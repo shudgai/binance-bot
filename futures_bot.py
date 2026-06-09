@@ -15,7 +15,7 @@ load_dotenv()
 # =====================================================================
 # 帳號與參數設定區（方案 A：直接交易 BNB 合約）
 # =====================================================================
-exchange = ccxtpro.binance({
+exchange = ccxtpro.binance({ 
     'apiKey': os.getenv('BINANCE_API_KEY') or None,     # 從 .env 讀取 API Key
     'secret': os.getenv('BINANCE_API_SECRET') or None,   # .env 讀取 Secret Key
     'enableRateLimit': True,
@@ -828,14 +828,51 @@ def reset_trailing_stops():
     has_reached_half_pct_profit = False
     highest_profit_pct_hardlock = 0.0
     has_partial_closed_50pct = False
+def is_trend_reversed(data, side):
+    # 此處需根據您現有的 data 變數來判斷
+    # 假設您有 macd_hist 判斷，或是其它反轉指標
+    # 這裡放您原本判斷反轉的邏輯
+    return data.get('is_reversed', False) 
 
+def is_congestion(data):
+    # 盤整判斷邏輯
+    return data.get('is_congestion', False)
+
+def process_market_state(symbol, market_data, position):
+    if is_trend_reversed(market_data, position['side']):
+        return "EXIT_REVERSAL"
+    if is_congestion(market_data):
+        return "MONITOR_STAGNATION"
+    return "HOLD_POSITION"
 async def monitor_position_tp_sl():
     """ 獨立監控持倉：波段止盈/止損 """
     global highest_profit_pct_hardlock, current_atr, atr_ma20, position_open_time, has_partial_closed_50pct
     while True:
         try:
             await asyncio.sleep(0.5)
-
+# --- [開始插入] 市場狀態分流監控 ---
+            # 準備 market_data 與 position_info (確保變數名稱與您程式現有的一致)
+            # 這裡簡單定義判定邏輯，您可以依據實際參數調整
+            is_long = current_pos_qty > 0
+            
+            # 使用現有的指標 (如 macd_hist, current_rsi)
+            market_data_temp = {
+                'macd_hist': macd_hist, 
+                'rsi': current_rsi,
+                'price_crossed_key_level': (current_p > global_resistance or current_p < global_support)
+            }
+            
+            # 偵測是否反轉 (若 macd 反向且價格突破關鍵位)
+            if (market_data_temp['macd_hist'] < 0 if is_long else market_data_temp['macd_hist'] > 0) and market_data_temp['price_crossed_key_level']:
+                print(f"🚨 [反轉] 方向錯誤，立即市價平倉！")
+                await close_entire_position('sell' if is_long else 'buy', abs(current_pos_qty), current_p, current_pos_avg, force_market=True)
+                continue # 重新進入迴圈，跳過後續邏輯
+            
+            # 偵測盤整 (若 RSI 在 45~55 之間判定為窄幅震盪)
+            if 45 < current_rsi < 55:
+                # 這裡直接維持原狀繼續盯盤，不需特別處理，系統會繼續往下執行僵局邏輯
+                pass 
+            # --- [結束插入] ---
             pos_qty = 0.0
             pos_avg = 0.0
             # 使用全域變數 current_pos_qty 以節省 API 次數
@@ -1450,13 +1487,15 @@ async def watch_kline_and_strategy():
                 elif pending_signal_side is None:
                     pending_confirm_high = pending_confirm_low = 0
 
-                # 放寬後的開倉條件：RSI 超賣(40)，或 MACD 金叉 (無零軸限制)
-                long_cond = (current_rsi < 40 and close_price <= bb_low * 1.005) or \
-                            (prev_macd_line <= prev_macd_signal and macd_line > macd_signal)
+# --- [修正後：強制趨勢過濾 + 指標共振] ---
+                # 多單條件：(MACD 金叉) 且 (在 SMA200 之上) 且 (避開熊市)
+                long_cond = (macd_line > macd_signal and close_price > global_sma200_1h and macro_regime != "BEAR") or \
+                            (current_rsi < 40 and close_price <= bb_low * 1.005)
 
-                # 放寬後的開倉條件：RSI 超買(60)，或 MACD 死叉 (無零軸限制)
-                short_cond = (current_rsi > 60 and close_price >= bb_up * 0.995) or \
-                             (prev_macd_line >= prev_macd_signal and macd_line < macd_signal)
+                # 空單條件：(MACD 死叉) 且 (在 SMA200 之下) 且 (避開牛市)
+                short_cond = (macd_line < macd_signal and close_price < global_sma200_1h and macro_regime != "BULL") or \
+                             (current_rsi > 60 and close_price >= bb_up * 0.995)
+                # ----------------------------------------
 
                 if long_cond:
                     allowed, reason = is_entry_allowed('buy')
@@ -1507,7 +1546,6 @@ async def watch_kline_and_strategy():
                 else:
                     if pending_signal_side is not None:
                         pending_signal_side = None
-
 
         except Exception as e:
             import traceback

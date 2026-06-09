@@ -1,0 +1,244 @@
+import os
+import json
+import sys
+import time
+import threading
+import subprocess
+from services.system_log_service import add_system_log
+
+# 模擬交易機器人狀態 (支援多幣種多進程)
+bot_status = {
+    "is_running": False,
+    "strategy": "Top 5 Sniper Mode",
+    "balance_quote": 150.0,
+    "active_orders": 0,
+    "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
+    "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "PEPEUSDT"], # 使用者自訂的 5 個關注幣種
+    "regime": "多幣種監控中",
+    "coin_regimes": {},    # { symbol: regime }
+    "trade_amount": 150.0,
+}
+
+bot_processes = {}  # {symbol: subprocess.Popen}
+SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
+DEFAULT_SYMBOLS = [
+    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
+    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
+]
+
+
+def normalize_symbol(sym):
+    if sym is None:
+        return ""
+    sym = str(sym).strip().upper()
+    if not sym:
+        return ""
+    if not sym.endswith("USDT"):
+        sym = f"{sym}USDT"
+    return sym
+
+
+def normalize_symbol_list(symbols, max_count=10):
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    if not symbols:
+        return list(DEFAULT_SYMBOLS[:max_count])
+    seen = []
+    for item in symbols:
+        sym = normalize_symbol(item)
+        if sym and sym not in seen:
+            seen.append(sym)
+    return seen[:max_count]
+
+
+def load_symbol_config():
+    try:
+        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return normalize_symbol_list(data.get("symbols", []))
+        return normalize_symbol_list(data)
+    except Exception:
+        return list(DEFAULT_SYMBOLS)
+
+
+def save_symbol_config(symbols):
+    normalized = normalize_symbol_list(symbols)
+    with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({"symbols": normalized}, f, ensure_ascii=False)
+    return normalized
+
+
+def get_bot_status():
+    from services.paper_trade_service import get_paper_balance
+    import os
+    from dotenv import load_dotenv
+    
+    load_dotenv()
+    if os.getenv("TRADING_MODE", "paper") == "paper":
+        bot_status["balance_quote"] = get_paper_balance()
+        
+    return bot_status
+
+def set_bot_balance_quote(balance: float):
+    bot_status["balance_quote"] = balance
+
+def update_bot_status(key, value):
+    bot_status[key] = value
+
+def read_bot_output(proc, sym):
+    for line in iter(proc.stdout.readline, ''):
+        line = line.strip()
+        if line:
+            if line.startswith("@@REGIME@@"):
+                bot_status["regime"] = line.replace("@@REGIME@@", "").strip()
+            elif line.startswith("@@COIN_REGIME@@"):
+                parts = line.replace("@@COIN_REGIME@@", "").strip().split("@@")
+                if len(parts) >= 2:
+                    coin_sym = parts[0]
+                    coin_reg = parts[1]
+                    bot_status["coin_regimes"][coin_sym] = coin_reg
+            elif line.startswith("@@AMOUNT@@"):
+                try:
+                    bot_status["trade_amount"] = float(line.replace("@@AMOUNT@@", "").strip())
+                except:
+                    pass
+            elif line.startswith("@@LEVERAGE@@"):
+                try:
+                    bot_status["leverage"] = int(line.replace("@@LEVERAGE@@", "").strip())
+                except:
+                    pass
+            else:
+                add_system_log(f"[{sym}] {line}", "info")
+    proc.stdout.close()
+    proc.wait()
+    
+    if proc.returncode == 4:
+        # 單幣熔斷停牌 (Exit Code 4)
+        from services.radar_service import replace_dead_coin, blacklist_coin
+        blacklist_coin(sym, duration_sec=24*3600)
+        threading.Thread(target=replace_dead_coin, args=(sym,), daemon=True).start()
+    elif proc.returncode == 3:
+        # 死水幣觸發淘汰 (Exit Code 3)
+        from services.radar_service import replace_dead_coin
+        threading.Thread(target=replace_dead_coin, args=(sym,), daemon=True).start()
+    elif proc.returncode == 2:
+        # 觸發全自動雷達換倉機制 (保留)
+        from services.radar_service import auto_radar_switch
+        threading.Thread(target=auto_radar_switch, daemon=True).start()
+    elif bot_status["is_running"] and sym in bot_processes and bot_processes[sym] == proc:
+        # 非預期停止（使用者未手動關閉），啟動守護重啟機制
+        add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止，將在 5 秒後自動重啟...", "danger")
+        def daemon_restart():
+            time.sleep(5)
+            if bot_status["is_running"] and sym in bot_status.get("active_symbols", []):
+                _start_single_bot(sym, bot_status["trade_amount"])
+        threading.Thread(target=daemon_restart, daemon=True).start()
+
+def _start_multi_coin_bot(trade_amt: float):
+    global bot_processes
+    cmd = [sys.executable, "-u", "multi_coin_bot.py"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    bot_processes["__multi__"] = proc
+    threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
+    add_system_log(f"🚀 已啟動多幣輪動機器人 ({10}個幣種, 金額: {trade_amt})", "success")
+
+def start_bot(symbols=None, trade_amt: float = None):
+    global bot_processes
+    if symbols is None:
+        symbols = load_symbol_config()
+    elif isinstance(symbols, str):
+        symbols = [symbols]
+    if not symbols:
+        symbols = list(DEFAULT_SYMBOLS)
+
+    symbols = normalize_symbol_list(symbols)
+    save_symbol_config(symbols)
+
+    if trade_amt is None:
+        trade_amt = bot_status.get("trade_amount", 150.0)
+
+    bot_status["is_running"] = True
+    bot_status["active_symbols"] = symbols
+    bot_status["trade_amount"] = trade_amt
+    
+    # 關閉所有現有行程
+    current_running = list(bot_processes.keys())
+    for s in current_running:
+        _kill_single_bot(s)
+            
+    # 啟動單一多幣行程
+    _start_multi_coin_bot(trade_amt)
+
+def _kill_single_bot(symbol: str):
+    global bot_processes
+    if symbol in bot_processes and bot_processes[symbol]:
+        proc = bot_processes[symbol]
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except:
+            proc.kill()
+        bot_processes[symbol] = None
+        del bot_processes[symbol]
+        add_system_log(f"🛑 已終止背景機器人 ({symbol})", "warning")
+
+def kill_bot():
+    global bot_processes
+    bot_status["is_running"] = False
+    symbols = list(bot_processes.keys())
+    for s in symbols:
+        _kill_single_bot(s)
+
+def restart_bot():
+    kill_bot()
+    start_bot()
+
+def toggle_bot():
+    is_running = not bot_status["is_running"]
+    status_str = "啟動" if is_running else "停止"
+    add_system_log(f"手動{status_str}機器人群組", "info")
+    
+    if is_running:
+        start_bot()
+    else:
+        kill_bot()
+    return bot_status["is_running"]
+
+def set_bot_symbol(symbols):
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    if not symbols:
+        symbols = list(DEFAULT_SYMBOLS)
+
+    symbols = normalize_symbol_list(symbols)
+    save_symbol_config(symbols)
+    bot_status["active_symbols"] = symbols
+
+    amt = bot_status.get("trade_amount", 150.0)
+    bot_status["strategy"] = f"Top 5 Sniper ({amt})"
+    add_system_log(f"🎯 自動交易監聽目標切換為: {', '.join(symbols)}", "info")
+
+    return symbols
+
+def set_bot_watch_symbols(symbols):
+    if not isinstance(symbols, list):
+        symbols = [symbols]
+    # 限定 5 隻
+    symbols = [s.upper() for s in symbols][:5]
+    bot_status["watch_symbols"] = symbols
+    add_system_log(f"📋 使用者更新自選關注清單: {', '.join(symbols)}", "info")
+    return symbols
+
+def set_bot_amount(amount: float):
+    if amount < 0 or amount > 1000:
+        raise ValueError("單次交易數量必須限制在 0 至 1000 之間")
+    bot_status["trade_amount"] = amount
+    bot_status["strategy"] = f"Top 5 Sniper ({amount})"
+    add_system_log(f"⚙️ 自動交易單次數量設定為: {amount}", "info")
+    
+    if bot_status.get("is_running"):
+        add_system_log("♻️ 已重新啟動所有機器人以套用新的下單金額", "warning")
+        restart_bot()
+        
+    return bot_status["trade_amount"]

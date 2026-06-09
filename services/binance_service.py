@@ -1,0 +1,257 @@
+import os
+from binance.client import Client
+from binance.exceptions import BinanceAPIException
+from dotenv import load_dotenv
+
+load_dotenv()
+
+api_key = os.getenv("BINANCE_API_KEY")
+api_secret = os.getenv("BINANCE_API_SECRET")
+use_testnet = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
+
+client = None
+if api_key and api_key != "your_api_key_here":
+    client = Client(api_key, api_secret, testnet=use_testnet)
+else:
+    client = Client(testnet=use_testnet)
+
+_contract_precisions = {}
+
+def get_contract_step(symbol):
+    if symbol in _contract_precisions:
+        return _contract_precisions[symbol]
+    try:
+        info = client.futures_exchange_info()
+        for s in info.get('symbols', []):
+            if s['symbol'] == symbol:
+                for f in s.get('filters', []):
+                    if f['filterType'] == 'LOT_SIZE':
+                        step = float(f['stepSize'])
+                        _contract_precisions[symbol] = step
+                        return step
+    except Exception as e:
+        pass
+    return 0.001
+
+def round_step(qty, step):
+    precision = int(round(-__import__('math').log10(step)))
+    return round(round(qty / step) * step, precision)
+
+def get_price(symbol: str):
+    ticker = client.futures_symbol_ticker(symbol=symbol)
+    return {
+        "symbol": symbol,
+        "price": float(ticker["price"]),
+        "timestamp": ticker.get("time")
+    }
+
+import time
+_last_prices = {}
+_last_prices_time = 0
+
+def get_all_prices():
+    global _last_prices, _last_prices_time
+    now = time.time()
+    if now - _last_prices_time < 2:
+        return _last_prices
+    try:
+        tickers = client.futures_ticker()
+        prices = {}
+        for t in tickers:
+            prices[t['symbol']] = float(t.get('lastPrice', 0))
+        _last_prices = prices
+        _last_prices_time = now
+        return prices
+    except Exception as e:
+        if _last_prices:
+            return _last_prices
+        raise e
+
+
+def get_position(symbol: str, quote_asset: str, base_asset: str):
+    positions = client.futures_position_information(symbol=symbol)
+    if not positions:
+        raise Exception("No position data returned")
+        
+    pos = positions[0]
+    qty = float(pos['positionAmt'])
+    unrealized_pnl = float(pos['unRealizedProfit'])
+    entry_price = float(pos['entryPrice'])
+    mark_price = float(pos['markPrice'])
+    
+    abs_qty = abs(qty)
+    total_cost = abs_qty * entry_price
+    current_value = abs_qty * mark_price
+    pnl_percent = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0.0
+    
+    return {
+        "asset": base_asset,
+        "quote_asset": quote_asset,
+        "qty": qty,
+        "avg_price": entry_price,
+        "total_cost": total_cost,
+        "current_price": mark_price,
+        "current_value": current_value,
+        "pnl": unrealized_pnl,
+        "pnl_percent": pnl_percent,
+        "realized_pnl": 0.0
+    }
+
+def get_trades(symbol: str):
+    trades = client.futures_account_trades(symbol=symbol, limit=15)
+    formatted_trades = []
+    for t in reversed(trades):
+        qty = float(t["qty"])
+        is_buyer = (t["side"] == "BUY")
+        realized_pnl = float(t.get("realizedPnl", 0.0))
+        timestamp = t.get("time") / 1000.0
+        formatted_trades.append({
+            "id": t.get("id"),
+            "order_id": t.get("orderId"),
+            "price": float(t["price"]),
+            "qty": qty,
+            "time": timestamp,
+            "is_buyer": is_buyer,
+            "pnl": realized_pnl if realized_pnl != 0 else None
+        })
+    return formatted_trades
+
+def get_klines(symbol: str, interval: str, limit: int):
+    klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+    result = []
+    for k in klines:
+        result.append({
+            "open_time": k[0] / 1000.0,
+            "time": k[0] / 1000.0,
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+            "close_time": k[6] / 1000.0,
+        })
+    return result
+
+def get_1h_volatility(symbol: str):
+    try:
+        klines = client.futures_klines(symbol=symbol, interval='15m', limit=4)
+        if not klines:
+            return symbol, 0
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        vols = [float(k[7]) for k in klines] 
+        
+        h = max(highs)
+        l = min(lows)
+        q_vol = sum(vols)
+        
+        if l > 0 and q_vol > 1_000_000:
+            volatility = ((h - l) / l) * 100
+            return symbol, volatility
+    except:
+        pass
+    return symbol, 0
+
+def get_top_volume_altcoins(limit=5, ignore_list=None):
+    try:
+        tickers = client.futures_ticker()
+        exclude_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT"]
+        if ignore_list:
+            exclude_list.extend(ignore_list)
+        candidates = []
+        for t in tickers:
+            sym = t['symbol']
+            if not sym.endswith('USDT'):
+                continue
+            if sym in exclude_list:
+                continue
+            try:
+                price = float(t.get('lastPrice', 0))
+                q_vol = float(t.get('quoteVolume', 0))
+            except (ValueError, TypeError):
+                continue
+                
+            # Filter for "small coins": price under $5.0
+            if price > 5.0 or price == 0:
+                continue
+                
+            if q_vol > 0:
+                candidates.append((sym, q_vol))
+        
+        # Sort by quoteVolume descending
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, vol in candidates[:limit]]
+    except Exception as e:
+        print(f"Error fetching top volume altcoins: {e}")
+        return []
+
+def market_buy(symbol: str, amount: float):
+    ticker = client.futures_symbol_ticker(symbol=symbol)
+    price = float(ticker['price'])
+    qty = amount / price
+    step = get_contract_step(symbol)
+    qty_str = str(round_step(qty, step))
+
+    if symbol == 'USDCUSDT':
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=Client.SIDE_BUY,
+            type=Client.ORDER_TYPE_LIMIT,
+            timeInForce='GTC',
+            price='0.9999',
+            quantity=qty_str
+        )
+    else:
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=Client.SIDE_BUY,
+            type=Client.ORDER_TYPE_MARKET,
+            quantity=qty_str
+        )
+    return order
+
+def market_short(symbol: str, amount: float):
+    ticker = client.futures_symbol_ticker(symbol=symbol)
+    price = float(ticker['price'])
+    qty = amount / price
+    step = get_contract_step(symbol)
+    qty_str = str(round_step(qty, step))
+
+    order = client.futures_create_order(
+        symbol=symbol,
+        side=Client.SIDE_SELL,
+        type=Client.ORDER_TYPE_MARKET,
+        quantity=qty_str
+    )
+    return order
+
+def market_sell(symbol: str, base_asset: str):
+    positions = client.futures_position_information(symbol=symbol)
+    if not positions:
+        raise Exception("找不到合約倉位資訊")
+        
+    qty = float(positions[0]['positionAmt'])
+    if qty == 0:
+        raise Exception("當前無合約倉位可平倉")
+
+    side = Client.SIDE_SELL if qty > 0 else Client.SIDE_BUY
+    step = get_contract_step(symbol)
+    qty_str = str(round_step(abs(qty), step))
+    
+    if symbol == 'USDCUSDT':
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type=Client.ORDER_TYPE_LIMIT,
+            timeInForce='GTC',
+            price='1.0000',
+            quantity=qty_str
+        )
+    else:
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type=Client.ORDER_TYPE_MARKET,
+            quantity=abs(qty)
+        )
+    return order
