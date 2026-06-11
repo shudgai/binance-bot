@@ -100,8 +100,8 @@ PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
-SL_ATR_MULTIPLIER = 4.0
-TP_ATR_MULTIPLIER = 0.8
+SL_ATR_MULTIPLIER = 2.5
+TP_ATR_MULTIPLIER = 2.5
 HARD_STOP_LOSS_PCT = 0.02
 
 def build_symbol_state(sym):
@@ -161,6 +161,9 @@ def build_symbol_state(sym):
         "max_additional_entries": 2,
         "entry_cooldown_sec": 90,
         "last_entry_time": 0.0,
+        "htf_trend": None,
+        "htf_ema20": 0.0,
+        "rsis": [],
     }
 
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
@@ -169,15 +172,39 @@ WATCH_TASKS = {}
 # ── 指標計算函數 ──────────────────────────────────────────────
 
 def calculate_ema(prices, period):
-    if len(prices) < period:
-        return np.mean(prices)
-    multiplier = 2.0 / (period + 1)
-    ema = np.mean(prices[:period])
-    for p in prices[period:]:
-        ema = (p - ema) * multiplier + ema
-    return ema
+    if len(prices) == 0: return 0.0
+    ema = np.zeros_like(prices)
+    ema[0] = prices[0]
+    multiplier = 2 / (period + 1)
+    for i in range(1, len(prices)):
+        ema[i] = (prices[i] - ema[i-1]) * multiplier + ema[i-1]
+    return ema[-1]
 
-def calculate_macd(prices, fast=12, slow=26, signal=9):
+def calculate_rsi_array(prices, period=14):
+    if len(prices) <= period:
+        return np.full_like(prices, 50.0)
+    deltas = np.diff(prices)
+    seed = deltas[:period]
+    up = seed[seed >= 0].sum() / period
+    down = -seed[seed < 0].sum() / period
+    rs = up / down if down != 0 else 0
+    rsi = np.zeros_like(prices)
+    rsi[:period] = 100. - 100. / (1. + rs)
+    for i in range(period, len(prices)):
+        delta = deltas[i - 1]
+        if delta > 0:
+            upval = delta
+            downval = 0.
+        else:
+            upval = 0.
+            downval = -delta
+        up = (up * (period - 1) + upval) / period
+        down = (down * (period - 1) + downval) / period
+        rs = up / down if down != 0 else 0
+        rsi[i] = 100. - 100. / (1. + rs)
+    return rsi
+
+def calculate_macd(prices, slow=26, fast=12, signal=9):
     if len(prices) < slow + signal:
         return 0, 0, 0, 0, 0
     ema_fast = np.array([calculate_ema(prices[:i+1], fast) for i in range(fast-1, len(prices))])
@@ -557,6 +584,28 @@ async def fetch_all_sma200():
         if not isinstance(results[i], Exception):
             STATES[sym]["sma200_15m"] = results[i]
 
+async def fetch_htf_trend(sym):
+    try:
+        ohlcv = await exchange.fetch_ohlcv(sym, '1h', limit=50)
+        closes = np.array([float(x[4]) for x in ohlcv])
+        ema20 = calculate_ema(closes, 20)
+        current_close = closes[-1]
+        trend = "long" if current_close > ema20[-1] else "short"
+        return trend, ema20[-1]
+    except Exception as e:
+        print(f"⚠️ [HTF獲取失敗] {sym}: {e}")
+        return None, 0.0
+
+async def fetch_all_htf_trend():
+    tasks = {sym: fetch_htf_trend(sym) for sym in ALL_SYMBOLS}
+    results = await asyncio.gather(*[tasks[sym] for sym in tasks], return_exceptions=True)
+    for i, sym in enumerate(ALL_SYMBOLS):
+        if not isinstance(results[i], Exception):
+            trend, ema20 = results[i]
+            if trend:
+                STATES[sym]["htf_trend"] = trend
+                STATES[sym]["htf_ema20"] = ema20
+
 async def load_open_positions():
     if not PAPER_TRADING:
         return
@@ -605,11 +654,8 @@ def compute_indicators(sym):
             s["atr_history"] = s["atr_history"][-1440:]
         s["atr_ma20"] = float(np.mean(s["atr_history"][-20:])) if len(s["atr_history"]) >= 20 else s["current_atr"]
     if len(closes) > RSI_PERIOD:
-        deltas = np.diff(closes[-(RSI_PERIOD + 1):])
-        gains = deltas[deltas > 0].mean() if np.any(deltas > 0) else 1e-10
-        losses = -deltas[deltas < 0].mean() if np.any(deltas < 0) else 1e-10
-        rs = gains / losses
-        s["current_rsi"] = 100.0 - (100.0 / (1.0 + rs))
+        s["rsis"] = calculate_rsi_array(closes, RSI_PERIOD)
+        s["current_rsi"] = s["rsis"][-1]
     s["vol_ma20"] = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
     s["current_vol"] = float(volumes[-1])
     if len(closes) >= 20:
@@ -839,60 +885,67 @@ async def check_exits(sym):
 
     # ── 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock) ──
     # 實施分級保本與回撤防護，防止「有利潤不平倉，最後被打到停損」
-    if s["highest_profit_pct"] >= 0.008 and profit_pct < s["highest_profit_pct"] * 0.5:
+    if s["highest_profit_pct"] >= 0.015 and profit_pct < s["highest_profit_pct"] * 0.5:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達50% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="回撤鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.006 and profit_pct < 0.0025:
+    elif s["highest_profit_pct"] >= 0.010 and profit_pct < 0.005:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [高利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發高利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="高利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.004 and profit_pct < 0.0015:
+    elif s["highest_profit_pct"] >= 0.008 and profit_pct < 0.003:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發中利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="中利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.0025 and profit_pct < 0.0010:
+    elif s["highest_profit_pct"] >= 0.006 and profit_pct < 0.0015:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="微利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
+    elif s["highest_profit_pct"] >= 0.003 and profit_pct < 0.0005:
+        cs = 'sell' if is_long else 'buy'
+        print(f"🛡️ [強制保本] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，不允許轉盈為虧，觸發強制保本平倉")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="強制保本防護")
+        s["highest_profit_pct"] = 0.0
+        return
 
-    # 見好就收：先以 0.3% 進行停利，若後續價格再創新高，就把停利線往上移動
-    early_take_profit_pct = 0.003
-    if s["highest_profit_pct"] >= early_take_profit_pct and profit_pct >= 0.001:
+    # 見好就收：先以 0.4% (原本 0.8%) 進行停利，若後續價格再創新高，就把停利線往上移動
+    early_take_profit_pct = 0.004
+    if s["highest_profit_pct"] >= early_take_profit_pct and profit_pct >= 0.003:
         should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
         if should_exit:
             cs = 'sell' if is_long else 'buy'
-            print(f"🎯 [移動停利] {sym} 已達到 0.3% 目標，按移動停利出場")
+            print(f"🎯 [移動停利] {sym} 已達到 {early_take_profit_pct*100:.1f}% 目標，按移動停利出場")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="移動停利")
             s["highest_profit_pct"] = 0.0
             return
 
     if not is_strong:
         # ── 盤整／弱勢路線 ────────────────────────────────
-        # 僵局一階：時間到 → 有任何正利潤就全平，利潤微薄(0.2%~0.5%)平50%
+        # 僵局一階：時間到 → 只有在真實波動率萎縮時才執行
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
         if hold_sec > stagnation_limit and profit_pct > 0:
-            if not s["has_partial_closed"] and 0.002 <= profit_pct < 0.005:
-                half = abs(s["qty"]) * 0.5
-                cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局一階] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，平50%")
-                await close_position(sym, cs, half, p, avg, reason="僵局一階")
-                s["has_partial_closed"] = True
-                return
-            if profit_pct < 0.002:
-                cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局平倉] {sym} 持倉{stagnation_limit//60}分利潤僅{profit_pct*100:.2f}%，全平")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="僵局平倉")
-                s["highest_profit_pct"] = 0.0
-                return
+            if s["current_atr"] < s["atr_ma20"] * 0.8:
+                if not s["has_partial_closed"] and 0.002 <= profit_pct < 0.005:
+                    half = abs(s["qty"]) * 0.5
+                    cs = 'sell' if is_long else 'buy'
+                    print(f"⏳ [僵局一階] {sym} 波動率萎縮，持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，平50%")
+                    await close_position(sym, cs, half, p, avg, reason="僵局一階")
+                    s["has_partial_closed"] = True
+                    return
+                if profit_pct < 0.002:
+                    cs = 'sell' if is_long else 'buy'
+                    print(f"⏳ [僵局平倉] {sym} 波動率萎縮，持倉{stagnation_limit//60}分利潤僅{profit_pct*100:.2f}%，全平")
+                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="僵局平倉")
+                    s["highest_profit_pct"] = 0.0
+                    return
         # 僵局二階：平過50% + 8分仍未突破1% → 全平
         if s["has_partial_closed"] and hold_sec > 480 and profit_pct < 0.01:
             cs = 'sell' if is_long else 'buy'
@@ -901,8 +954,8 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             s["has_partial_closed"] = False
             return
-        # 弱勢快速停利：0.3% 就走
-        weak_tp = 0.003
+        # 弱勢快速停利：0.8% 就走
+        weak_tp = 0.008
         if s["highest_profit_pct"] >= weak_tp:
             cs = 'sell' if is_long else 'buy'
             print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%")
@@ -919,10 +972,12 @@ async def check_exits(sym):
     else:
         # ── 強勢路線 ────────────────────────────────────
         # 強勢動態停利：高點回撤 0.5%
-        if s["highest_profit_pct"] >= 0.01:
+        # 改為當利潤達到 1.5 倍 ATR 距離時啟動
+        atr_profit_pct = (s["current_atr"] / avg) * 1.5 if avg > 0 else 0.015
+        if s["highest_profit_pct"] >= atr_profit_pct:
             if (is_long and p <= s["trailing_highest"] * 0.995) or (not is_long and p >= s["trailing_lowest"] * 1.005):
                 cs = 'sell' if is_long else 'buy'
-                print(f"🏃 [動態停利] {sym} 強勢回撤0.5%")
+                print(f"🏃 [動態停利] {sym} 利潤達 {s['highest_profit_pct']*100:.2f}% (超過1.5ATR)，高點回撤0.5%，果斷收割")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動態停利")
                 s["highest_profit_pct"] = 0.0
                 return
@@ -990,18 +1045,26 @@ async def execute_order(sym, side, price):
         return
 
     now = time.time()
-    if side == 'buy' and s["entry_count"] > 0:
+    if s["entry_count"] > 0:
         if now - s["last_entry_time"] < s["entry_cooldown_sec"]:
             print(f"⏳ [加倉冷卻] {sym} 距離上次加倉不足 {s['entry_cooldown_sec']} 秒")
             return
         if s["entry_count"] >= s["max_additional_entries"]:
             print(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
             return
-        if s["avg_price"] > 0 and s["close_price"] > 0:
-            profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"]
-            if profit_pct < 0.001:
-                print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉")
-                return
+        if s["avg_price"] > 0 and price > 0:
+            if side == 'buy':
+                # 多單攤平：越跌越買。要求價格至少低於均價 0.5% 才允許加倉
+                drop_pct = (s["avg_price"] - price) / s["avg_price"]
+                if drop_pct < 0.005:
+                    print(f"🛑 [攤平風控] {sym} 多單跌幅未達 0.5% (目前: {drop_pct*100:.2f}%)，不急著買")
+                    return
+            else:
+                # 空單攤平：越漲越空。要求價格至少高於均價 0.5% 才允許加倉
+                rise_pct = (price - s["avg_price"]) / s["avg_price"]
+                if rise_pct < 0.005:
+                    print(f"🛑 [攤平風控] {sym} 空單漲幅未達 0.5% (目前: {rise_pct*100:.2f}%)，不急著空")
+                    return
 
     base_amt = margin / price
     if base_amt < 0.001:
@@ -1075,19 +1138,13 @@ def is_entry_pin_safe(sym, side):
     lower_wick = min(open_price, close_price) - low
 
     if side == 'buy':
-        if close_price <= open_price:
-            return False
-        if close_price <= prev_close:
-            return False
-        if upper_wick > body * 2.0:
+        # 放寬條件：只要求不要收在最低點附近，或者長上影線不要太誇張
+        if upper_wick > body * 3.0:
             return False
         return True
 
-    if close_price >= open_price:
-        return False
-    if close_price >= prev_close:
-        return False
-    if lower_wick > body * 2.0:
+    # side == 'sell'
+    if lower_wick > body * 3.0:
         return False
     return True
 
@@ -1097,11 +1154,15 @@ def is_entry_volume_confirmed(sym, side):
     if len(s["ohlcv"]) < 2:
         return False
     current_vol = s["current_vol"]
+    prev_vol = s["ohlcv"][-2][5]
     vol_ma20 = s["vol_ma20"]
     if vol_ma20 <= 0:
         return False
-    if current_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 均量門檻 {vol_ma20 * VOLUME_RATIO_THRESHOLD:.2f}")
+        
+    # 如果「當前 K 線」跟「上一根 K 線」的量都不到均量的 70%，才視為量能不足
+    # 這是為了避免在剛換線（前幾秒）時，當前 K 線量能必然偏低而導致誤判
+    if current_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD and prev_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} 且上一根量 {prev_vol:.2f} 均 < 均量門檻 {vol_ma20 * VOLUME_RATIO_THRESHOLD:.2f}")
         return False
     return True
 
@@ -1118,22 +1179,37 @@ def is_entry_allowed(sym, side, route="a"):
     s = STATES[sym]
     cp = s["close_price"]
     
-    # 均線過濾器：受 15m SMA200 趨勢保護，防止逆勢接刀
-    if s.get("sma200_15m", 0) > 0:
+    # 均線過濾器：原本所有策略皆受 15m SMA200 限制，現放寬僅限制 Route A (順勢)
+    # 讓 Route B/C (搶短反彈) 可以在大勢逆風時抓取極端超賣/超買的反彈機會
+    if is_trend and s.get("sma200_15m", 0) > 0:
         ma200 = s["sma200_15m"]
-        rsi = s.get("current_rsi", 50)
+        if side == 'buy' and cp <= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200大勢保護] 順勢做多，但價格 {cp:.4f} <= MA200 {ma200:.4f}")
+            return False
+        if side == 'sell' and cp >= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200大勢保護] 順勢做空，但價格 {cp:.4f} >= MA200 {ma200:.4f}")
+            return False
+
+    # 大週期 (HTF) 1H 趨勢過濾器
+    # 嚴格要求不能逆著 1H 趨勢做單 (除非是背離 Route S)
+    htf_trend = s.get("htf_trend")
+    if route != "s" and htf_trend:
+        if side == 'buy' and htf_trend == 'short':
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [1H 大週期過濾] 1H 趨勢為空頭，禁止做多")
+            return False
+        if side == 'sell' and htf_trend == 'long':
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [1H 大週期過濾] 1H 趨勢為多頭，禁止做空")
+            return False
+            
+    # 極端波動率過濾：當市場處於瘋狂洗盤、暴漲暴跌 (ATR > 24h均值兩倍) 時，禁止任何逆勢搶短 (Route B/C)
+    if not is_trend:
+        atr_history = s.get("atr_history", [])
+        atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
+        current_atr = s.get("current_atr", 0.0)
         
-        # 破例：當 RSI 極度超賣 (<25) 或極度超買 (>75) 時，允許逆勢搶反彈 (Route C)
-        is_extreme_long = (side == 'buy' and rsi < 25.0)
-        is_extreme_short = (side == 'sell' and rsi > 75.0)
-        
-        if not (is_extreme_long or is_extreme_short):
-            if side == 'buy' and cp <= ma200:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
-                return False
-            if side == 'sell' and cp >= ma200:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
-                return False
+        if atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極端波動率保護] 目前 ATR {current_atr:.5f} > 均值兩倍 {atr_24h_avg*2.0:.5f} (禁止逆勢接刀/摸頭)")
+            return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
@@ -1162,12 +1238,47 @@ def is_entry_allowed(sym, side, route="a"):
         return False
     return True
 
+def check_rsi_divergence(closes, rsis, window=60):
+    if len(closes) < window or len(rsis) < window:
+        return False, False
+        
+    recent_closes = closes[-window:]
+    recent_rsis = rsis[-window:]
+    
+    # 看漲背離 (Bullish Divergence): Price Lower Low, RSI Higher Low
+    bullish_div = False
+    current_close = recent_closes[-1]
+    current_rsi = recent_rsis[-1]
+    
+    # 尋找前一個價格低點 (大約 5-50 根 k線前)
+    lowest_idx = np.argmin(recent_closes[:-5])
+    prev_low_close = recent_closes[lowest_idx]
+    prev_low_rsi = recent_rsis[lowest_idx]
+    
+    if current_close < prev_low_close * 0.998 and current_rsi > prev_low_rsi + 5.0 and current_rsi < 45.0:
+        bullish_div = True
+        
+    # 看跌背離 (Bearish Divergence): Price Higher High, RSI Lower High
+    bearish_div = False
+    highest_idx = np.argmax(recent_closes[:-5])
+    prev_high_close = recent_closes[highest_idx]
+    prev_high_rsi = recent_rsis[highest_idx]
+    
+    if current_close > prev_high_close * 1.002 and current_rsi < prev_high_rsi - 5.0 and current_rsi > 55.0:
+        bearish_div = True
+        
+    return bullish_div, bearish_div
+
 def compute_signal_strength(sym):
     s = STATES[sym]
     if len(s["closes"]) < 20:
         return (None, 0)
 
     rsi = s["current_rsi"]
+    rsis = s.get("rsis", [])
+    if len(rsis) == 0:
+        rsis = [rsi]
+        
     close = s["close_price"]
     prev_close = s["prev_close"] if s["prev_close"] is not None else close
     ema20 = s.get("ema20", 0.0)
@@ -1179,8 +1290,8 @@ def compute_signal_strength(sym):
     # Define parameters for dynamic RSI thresholds
     LONG_RSI_NORMAL = 40.0
     SHORT_RSI_NORMAL = 60.0
-    LONG_RSI_HIGH_VOL = 30.0
-    SHORT_RSI_HIGH_VOL = 70.0
+    LONG_RSI_HIGH_VOL = 35.0
+    SHORT_RSI_HIGH_VOL = 65.0
 
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
@@ -1191,8 +1302,9 @@ def compute_signal_strength(sym):
         short_rsi_threshold = SHORT_RSI_HIGH_VOL
         vol_mode = "高波動模式 (High Vol)"
     else:
-        long_rsi_threshold = LONG_RSI_NORMAL
-        short_rsi_threshold = SHORT_RSI_NORMAL
+        # 在低波動模式下，縮緊門檻，只做最穩定的訊號
+        long_rsi_threshold = 25.0
+        short_rsi_threshold = 75.0
         vol_mode = "低波動模式 (Low Vol)"
 
     # 每個循環輸出當前指標數值，方便追蹤與除錯
@@ -1218,8 +1330,9 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
-    last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
+    # 放寬收盤價確認：只要不低於前一根最低點就算確認
+    last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and close > s["ohlcv"][-2][3]
+    last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and close < s["ohlcv"][-2][2]
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI門檻(L/S: {long_rsi_threshold:.0f}/{short_rsi_threshold:.0f}): {rsi < long_rsi_threshold}/{rsi > short_rsi_threshold} | BB區間(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | MACD滿足(L/S): {long_macd_ok}/{short_macd_ok} (交叉:{long_macd_cross}/{short_macd_cross}, 柱狀體向上/下:{long_macd_hist_aligned}/{short_macd_hist_aligned}) | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
 
@@ -1238,15 +1351,24 @@ def compute_signal_strength(sym):
     route_b_long = rsi < long_rsi_threshold and is_in_bb_zone_long and last_candle_confirmed_long
     route_b_short = rsi > short_rsi_threshold and is_in_bb_zone_short and last_candle_confirmed_short
 
-    # Route C (Counter-Trend Scalp / 反轉搶短機制): RSI超賣/超買 (30/70)，無視 EMA 趨勢濾網，允許開倉搶反彈
-    route_c_long = rsi < 30.0 and last_candle_confirmed_long
-    route_c_short = rsi > 70.0 and last_candle_confirmed_short
+    # Route C (Counter-Trend Scalp / 反轉搶短機制): RSI超賣/超買 (35/65)，無視 EMA 趨勢濾網，允許開倉搶反彈
+    route_c_long = rsi < 35.0 and last_candle_confirmed_long
+    route_c_short = rsi > 65.0 and last_candle_confirmed_short
 
-    long_base_ok = route_a_long or route_b_long or route_c_long
-    short_base_ok = route_a_short or route_b_short or route_c_short
+    # Route S (Divergence / 背離確認機制): 最強反轉訊號，無視 1H 大週期過濾
+    bullish_div, bearish_div = check_rsi_divergence(s["closes"], s.get("rsis", []), window=60)
+    route_s_long = bullish_div and last_candle_confirmed_long
+    route_s_short = bearish_div and last_candle_confirmed_short
+    if route_s_long:
+        print(f"🌟 [背離確認] {sym} 出現看漲背離 (Bullish Divergence)!")
+    if route_s_short:
+        print(f"🌟 [背離確認] {sym} 出現看跌背離 (Bearish Divergence)!")
+
+    long_base_ok = route_s_long or route_a_long or route_b_long or route_c_long
+    short_base_ok = route_s_short or route_a_short or route_b_short or route_c_short
 
     if long_base_ok:
-        route = "c" if route_c_long else "b" if route_b_long else "a"
+        route = "s" if route_s_long else "c" if route_c_long else "b" if route_b_long else "a"
         if route == "a":
             strength = 5.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         else:
@@ -1259,7 +1381,7 @@ def compute_signal_strength(sym):
         return ("buy", strength if strength >= 8.0 else 0.0, route)
 
     if short_base_ok:
-        route = "c" if route_c_short else "b" if route_b_short else "a"
+        route = "s" if route_s_short else "c" if route_c_short else "b" if route_b_short else "a"
         if route == "a":
             strength = 5.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         else:
@@ -1290,6 +1412,8 @@ async def check_entries():
         if side_strength[0] is None:
             continue
         side, strength, route = side_strength
+        if strength <= 0.0:
+            continue
         if not is_entry_allowed(sym, side, route):
             continue
         candidates.append((sym, side, strength, route))
@@ -1305,9 +1429,9 @@ async def check_entries():
         s = STATES[sym]
         now = time.time()
         
-        # Route C 反轉搶短直接開倉，不進行二次確認與突破等待
-        if route == "c":
-            print(f"⚡ [即時開倉] {sym} 觸發反轉搶短，繞過二次確認即刻下單！")
+        # Route C/S 反轉搶短或背離直接開倉，不進行二次確認與突破等待
+        if route in ["c", "s"]:
+            print(f"⚡ [即時開倉] {sym} 觸發反轉搶短/背離，繞過二次確認即刻下單！")
             await execute_order(sym, side, s["close_price"])
             s["pending_side"] = None
             s["pending_confirm_high"] = 0
@@ -1400,8 +1524,10 @@ async def main_loop():
     await fetch_real_balance()
     await load_open_positions()
     await fetch_all_sma200()
+    await fetch_all_htf_trend()
 
     last_balance_update = time.time()
+    last_htf_update = time.time()
 
     while True:
         try:
@@ -1409,6 +1535,10 @@ async def main_loop():
             if not PAPER_TRADING and loop_start - last_balance_update > 30:
                 await fetch_real_balance()
                 last_balance_update = loop_start
+                
+            if loop_start - last_htf_update > 1800:  # 每 30 分鐘更新一次大週期
+                await fetch_all_htf_trend()
+                last_htf_update = loop_start
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False

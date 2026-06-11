@@ -877,16 +877,21 @@ createApp({
             customSymbol.value = '';
         };
         const coins = ref([
-            { symbol: 'XRPUSDT', name: 'XRP', label: '瑞波幣', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'BTCUSDT', name: 'BTC', label: 'BTC', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'ETHUSDT', name: 'ETH', label: 'ETH', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'SOLUSDT', name: 'SOL', label: 'SOL', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'BNBUSDT', name: 'BNB', label: 'BNB', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'XRPUSDT', name: 'XRP', label: 'XRP', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'ADAUSDT', name: 'ADA', label: 'ADA', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'Layer 1', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'AVAX', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'DOTUSDT', name: 'DOT', label: 'DOT', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'UNIUSDT', name: 'UNI', label: 'UNI', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'POLUSDT', name: 'POL', label: 'POL', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'LTCUSDT', name: 'LTC', label: 'LTC', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'BCHUSDT', name: 'BCH', label: 'BCH', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'NEARUSDT', name: 'NEAR', label: 'NEAR', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'FETUSDT', name: 'FET', label: 'FET', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'SUIUSDT', name: 'SUI', label: 'SUI', price: 0, prevPrice: 0, priceClass: '' }
+            { symbol: 'APTUSDT', name: 'APT', label: 'APT', price: 0, prevPrice: 0, priceClass: '' }
         ]);
         const activeSymbol = ref(localStorage.getItem('activeSymbol') || 'SUIUSDT');
         const showAllTradesModal = ref(false);
