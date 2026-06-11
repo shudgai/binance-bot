@@ -141,7 +141,7 @@ def read_bot_output(proc, sym):
 
 def _start_multi_coin_bot(trade_amt: float):
     global bot_processes
-    cmd = [sys.executable, "-u", "multi_coin_bot.py"]
+    cmd = [sys.executable, "-u", "multi_coin_bot_v2.py"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
