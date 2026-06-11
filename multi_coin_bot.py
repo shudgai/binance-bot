@@ -17,10 +17,12 @@ exchange = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,
     'secret': os.getenv('BINANCE_API_SECRET') or None,
     'enableRateLimit': True,
-    'options': {'defaultType': 'future'},
+    'options': {
+        'defaultType': 'swap',  # 強制使用 USDT-M 永續合約 (fapi)
+    },
 })
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = not bool(os.getenv('BINANCE_API_KEY'))
+PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 
@@ -962,30 +964,28 @@ def compute_signal_strength(sym):
     ema20 = s.get("ema20", 0.0)
     ema50 = s.get("ema50", 0.0)
 
-    trend_long = ema20 > 0 and ema50 > 0 and close > ema20 and ema20 > ema50
-    trend_short = ema20 > 0 and ema50 > 0 and close < ema20 and ema20 < ema50
+    trend_long = ema20 > 0 and ema50 > 0 and ema20 > ema50
+    trend_short = ema20 > 0 and ema50 > 0 and ema20 < ema50
 
     last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
     last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
 
-    long_cond_rsi = rsi < 40 and close <= s["bb_low"] * 1.005
+    long_cond_rsi = rsi < 35
     long_cond_macd = s["prev_macd_line"] <= s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"]
-    short_cond_rsi = rsi > 60 and close >= s["bb_up"] * 0.995
+    short_cond_rsi = rsi > 65
     short_cond_macd = s["prev_macd_line"] >= s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]
 
-    if long_cond_rsi and trend_long and last_candle_confirmed_long:
-        strength = max(0.0, 40 - rsi) + ((close - ema20) / max(ema20, 1e-8) * 100) + 5.0
-        return ("buy", strength if strength >= 8.0 else 0.0)
-    if long_cond_macd and trend_long and last_candle_confirmed_long:
-        strength = abs(s["macd_hist"]) * 100 + 5.0
-        return ("buy", strength if strength >= 8.0 else 0.0)
+    if trend_long and last_candle_confirmed_long:
+        if long_cond_rsi:
+            return ("buy", max(10.0, 40 - rsi))
+        if long_cond_macd:
+            return ("buy", 8.0)
 
-    if short_cond_rsi and trend_short and last_candle_confirmed_short:
-        strength = max(0.0, rsi - 60) + ((ema20 - close) / max(close, 1e-8) * 100) + 5.0
-        return ("sell", strength if strength >= 8.0 else 0.0)
-    if short_cond_macd and trend_short and last_candle_confirmed_short:
-        strength = abs(s["macd_hist"]) * 100 + 5.0
-        return ("sell", strength if strength >= 8.0 else 0.0)
+    if trend_short and last_candle_confirmed_short:
+        if short_cond_rsi:
+            return ("sell", max(10.0, rsi - 60))
+        if short_cond_macd:
+            return ("sell", 8.0)
 
     return (None, 0)
 

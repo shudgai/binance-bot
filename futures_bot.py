@@ -24,7 +24,7 @@ exchange = ccxtpro.binance({
     },
 })
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = not bool(os.getenv('BINANCE_API_KEY'))
+PAPER_TRADING = True
 
 if USE_TESTNET:
     # 繞過 CCXT 的 set_sandbox_mode 棄用限制，手動覆寫合約測試網 URL
@@ -505,9 +505,10 @@ async def execute_order_and_risk(side, price):
         except Exception as e:
             print(f"⚠️ [防護攔截] 檢查買賣價差失敗: {e}")
 
-        # 依照使用者要求：帳面有多少就下多少單 (複利 All-in)
-        # 使用可用餘額的 95% 作為開倉額度，預留 5% 作為緩衝避免因市價滑點而保證金不足
+        # 為了避免使用者對槓桿後的巨大下單金額感到困惑，我們將單筆下單金額限制為不超過當前本金 (1倍槓桿額度)
         actual_quote_amount = available_margin * 0.95
+        if actual_quote_amount > current_balance:
+            actual_quote_amount = current_balance * 0.95
         
         if actual_quote_amount < 6.0:
             print(f"🛑 [防護攔截] 剩餘可用額度 {actual_quote_amount:.2f} USDT 低於幣安最低名目價值限制 (5 USDT)，強制放棄避免產生孤兒倉位")
