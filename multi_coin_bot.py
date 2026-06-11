@@ -590,8 +590,8 @@ async def fetch_htf_trend(sym):
         closes = np.array([float(x[4]) for x in ohlcv])
         ema20 = calculate_ema(closes, 20)
         current_close = closes[-1]
-        trend = "long" if current_close > ema20[-1] else "short"
-        return trend, ema20[-1]
+        trend = "long" if current_close > ema20 else "short"
+        return trend, ema20
     except Exception as e:
         print(f"⚠️ [HTF獲取失敗] {sym}: {e}")
         return None, 0.0
