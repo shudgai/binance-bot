@@ -53,12 +53,8 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
         current_qty = pos["qty"]
         current_avg = pos["avg_price"]
         
-        # [ATOMIC GLOBAL LOCK] 防止多行程併發開倉的 Race Condition
-        if current_qty == 0 and not is_close:
-            open_count = sum(1 for sym, p in state["positions"].items() if abs(p.get("qty", 0)) > 0)
-            if open_count >= 2:
-                print(f"🛑 [底層阻擋] 檢測到持倉數已達上限 (2)，放棄 {symbol} 的開單請求！")
-                raise ValueError("MAX_POSITIONS reached")
+        # [ATOMIC GLOBAL LOCK] 已移除：因為 multi_coin_bot 會自行管理最大持倉數，
+        # 底層不該再用 sys.exit(2) 強制關閉整個程式。
         
         if side == 'buy':
             signed_qty = qty
@@ -104,12 +100,19 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
             pos["qty"] = new_qty
         else:
             # 防禦機制: 避免重複平倉導致把倉位平成反向且均價為 0
-            if (current_qty > 0 and signed_qty > 0) or (current_qty < 0 and signed_qty < 0):
-                print(f"�� [防禦] 嘗試平倉但方向錯誤 (增加倉位)，忽略！ current: {current_qty}, signed: {signed_qty}")
+            if current_qty == 0:
+                print(f"🛑 [防禦] 嘗試平倉但當前已無持倉，忽略重複平倉！")
+                new_qty = 0.0
+                pnl = 0.0
+            elif (current_qty > 0 and signed_qty > 0) or (current_qty < 0 and signed_qty < 0):
+                print(f" [防禦] 嘗試平倉但方向錯誤 (增加倉位)，忽略！ current: {current_qty}, signed: {signed_qty}")
                 new_qty = current_qty
                 pnl = 0.0
             elif abs(signed_qty) > abs(current_qty) + 1e-6:
                 print(f"🛑 [防禦] 嘗試平倉數量大於持有數量，只平倉剩餘部分！")
+                # 依比例重算 PnL
+                ratio = abs(current_qty) / abs(signed_qty)
+                pnl = pnl * ratio
                 signed_qty = -current_qty
                 new_qty = 0.0
                 pos["avg_price"] = 0.0

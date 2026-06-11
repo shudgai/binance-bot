@@ -20,12 +20,12 @@ exchange = ccxtpro.binance({
     'enableRateLimit': True,
     'rateLimit': 1000,
     'options': {
-        'defaultType': 'future',
+        'defaultType': 'swap',
         'watchOrderBookSnapshot': True,
     },
 })
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = not bool(os.getenv('BINANCE_API_KEY'))
+PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
@@ -421,7 +421,8 @@ def compute_per_coin_margin():
     remaining_slots = MAX_POSITIONS - open_count
     if remaining_slots <= 0:
         return 0
-    usable = balance * LEVERAGE * 0.95
+    # 避免使用過大槓桿額度嚇到使用者，此處改為本金直下 (不乘上 LEVERAGE)
+    usable = balance * 0.95
     per_slot = usable / MAX_POSITIONS
     return per_slot
 
