@@ -541,9 +541,9 @@ async def fetch_all_klines():
         else:
             print(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
 
-async def fetch_sma200_1h(sym):
+async def fetch_sma200_15m(sym):
     try:
-        ohlcv = await exchange.fetch_ohlcv(sym, '1h', limit=200)
+        ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=200)
         closes = np.array([x[4] for x in ohlcv])
         return float(np.mean(closes))
     except Exception as e:
@@ -551,11 +551,11 @@ async def fetch_sma200_1h(sym):
         return 0.0
 
 async def fetch_all_sma200():
-    tasks = {sym: fetch_sma200_1h(sym) for sym in ALL_SYMBOLS}
+    tasks = {sym: fetch_sma200_15m(sym) for sym in ALL_SYMBOLS}
     results = await asyncio.gather(*[tasks[sym] for sym in tasks], return_exceptions=True)
     for i, sym in enumerate(ALL_SYMBOLS):
         if not isinstance(results[i], Exception):
-            STATES[sym]["sma200_1h"] = results[i]
+            STATES[sym]["sma200_15m"] = results[i]
 
 async def load_open_positions():
     if not PAPER_TRADING:
@@ -1079,7 +1079,7 @@ def is_entry_pin_safe(sym, side):
             return False
         if close_price <= prev_close:
             return False
-        if upper_wick > body * 2.0 and close_price < prev_close:
+        if upper_wick > body * 2.0:
             return False
         return True
 
@@ -1087,7 +1087,7 @@ def is_entry_pin_safe(sym, side):
         return False
     if close_price >= prev_close:
         return False
-    if lower_wick > body * 2.0 and close_price > prev_close:
+    if lower_wick > body * 2.0:
         return False
     return True
 
@@ -1118,15 +1118,22 @@ def is_entry_allowed(sym, side, route="a"):
     s = STATES[sym]
     cp = s["close_price"]
     
-    # 均線過濾器：僅 Route A (趨勢跟蹤) 需要 SMA200 確認，Route B/C 是逆勢/均值回歸不需要
-    if is_trend and s.get("sma200_1h", 0) > 0:
-        ma200 = s["sma200_1h"]
-        if side == 'buy' and cp <= ma200:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
-            return False
-        if side == 'sell' and cp >= ma200:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
-            return False
+    # 均線過濾器：受 15m SMA200 趨勢保護，防止逆勢接刀
+    if s.get("sma200_15m", 0) > 0:
+        ma200 = s["sma200_15m"]
+        rsi = s.get("current_rsi", 50)
+        
+        # 破例：當 RSI 極度超賣 (<25) 或極度超買 (>75) 時，允許逆勢搶反彈 (Route C)
+        is_extreme_long = (side == 'buy' and rsi < 25.0)
+        is_extreme_short = (side == 'sell' and rsi > 75.0)
+        
+        if not (is_extreme_long or is_extreme_short):
+            if side == 'buy' and cp <= ma200:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
+                return False
+            if side == 'sell' and cp >= ma200:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
+                return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
@@ -1211,8 +1218,8 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4] * 0.999
-    last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4] * 1.001
+    last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
+    last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI門檻(L/S: {long_rsi_threshold:.0f}/{short_rsi_threshold:.0f}): {rsi < long_rsi_threshold}/{rsi > short_rsi_threshold} | BB區間(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | MACD滿足(L/S): {long_macd_ok}/{short_macd_ok} (交叉:{long_macd_cross}/{short_macd_cross}, 柱狀體向上/下:{long_macd_hist_aligned}/{short_macd_hist_aligned}) | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
 
@@ -1220,8 +1227,8 @@ def compute_signal_strength(sym):
     trend_confluence_long = ema50 == 0.0 or close > ema50
     trend_confluence_short = ema50 == 0.0 or close < ema50
 
-    is_above_sma200 = s.get("sma200_1h", 0) > 0 and close > s.get("sma200_1h", 0) * 0.999
-    is_below_sma200 = s.get("sma200_1h", 0) > 0 and close < s.get("sma200_1h", 0) * 1.001
+    is_above_sma200 = s.get("sma200_15m", 0) > 0 and close > s.get("sma200_15m", 0) * 0.999
+    is_below_sma200 = s.get("sma200_15m", 0) > 0 and close < s.get("sma200_15m", 0) * 1.001
 
     # Route A (Trend Following): 站上 SMA200 AND MACD黃金交叉 AND K線方向確認
     route_a_long = is_above_sma200 and long_macd_cross and last_candle_confirmed_long
@@ -1239,20 +1246,28 @@ def compute_signal_strength(sym):
     short_base_ok = route_a_short or route_b_short or route_c_short
 
     if long_base_ok:
-        strength = max(0.0, long_rsi_threshold - rsi) + ((ema20 - close) / max(ema20, 1e-8) * 100) + 5.0
+        route = "c" if route_c_long else "b" if route_b_long else "a"
+        if route == "a":
+            strength = 5.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
+        else:
+            strength = max(0.0, long_rsi_threshold - rsi) + ((ema20 - close) / max(ema20, 1e-8) * 100) + 5.0
+            
         if long_macd_cross:
             strength += 5.0
-        route = "c" if route_c_long else "b" if route_b_long else "a"
-        if route_a_long:
+        if route == "a":
             strength += 10.0  # Extra score for trend confluence
         return ("buy", strength if strength >= 8.0 else 0.0, route)
 
     if short_base_ok:
-        strength = max(0.0, rsi - short_rsi_threshold) + ((close - ema20) / max(ema20, 1e-8) * 100) + 5.0
+        route = "c" if route_c_short else "b" if route_b_short else "a"
+        if route == "a":
+            strength = 5.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
+        else:
+            strength = max(0.0, rsi - short_rsi_threshold) + ((close - ema20) / max(ema20, 1e-8) * 100) + 5.0
+            
         if short_macd_cross:
             strength += 5.0
-        route = "c" if route_c_short else "b" if route_b_short else "a"
-        if route_a_short:
+        if route == "a":
             strength += 10.0  # Extra score for trend confluence
         return ("sell", strength if strength >= 8.0 else 0.0, route)
 
@@ -1447,9 +1462,9 @@ async def main_loop():
 
 async def periodic_sma200_update():
     while True:
-        await asyncio.sleep(3600)
+        await asyncio.sleep(900)
         await fetch_all_sma200()
-        print("🔄 [SMA200] 已更新所有幣種1h SMA200")
+        print("🔄 [SMA200] 已更新所有幣種15m SMA200")
 
 async def periodic_status_log():
     while True:

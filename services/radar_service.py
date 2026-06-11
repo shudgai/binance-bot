@@ -40,6 +40,25 @@ def trigger_manual_radar():
     best_symbols = auto_radar_switch(force_start=True)
     return {"status": "success", "best_symbols": best_symbols}
 
+def _get_recently_traded_symbols(hours=24):
+    try:
+        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "paper_state.json")
+        if not os.path.exists(state_path):
+            return []
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        symbols = set()
+        now_ms = time.time() * 1000
+        for t in state.get("trades", []):
+            if now_ms - t.get("time", 0) < hours * 3600 * 1000:
+                sym = t.get("symbol", "").replace(":USDT", "USDT").replace(":", "")
+                if sym:
+                    symbols.add(sym)
+        return list(symbols)
+    except Exception as e:
+        print(f"⚠️ [讀取交易歷史] 失敗: {e}")
+        return []
+
 def _get_open_position_symbols():
     try:
         state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "paper_state.json")
@@ -81,11 +100,14 @@ def auto_radar_switch(force_start=False):
             add_system_log("⚠️ [雷達掃描] 無法獲取 Top 20 榜單，維持原狀", "warning")
             return current_syms
 
-        # 保留仍有持倉的幣種，避免介面換幣時遺棄未平倉單
+        # 保留仍有持倉的幣種以及 24 小時內有交易紀錄的幣種，避免介面換幣時找不到
         open_syms = _get_open_position_symbols()
-        preserved = [s for s in open_syms if s not in top_20]
+        recent_syms = _get_recently_traded_symbols(hours=24)
+        all_preserved = list(set(open_syms + recent_syms))
+        
+        preserved = [s for s in all_preserved if s not in top_20]
         if preserved:
-            add_system_log(f"🔒 [持倉保護] 以下幣種仍有持倉，強制保留: {', '.join(preserved)}", "warning")
+            add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(preserved)}", "warning")
         final_symbols = top_20 + preserved
 
         # 排序讓比較不受順序影響
