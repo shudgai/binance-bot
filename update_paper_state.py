@@ -6,6 +6,9 @@ import sys
 import fcntl
 
 PAPER_STATE_FILE = "paper_state.json"
+# 測試環境隔離，避免單元測試污染實際紙交易數據
+if any("pytest" in x or "unittest" in x for x in sys.argv) or "pytest" in sys.modules or "unittest" in sys.modules:
+    PAPER_STATE_FILE = "test_paper_state.json"
 
 def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
     state = {
@@ -52,10 +55,10 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
         
         # [ATOMIC GLOBAL LOCK] 防止多行程併發開倉的 Race Condition
         if current_qty == 0 and not is_close:
-            holding_other = any(sym != symbol for sym, p in state["positions"].items() if abs(p.get("qty", 0)) > 0)
-            if holding_other:
-                print(f"🛑 [底層阻擋] 檢測到其他幣種已搶先開倉，放棄 {symbol} 的開單請求！")
-                sys.exit(2) # Exit with specific code so caller knows it was blocked
+            open_count = sum(1 for sym, p in state["positions"].items() if abs(p.get("qty", 0)) > 0)
+            if open_count >= 2:
+                print(f"🛑 [底層阻擋] 檢測到持倉數已達上限 (2)，放棄 {symbol} 的開單請求！")
+                raise ValueError("MAX_POSITIONS reached")
         
         if side == 'buy':
             signed_qty = qty

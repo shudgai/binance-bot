@@ -168,7 +168,7 @@ async def get_current_price():
     ccxt_symbol = "1000PEPE/USDT" if SYMBOL == "PEPEUSDT" else SYMBOL.replace("USDT", "/USDT")
     if ccxt_symbol == "PEPE/USDT":
         ccxt_symbol = "1000PEPE/USDT"
-    ticker = await exchange.watch_ticker(ccxt_symbol)
+    ticker = await exchange.fetch_ticker(ccxt_symbol)
     return float(ticker['last'])
 
 # =====================================================================
@@ -196,35 +196,6 @@ async def check_account_safety():
         sys.exit(0)
     except Exception as e:
         print(f"⚠️ [風控模組] 讀取資產線失敗: {e}，暫時放行檢查。")
-
-async def get_current_price():
-    ticker = await exchange.fetch_ticker(symbol)
-    return float(ticker['last'])
-
-# 合約精度資訊快取 (LOT_SIZE stepSize / PRICE_FILTER tickSize)
-_contract_precision = None
-
-async def get_contract_precision():
-    global _contract_precision
-    if _contract_precision is not None:
-        return _contract_precision
-    try:
-        markets = await exchange.load_markets()
-        market = markets.get(symbol)
-        if market:
-            info = market.get('info', {})
-            filters = {f['filterType']: f for f in info.get('filters', [])}
-            ls = filters.get('LOT_SIZE', {})
-            pf = filters.get('PRICE_FILTER', {})
-            _contract_precision = {
-                'step_size': float(ls.get('stepSize', 0.001)),
-                'min_qty': float(ls.get('minQty', 0.001)),
-                'tick_size': float(pf.get('tickSize', 0.001)),
-            }
-            return _contract_precision
-    except Exception as e:
-        print(f"⚠️ 讀取合約精度失敗: {e}")
-    return {'step_size': 0.001, 'min_qty': 0.001, 'tick_size': 0.001}
 
 def round_step(qty, step_size):
     """將數量取整到交易所要求的 stepSize"""
@@ -259,7 +230,6 @@ global_sma200_1h = 0.0
 SYMBOL_KEY = symbol.replace('/', '').replace(':USDT', '').replace('USDT', '') + ':USDT'
 
 # 雷達換倉：追蹤最後活動時間
-import sys
 last_action_time = time.time()
 
 # 移動停利狀態變數
@@ -385,19 +355,16 @@ async def check_liquidation_safety_lock(side, entry_price, stop_loss_price=None)
     unsafe = False
 
     if side == 'buy':
-        # 多單：強平價必須低於止損價（價格跌到強平之前，止損要先出場）
         if liq_price >= stop_loss_price:
             unsafe = True
             print(f"🚨 [強平安全鎖] {side_label} 強平價 {liq_price:.6f} >= 止損價 {stop_loss_price:.6f}，強平會在止損前觸發！")
     else:
-        # 空單：強平價必須高於止損價（價格漲到強平之前，止損要先出場）
         if liq_price <= stop_loss_price:
             unsafe = True
             print(f"🚨 [強平安全鎖] {side_label} 強平價 {liq_price:.6f} <= 止損價 {stop_loss_price:.6f}，強平會在止損前觸發！")
 
     if unsafe:
-        suggested = LEVERAGE - 2
-        suggested = max(suggested, MIN_LEVERAGE)
+        suggested = max(LEVERAGE - 2, MIN_LEVERAGE)
         print(f"🛑 [強平安全鎖] 進場價={entry_price:.6f} | 槓桿={LEVERAGE}x | 強平價={liq_price:.6f} | 止損價={stop_loss_price:.6f}")
         print(f"⚠️ [強平安全鎖] 建議降低槓桿至 {suggested}x 以上，或放寬止損比例")
         return False
@@ -406,16 +373,11 @@ async def check_liquidation_safety_lock(side, entry_price, stop_loss_price=None)
     return True
 
 async def execute_order_and_risk(side, price):
-    global simulated_base_amt, simulated_avg_price, current_atr, is_ordering, position_open_time, ALLOW_LONG, ALLOW_SHORT
+    global simulated_base_amt, simulated_avg_price, current_atr, position_open_time, ALLOW_LONG, ALLOW_SHORT
     
     # [DCA 設定 - 雙引擎策略]
     ENTRY_BATCH_RATIOS = [0.3, 0.3, 0.4]
     
-    # 防止並發開倉：同時間只允許一筆訂單執行
-    if is_ordering:
-        print(f"⚠️ [並發防護] 已有訂單在執行，跳過")
-        return
-
     # ================================================================
     # 【外層過濾一】Market_Trend 方向控制：ALLOW_LONG / ALLOW_SHORT
     # ================================================================
@@ -433,8 +395,6 @@ async def execute_order_and_risk(side, price):
     if await vacuum_zone_check(current_p, global_support, global_resistance):
         return
 
-    # 全局單一持倉鎖已被移除，允許多幣種同時開倉
-
     # ================================================================
     # 【外層過濾三】槓桿與強平價安全連動鎖
     # ================================================================
@@ -442,9 +402,14 @@ async def execute_order_and_risk(side, price):
         print(f"🛑 [強平安全鎖] 槓桿 {LEVERAGE}x 導致強平價侵入止損區，拒絕開單！")
         return
 
-    is_ordering = True
-    try:
-    
+    # ================================================================
+    # 【局部鎖】只鎖送單那一段，不影響平倉邏輯
+    # ================================================================
+    if order_lock.locked():
+        print(f"⚠️ [並發防護] 已有訂單在送單中，跳過")
+        return
+
+    async with order_lock:
         # 0. 資金費率防護 (Funding Rate Shield)
         if not PAPER_TRADING:
             try:
@@ -452,16 +417,13 @@ async def execute_order_and_risk(side, price):
                 funding_rate = float(funding_info.get('fundingRate', 0.0))
                 if side == 'buy' and funding_rate > 0.002:
                     print(f"🛑 [資金費率防護] 資金費率過高 ({funding_rate*100:.3f}%)，放棄做多避免支付高昂利息！")
-                    is_ordering = False
                     return
                 elif side == 'sell' and funding_rate < -0.002:
                     print(f"🛑 [資金費率防護] 資金費率過低 ({funding_rate*100:.3f}%)，放棄做空避免支付高昂利息！")
-                    is_ordering = False
                     return
                 # 極端費率防護：負費率超過 -0.5% 時禁止任何新空單
                 if side == 'sell' and funding_rate < FUNDING_RATE_SHORT_BLOCK:
                     print(f"🛑 [極端費率防護] 資金費率 {funding_rate*100:.3f}% < {FUNDING_RATE_SHORT_BLOCK*100:.1f}%，空單持倉利息過高，強制暫停開空！")
-                    is_ordering = False
                     return
             except Exception as e:
                 print(f"⚠️ [防護攔截] 檢查資金費率失敗: {e}")
@@ -500,7 +462,6 @@ async def execute_order_and_risk(side, price):
             spread_pct = (ask - bid) / bid
             if spread_pct > 0.005:
                 print(f"🛑 [防護攔截] 買賣價差過大 ({spread_pct*100:.2f}%)，放棄開倉避免嚴重滑點！")
-                is_ordering = False
                 return
         except Exception as e:
             print(f"⚠️ [防護攔截] 檢查買賣價差失敗: {e}")
@@ -511,7 +472,6 @@ async def execute_order_and_risk(side, price):
         
         if actual_quote_amount < 6.0:
             print(f"🛑 [防護攔截] 剩餘可用額度 {actual_quote_amount:.2f} USDT 低於幣安最低名目價值限制 (5 USDT)，強制放棄避免產生孤兒倉位")
-            is_ordering = False
             return
             
         print(f"💰 [{macro_regime}] 下單 {actual_quote_amount:.2f} USDT (設定:{quote_amount:.0f}, 可用:{available_margin:.2f})")
@@ -523,7 +483,7 @@ async def execute_order_and_risk(side, price):
             print(f"\n🛒 [下單模組] 💡 訊號觸發！{direction_str} {actual_quote_amount:.2f} USDT -> 數量: {base_amt:.6f}")
             
             if PAPER_TRADING:
-                print(f"�� [模擬盤提醒] 實盤將採用 30%/30%/40% 智能追價與網格掛單。為求簡化，模擬盤全數以市價 ({price}) 立即成交。")
+                print(f"📋 [模擬盤提醒] 實盤將採用 30%/30%/40% 智能追價與網格掛單。為求簡化，模擬盤全數以市價 ({price}) 立即成交。")
                 avg_price = price
                 actual_received_amt = base_amt
                 if side == 'buy':
@@ -639,8 +599,6 @@ async def execute_order_and_risk(side, price):
             print(f"🚨 [下單/風控模組嚴重致命錯誤]: {e}")
             if PAPER_TRADING:
                 simulated_base_amt = 0.0
-    finally:
-        is_ordering = False
 
 async def update_position_info():
     global current_pos_qty, current_pos_avg
@@ -850,29 +808,6 @@ async def monitor_position_tp_sl():
     while True:
         try:
             await asyncio.sleep(0.5)
-# --- [開始插入] 市場狀態分流監控 ---
-            # 準備 market_data 與 position_info (確保變數名稱與您程式現有的一致)
-            # 這裡簡單定義判定邏輯，您可以依據實際參數調整
-            is_long = current_pos_qty > 0
-            
-            # 使用現有的指標 (如 macd_hist, current_rsi)
-            market_data_temp = {
-                'macd_hist': macd_hist, 
-                'rsi': current_rsi,
-                'price_crossed_key_level': (current_p > global_resistance or current_p < global_support)
-            }
-            
-            # 偵測是否反轉 (若 macd 反向且價格突破關鍵位)
-            if (market_data_temp['macd_hist'] < 0 if is_long else market_data_temp['macd_hist'] > 0) and market_data_temp['price_crossed_key_level']:
-                print(f"🚨 [反轉] 方向錯誤，立即市價平倉！")
-                await close_entire_position('sell' if is_long else 'buy', abs(current_pos_qty), current_p, current_pos_avg, force_market=True)
-                continue # 重新進入迴圈，跳過後續邏輯
-            
-            # 偵測盤整 (若 RSI 在 45~55 之間判定為窄幅震盪)
-            if 45 < current_rsi < 55:
-                # 這裡直接維持原狀繼續盯盤，不需特別處理，系統會繼續往下執行僵局邏輯
-                pass 
-            # --- [結束插入] ---
             pos_qty = 0.0
             pos_avg = 0.0
             # 使用全域變數 current_pos_qty 以節省 API 次數
@@ -888,7 +823,7 @@ async def monitor_position_tp_sl():
                 continue
             sl_multiplier = SL_ATR_MULTIPLIER * 2 if hold_sec < 120 else SL_ATR_MULTIPLIER
 
-            ticker = await exchange.watch_ticker(symbol)
+            ticker = await exchange.fetch_ticker(symbol)
             current_p = ticker['last']
 
             # 計算動態停利與停損價格
@@ -1049,7 +984,7 @@ async def monitor_position_tp_sl():
                     _handle_hard_sl()
 
         except Exception as e:
-            pass
+            print(f"⚠️ [監控模組錯誤] {e}")
 
 def _handle_hard_sl():
     """ 處理單幣熔斷計數器 """
@@ -1265,10 +1200,12 @@ async def watch_kline_and_strategy():
                 # 無情清倉
                 if current_pos_qty > 0:
                     print(f"🧹 舊市況殘留多單強制退場：{symbol}")
-                    await close_entire_position('sell', abs(current_pos_qty), current_p if 'current_p' in locals() else closes_history[-1] if closes_history else 0, current_pos_avg, force_market=True)
+                    fallback_price = closes_history[-1] if len(closes_history) > 0 else (ohlcv_buffer[-1][4] if ohlcv_buffer else 0)
+                    await close_entire_position('sell', abs(current_pos_qty), current_p if 'current_p' in locals() else fallback_price, current_pos_avg, force_market=True)
                 elif current_pos_qty < 0:
                     print(f"🧹 舊市況殘留空單強制退場：{symbol}")
-                    await close_entire_position('buy', abs(current_pos_qty), current_p if 'current_p' in locals() else closes_history[-1] if closes_history else 0, current_pos_avg, force_market=True)
+                    fallback_price = closes_history[-1] if len(closes_history) > 0 else (ohlcv_buffer[-1][4] if ohlcv_buffer else 0)
+                    await close_entire_position('buy', abs(current_pos_qty), current_p if 'current_p' in locals() else fallback_price, current_pos_avg, force_market=True)
                 
                 # 清除掛單 (若有)
                 try:
@@ -1280,7 +1217,13 @@ async def watch_kline_and_strategy():
                 last_market_condition = macro_regime
                 print(f"🚀 [順勢跟進] 策略已全自動切換為 {macro_regime} 模式，全速進擊！")
             
-            new_ohlcv = await exchange.watch_ohlcv(symbol, timeframe)
+            try:
+                new_ohlcv = await asyncio.wait_for(
+                    exchange.watch_ohlcv(symbol, timeframe), timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                # WebSocket 超時：使用上一次緩衝繼續執行策略，不卡死主循環
+                new_ohlcv = []
             
             # 將新數據合併進緩衝區 (避免 watch_ohlcv 只回傳遞增數據)
             if new_ohlcv:
@@ -1459,16 +1402,18 @@ async def watch_kline_and_strategy():
                     [x[4] for x in ohlcv]
                 )
 
-                def is_entry_allowed(side):
+                def is_entry_allowed(side, is_counter_trend=False):
+                    if is_counter_trend:
+                        return True, "反轉搶短，無視趨勢濾網"
                     if global_sma200_1h > 0:
                         if side == 'buy' and close_price <= global_sma200_1h:
                             return False, f"SMA200={global_sma200_1h:.4f} 之上才允許多，當前={close_price:.4f}"
                         if side == 'sell' and close_price >= global_sma200_1h:
                             return False, f"SMA200={global_sma200_1h:.4f} 之下才允許空，當前={close_price:.4f}"
-                    if adx_val < 25:
-                        return False, f"ADX={adx_val:.1f} < 20，盤整不開倉"
-                    if current_vol < vol_ma20:
-                        return False, f"量能不足 {current_vol:.0f} < {vol_ma20:.0f}"
+                    if adx_val < 15:  # 放寬至 15
+                        return False, f"ADX={adx_val:.1f} < 15，盤整不開倉"
+                    if current_vol < vol_ma20 * 0.7:  # 放寬至 70%
+                        return False, f"量能不足 {current_vol:.0f} < {vol_ma20*0.7:.0f}(均量70%)"
                     return True, ""
 
                 def is_symbol_tradable(sym_key):
@@ -1487,18 +1432,32 @@ async def watch_kline_and_strategy():
                 elif pending_signal_side is None:
                     pending_confirm_high = pending_confirm_low = 0
 
-# --- [修正後：強制趨勢過濾 + 指標共振] ---
-                # 多單條件：(MACD 金叉) 且 (在 SMA200 之上) 且 (避開熊市)
-                long_cond = (macd_line > macd_signal and close_price > global_sma200_1h and macro_regime != "BEAR") or \
-                            (current_rsi < 40 and close_price <= bb_low * 1.005)
+# --- [加權計分制進場 + 反轉搶短] ---
+                is_counter_trend_long = current_rsi < 25
+                is_counter_trend_short = current_rsi > 75
 
-                # 空單條件：(MACD 死叉) 且 (在 SMA200 之下) 且 (避開牛市)
-                short_cond = (macd_line < macd_signal and close_price < global_sma200_1h and macro_regime != "BULL") or \
-                             (current_rsi > 60 and close_price >= bb_up * 0.995)
+                # 多單加權計分 (5 項指標各 1 分，满足 ≥3 分即可開倉)
+                score_long = 0
+                if macd_line > macd_signal:          score_long += 1
+                if close_price > global_sma200_1h:   score_long += 1
+                if current_rsi < 60:                 score_long += 1
+                if current_vol > vol_ma20 * 0.7:     score_long += 1
+                if macro_regime != "BEAR":            score_long += 1
+
+                # 空單加權計分
+                score_short = 0
+                if macd_line < macd_signal:          score_short += 1
+                if close_price < global_sma200_1h:   score_short += 1
+                if current_rsi > 40:                 score_short += 1
+                if current_vol > vol_ma20 * 0.7:     score_short += 1
+                if macro_regime != "BULL":            score_short += 1
+
+                long_cond  = (score_long  >= 3) or (current_rsi < 40 and close_price <= bb_low * 1.005) or is_counter_trend_long
+                short_cond = (score_short >= 3) or (current_rsi > 60 and close_price >= bb_up  * 0.995) or is_counter_trend_short
                 # ----------------------------------------
 
                 if long_cond:
-                    allowed, reason = is_entry_allowed('buy')
+                    allowed, reason = is_entry_allowed('buy', is_counter_trend_long)
                     if not allowed:
                         if pending_signal_side is not None:
                             pending_signal_side = None
@@ -1516,12 +1475,12 @@ async def watch_kline_and_strategy():
                         if pending_confirm_high > 0 and close_price <= pending_confirm_high:
                             print(f"⏳ [確認K線-多] MACD金叉尚未突破前高 {pending_confirm_high:.4f}，繼續等待")
                             continue
-                        print(f"🟢 [量化做多] 三層濾網通過！RSI={current_rsi:.1f}, ADX={adx_val:.1f}, SMA200={global_sma200_1h:.4f}")
+                        print(f"🟢 [量化做多] 加權計分層過濾通過！score={score_long}/5 | RSI={current_rsi:.1f}, ADX={adx_val:.1f}, SMA200={global_sma200_1h:.4f}")
                         last_buy_time = current_time
                         asyncio.create_task(execute_order_and_risk(side='buy', price=close_price))
                         pending_signal_side = None
                 elif short_cond:
-                    allowed, reason = is_entry_allowed('sell')
+                    allowed, reason = is_entry_allowed('sell', is_counter_trend_short)
                     if not allowed:
                         if pending_signal_side is not None:
                             pending_signal_side = None
@@ -1539,7 +1498,7 @@ async def watch_kline_and_strategy():
                         if pending_confirm_low > 0 and close_price >= pending_confirm_low:
                             print(f"⏳ [確認K線-空] MACD死叉尚未跌破前低 {pending_confirm_low:.4f}，繼續等待")
                             continue
-                        print(f"🔴 [量化做空] 三層濾網通過！RSI={current_rsi:.1f}, ADX={adx_val:.1f}, SMA200={global_sma200_1h:.4f}")
+                        print(f"🔴 [量化做空] 加權計分層過濾通過！score={score_short}/5 | RSI={current_rsi:.1f}, ADX={adx_val:.1f}, SMA200={global_sma200_1h:.4f}")
                         last_buy_time = current_time
                         asyncio.create_task(execute_order_and_risk(side='sell', price=close_price))
                         pending_signal_side = None

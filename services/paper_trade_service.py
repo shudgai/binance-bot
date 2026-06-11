@@ -6,6 +6,10 @@ from update_paper_state import update_paper_state
 from services.system_log_service import add_system_log
 
 PAPER_STATE_FILE = "paper_state.json"
+import sys
+# 測試環境隔離，避免單元測試污染實際紙交易數據
+if any("pytest" in x or "unittest" in x for x in sys.argv) or "pytest" in sys.modules or "unittest" in sys.modules:
+    PAPER_STATE_FILE = "test_paper_state.json"
 
 def get_paper_position(symbol: str, quote_asset: str, base_asset: str, paper_key: str):
     qty = 0.0

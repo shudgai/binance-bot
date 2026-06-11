@@ -33,12 +33,14 @@ def normalize_symbol(sym):
     sym = str(sym).strip().upper()
     if not sym:
         return ""
+    if sym in ("PEPE", "PEPEUSDT"):
+        return "1000PEPEUSDT"
     if not sym.endswith("USDT"):
         sym = f"{sym}USDT"
     return sym
 
 
-def normalize_symbol_list(symbols, max_count=10):
+def normalize_symbol_list(symbols, max_count=20):
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:
@@ -108,6 +110,8 @@ def read_bot_output(proc, sym):
                     bot_status["leverage"] = int(line.replace("@@LEVERAGE@@", "").strip())
                 except:
                     pass
+            elif line.startswith("@@COIN_DEBUG@@"):
+                add_system_log(line.replace("@@COIN_DEBUG@@", "").strip(), "info")
             else:
                 add_system_log(f"[{sym}] {line}", "info")
     proc.stdout.close()
@@ -141,7 +145,24 @@ def _start_multi_coin_bot(trade_amt: float):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
-    add_system_log(f"🚀 已啟動多幣輪動機器人 ({10}個幣種, 金額: {trade_amt})", "success")
+    count = len(bot_status.get("active_symbols", []))
+    add_system_log(f"🚀 已啟動多幣輪動機器人 ({count}個幣種, 金額: {trade_amt})", "success")
+
+def _get_open_position_symbols():
+    try:
+        state_path = os.path.join(os.path.dirname(__file__), "..", "paper_state.json")
+        if not os.path.exists(state_path):
+            return []
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        open_syms = []
+        for key, pos in state.get("positions", {}).items():
+            if abs(float(pos.get("qty", 0.0))) > 0.000001:
+                sym = key.replace(":USDT", "USDT").replace(":", "")
+                open_syms.append(sym)
+        return open_syms
+    except Exception:
+        return []
 
 def start_bot(symbols=None, trade_amt: float = None):
     global bot_processes
@@ -153,6 +174,11 @@ def start_bot(symbols=None, trade_amt: float = None):
         symbols = list(DEFAULT_SYMBOLS)
 
     symbols = normalize_symbol_list(symbols)
+    # 保留有持倉的幣種，避免被換掉
+    open_syms = _get_open_position_symbols()
+    for s in open_syms:
+        if s not in symbols:
+            symbols.append(s)
     save_symbol_config(symbols)
 
     if trade_amt is None:

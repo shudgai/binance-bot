@@ -19,7 +19,7 @@ exchange = ccxtpro.binance({
     'secret': os.getenv('BINANCE_API_SECRET') or None,   # .env 讀取 Secret Key
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'future',  # 強制使用合約交易
+        'defaultType': 'spot',  # 現貨交易
     },
 })
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
@@ -151,7 +151,6 @@ position_open_time = 0.0  # 記錄開倉時間，防止動態平倉秒砍
 SYMBOL_KEY = symbol.replace('/', '').replace(':USDT', '').replace('USDT', '') + ':USDT'
 
 # 雷達換倉：追蹤最後活動時間
-import sys
 last_action_time = time.time()
 
 # 移動停利狀態變數

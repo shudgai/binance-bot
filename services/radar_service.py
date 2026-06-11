@@ -1,3 +1,5 @@
+import os
+import json
 import time
 import threading
 from services.system_log_service import add_system_log
@@ -38,13 +40,30 @@ def trigger_manual_radar():
     best_symbols = auto_radar_switch(force_start=True)
     return {"status": "success", "best_symbols": best_symbols}
 
+def _get_open_position_symbols():
+    try:
+        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "paper_state.json")
+        if not os.path.exists(state_path):
+            return []
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        symbols = []
+        for key, pos in state.get("positions", {}).items():
+            if abs(float(pos.get("qty", 0.0))) > 0.000001:
+                sym = key.replace(":USDT", "USDT").replace(":", "")
+                symbols.append(sym)
+        return symbols
+    except Exception as e:
+        print(f"⚠️ [讀取持倉] 失敗: {e}")
+        return []
+
 def auto_radar_switch(force_start=False):
     global last_api_call
     if not radar_lock.acquire(blocking=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
-        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 5 成交額)...", "warning")
+        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 20 成交額)...", "warning")
         
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
@@ -56,26 +75,35 @@ def auto_radar_switch(force_start=False):
         
         clean_blacklist()
         ignore_list = list(BLACKLIST.keys())
-        top_5 = get_top_volume_altcoins(5, ignore_list=ignore_list)
+        top_20 = get_top_volume_altcoins(20, ignore_list=ignore_list)
 
-        if not top_5:
-            add_system_log("⚠️ [雷達掃描] 無法獲取 Top 5 榜單，維持原狀", "warning")
+        if not top_20:
+            add_system_log("⚠️ [雷達掃描] 無法獲取 Top 20 榜單，維持原狀", "warning")
             return current_syms
 
-        # 排序讓比較不受順序影響
-        if sorted(top_5) == sorted(current_syms):
-            add_system_log(f"✅ [雷達掃描] 當前榜單依然稱霸 ({', '.join(top_5)})，維持不變", "success")
-            if force_start and not bot_status.get("is_running"):
-                start_bot(top_5, bot_status.get("trade_amount", 150.0))
-            return top_5
+        # 保留仍有持倉的幣種，避免介面換幣時遺棄未平倉單
+        open_syms = _get_open_position_symbols()
+        preserved = [s for s in open_syms if s not in top_20]
+        if preserved:
+            add_system_log(f"🔒 [持倉保護] 以下幣種仍有持倉，強制保留: {', '.join(preserved)}", "warning")
+        final_symbols = top_20 + preserved
 
-        add_system_log(f"🎯 [雷達鎖定] 最新熱門小幣榜單: {', '.join(top_5)}", "success")
-        bot_status["active_symbols"] = top_5
+        # 排序讓比較不受順序影響
+        if sorted(final_symbols) == sorted(current_syms):
+            add_system_log(f"✅ [雷達掃描] 當前榜單依然稱霸 ({', '.join(final_symbols)})，維持不變", "success")
+            if force_start and not bot_status.get("is_running"):
+                start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
+            return final_symbols
+
+        add_system_log(f"🎯 [雷達鎖定] 最新熱門小幣榜單: {', '.join(top_20)}", "success")
+        if preserved:
+            add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(preserved)}", "warning")
+        bot_status["active_symbols"] = final_symbols
         
         if bot_status.get("is_running") or force_start:
-            start_bot(top_5, bot_status.get("trade_amount", 150.0))
+            start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
             
-        return top_5
+        return final_symbols
     except Exception as e:
         add_system_log(f"🚨 [雷達掃描] 掃描失敗: {e}", "danger")
         bot_status = get_bot_status()

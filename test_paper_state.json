@@ -1,0 +1,38 @@
+{
+    "balance_usdt": 150.749225,
+    "positions": {
+        "XRP:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.7999999999999972
+        }
+    },
+    "trades": [
+        {
+            "id": "23908114",
+            "order_id": "93d54d20",
+            "symbol": "XRP:USDT",
+            "price": 110.0,
+            "qty": 0.006818181818181818,
+            "quote_qty": 0.75,
+            "time": 1781145109491,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "id": "3db0eec7",
+            "order_id": "a9e2531f",
+            "symbol": "XRP:USDT",
+            "price": 100.8,
+            "qty": 1.0,
+            "quote_qty": 100.8,
+            "time": 1781145109498,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.7999999999999972,
+            "is_close": true
+        }
+    ]
+}

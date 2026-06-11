@@ -497,7 +497,7 @@
             <!-- Coin chip strip -->
             <div class="coin-strip">
                 <div
-                    v-for="coin in coins" :key="coin.symbol"
+                    v-for="coin in sortedCoins" :key="coin.symbol"
                     :class="['coin-chip', activeSymbol === coin.symbol ? 'active' : '']"
                     @click="setActiveCoin(coin.symbol)"
                 >
@@ -546,17 +546,17 @@
                                 <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
                                     {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
                                     <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                        ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}%)
+                                        ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
                                     </span>
                                 </td>
                                 <td :class="t.realized_pnl > 0 ? 'up' : (t.realized_pnl < 0 ? 'down' : '')">
                                     {{ t.realized_pnl > 0 ? '+' : '' }}{{ t.realized_pnl === 0 ? '-' : t.realized_pnl.toFixed(4) }}
                                     <span v-if="t.realized_pnl !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                        ({{ (t.realized_pnl / (t.price * t.qty) * 100 * (bot.leverage || 20)).toFixed(2) }}%)
+                                        ({{ (t.realized_pnl / (t.price * t.qty) * 100 * (bot.leverage || 20)).toFixed(2) }}% / 實: {{ (t.realized_pnl / (t.price * t.qty) * 100).toFixed(2) }}%)
                                     </span>
                                 </td>
                                 <td>
-                                    <button v-if="!t.is_close" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
+                                    <button v-if="!t.is_close && canCloseTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
                                 </td>
                             </tr>
                             <tr v-if="trades.length === 0">
@@ -1044,6 +1044,17 @@ createApp({
 
         const activeCoin = computed(() => coins.value.find(c => c.symbol === activeSymbol.value));
 
+        const sortedCoins = computed(() => {
+            return [...coins.value].sort((a, b) => {
+                const hasA = allPositions.value[a.symbol] ? 1 : 0;
+                const hasB = allPositions.value[b.symbol] ? 1 : 0;
+                if (hasA !== hasB) {
+                    return hasB - hasA;
+                }
+                return a.symbol.localeCompare(b.symbol);
+            });
+        });
+
         const formattedMainPrice = computed(() => {
             if (!activeCoin.value?.price) return '---.--';
             const p = currentCurrency.value === 'TWD' ? activeCoin.value.price * twdRate.value : activeCoin.value.price;
@@ -1168,9 +1179,8 @@ createApp({
         const setActiveCoin = async (symbol) => {
             activeSymbol.value = symbol;
             localStorage.setItem('activeSymbol', symbol);
-            addLog(`切換監聽: ${coins.value.find(c => c.symbol === symbol)?.name}`);
+            addLog(`切換檢視: ${coins.value.find(c => c.symbol === symbol)?.name}`);
             fetchPosition(); fetchTrades(); loadKlines(); initLiveTradesWs();
-            try { await fetch(`${API_BASE}/bot-status/set-symbol/${symbol}`, { method: 'POST' }); } catch(e) {}
         };
 
         const fetchExchangeRate = async () => {
@@ -1190,6 +1200,28 @@ createApp({
                 if (bot.value.is_running !== data.is_running && bot.value.strategy !== '-')
                     addLog(`機器人狀態: ${data.is_running ? '🚀 啟動' : '⏹️ 停止'}`);
                 bot.value = data;
+                
+                // 動態更新界面上的監控幣種
+                if (data.active_symbols && data.active_symbols.length > 0) {
+                    const newCoins = data.active_symbols.map(sym => {
+                        const existing = coins.value.find(c => c.symbol === sym);
+                        if (existing) return existing;
+                        const name = sym.replace('USDT', '');
+                        return { symbol: sym, name: name, label: name, price: 0, prevPrice: 0, priceClass: '' };
+                    });
+                    
+                    const oldSyms = coins.value.map(c => c.symbol).join(',');
+                    const newSyms = newCoins.map(c => c.symbol).join(',');
+                    if (oldSyms !== newSyms) {
+                        coins.value = newCoins;
+                        if (!newCoins.some(c => c.symbol === activeSymbol.value)) {
+                            setActiveCoin(newCoins[0].symbol);
+                        } else {
+                            initWebSocket();
+                        }
+                    }
+                }
+
                 if (data.trade_amount !== undefined) {
                     if (document.activeElement?.type !== 'number' && document.activeElement?.type !== 'range')
                         tempTradeAmount.value = data.trade_amount;
@@ -1354,7 +1386,7 @@ createApp({
                 const data = resp.data || resp;
                 if (res.ok && data.status === 'success') {
                     addLog(`✅ 買入成功! ID:${data.order.orderId} 數量:${parseFloat(data.order.executedQty).toFixed(5)}`, 'success');
-                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); }, 1200);
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
                 } else throw new Error(data.detail);
             } catch(e) { addLog(`❌ 買入失敗: ${e.message}`, 'danger'); }
             finally { isPlacingOrder.value = false; limitPrice.value = ''; }
@@ -1383,7 +1415,7 @@ createApp({
                 const data = resp.data || resp;
                 if (res.ok && data.status === 'success') {
                     addLog(`✅ 做空成功! ID:${data.order.orderId} 數量:${parseFloat(data.order.executedQty).toFixed(5)}`, 'success');
-                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); }, 1200);
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
                 } else throw new Error(data.detail);
             } catch(e) { addLog(`❌ 做空失敗: ${e.message}`, 'danger'); }
             finally { isPlacingOrder.value = false; limitPrice.value = ''; }
@@ -1404,7 +1436,7 @@ createApp({
                 const data = resp.data || resp;
                 if (res.ok && data.status === 'success') {
                     addLog(`✅ 賣出成功! ${data.order?.orderId || data.detail || ''}`, 'success');
-                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); }, 1200);
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
                 } else throw new Error(data.detail);
             } catch(e) { addLog(`❌ 賣出失敗: ${e.message}`, 'danger'); }
             finally { isPlacingOrder.value = false; limitPrice.value = ''; }
@@ -1420,7 +1452,7 @@ createApp({
                 const data = resp.data || resp;
                 if (res.ok && data.status === 'success') {
                     addLog(`✅ 平倉成功! ${data.detail || data.order?.orderId || ''}`, 'success');
-                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); }, 1200);
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
                 } else throw new Error(data.detail);
             } catch(e) { addLog(`❌ 平倉失敗: ${e.message}`, 'danger'); }
             finally { isPlacingOrder.value = false; }
@@ -1456,6 +1488,12 @@ createApp({
             return pnl / (trade.price * trade.qty) * 100 * (bot.value.leverage || 20);
         };
 
+        const getTradeUnrealizedPnlPercentActual = (trade) => {
+            const pnl = getTradeUnrealizedPnl(trade);
+            if (pnl === 0 || trade.price * trade.qty === 0) return 0;
+            return pnl / (trade.price * trade.qty) * 100;
+        };
+
         const canCloseTrade = (trade) => {
             const sym = trade.symbol;
             return allPositions.value[sym] && Math.abs(allPositions.value[sym].qty) > 0;
@@ -1473,7 +1511,7 @@ createApp({
                 if (res.ok && (data.status === 'success' || data.detail)) {
                     showToast(`✅ 平倉 ${sym} 完成!`, 'success');
                     addLog(`✅ 平倉 ${sym} 成功!`, 'success');
-                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); }, 1200);
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
                 } else throw new Error(data.detail);
             } catch(e) {
                 addLog(`❌ 平倉 ${sym} 失敗: ${e.message}`, 'danger');
@@ -1613,7 +1651,6 @@ createApp({
             loadKlines();
             initWebSocket();
             initLiveTradesWs();
-            fetch(`${API_BASE}/bot-status/set-symbol/${activeSymbol.value}`, { method: 'POST' });
             fetchBackendLogs();
 
             statusInterval       = setInterval(fetchBotStatus, 5000);
@@ -1663,13 +1700,13 @@ createApp({
         };
 
         return {
-            customSymbol, addCustomCoin, coins, activeSymbol, activeCoin,
+            customSymbol, addCustomCoin, coins, sortedCoins, activeSymbol, activeCoin,
             formattedMainPrice, mainPriceClass,
             currentCurrency, currentCurrencySymbol, twdRate,
             toggleCurrency, setActiveCoin,
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, liveTrades, error,
-            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, limitPrice,
+            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,

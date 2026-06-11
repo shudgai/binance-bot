@@ -5,28 +5,33 @@ import json
 import math
 import random
 import datetime
+import threading
+import time
 import numpy as np
+import requests
+import pytz
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-import requests
 from dotenv import load_dotenv
+from typing import List
 
 from services.utils import parse_symbol, paper_key
-from services.system_log_service import get_system_logs
-from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols
+from services.system_log_service import get_system_logs, add_system_log, clear_system_logs
+from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols, kill_bot
 from services.binance_service import (
-    api_key, get_price, get_all_prices, get_position, get_trades, get_klines,
+    api_key, client, get_price, get_all_prices, get_position, get_trades, get_klines,
     market_buy, market_short, market_sell
 )
 from services.paper_trade_service import (
     get_paper_balance, get_paper_position, get_paper_trades,
     market_buy as paper_market_buy, 
     market_short as paper_market_short, 
-    market_sell as paper_market_sell
+    market_sell as paper_market_sell,
+    force_close_all_positions,
 )
-from services.radar_service import trigger_manual_radar
+from services.radar_service import trigger_manual_radar, auto_radar_switch
 
 load_dotenv()
 
@@ -34,7 +39,7 @@ app = FastAPI(title="Binance Bot API Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8005", "http://127.0.0.1:8005"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,26 +48,21 @@ app.add_middleware(
 def is_paper_trading():
     return not api_key or api_key == "your_api_key_here"
 
-import threading
-import time
-import pytz
-from services.bot_manager_service import kill_bot
-from services.radar_service import auto_radar_switch
-from services.paper_trade_service import force_close_all_positions
-from services.system_log_service import add_system_log, clear_system_logs
-
 def daily_market_clean_and_reset(is_manual=False):
     """大掃除與即時同步前五名 (模組化)"""
     try:
         trigger_type = "手動強制" if is_manual else "每日/開機"
-        add_system_log(f"🔄 [{trigger_type}淨空] 啟動大掃除換班機制！", "warning")
+        add_system_log(f"🔄 [{trigger_type}換班] 啟動排程換班機制！", "warning")
         kill_bot()
-        force_close_all_positions()
+        if is_manual:
+            force_close_all_positions()
+            add_system_log(f"🧹 [{trigger_type}淨空] 系統狀態已重置，舊訂單已撤銷並強制平倉。", "success")
+        else:
+            add_system_log(f"🧹 [{trigger_type}換班] 已保留現有持倉部位，將由機器人繼續監控至正常出場。", "success")
         clear_system_logs()
-        add_system_log(f"🧹 [{trigger_type}淨空] 系統狀態已重置，舊訂單已撤銷並平倉。", "success")
         auto_radar_switch(force_start=True)
     except Exception as e:
-        add_system_log(f"🚨 [{trigger_type}淨空] 發生錯誤: {e}", "danger")
+        add_system_log(f"🚨 [{trigger_type}換班] 發生錯誤: {e}", "danger")
 
 def daily_reset_daemon():
     tz = pytz.timezone('Asia/Taipei')
@@ -84,13 +84,11 @@ async def startup_event():
     # 啟動 6:00 AM 定時器
     threading.Thread(target=daily_reset_daemon, daemon=True).start()
 
-from fastapi.responses import HTMLResponse
-
 @app.get("/")
 def read_root():
     with open("index.html", "r", encoding="utf-8") as f:
         content = f.read()
-    response = HTMLResponse(content=content)
+    response = HTMLResponse(content=content, media_type="text/html; charset=utf-8")
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -125,9 +123,6 @@ def api_set_bot_symbol(symbol: str):
     active_symbol = set_bot_symbol(symbol)
     return {"status": "success", "active_symbol": active_symbol}
 
-from pydantic import BaseModel
-from typing import List
-
 class WatchSymbolsReq(BaseModel):
     symbols: List[str]
 
@@ -135,10 +130,12 @@ class ActiveSymbolsReq(BaseModel):
     symbols: List[str]
 
 @app.post("/api/bot-status/set-symbols")
-def api_set_bot_watch_symbols(req: WatchSymbolsReq):
+def api_set_bot_symbols(req: ActiveSymbolsReq):
     try:
-        symbols = set_bot_watch_symbols(req.symbols)
-        return {"status": "success", "watch_symbols": symbols}
+        symbols = set_bot_symbol(req.symbols)
+        # Also update watch symbols with the first 5 for backward compatibility if needed
+        set_bot_watch_symbols(symbols)
+        return {"status": "success", "active_symbols": symbols}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -191,8 +188,6 @@ def api_get_all_prices():
         return {"status": "success", "data": prices}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/position/{symbol}")
 
 @app.get("/api/positions")
 def api_get_all_positions():
@@ -431,7 +426,8 @@ def api_chat(chat_msg: ChatMessage):
         except:
             status["klines"] = "獲取 K 線失敗"
             status["prices"] = []
-            
+        
+        reply = f"收到您的訊息: {chat_msg.message}"
         return {"status": "success", "reply": reply}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -500,18 +496,14 @@ def api_history_download(date: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- 請確認您的檔案上方已經有匯入這些 ---
-# from futures_bot import exchange
-
 @app.get("/api/open-orders")
-async def get_open_orders(symbol: str):
+def get_open_orders(symbol: str):
     try:
-        # 呼叫您的機器人中的交易所物件來獲取掛單
-        orders = await exchange.fetch_open_orders(symbol)
+        orders = client.futures_get_open_orders(symbol=symbol)
         return {"status": "success", "data": orders}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8005)
+    uvicorn.run(app, host="0.0.0.0", port=8005)
 
