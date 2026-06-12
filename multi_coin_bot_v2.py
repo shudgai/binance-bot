@@ -5,6 +5,7 @@ import numpy as np
 import json
 import os
 import time
+import datetime
 
 
 
@@ -152,12 +153,16 @@ SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 1.8
 HARD_STOP_LOSS_PCT = 0.01
 
+HIGH_VOLATILITY_COINS = ["NEAR/USDT", "FET/USDT", "INJ/USDT", "WIF/USDT", "PEPE/USDT", "FLOKI/USDT", "BONK/USDT", "ORDI/USDT"]
+
 def build_symbol_state(sym):
     state_dict = {
         "status": "ACTIVE",
         "status_reason": "",
         "next_status_time": 0,
         "stop_count": 0,
+        "stop_timestamps": [],
+        "is_breakeven_set": False,
         "first_stop_time": 0,
         "qty": 0.0,
         "avg_price": 0.0,
@@ -223,6 +228,7 @@ def build_symbol_state(sym):
 GLOBAL_STATE = {
     "daily_pnl": 0.0,
     "last_reset_day": "",
+    "initial_daily_equity": 0.0,
     "consecutive_losses": 0,
     "trading_enabled": True,
     "route_stats": {"a": {"win": 0, "loss": 0}, "b": {"win": 0, "loss": 0}, "c": {"win": 0, "loss": 0}, "s": {"win": 0, "loss": 0}}
@@ -531,16 +537,15 @@ def mark_exit(sym, is_stop_loss=False):
     s.status_reason = "冷卻中 (5分鐘)"
     logger.info(f"⏳ [狀態] {sym} 平倉 → COOLDOWN 5分鐘")
     if is_stop_loss:
-        if not hasattr(s, 'stop_times'):
-            s.stop_times = []
         s.stop_times.append(now)
         s.stop_times = [t for t in s.stop_times if now - t <= BAN_WINDOW]
         s.stop_count = len(s.stop_times)
-        if s.stop_count >= MAX_STOPS_IN_WINDOW:
+        max_stops = 2 if sym in HIGH_VOLATILITY_COINS else MAX_STOPS_IN_WINDOW
+        if s.stop_count >= max_stops:
             s.status = "BANNED"
             s.next_status_time = now + BAN_DURATION
-            s.status_reason = f"封禁中 (24h，{MAX_STOPS_IN_WINDOW}次停損)"
-            logger.warning(f"🚫 [狀態] {sym} 1h內{MAX_STOPS_IN_WINDOW}次停損 → BANNED 24h")
+            s.status_reason = f"封禁中 (24h，{max_stops}次停損)"
+            logger.warning(f"🚫 [狀態] {sym} 1h內{max_stops}次停損 → BANNED 24h")
 
 def reset_coin_state(sym):
     STATES.setdefault(sym, build_symbol_state(sym))
@@ -970,6 +975,18 @@ async def check_position_exits(sym):
         s.trailing_highest = p
     if p < s.trailing_lowest:
         s.trailing_lowest = p
+
+    # 0. 強制保本機制 (Breakeven Protection)
+    if profit_pct > 0.005:
+        s.is_breakeven_set = True
+    elif profit_pct > 0.002 and hold_sec > 180:
+        s.is_breakeven_set = True
+
+    if s.is_breakeven_set and profit_pct <= 0.001:
+        cs = 'sell' if is_long else 'buy'
+        print(f"🔒 [強制保本] {sym} 觸發保本機制，防止利潤回吐！")
+        await close_position(sym, cs, abs(s.qty), p, avg, reason="保本防護出場")
+        return
 
     # 1. 絕對硬停損 (嚴格控管最大虧損，無視持倉時間！)
     usdt_pnl = profit_pct * avg * abs(s.qty)
@@ -1540,9 +1557,10 @@ async def process_symbols():
                 is_long = s.qty > 0
                 profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
                 usdt_pnl = profit_pct * avg * abs(s.qty)
-                if profit_pct <= -0.02 or usdt_pnl <= -3.0:
+                hard_stop = -0.015 if sym in HIGH_VOLATILITY_COINS else -0.02
+                if profit_pct <= hard_stop or usdt_pnl <= -3.0:
                     cs = 'sell' if is_long else 'buy'
-                    reason_msg = "2%跌幅停損" if profit_pct <= -0.02 else "3U金額停損"
+                    reason_msg = f"{abs(hard_stop)*100}%跌幅停損" if profit_pct <= hard_stop else "3U金額停損"
                     print(f"🚨 [優先防護] {sym} 觸發底線平倉！(指標結算前攔截) 目前虧損: {usdt_pnl:.2f} U")
                     await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
 
@@ -1698,9 +1716,23 @@ async def main_loop():
     while True:
         try:
             loop_start = time.time()
-            if not PAPER_TRADING and loop_start - last_balance_update > 30:
+            if loop_start - last_balance_update > 30:
                 await fetch_real_balance()
                 last_balance_update = loop_start
+                current_balance = get_balance()
+                
+                # Daily Equity Drawdown Protection
+                current_day = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+                if GLOBAL_STATE["last_reset_day"] != current_day or GLOBAL_STATE["initial_daily_equity"] == 0.0:
+                    GLOBAL_STATE["last_reset_day"] = current_day
+                    GLOBAL_STATE["initial_daily_equity"] = current_balance
+                    logger.info(f"📅 [每日重置] 記錄初始本金: {current_balance:.2f} U")
+                
+                if GLOBAL_STATE["initial_daily_equity"] > 0 and GLOBAL_STATE["trading_enabled"]:
+                    dd_pct = (current_balance - GLOBAL_STATE["initial_daily_equity"]) / GLOBAL_STATE["initial_daily_equity"]
+                    if dd_pct <= -0.03:
+                        logger.error(f"🚨🚨 [淨值回撤保護] 今日總淨值回撤達 {dd_pct*100:.2f}% (<-3%)，強制關閉交易至明日！")
+                        GLOBAL_STATE["trading_enabled"] = False
                 
             if loop_start - last_htf_update > 1800:  # 每 30 分鐘更新一次大週期
                 await fetch_all_htf_trend()
