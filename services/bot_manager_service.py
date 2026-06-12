@@ -6,6 +6,18 @@ import threading
 import subprocess
 from services.system_log_service import add_system_log
 
+
+def get_python_executable():
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), '.venv', 'bin', 'python'),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'venv', 'bin', 'python'),
+        sys.executable,
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return sys.executable
+
 # 模擬交易機器人狀態 (支援多幣種多進程)
 bot_status = {
     "is_running": False,
@@ -22,8 +34,8 @@ bot_status = {
 bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
 DEFAULT_SYMBOLS = [
-    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
+    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "SUIUSDT", "PEPEUSDT",
+    "WIFUSDT", "JUPUSDT", "LINKUSDT", "BNBUSDT", "BTCUSDT"
 ]
 
 
@@ -40,6 +52,8 @@ def normalize_symbol(sym):
     return sym
 
 
+BANNED_TOKENS = ['CROSS', 'HANA', 'COAI', 'PHA', 'BAN', 'FOGO', 'ESPORTS', 'PLAY', 'HOME', 'VELVET', 'AIO', 'ALLO']
+
 def normalize_symbol_list(symbols, max_count=20):
     if isinstance(symbols, str):
         symbols = [symbols]
@@ -48,7 +62,12 @@ def normalize_symbol_list(symbols, max_count=20):
     seen = []
     for item in symbols:
         sym = normalize_symbol(item)
-        if sym and sym not in seen:
+        if not sym:
+            continue
+        base_asset = sym.replace('USDT', '')
+        if base_asset in BANNED_TOKENS:
+            continue
+        if sym not in seen:
             seen.append(sym)
     return seen[:max_count]
 
@@ -75,11 +94,17 @@ def get_bot_status():
     from services.paper_trade_service import get_paper_balance
     import os
     from dotenv import load_dotenv
-    
+
     load_dotenv()
     if os.getenv("TRADING_MODE", "paper") == "paper":
         bot_status["balance_quote"] = get_paper_balance()
-        
+
+    saved_symbols = load_symbol_config()
+    if saved_symbols:
+        bot_status["active_symbols"] = saved_symbols
+    if not bot_status.get("active_symbols"):
+        bot_status["active_symbols"] = list(DEFAULT_SYMBOLS)
+
     return bot_status
 
 def set_bot_balance_quote(balance: float):
@@ -141,8 +166,9 @@ def read_bot_output(proc, sym):
 
 def _start_multi_coin_bot(trade_amt: float):
     global bot_processes
-    cmd = [sys.executable, "-u", "multi_coin_bot_v2.py"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    python_exec = get_python_executable()
+    cmd = [python_exec, "-u", "multi_coin_bot_v2.py"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
     count = len(bot_status.get("active_symbols", []))
