@@ -231,6 +231,7 @@ GLOBAL_STATE = {
 STATE_SYMBOLS = list(dict.fromkeys(DEFAULT_SYMBOLS + ALL_SYMBOLS))
 STATES = {sym: build_symbol_state(sym) for sym in STATE_SYMBOLS}
 WATCH_TASKS = {}
+STATES_LOCK = None
 
 # ── 指標計算函數 ──────────────────────────────────────────────
 
@@ -1235,10 +1236,9 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
         
-    # 如果「當前 K 線」跟「上一根 K 線」的量都不到均量的 70%，才視為量能不足
-    # 這是為了避免在剛換線（前幾秒）時，當前 K 線量能必然偏低而導致誤判
-    if current_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD and prev_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD:
-        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} 且上一根量 {prev_vol:.2f} 均 < 均量門檻 {vol_ma20 * VOLUME_RATIO_THRESHOLD:.2f}")
+    # 假突破防護：突破當下量能必須放大 (大於均量的 1.2 倍)
+    if current_vol < vol_ma20 * 1.2:
+        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [假突破防護/量能不足] 當前量 {current_vol:.2f} < 要求量能 {vol_ma20 * 1.2:.2f} (1.2x 均量)")
         return False
     return True
 
@@ -1528,6 +1528,16 @@ def compute_signal_strength(sym):
 
     return (None, 0, None)
 
+async def process_symbols():
+    await fetch_all_klines()
+    async with STATES_LOCK:
+        for sym in ALL_SYMBOLS:
+            compute_indicators(sym)
+        update_states()
+        for sym in ALL_SYMBOLS:
+            await check_position_exits(sym)
+        await check_entries()
+
 async def check_entries():
     if not GLOBAL_STATE["trading_enabled"]:
         return
@@ -1604,9 +1614,10 @@ async def watch_symbol_trades(sym):
         try:
             trades = await exchange.watch_trades(sym)
             if trades:
-                data = trades if isinstance(trades, list) else [trades]
-                for trade in data:
-                    update_trade_signal(sym, trade)
+                async with STATES_LOCK:
+                    data = trades if isinstance(trades, list) else [trades]
+                    for trade in data:
+                        update_trade_signal(sym, trade)
         except Exception as e:
             logger.warning(f"⚠️ [成交流監聽異常] {sym}: {e}，5秒後重試")
             await asyncio.sleep(5)
@@ -1688,13 +1699,7 @@ async def main_loop():
                 await fetch_all_htf_trend()
             await ensure_watch_tasks()
             await update_market_wind()
-            await fetch_all_klines()
-            for sym in ALL_SYMBOLS:
-                compute_indicators(sym)
-            update_states()
-            for sym in ALL_SYMBOLS:
-                await check_position_exits(sym)
-            await check_entries()
+            await process_symbols()
             
             # 成功執行，重置連續錯誤計數器
             global CONSECUTIVE_ERRORS
@@ -1723,7 +1728,12 @@ async def main_loop():
             traceback.print_exc()
             
             # 連續錯誤防爆防封禁冷卻機制
-            if CONSECUTIVE_ERRORS >= 3:
+            if CONSECUTIVE_ERRORS >= 10:
+                logger.error(f"🚨🚨 [極端防護] 連續錯誤達 10 次，暫時關閉自動交易以防失控！")
+                GLOBAL_STATE["trading_enabled"] = False
+                # Optionally send line alert if implemented here, but we will just disable trading.
+                await asyncio.sleep(60)
+            elif CONSECUTIVE_ERRORS >= 3:
                 cooldown = min(120, 15 * (CONSECUTIVE_ERRORS - 2))
                 logger.error(f"🚨 [連續API錯誤風控] 已連續錯誤 {CONSECUTIVE_ERRORS} 次，觸發風控冷卻，暫停 {cooldown} 秒...")
                 await asyncio.sleep(cooldown)
@@ -1746,12 +1756,38 @@ async def periodic_status_log():
         open_str = ', '.join(f"{sym}({'多' if STATES[sym].qty>0 else '空'})" for sym in open_syms) if open_syms else "無"
         logger.info(f"📊 [狀態] ACTIVE={active} COOLDOWN={cooldown} BANNED={banned} | 持倉({len(open_syms)}): {open_str}")
 
+async def export_states_to_json():
+    while True:
+        try:
+            await asyncio.sleep(3)
+            export_data = {}
+            # We don't necessarily need STATES_LOCK for a simple read copy, but it's safer.
+            # However, acquiring lock every 3 sec might block, so we just do a dirty read.
+            for sym in list(STATES.keys()):
+                s = STATES[sym]
+                export_data[sym] = {
+                    "status": s.status,
+                    "qty": s.qty,
+                    "avg_price": s.avg_price,
+                    "current_price": s.close_price,
+                    "rsi": s.current_rsi,
+                    "atr": s.current_atr,
+                    "trend": s.htf_trend
+                }
+            with open("bot_states.json", "w") as f:
+                json.dump(export_data, f)
+        except Exception as e:
+            pass
+
 async def main():
+    global STATES_LOCK
+    STATES_LOCK = asyncio.Lock()
     await asyncio.gather(
         main_loop(),
         periodic_sma200_update(),
         periodic_status_log(),
         watch_all_trades(),
+        export_states_to_json(),
     )
 
 if __name__ == "__main__":
