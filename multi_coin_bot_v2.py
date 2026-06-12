@@ -1557,10 +1557,9 @@ async def process_symbols():
                 is_long = s.qty > 0
                 profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
                 usdt_pnl = profit_pct * avg * abs(s.qty)
-                hard_stop = -0.015 if sym in HIGH_VOLATILITY_COINS else -0.02
-                if profit_pct <= hard_stop or usdt_pnl <= -3.0:
+                if profit_pct <= -0.02 or usdt_pnl <= -3.0:
                     cs = 'sell' if is_long else 'buy'
-                    reason_msg = f"{abs(hard_stop)*100}%跌幅停損" if profit_pct <= hard_stop else "3U金額停損"
+                    reason_msg = "2%跌幅停損" if profit_pct <= -0.02 else "3U金額停損"
                     print(f"🚨 [優先防護] {sym} 觸發底線平倉！(指標結算前攔截) 目前虧損: {usdt_pnl:.2f} U")
                     await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
 
