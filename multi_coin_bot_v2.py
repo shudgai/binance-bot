@@ -1317,7 +1317,7 @@ def risk_guard(sym, side, route="a"):
         logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [低波動率過濾] ATR {atr_pct*100:.2f}% < 0.3%，盤整死水不交易")
         return False
 
-    # 極端行情保護 (Extreme Volatility in 5m)
+    # 極端行情保護 (Extreme Volatility in 5m & Dynamic ATR Spike)
     if len(s.ohlcv) >= 5:
         recent_5 = s.ohlcv[-5:]
         highest_5m = max([x[2] for x in recent_5])
@@ -1326,6 +1326,11 @@ def risk_guard(sym, side, route="a"):
         if change_5m > 0.03:
             logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極端行情保護] 5分鐘內震幅達 {change_5m*100:.2f}% > 3%，放棄進場")
             return False
+            
+    # 動態 ATR 異常飆升過濾 (當前 ATR 超過 20均線的 2.5倍)
+    if s.atr_ma20 > 0 and s.current_atr > s.atr_ma20 * 2.5:
+        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR波動過濾] 當前 ATR {s.current_atr:.5f} 異常飆升 (超過均值 {s.atr_ma20:.5f} 2.5 倍)，暫停交易避險")
+        return False
     
     # 均線過濾器：僅限制 Route A (順勢)
     if is_trend and s.sma200_15m > 0:
