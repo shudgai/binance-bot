@@ -163,17 +163,25 @@ def get_top_volume_altcoins(limit=5, ignore_list=None):
             sym = t['symbol']
             if not sym.endswith('USDT'):
                 continue
-            if sym in exclude_list:
+            if sym in exclude_list or 'SPACE' in sym:
                 continue
             try:
                 price = float(t.get('lastPrice', 0))
                 q_vol = float(t.get('quoteVolume', 0))
+                high = float(t.get('highPrice', 0))
+                low = float(t.get('lowPrice', 0))
             except (ValueError, TypeError):
                 continue
                 
             # Filter for "small coins": price under $5.0
             if price > 5.0 or price == 0:
                 continue
+                
+            # Filter out wildly jumping coins (24h high/low difference > 25%)
+            if low > 0:
+                volatility_24h = (high - low) / low * 100
+                if volatility_24h > 25.0:
+                    continue
                 
             if q_vol > 0:
                 candidates.append((sym, q_vol))
