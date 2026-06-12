@@ -1285,7 +1285,7 @@ def risk_guard(sym, side, route="a"):
     # 波動率過濾 (Low Volatility)
     atr_pct = s.current_atr / cp if cp > 0 else 0
     if atr_pct < 0.003:
-        # logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [低波動率過濾] ATR {atr_pct*100:.2f}% < 0.3%，盤整死水不交易")
+        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [低波動率過濾] ATR {atr_pct*100:.2f}% < 0.3%，盤整死水不交易")
         return False
 
     # 極端行情保護 (Extreme Volatility in 5m)
@@ -1610,34 +1610,8 @@ async def check_entries():
         s = STATES[sym]
         now = time.time()
         
-        # 取消 Route C/S 的即刻進場特權，所有進場皆須經過突破確認 (避免接刀)
-        if s.pending_side != side:
-            s.pending_side = side
-            s.pending_time = now
-            m_line, m_sig, _, _, _ = calculate_macd(s.closes)
-            macd_triggered = (s.prev_macd_line <= s.prev_macd_signal and m_line > m_sig) or \
-                             (s.prev_macd_line >= s.prev_macd_signal and m_line < m_sig)
-            if macd_triggered and len(s.ohlcv) >= 2:
-                s.pending_confirm_high = s.ohlcv[-2][2]
-                s.pending_confirm_low = s.ohlcv[-2][3]
-            continue
-        candle_range = max(1e-8, s.pending_confirm_high - s.pending_confirm_low)
-        required_breakout = candle_range * 0.05
-        confirm_delay = 2.0 if s.current_atr > s.atr_ma20 else PENDING_CONFIRM_SEC
-
-        if now - s.pending_time >= confirm_delay:
-            if side == 'buy' and s.pending_confirm_high > 0 and s.close_price <= (s.pending_confirm_high + required_breakout):
-                if now - s.pending_time > max(15.0, confirm_delay * 5):
-                    s.pending_side = None
-                continue
-            if side == 'sell' and s.pending_confirm_low > 0 and s.close_price >= (s.pending_confirm_low - required_breakout):
-                if now - s.pending_time > max(15.0, confirm_delay * 5):
-                    s.pending_side = None
-                continue
-            await execute_order(sym, side, s.close_price)
-            s.pending_side = None
-            s.pending_confirm_high = 0
-            s.pending_confirm_low = 0
+        # 移除突破確認機制，只要有訊號 (且通過 risk_guard) 就立即開倉
+        await execute_order(sym, side, s.close_price)
 
 # ── 主循環 ──────────────────────────────────────────────────
 
