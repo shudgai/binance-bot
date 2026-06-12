@@ -142,7 +142,7 @@ def save_symbol_pool(symbols):
 
 ALL_SYMBOLS = load_symbol_pool()
 
-MAX_POSITIONS = 2
+MAX_POSITIONS = 5
 COOLDOWN_SEC = 180
 MAIN_LOOP_INTERVAL_SEC = 3
 PENDING_CONFIRM_SEC = 1.0
