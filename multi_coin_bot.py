@@ -36,8 +36,9 @@ if USE_TESTNET:
     exchange.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
 
 DEFAULT_SYMBOLS = [
-    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT",
+    "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT",
+    "AVAXUSDT", "INJUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 

@@ -55,11 +55,12 @@ if USE_TESTNET:
     exchange.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
 
 DEFAULT_SYMBOLS = [
-    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "SUIUSDT", "1000PEPEUSDT",
-    "WIFUSDT", "JUPUSDT", "LINKUSDT", "BNBUSDT", "BTCUSDT"
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT",
+    "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT",
+    "AVAXUSDT", "INJUSDT"
 ]
 SLOW_OR_LOW_QUALITY_SYMBOLS = {
-    "ETH", "AERO", "ADA", "AVAX", "DOT", "UNI", "NEAR", "FET"
+    "AERO", "ADA", "DOT", "UNI", "FET"
 }
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 
@@ -1150,29 +1151,35 @@ async def execute_order(sym, side, price, route="a"):
 
     # 深度與流動性防護 (Bid-Ask Spread & Volume)
     try:
-        order_book = await exchange.fetch_bids_asks([sym])
-        if sym in order_book:
-            best_bid = order_book[sym]['info'].get('bidPrice')
-            best_ask = order_book[sym]['info'].get('askPrice')
-            bid_qty = order_book[sym]['info'].get('bidQty')
-            ask_qty = order_book[sym]['info'].get('askQty')
-            
+        # 取得 ccxt 格式幣種代號 (ex: BTC/USDT)
+        try:
+            ccxt_sym = exchange.market(sym)['symbol']
+        except Exception:
+            ccxt_sym = sym
+        ticker_data = await exchange.fetch_bids_asks([ccxt_sym])
+        ticker = ticker_data.get(ccxt_sym)
+        if ticker and ticker.get('info'):
+            info = ticker['info']
+            best_bid = info.get('bidPrice')
+            best_ask = info.get('askPrice')
+            bid_qty = info.get('bidQty')
+            ask_qty = info.get('askQty')
+
             if best_bid and best_ask:
                 best_bid = float(best_bid)
                 best_ask = float(best_ask)
                 spread = (best_ask - best_bid) / best_ask
                 if spread > 0.001:
-                    logger.warning(f"🛑 [流動性風控] {sym} 買賣價差 {spread*100:.2f}% > 0.1%，深度不足，拒絕開倉！")
+                    logger.warning(f"🛑 [流動性風控] {sym} 買賣價差 {spread*100:.2f}% > 0.1%，拒絕開倉！")
                     return
-            
-            # 滑價保護: 訂單量不得超過最佳盤口掛單量的 1%
+
             if bid_qty and ask_qty:
                 bid_qty = float(bid_qty)
                 ask_qty = float(ask_qty)
                 base_amt_est = (margin * LEVERAGE) / price
                 target_qty = ask_qty if side == 'buy' else bid_qty
                 if target_qty > 0 and base_amt_est > target_qty * 0.01:
-                    logger.warning(f"🛑 [深度風控] {sym} 預估下單量 {base_amt_est:.4f} 超過盤口深度 1% (掛單量 {target_qty:.4f})，拒絕開倉避免滑價！")
+                    logger.warning(f"🛑 [深度風控] {sym} 預估下單量 {base_amt_est:.4f} 超過盤口深度 1% ({target_qty:.4f})，拒絕開倉！")
                     return
     except Exception as e:
         logger.debug(f"⚠️ [流動性檢查失敗] {sym}: {e}")

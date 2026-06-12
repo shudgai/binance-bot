@@ -199,6 +199,35 @@ def get_top_volume_altcoins(limit=5, ignore_list=None):
         print(f"Error fetching top volume altcoins: {e}")
         return []
 
+def check_liquidity(symbol: str, trade_amount: float, leverage: int = 5) -> dict:
+    """流動性檢核：確認買賣價差 < 0.1% 且訂單簿深度足以支撐設定交易額"""
+    try:
+        ticker = client.futures_symbol_ticker(symbol=symbol)
+        bid = float(ticker.get('bidPrice', 0))
+        ask = float(ticker.get('askPrice', 0))
+        bid_qty = float(ticker.get('bidQty', 0))
+        ask_qty = float(ticker.get('askQty', 0))
+
+        if bid <= 0 or ask <= 0:
+            return {"passed": False, "reason": "無法取得買賣報價"}
+
+        spread = (ask - bid) / ask
+        spread_pct = spread * 100
+        if spread > 0.001:
+            return {"passed": False, "reason": f"買賣價差 {spread_pct:.3f}% > 0.1%", "spread": spread_pct}
+
+        price = (bid + ask) / 2
+        base_amt = (trade_amount * leverage) / price
+        target_qty = ask_qty
+
+        if base_amt > target_qty * 0.01:
+            return {"passed": False, "reason": f"預估下單量 {base_amt:.4f} 超過盤口深度 1% ({target_qty:.4f})", "spread": spread_pct}
+
+        return {"passed": True, "spread": spread_pct, "bid": bid, "ask": ask, "price": price}
+    except Exception as e:
+        return {"passed": False, "reason": f"流動性檢查異常: {e}"}
+
+
 def market_buy(symbol: str, amount: float):
     ticker = client.futures_symbol_ticker(symbol=symbol)
     price = float(ticker['price'])

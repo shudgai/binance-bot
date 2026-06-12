@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-WHITELIST = ["BTCUSDT", "ETHUSDT"]
+WHITELIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT", "AVAXUSDT", "INJUSDT"]
 MAX_SYMBOLS = 20  # Target count of active symbols
 STATE_FILE = os.path.join(os.path.dirname(__file__), "scanner_state.json")
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
@@ -85,16 +85,8 @@ def run_scan():
         # Sort by growth rate descending (and absolute volume as secondary sort key)
         growth_rates.sort(key=lambda x: (x[1], x[2]), reverse=True)
 
-        # Build new symbols list starting with whitelist
+        # 白名單模式：僅採用白名單幣種
         selected_symbols = list(WHITELIST)
-        for item in growth_rates:
-            if len(selected_symbols) >= MAX_SYMBOLS:
-                break
-            sym = item[0]
-            if sym not in selected_symbols:
-                selected_symbols.append(sym)
-
-        # Sort selected symbols alphabetically
         selected_symbols.sort()
 
         # Save to bot_symbols.json

@@ -850,13 +850,15 @@ createApp({
 
         const position = ref({ asset: '-', qty: 0, avg_price: 0, total_cost: 0, current_price: 0, current_value: 0, pnl: 0, pnl_percent: 0, realized_pnl: 0 });
 
+        const WHITELIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'TRXUSDT', 'NEARUSDT', 'TONUSDT', 'SUIUSDT', 'BNBUSDT', 'LINKUSDT', 'AVAXUSDT', 'INJUSDT'];
         const customSymbol = ref('');
         const addCustomCoin = () => {
             let s = customSymbol.value.trim().toUpperCase();
             if (!s) return;
             if (!s.endsWith('USDT')) s += 'USDT';
+            if (!WHITELIST.includes(s)) { alert(`⚠️ ${s} 不在白名單中，僅允許白名單幣種`); customSymbol.value = ''; return; }
             if (!coins.value.find(c => c.symbol === s)) {
-                coins.value.push({ symbol: s, name: s.replace('USDT',''), label: '自訂', price: 0, prevPrice: 0, priceClass: '' });
+                coins.value.push({ symbol: s, name: s.replace('USDT',''), label: s.replace('USDT',''), price: 0, prevPrice: 0, priceClass: '' });
                 // Subscribe to ticker immediately
                 try {
                     const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${s.toLowerCase()}@ticker`);
@@ -880,18 +882,15 @@ createApp({
             { symbol: 'BTCUSDT', name: 'BTC', label: 'BTC', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'ETHUSDT', name: 'ETH', label: 'ETH', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'SOLUSDT', name: 'SOL', label: 'SOL', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'BNBUSDT', name: 'BNB', label: 'BNB', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'XRPUSDT', name: 'XRP', label: 'XRP', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'ADAUSDT', name: 'ADA', label: 'ADA', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'AVAX', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'DOTUSDT', name: 'DOT', label: 'DOT', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'POLUSDT', name: 'POL', label: 'POL', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'LTCUSDT', name: 'LTC', label: 'LTC', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'BCHUSDT', name: 'BCH', label: 'BCH', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'TRXUSDT', name: 'TRX', label: 'TRX', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'NEARUSDT', name: 'NEAR', label: 'NEAR', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'APTUSDT', name: 'APT', label: 'APT', price: 0, prevPrice: 0, priceClass: '' }
+            { symbol: 'TONUSDT', name: 'TON', label: 'TON', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'SUIUSDT', name: 'SUI', label: 'SUI', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'BNBUSDT', name: 'BNB', label: 'BNB', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'AVAX', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'INJUSDT', name: 'INJ', label: 'INJ', price: 0, prevPrice: 0, priceClass: '' }
         ]);
         const activeSymbol = ref(localStorage.getItem('activeSymbol') || 'SUIUSDT');
         const showAllTradesModal = ref(false);

@@ -25,7 +25,7 @@ bot_status = {
     "balance_quote": 150.0,
     "active_orders": 0,
     "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
-    "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "PEPEUSDT"], # 使用者自訂的 5 個關注幣種
+    "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"], # 使用者自訂的 5 個關注幣種
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
@@ -34,8 +34,9 @@ bot_status = {
 bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
 DEFAULT_SYMBOLS = [
-    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "SUIUSDT", "PEPEUSDT",
-    "WIFUSDT", "JUPUSDT", "LINKUSDT", "BNBUSDT", "BTCUSDT"
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT",
+    "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT",
+    "AVAXUSDT", "INJUSDT"
 ]
 
 
