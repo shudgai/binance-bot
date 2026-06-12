@@ -858,7 +858,7 @@ createApp({
             if (!s.endsWith('USDT')) s += 'USDT';
             if (!WHITELIST.includes(s)) { alert(`⚠️ ${s} 不在白名單中，僅允許白名單幣種`); customSymbol.value = ''; return; }
             if (!coins.value.find(c => c.symbol === s)) {
-                coins.value.push({ symbol: s, name: s.replace('USDT',''), label: s.replace('USDT',''), price: 0, prevPrice: 0, priceClass: '' });
+                coins.value.push({ symbol: s, name: s.replace('USDT',''), label: s.replace('USDT',''), price: 0, prevPrice: 0, priceClass: '', custom: true });
                 // Subscribe to ticker immediately
                 try {
                     const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${s.toLowerCase()}@ticker`);
@@ -1207,21 +1207,29 @@ createApp({
                     addLog(`機器人狀態: ${data.is_running ? '🚀 啟動' : '⏹️ 停止'}`);
                 bot.value = data;
                 
-                // 動態更新界面上的監控幣種
+                // 動態更新界面上的監控幣種（保留手動新增的自訂幣種）
                 if (data.active_symbols && data.active_symbols.length > 0) {
-                    const newCoins = data.active_symbols.map(sym => {
+                    const customCoins = coins.value.filter(c => c.custom);
+                    const merged = [];
+                    const seen = new Set();
+                    for (const sym of data.active_symbols) {
                         const existing = coins.value.find(c => c.symbol === sym);
-                        if (existing) return existing;
-                        const name = sym.replace('USDT', '');
-                        return { symbol: sym, name: name, label: name, price: 0, prevPrice: 0, priceClass: '' };
-                    });
-                    
+                        if (existing) { merged.push(existing); seen.add(sym); }
+                        else {
+                            const name = sym.replace('USDT', '');
+                            merged.push({ symbol: sym, name: name, label: name, price: 0, prevPrice: 0, priceClass: '' });
+                            seen.add(sym);
+                        }
+                    }
+                    for (const c of customCoins) {
+                        if (!seen.has(c.symbol)) { merged.push(c); seen.add(c.symbol); }
+                    }
                     const oldSyms = coins.value.map(c => c.symbol).join(',');
-                    const newSyms = newCoins.map(c => c.symbol).join(',');
+                    const newSyms = merged.map(c => c.symbol).join(',');
                     if (oldSyms !== newSyms) {
-                        coins.value = newCoins;
-                        if (!newCoins.some(c => c.symbol === activeSymbol.value)) {
-                            setActiveCoin(newCoins[0].symbol);
+                        coins.value = merged;
+                        if (!merged.some(c => c.symbol === activeSymbol.value)) {
+                            setActiveCoin(merged[0].symbol);
                         } else {
                             initWebSocket();
                         }
