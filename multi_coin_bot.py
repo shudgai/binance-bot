@@ -498,7 +498,6 @@ async def update_market_wind():
         # 抓取 BTC 和 ETH
         btc_ohlcv = await exchange.fetch_ohlcv("BTCUSDT", TIMEFRAME, limit=100)
         eth_ohlcv = await exchange.fetch_ohlcv("ETHUSDT", TIMEFRAME, limit=100)
-        
         MARKET_WIND["allow_long"] = True
         MARKET_WIND["allow_short"] = True
         
@@ -761,7 +760,7 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     # 2) 盤整市場：價格被壓縮在狹窄區間內，且 ATR 也偏小
     is_ranging = range_width_pct < 0.025 and atr_pct < 0.015
     if is_ranging:
-        profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+        profit_pct = (current_price - avg_price) / max(avg_price, 1e-8) if is_long else (avg_price - current_price) / max(avg_price, 1e-8)
         if profit_pct >= 0.003:
             return "RANGE_PROFIT_TAKE", f"盤整區間內已獲利 {profit_pct * 100:.2f}%"
 
@@ -813,7 +812,7 @@ async def check_exits(sym):
     p = s["close_price"]
     avg = s["avg_price"]
     is_long = s["qty"] > 0
-    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
 
 
     sl_mult = SL_ATR_MULTIPLIER * 2 if hold_sec < 120 else SL_ATR_MULTIPLIER
@@ -1005,18 +1004,18 @@ async def check_position_exits(sym):
     p = s["close_price"]
     avg = s["avg_price"]
     is_long = s["qty"] > 0
-    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
 
     if hold_sec < 120:
         return
 
-    # 10% 硬停損
+    # 2% 硬停損
     hard_sl = avg * HARD_STOP_LOSS_PCT
     if (is_long and p <= avg - hard_sl) or (not is_long and p >= avg + hard_sl):
         cs = 'sell' if is_long else 'buy'
-        print(f"⛔ [10%停損] {sym}")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="10%停損", is_stop_loss=True)
+        print(f"⛔ [2%硬停損] {sym}")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="2%硬停損", is_stop_loss=True)
         return
 
     # 3x ATR 停利
@@ -1469,14 +1468,13 @@ async def watch_symbol_trades(sym):
     while True:
         try:
             trades = await exchange.watch_trades(sym)
-            if isinstance(trades, list):
-                for trade in trades:
+            if trades:
+                data = trades if isinstance(trades, list) else [trades]
+                for trade in data:
                     update_trade_signal(sym, trade)
-            elif trades:
-                update_trade_signal(sym, trades)
         except Exception as e:
-            print(f"⚠️ [成交流監聽異常] {sym}: {e}")
-            await asyncio.sleep(3)
+            print(f"⚠️ [成交流監聽異常] {sym}: {e}，5秒後重試")
+            await asyncio.sleep(5)
 
 
 async def ensure_watch_tasks():
@@ -1484,11 +1482,17 @@ async def ensure_watch_tasks():
     desired_symbols = set(ALL_SYMBOLS)
     current_symbols = set(WATCH_TASKS.keys())
 
+    # 移除失效任務
     for sym in current_symbols - desired_symbols:
         task = WATCH_TASKS.pop(sym, None)
         if task is not None:
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
+    # 加入新任務
     for sym in desired_symbols - current_symbols:
         WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(sym))
 

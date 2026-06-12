@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_FILES = ["multi_coin_bot.py", "futures_bot.py"]
+BOT_FILES = ["multi_coin_bot.py", "multi_coin_bot_v2.py", "futures_bot.py"]
 CHECK_INTERVAL_SEC = 60
 
 def is_process_running(script_name):

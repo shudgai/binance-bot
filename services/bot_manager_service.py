@@ -160,8 +160,11 @@ def read_bot_output(proc, sym):
         add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止，將在 5 秒後自動重啟...", "danger")
         def daemon_restart():
             time.sleep(5)
-            if bot_status["is_running"] and sym in bot_status.get("active_symbols", []):
-                _start_single_bot(sym, bot_status["trade_amount"])
+            if bot_status["is_running"]:
+                if sym == "__multi__":
+                    _start_multi_coin_bot(bot_status.get("trade_amount", 150.0))
+                else:
+                    add_system_log(f"無法重啟未知的機器人程序: {sym}", "warning")
         threading.Thread(target=daemon_restart, daemon=True).start()
 
 def _start_multi_coin_bot(trade_amt: float):

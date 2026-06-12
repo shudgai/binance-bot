@@ -47,7 +47,7 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 0.5
+VOLUME_RATIO_THRESHOLD = 1.5
 
 if USE_TESTNET:
     exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
@@ -148,7 +148,7 @@ PENDING_CONFIRM_SEC = 1.0
 BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
-SL_ATR_MULTIPLIER = 1.8
+SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 1.8
 HARD_STOP_LOSS_PCT = 0.01
 
@@ -215,8 +215,18 @@ def build_symbol_state(sym):
         "sma200_15m": 0.0,
         "max_strength": 0.0,
         "entry_route": "a",
+        "last_stop_loss_side": "",
+        "last_stop_loss_time": 0.0,
     }
     return dotdict(state_dict)
+
+GLOBAL_STATE = {
+    "daily_pnl": 0.0,
+    "last_reset_day": "",
+    "consecutive_losses": 0,
+    "trading_enabled": True,
+    "route_stats": {"a": {"win": 0, "loss": 0}, "b": {"win": 0, "loss": 0}, "c": {"win": 0, "loss": 0}, "s": {"win": 0, "loss": 0}}
+}
 
 STATE_SYMBOLS = list(dict.fromkeys(DEFAULT_SYMBOLS + ALL_SYMBOLS))
 STATES = {sym: build_symbol_state(sym) for sym in STATE_SYMBOLS}
@@ -605,13 +615,20 @@ async def update_market_wind():
 
 async def initialize_atr_history():
     print("⏳ [初始化] 開始獲取 1000 根 1m K線以預熱 ATR 歷史...")
-    tasks = {}
+    results_map = {}
+    chunk_size = 5
+    for i in range(0, len(ALL_SYMBOLS), chunk_size):
+        chunk = ALL_SYMBOLS[i:i+chunk_size]
+        tasks = [exchange.fetch_ohlcv(sym, '1m', limit=1000) for sym in chunk]
+        res = await asyncio.gather(*tasks, return_exceptions=True)
+        for sym, r in zip(chunk, res):
+            results_map[sym] = r
+        await asyncio.sleep(0.5)
+
     for sym in ALL_SYMBOLS:
-        tasks[sym] = exchange.fetch_ohlcv(sym, '1m', limit=1000)
-    results = await asyncio.gather(*[tasks[sym] for sym in ALL_SYMBOLS], return_exceptions=True)
-    for i, sym in enumerate(ALL_SYMBOLS):
-        if not isinstance(results[i], Exception) and results[i]:
-            ohlcv = results[i]
+        res = results_map.get(sym)
+        if not isinstance(res, Exception) and res:
+            ohlcv = res
             tr_list = []
             for j in range(1, len(ohlcv)):
                 h = ohlcv[j][2]
@@ -624,7 +641,7 @@ async def initialize_atr_history():
                     STATES[sym].atr_history.append(atr)
             logger.info(f"✅ [初始化] {sym} 歷史 ATR 預熱完成，載入 {len(STATES[sym].atr_history)} 筆數據")
         else:
-            logger.warning(f"⚠️ [初始化] {sym} 歷史 ATR 預熱失敗: {results[i]}")
+            logger.warning(f"⚠️ [初始化] {sym} 歷史 ATR 預熱失敗: {res}")
 
 async def fetch_all_klines():
     tasks = {}
@@ -859,7 +876,7 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     # 2) 盤整市場：價格被壓縮在狹窄區間內，且 ATR 也偏小
     is_ranging = range_width_pct < 0.025 and atr_pct < 0.015
     if is_ranging:
-        profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+        profit_pct = (current_price - avg_price) / max(avg_price, 1e-8) if is_long else (avg_price - current_price) / max(avg_price, 1e-8)
         if profit_pct >= 0.003:
             return "RANGE_PROFIT_TAKE", f"盤整區間內已獲利 {profit_pct * 100:.2f}%"
 
@@ -893,7 +910,38 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
             logger.info(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
         logger.info(f"🔴 [平倉] {sym} 全平 {reason} (PnL: {pnl:.2f})")
         mark_exit(sym, is_stop_loss=is_stop_loss)
+        
+        # 保存同向冷卻狀態
+        old_side = 'buy' if s.qty > 0 else 'sell'
+        ls_side = old_side if is_stop_loss else s.last_stop_loss_side
+        ls_time = time.time() if is_stop_loss else s.last_stop_loss_time
+        
         reset_coin_state(sym)
+        STATES[sym].last_stop_loss_side = ls_side
+        STATES[sym].last_stop_loss_time = ls_time
+        
+        # 更新全局風控與績效狀態
+        current_day = time.strftime("%Y-%m-%d", time.gmtime())
+        if GLOBAL_STATE["last_reset_day"] != current_day:
+            GLOBAL_STATE["daily_pnl"] = 0.0
+            GLOBAL_STATE["last_reset_day"] = current_day
+            GLOBAL_STATE["trading_enabled"] = True
+
+        GLOBAL_STATE["daily_pnl"] += pnl
+        route = s.entry_route
+        if route in GLOBAL_STATE["route_stats"]:
+            if pnl > 0:
+                GLOBAL_STATE["route_stats"][route]["win"] += 1
+                GLOBAL_STATE["consecutive_losses"] = 0
+            elif pnl < 0:
+                GLOBAL_STATE["route_stats"][route]["loss"] += 1
+                GLOBAL_STATE["consecutive_losses"] += 1
+
+        MAX_DAILY_LOSS_USDT = 30.0
+        if GLOBAL_STATE["daily_pnl"] <= -MAX_DAILY_LOSS_USDT:
+            if GLOBAL_STATE["trading_enabled"]:
+                logger.error(f"🚨 [全局風控] 當日累積虧損已達 {GLOBAL_STATE['daily_pnl']:.2f} USDT，超過每日最大虧損限制！關閉今日所有新開倉。")
+                GLOBAL_STATE["trading_enabled"] = False
     else:
         s.qty = (abs(s.qty) - qty) * (1 if s.qty > 0 else -1)
         logger.info(f"✅ [部分平] {sym} 平{qty} 剩{abs(s.qty):.4f} {reason} (PnL: {pnl:.2f})")
@@ -908,7 +956,7 @@ async def check_position_exits(sym):
     p = s.close_price
     avg = s.avg_price
     is_long = s.qty > 0
-    raw_profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    raw_profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
     profit_pct = raw_profit_pct
     hold_sec = time.time() - s.open_time if s.open_time > 0 else 9999
     
@@ -931,6 +979,15 @@ async def check_position_exits(sym):
         await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
         return
 
+    # 1.5 加倉後的保本停損上移 (Pyramiding Break-Even Stop Loss)
+    if s.entry_count >= 2:
+        # 已加倉，將停損上移至新均價附近 (容忍 -0.1% 避免被點差洗掉)
+        if profit_pct <= -0.001:
+            cs = 'sell' if is_long else 'buy'
+            print(f"🛡️ [加倉保本] {sym} 已加倉 {s.entry_count-1} 次，觸發新均價保本防護出場！")
+            await close_position(sym, cs, abs(s.qty), p, avg, reason="加倉保本出局")
+            return
+
     # 2. 市場狀態偵測與補救 (BREAKOUT_REVERSAL / 反向補救)
     regime_decision, regime_reason = detect_market_regime(sym, p, avg, is_long)
     if regime_decision == "BREAKOUT_REVERSAL":
@@ -947,12 +1004,25 @@ async def check_position_exits(sym):
         s.highest_profit_pct = 0.0
         return
 
-    # 3. 緊密移動停利 (Trailing Stop-Profit)
-    if s.highest_profit_pct >= 0.006:
-        if profit_pct <= s.highest_profit_pct - 0.002:
+    # 3. 大波段移動停利 (ATR Trailing Stop)
+    if s.highest_profit_pct >= 0.018:
+        trail_stop_dist = s.current_atr * 1.5
+        if is_long and p <= s.trailing_highest - trail_stop_dist:
+            cs = 'sell'
+            print(f"🏃 [ATR移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 1.5 ATR，觸發出場！")
+            await close_position(sym, cs, abs(s.qty), p, avg, reason="ATR移動停利")
+            return
+        elif not is_long and p >= s.trailing_lowest + trail_stop_dist:
+            cs = 'buy'
+            print(f"🏃 [ATR移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 1.5 ATR，觸發出場！")
+            await close_position(sym, cs, abs(s.qty), p, avg, reason="ATR移動停利")
+            return
+    elif s.highest_profit_pct >= 0.008:
+        # 保留一個較早的防護，以防沒走到 1.8% 就 A 轉
+        if profit_pct <= s.highest_profit_pct - 0.003:
             cs = 'sell' if is_long else 'buy'
-            print(f"🏃 [移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 0.2%，觸發移動停利鎖定獲利！")
-            await close_position(sym, cs, abs(s.qty), p, avg, reason="移動停利")
+            print(f"🏃 [初階移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 0.3%，觸發出場！")
+            await close_position(sym, cs, abs(s.qty), p, avg, reason="初階移動停利")
             return
 
     # 4. 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock)
@@ -974,16 +1044,10 @@ async def check_position_exits(sym):
         await close_position(sym, cs, abs(s.qty), p, avg, reason="中利鎖利防護")
         s.highest_profit_pct = 0.0
         return
-    elif s.highest_profit_pct >= 0.006 and profit_pct < 0.0015:
+    elif s.highest_profit_pct >= 0.008 and profit_pct < 0.0015:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s.highest_profit_pct*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
         await close_position(sym, cs, abs(s.qty), p, avg, reason="微利鎖利防護")
-        s.highest_profit_pct = 0.0
-        return
-    elif s.highest_profit_pct >= 0.003 and profit_pct < 0.0005:
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [強制保本] {sym} 獲利最高曾達 {s.highest_profit_pct*100:.3f}%，不允許轉盈為虧，觸發強制保本平倉")
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="強制保本防護")
         s.highest_profit_pct = 0.0
         return
 
@@ -1054,28 +1118,33 @@ async def execute_order(sym, side, price, route="a"):
             logger.warning(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
             return
         if s.avg_price > 0 and price > 0:
-            if side == 'buy':
-                # 只在價格明顯逆向時阻擋加倉，避免把正常的溢價加倉誤判為風控
-                drop_pct = (s.avg_price - price) / s.avg_price
-                if drop_pct > 0.005:
-                    logger.info(f"🛑 [攤平風控] {sym} 多單跌幅已達 0.5% (目前: {drop_pct*100:.2f}%)，暫停加倉")
-                    return
-            else:
-                # 空單同理，避免在價格明顯反向時重複加倉
-                rise_pct = (price - s.avg_price) / s.avg_price
-                if rise_pct > 0.005:
-                    logger.info(f"🛑 [攤平風控] {sym} 空單漲幅已達 0.5% (目前: {rise_pct*100:.2f}%)，暫停加倉")
-                    return
+            profit_pct = (price - s.avg_price) / max(s.avg_price, 1e-8) if side == 'buy' else (s.avg_price - price) / max(s.avg_price, 1e-8)
+            required_profit = 0.006 if s.entry_count == 1 else 0.012
+            if profit_pct < required_profit:
+                logger.info(f"🛑 [順勢加碼風控] {sym} {'多' if side=='buy' else '空'}單獲利未達 {required_profit*100:.1f}% (目前: {profit_pct*100:.2f}%)，禁止過早加倉")
+                return
+
+    if GLOBAL_STATE["consecutive_losses"] >= 5:
+        logger.warning(f"⚠️ [連敗風控] {sym} 全局已連續虧損 {GLOBAL_STATE['consecutive_losses']} 次，暫停開倉避免上頭")
+        return
 
     base_amt = (margin * LEVERAGE) / price
     if base_amt < 0.001:
         logger.warning(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
         return
 
-    if side == 'buy':
-        base_amt *= 0.5 if s.entry_count == 0 else 0.05
+    if GLOBAL_STATE["consecutive_losses"] >= 3:
+        logger.info(f"🛡️ [連敗降倉] 全局連輸 {GLOBAL_STATE['consecutive_losses']} 次，基礎倉位減半")
+        base_amt *= 0.5
+
+    if s.entry_count == 0:
+        base_amt *= 1.0   # 首次進場 100%
+    elif s.entry_count == 1:
+        base_amt *= 0.5   # 第一次加倉 50%
+    elif s.entry_count == 2:
+        base_amt *= 0.25  # 第二次加倉 25%
     else:
-        base_amt *= 0.5 if s.entry_count == 0 else 0.05
+        return
 
     if PAPER_TRADING:
         try:
@@ -1175,6 +1244,9 @@ def is_entry_volume_confirmed(sym, side):
 
 
 def risk_guard(sym, side, route="a"):
+    if not GLOBAL_STATE["trading_enabled"]:
+        return False
+
     is_trend = route == "a"
     if side == 'buy' and not MARKET_WIND.get("allow_long", True) and is_trend:
         logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止順勢開多")
@@ -1185,6 +1257,29 @@ def risk_guard(sym, side, route="a"):
 
     s = STATES[sym]
     cp = s.close_price
+
+    # 避免同方向連續追單 (15分鐘冷卻)
+    if time.time() - s.last_stop_loss_time < 900:
+        pos_side = 'buy' if side == 'buy' else 'sell'
+        if s.last_stop_loss_side == pos_side:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向追單保護] 15分鐘內剛被停損 {pos_side}，冷卻中")
+            return False
+
+    # 波動率過濾 (Low Volatility)
+    atr_pct = s.current_atr / cp if cp > 0 else 0
+    if atr_pct < 0.003:
+        # logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [低波動率過濾] ATR {atr_pct*100:.2f}% < 0.3%，盤整死水不交易")
+        return False
+
+    # 極端行情保護 (Extreme Volatility in 5m)
+    if len(s.ohlcv) >= 5:
+        recent_5 = s.ohlcv[-5:]
+        highest_5m = max([x[2] for x in recent_5])
+        lowest_5m = min([x[3] for x in recent_5])
+        change_5m = (highest_5m - lowest_5m) / lowest_5m if lowest_5m > 0 else 0
+        if change_5m > 0.03:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極端行情保護] 5分鐘內震幅達 {change_5m*100:.2f}% > 3%，放棄進場")
+            return False
     
     # 均線過濾器：僅限制 Route A (順勢)
     if is_trend and s.sma200_15m > 0:
@@ -1371,8 +1466,8 @@ def compute_signal_strength(sym):
     momentum_short = close < prev_close * 0.999 and (s.current_vol >= max(1000.0, s.vol_ma20 * 0.8) or s.trade_signal_strength > 0.2)
 
     # Route C (Left Side / 搶極端反彈): 只有在有順勢或足夠動能支持時才允許進場
-    route_c_long = rsi <= 35.0 and last_candle_confirmed_long and (trend_long or (momentum_long and s.current_vol >= max(1000.0, s.vol_ma20 * 0.8)))
-    route_c_short = rsi >= 65.0 and last_candle_confirmed_short and (trend_short or (momentum_short and s.current_vol >= max(1000.0, s.vol_ma20 * 0.8)))
+    route_c_long = rsi <= 25.0 and last_candle_confirmed_long and (trend_long or (momentum_long and s.current_vol >= max(1000.0, s.vol_ma20 * 0.8)))
+    route_c_short = rsi >= 75.0 and last_candle_confirmed_short and (trend_short or (momentum_short and s.current_vol >= max(1000.0, s.vol_ma20 * 0.8)))
 
     # Route S (Divergence / 背離確認機制): 最強反轉訊號
     bullish_div, bearish_div = check_rsi_divergence(s.closes, s.rsis, window=60)
@@ -1434,6 +1529,9 @@ def compute_signal_strength(sym):
     return (None, 0, None)
 
 async def check_entries():
+    if not GLOBAL_STATE["trading_enabled"]:
+        return
+        
     open_count = get_open_position_count()
     if open_count >= MAX_POSITIONS:
         return
@@ -1505,14 +1603,13 @@ async def watch_symbol_trades(sym):
     while True:
         try:
             trades = await exchange.watch_trades(sym)
-            if isinstance(trades, list):
-                for trade in trades:
+            if trades:
+                data = trades if isinstance(trades, list) else [trades]
+                for trade in data:
                     update_trade_signal(sym, trade)
-            elif trades:
-                update_trade_signal(sym, trades)
         except Exception as e:
-            logger.warning(f"⚠️ [成交流監聽異常] {sym}: {e}")
-            await asyncio.sleep(3)
+            logger.warning(f"⚠️ [成交流監聽異常] {sym}: {e}，5秒後重試")
+            await asyncio.sleep(5)
 
 
 async def ensure_watch_tasks():
@@ -1520,11 +1617,17 @@ async def ensure_watch_tasks():
     desired_symbols = set(ALL_SYMBOLS)
     current_symbols = set(WATCH_TASKS.keys())
 
+    # 移除失效任務
     for sym in current_symbols - desired_symbols:
         task = WATCH_TASKS.pop(sym, None)
         if task is not None:
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
+    # 加入新任務
     for sym in desired_symbols - current_symbols:
         WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(sym))
 
@@ -1555,7 +1658,7 @@ async def main_loop():
     
     print(f"📋 監控幣種: {', '.join(ALL_SYMBOLS)}")
     try:
-        await asyncio.wait_for(initialize_atr_history(), timeout=30)
+        await asyncio.wait_for(initialize_atr_history(), timeout=120)
     except (asyncio.TimeoutError, Exception) as e:
         logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
     await fetch_real_balance()

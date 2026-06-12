@@ -11,6 +11,24 @@ if any("pytest" in x or "unittest" in x for x in sys.argv) or "pytest" in sys.mo
     PAPER_STATE_FILE = "test_paper_state.json"
 
 def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
+    # --- 胖手指與異常價格防禦 ---
+    try:
+        from services.binance_service import get_price
+        clean_sym = symbol.replace(":USDT", "USDT")
+        if clean_sym.endswith("USDT"):
+            current_market = get_price(clean_sym)
+            if current_market and "price" in current_market:
+                real_price = float(current_market["price"])
+                if real_price > 0:
+                    deviation = abs(price - real_price) / real_price
+                    # 偏離實際市價超過 15% 視為異常價格 (胖手指或程式 Bug)，直接拒絕
+                    if deviation > 0.15:
+                        print(f"🛑 [胖手指防禦] 拒絕異常價格交易！請求價格: {price}, 實際市價: {real_price}")
+                        return
+    except Exception as e:
+        print(f"⚠️ [防禦檢查失敗] {e}")
+    # ----------------------------
+
     state = {
         "balance_usdt": 150.0,
         "positions": {},
@@ -32,6 +50,18 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
         state.setdefault("trades", [])
         pos = state.setdefault("positions", {}).setdefault(symbol, {"qty": 0.0, "avg_price": 0.0, "realized_pnl": 0.0})
         
+        current_qty = pos["qty"]
+        current_avg = pos["avg_price"]
+        
+        # 如果是嘗試平倉但當前已無持倉，提早結束，不紀錄任何東西
+        if is_close and current_qty == 0:
+            print(f"🛑 [防禦] 嘗試平倉但當前已無持倉，忽略重複平倉！")
+            f.seek(0)
+            json.dump(state, f, indent=4)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return
+
         trade = {
             "id": str(uuid.uuid4())[:8],
             "order_id": str(uuid.uuid4())[:8],
@@ -49,9 +79,6 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
         state["trades"].append(trade)
         # Keep only the last 100 trades to avoid file bloat
         state["trades"] = state["trades"][-100:]
-        
-        current_qty = pos["qty"]
-        current_avg = pos["avg_price"]
         
         # [ATOMIC GLOBAL LOCK] 已移除：因為 multi_coin_bot 會自行管理最大持倉數，
         # 底層不該再用 sys.exit(2) 強制關閉整個程式。

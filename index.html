@@ -1051,8 +1051,10 @@ createApp({
 
         const sortedCoins = computed(() => {
             return [...coins.value].sort((a, b) => {
-                const hasA = allPositions.value[a.symbol] ? 1 : 0;
-                const hasB = allPositions.value[b.symbol] ? 1 : 0;
+                const pkA = a.symbol.replace('USDT', ':USDT');
+                const pkB = b.symbol.replace('USDT', ':USDT');
+                const hasA = (allPositions.value[a.symbol] || allPositions.value[pkA]) ? 1 : 0;
+                const hasB = (allPositions.value[b.symbol] || allPositions.value[pkB]) ? 1 : 0;
                 if (hasA !== hasB) {
                     return hasB - hasA;
                 }
