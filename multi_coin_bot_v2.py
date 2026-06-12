@@ -988,11 +988,13 @@ async def check_position_exits(sym):
         await close_position(sym, cs, abs(s.qty), p, avg, reason="保本防護出場")
         return
 
-    # 1. 絕對硬停損 (嚴格控管最大虧損，無視持倉時間！)
+    # 1. 動態 ATR 硬停損 (取代固定的 2%)
+    # 邏輯: 停損點 = 進場價 +/- (2 * ATR)
+    dynamic_stop_pct = min(max(s.current_atr * 2.0 / avg, 0.01), 0.05) # 限制在 1% ~ 5% 之間
     usdt_pnl = profit_pct * avg * abs(s.qty)
-    if profit_pct <= -0.02:
+    if profit_pct <= -dynamic_stop_pct:
         cs = 'sell' if is_long else 'buy'
-        reason_msg = "2%跌幅停損"
+        reason_msg = f"動態ATR({dynamic_stop_pct*100:.2f}%)跌幅停損"
         print(f"🚨 [{reason_msg}] {sym} 觸發底線平倉！(目前虧損: {usdt_pnl:.2f} U)")
         await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
         return
@@ -1282,10 +1284,13 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
         
-    # 基礎量能防護 (過濾極度死水)：量能不能過度縮水
-    if current_vol < vol_ma20 * 0.7 and prev_vol < vol_ma20 * 0.7:
-        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 連續兩根量能極低 < 0.7x")
-        return False
+    if len(s.ohlcv) >= 5:
+        recent_5_vols = [x[5] for x in s.ohlcv[-6:-1]] # Past 5 closed candles
+        avg_vol_5 = sum(recent_5_vols) / 5
+        if current_vol <= avg_vol_5:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能確認過濾] 當前成交量 {current_vol:.2f} 未超越過去5根均量 {avg_vol_5:.2f}，量能不足")
+            return False
+            
     return True
 
 
