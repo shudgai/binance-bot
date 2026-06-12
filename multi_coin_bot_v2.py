@@ -48,7 +48,7 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 1.5
+VOLUME_RATIO_THRESHOLD = 0.7
 
 if USE_TESTNET:
     exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
@@ -977,6 +977,37 @@ async def check_position_exits(sym):
     if p < s.trailing_lowest:
         s.trailing_lowest = p
 
+    # ── 新增：方向確認失敗快速停損與反手操作 ──
+    # ① 連續 3 根反向 K 線 → 立即反手
+    if hold_sec >= 60 and profit_pct < 0 and len(s.ohlcv) >= 4:
+        recent_candles = s.ohlcv[-3:]  # 最近 3 根 K 線
+        if is_long:
+            consecutive_against = all(c[4] < c[1] for c in recent_candles) # 連續 3 根陰線
+        else:
+            consecutive_against = all(c[4] > c[1] for c in recent_candles) # 連續 3 根陽線
+            
+        if consecutive_against:
+            new_side = 'sell' if is_long else 'buy'
+            logger.warning(f"🕯️ [連續反向K線] {sym} 持倉{hold_sec/60:.1f}分，連續3根{'陰' if is_long else '陽'}線且虧損{profit_pct*100:.2f}%，方向錯誤立即反手開 {new_side}")
+            s.highest_profit_pct = 0.0
+            await close_and_reverse(sym, new_side, p, reason="連續反向K線停損反手")
+            return
+
+    # ② 3分鐘 (180秒) 守護線 → 虧損超過 -0.5% 立即反手
+    if hold_sec >= 180.0 and hold_sec < 300.0 and profit_pct <= -0.005:
+        new_side = 'sell' if is_long else 'buy'
+        logger.warning(f"🚩 [方向看錯快停] {sym} 持倉 {hold_sec/60:.1f} 分，虧損達 {profit_pct*100:.2f}% (>-0.5%)，立即反手開 {new_side}")
+        s.highest_profit_pct = 0.0
+        await close_and_reverse(sym, new_side, p, reason="3分鐘虧損超標反手(-0.5%)")
+        return
+
+    # ③ 5分鐘 (300秒) 守護線 → 未見盈利時間到認賠平倉 (不反手)
+    if hold_sec >= 300.0 and profit_pct < 0:
+        cs = 'sell' if is_long else 'buy'
+        logger.warning(f"🚩 [限時黃金期結束] {sym} 持倉 {hold_sec/60:.1f} 分未見盈利，且仍虧損 {profit_pct*100:.2f}%，認賠平倉")
+        await close_position(sym, cs, abs(s.qty), p, avg, reason="5分鐘黃金期結束未盈利平倉", is_stop_loss=True)
+        return
+
     # 0. 強制保本機制 (Breakeven Protection)
     if profit_pct > 0.005:
         s.is_breakeven_set = True
@@ -1253,31 +1284,50 @@ def is_entry_pin_safe(sym, side):
     if len(s.ohlcv) < 2:
         return True
 
-    candle = s.ohlcv[-1]
-    open_price = float(candle[1])
-    high = float(candle[2])
-    low = float(candle[3])
-    close_price = float(candle[4])
-    body = abs(close_price - open_price)
-    upper_wick = high - max(open_price, close_price)
-    lower_wick = min(open_price, close_price) - low
-
-    if body <= 0:
-        return False
-
-    if side == 'buy':
-        # 若當前 K 線是明顯的反轉 pin bar，直接判定為不安全的多頭進場
-        prev_close = float(s.ohlcv[-2][4]) if len(s.ohlcv) >= 2 else close_price
-        if close_price < prev_close and upper_wick > body * 2.0:
+    # 檢查當前 K 線和上一根 K 線，防範連續插針
+    for i in [-1, -2]:
+        candle = s.ohlcv[i]
+        open_price = float(candle[1])
+        high = float(candle[2])
+        low = float(candle[3])
+        close_price = float(candle[4])
+        body = abs(close_price - open_price)
+        upper_wick = high - max(open_price, close_price)
+        lower_wick = min(open_price, close_price) - low
+        candle_range = high - low
+        
+        # 1. 絕對插針過濾 (單根 K 線波動過大，超過 3 倍 ATR)
+        if s.current_atr > 0 and candle_range > s.current_atr * 3.0:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] K線波動 {candle_range:.5f} > 3x ATR {s.current_atr*3:.5f}，極端行情避險")
             return False
-        if close_price < prev_close and low < prev_close and upper_wick >= body:
-            return False
-        return True
 
-    # side == 'sell'
-    prev_close = float(s.ohlcv[-2][4]) if len(s.ohlcv) >= 2 else close_price
-    if close_price > prev_close and lower_wick > body * 2.0:
-        return False
+        if body <= 0:
+            continue
+
+        if side == 'buy':
+            # 若 K 線是明顯的反轉 pin bar (上影線過長)，判定為不安全的多頭進場
+            if upper_wick > body * 2.0:
+                logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 上影線 {upper_wick:.5f} > 實體 {body:.5f} 兩倍，做多危險")
+                return False
+            # 針對當前 K 線收跌，且上影線大於實體的情況
+            if i == -1 and len(s.ohlcv) >= 2:
+                prev_close = float(s.ohlcv[-2][4])
+                if close_price < prev_close and upper_wick >= body:
+                    logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 收跌且上影線過長，做多危險")
+                    return False
+
+        elif side == 'sell':
+            # 若 K 線是明顯的下引線 pin bar (下影線過長)，判定為不安全的空頭進場
+            if lower_wick > body * 2.0:
+                logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 下影線 {lower_wick:.5f} > 實體 {body:.5f} 兩倍，做空危險")
+                return False
+            # 針對當前 K 線收漲，且下影線大於實體的情況
+            if i == -1 and len(s.ohlcv) >= 2:
+                prev_close = float(s.ohlcv[-2][4])
+                if close_price > prev_close and lower_wick >= body:
+                    logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 收漲且下影線過長，做空危險")
+                    return False
+
     return True
 
 
@@ -1354,14 +1404,14 @@ def risk_guard(sym, side, route="a"):
             logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200大勢保護] 順勢做空，但價格 {cp:.4f} >= MA200 {ma200:.4f}")
             return False
 
-    # 大週期 (HTF) 1H 趨勢過濾器：僅限制順勢策略
+    # 大週期 (HTF) 1H 趨勢過濾器：(恢復寬鬆，僅過濾順勢)
     htf_trend = s.htf_trend
-    if is_trend and htf_trend:
+    if htf_trend and is_trend:
         if side == 'buy' and htf_trend == 'short':
-            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [1H 大週期過濾] 1H 趨勢為空頭，禁止順勢做多")
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [1H 大週期過濾] 1H 趨勢為空頭，禁止順勢開多")
             return False
         if side == 'sell' and htf_trend == 'long':
-            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [1H 大週期過濾] 1H 趨勢為多頭，禁止順勢做空")
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [1H 大週期過濾] 1H 趨勢為多頭，禁止順勢開空")
             return False
             
     # 極端波動率過濾：當市場處於瘋狂洗盤、暴漲暴跌時，禁止任何逆勢搶短
@@ -1461,11 +1511,11 @@ def compute_signal_strength(sym):
     trend_long = ema20 > 0 and close > ema20
     trend_short = ema20 > 0 and close < ema20
 
-    # 定義更嚴格的動態 RSI 門檻 (使用者建議加嚴)
-    LONG_RSI_NORMAL = 35.0 # 原40，改為35
-    SHORT_RSI_NORMAL = 65.0
-    LONG_RSI_HIGH_VOL = 30.0 # 極端超賣才進場
-    SHORT_RSI_HIGH_VOL = 70.0
+    # 定義動態 RSI 門檻 (恢復寬鬆)
+    LONG_RSI_NORMAL = 40.0
+    SHORT_RSI_NORMAL = 60.0
+    LONG_RSI_HIGH_VOL = 35.0
+    SHORT_RSI_HIGH_VOL = 65.0
 
     atr_history = s.atr_history
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
@@ -1508,6 +1558,18 @@ def compute_signal_strength(sym):
     last_candle_confirmed_long = len(s.ohlcv) >= 2 and close > s.ohlcv[-2][4]
     last_candle_confirmed_short = len(s.ohlcv) >= 2 and close < s.ohlcv[-2][4]
 
+    # 微觀動能確認 (Micro Momentum) - 方案1(當下K線顏色) + 方案2(超短線 EMA5)
+    current_open = float(s.ohlcv[-1][1]) if len(s.ohlcv) > 0 else close
+    is_green_candle = close > current_open
+    is_red_candle = close < current_open
+    ema5 = calculate_ema(closes, 5) if len(closes) >= 5 else close
+    is_above_ema5 = close > ema5
+    is_below_ema5 = close < ema5
+
+    # 綜合確認：必須突破前高/低，且當下是順向顏色，且站上/跌破 EMA5
+    last_candle_confirmed_long = last_candle_confirmed_long and is_green_candle and is_above_ema5
+    last_candle_confirmed_short = last_candle_confirmed_short and is_red_candle and is_below_ema5
+
     logger.debug(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI門檻(L/S: {long_rsi_threshold:.0f}/{short_rsi_threshold:.0f}): {rsi < long_rsi_threshold}/{rsi > short_rsi_threshold} | BB區間(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | MACD滿足(L/S): {long_macd_ok}/{short_macd_ok} (交叉:{long_macd_cross}/{short_macd_cross}, 柱狀體向上/下:{long_macd_hist_aligned}/{short_macd_hist_aligned}) | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
 
     ema50 = s.ema50
@@ -1517,11 +1579,15 @@ def compute_signal_strength(sym):
     is_above_sma200 = s.sma200_15m > 0 and close > s.sma200_15m * 0.999
     is_below_sma200 = s.sma200_15m > 0 and close < s.sma200_15m * 1.001
 
-    # Route A (Right Side / 順勢交易): 只要價格站上均線、MACD有方向、且最近一根K線向上/向下確認即可
+    # RSI 趨勢與方向確認 (開多必須 RSI > 50 且最新 RSI 在上升，開空必須 RSI < 50 且最新 RSI 在下降)
+    rsi_rising = len(rsis) >= 2 and rsis[-1] > rsis[-2]
+    rsi_falling = len(rsis) >= 2 and rsis[-1] < rsis[-2]
+
+    # Route A (Right Side / 順勢交易)
     route_a_long = (is_above_sma200 or trend_long) and (long_macd_cross or long_macd_hist_aligned) and last_candle_confirmed_long
     route_a_short = (is_below_sma200 or trend_short) and (short_macd_cross or short_macd_hist_aligned) and last_candle_confirmed_short
 
-    # Route B (Left Side / 逆勢反轉): 只要 RSI 進入極端區且價格在布林帶外，且有最近一根K線確認即可
+    # Route B (Left Side / 逆勢反轉)
     route_b_long = rsi < long_rsi_threshold and is_in_bb_zone_long and last_candle_confirmed_long
     route_b_short = rsi > short_rsi_threshold and is_in_bb_zone_short and last_candle_confirmed_short
 
