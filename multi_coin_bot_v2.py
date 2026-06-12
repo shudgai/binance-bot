@@ -1730,8 +1730,8 @@ async def main_loop():
                 
                 if GLOBAL_STATE["initial_daily_equity"] > 0 and GLOBAL_STATE["trading_enabled"]:
                     dd_pct = (current_balance - GLOBAL_STATE["initial_daily_equity"]) / GLOBAL_STATE["initial_daily_equity"]
-                    if dd_pct <= -0.03:
-                        logger.error(f"🚨🚨 [淨值回撤保護] 今日總淨值回撤達 {dd_pct*100:.2f}% (<-3%)，強制關閉交易至明日！")
+                    if dd_pct <= -0.10:
+                        logger.error(f"🚨🚨 [淨值回撤保護] 今日總淨值回撤達 {dd_pct*100:.2f}% (<-10%)，強制關閉交易至明日！")
                         GLOBAL_STATE["trading_enabled"] = False
                 
             if loop_start - last_htf_update > 1800:  # 每 30 分鐘更新一次大週期
