@@ -1146,6 +1146,35 @@ async def execute_order(sym, side, price, route="a"):
         logger.warning(f"⚠️ [連敗風控] {sym} 全局已連續虧損 {GLOBAL_STATE['consecutive_losses']} 次，暫停開倉避免上頭")
         return
 
+    # 深度與流動性防護 (Bid-Ask Spread & Volume)
+    try:
+        order_book = await exchange.fetch_bids_asks([sym])
+        if sym in order_book:
+            best_bid = order_book[sym]['info'].get('bidPrice')
+            best_ask = order_book[sym]['info'].get('askPrice')
+            bid_qty = order_book[sym]['info'].get('bidQty')
+            ask_qty = order_book[sym]['info'].get('askQty')
+            
+            if best_bid and best_ask:
+                best_bid = float(best_bid)
+                best_ask = float(best_ask)
+                spread = (best_ask - best_bid) / best_ask
+                if spread > 0.001:
+                    logger.warning(f"🛑 [流動性風控] {sym} 買賣價差 {spread*100:.2f}% > 0.1%，深度不足，拒絕開倉！")
+                    return
+            
+            # 滑價保護: 訂單量不得超過最佳盤口掛單量的 1%
+            if bid_qty and ask_qty:
+                bid_qty = float(bid_qty)
+                ask_qty = float(ask_qty)
+                base_amt_est = (margin * LEVERAGE) / price
+                target_qty = ask_qty if side == 'buy' else bid_qty
+                if target_qty > 0 and base_amt_est > target_qty * 0.01:
+                    logger.warning(f"🛑 [深度風控] {sym} 預估下單量 {base_amt_est:.4f} 超過盤口深度 1% (掛單量 {target_qty:.4f})，拒絕開倉避免滑價！")
+                    return
+    except Exception as e:
+        logger.debug(f"⚠️ [流動性檢查失敗] {sym}: {e}")
+
     base_amt = (margin * LEVERAGE) / price
     if base_amt < 0.001:
         logger.warning(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")

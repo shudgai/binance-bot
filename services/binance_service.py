@@ -155,7 +155,7 @@ def get_1h_volatility(symbol: str):
 def get_top_volume_altcoins(limit=5, ignore_list=None):
     try:
         tickers = client.futures_ticker()
-        exclude_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT"]
+        exclude_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "USDCUSDT", "SPACEUSDT", "HMSTRUSDT", "XPLUSDT", "SKYAIUSDT"]
         if ignore_list:
             exclude_list.extend(ignore_list)
         candidates = []
@@ -173,8 +173,7 @@ def get_top_volume_altcoins(limit=5, ignore_list=None):
             except (ValueError, TypeError):
                 continue
                 
-            # Filter for "small coins": price under $5.0
-            if price > 5.0 or price == 0:
+            if price == 0:
                 continue
                 
             # Filter out wildly jumping coins (24h high/low difference > 25%)
