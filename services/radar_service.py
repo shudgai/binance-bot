@@ -105,7 +105,7 @@ def auto_radar_switch(force_start=False):
         recent_syms = _get_recently_traded_symbols(hours=24)
         all_preserved = list(set(open_syms + recent_syms))
         
-        preserved = [s for s in all_preserved if s not in top_20]
+        preserved = [s for s in all_preserved if s not in top_20 and 'SPACE' not in s]
         if preserved:
             add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(preserved)}", "warning")
         final_symbols = top_20 + preserved
