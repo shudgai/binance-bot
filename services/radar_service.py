@@ -94,10 +94,13 @@ def auto_radar_switch(force_start=False):
         
         clean_blacklist()
         ignore_list = list(BLACKLIST.keys())
-        top_20 = get_top_volume_altcoins(20, ignore_list=ignore_list)
+        
+        # 系統指令：嚴格執行交易白名單
+        whitelist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT", "AVAXUSDT", "INJUSDT"]
+        top_20 = [sym for sym in whitelist if sym not in ignore_list]
 
         if not top_20:
-            add_system_log("⚠️ [雷達掃描] 無法獲取 Top 20 榜單，維持原狀", "warning")
+            add_system_log("⚠️ [雷達掃描] 白名單全數被熔斷，維持原狀", "warning")
             return current_syms
 
         # 保留仍有持倉的幣種以及 24 小時內有交易紀錄的幣種，避免介面換幣時找不到

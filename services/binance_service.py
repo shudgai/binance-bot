@@ -156,9 +156,9 @@ def get_top_volume_altcoins(limit=5, ignore_list=None):
     try:
         tickers = client.futures_ticker()
         
-        # 排除名單：包含穩定幣、比特幣、以太幣，以及缺乏基本面支撐的純迷因幣與高危險妖幣
+        # 排除名單：包含穩定幣，以及缺乏基本面支撐的純迷因幣與高危險妖幣
         exclude_list = [
-            "BTCUSDT", "ETHUSDT", "BNBUSDT", "USDCUSDT", 
+            "USDCUSDT", 
             "SPACEUSDT", "HMSTRUSDT", "XPLUSDT", "SKYAIUSDT",
             "PEPEUSDT", "WIFUSDT", "FLOKIUSDT", "BOMEUSDT", "MEMEUSDT", "BONKUSDT", "NOTUSDT", "DOGEUSDT", "SHIBUSDT", "1000PEPEUSDT", "1000FLOKIUSDT", "1000BONKUSDT"
         ]
