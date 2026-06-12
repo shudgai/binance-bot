@@ -973,9 +973,9 @@ async def check_position_exits(sym):
 
     # 1. 絕對硬停損 (嚴格控管最大虧損，無視持倉時間！)
     usdt_pnl = profit_pct * avg * abs(s.qty)
-    if profit_pct <= -0.04 or usdt_pnl <= -3.0:
+    if profit_pct <= -0.02 or usdt_pnl <= -3.0:
         cs = 'sell' if is_long else 'buy'
-        reason_msg = "4%跌幅停損" if profit_pct <= -0.04 else "3U金額停損"
+        reason_msg = "2%跌幅停損" if profit_pct <= -0.02 else "3U金額停損"
         print(f"🚨 [{reason_msg}] {sym} 觸發底線平倉！(目前虧損: {usdt_pnl:.2f} U)")
         await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
         return
@@ -1019,10 +1019,10 @@ async def check_position_exits(sym):
             await close_position(sym, cs, abs(s.qty), p, avg, reason="ATR移動停利")
             return
     elif s.highest_profit_pct >= 0.008:
-        # 保留一個較早的防護，以防沒走到 1.8% 就 A 轉
-        if profit_pct <= s.highest_profit_pct - 0.003:
+        # 保留一個較早的防護，高波動小幣稍微放寬防護網避免插針
+        if profit_pct <= s.highest_profit_pct - 0.005:
             cs = 'sell' if is_long else 'buy'
-            print(f"🏃 [初階移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 0.3%，觸發出場！")
+            print(f"🏃 [初階移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 0.5%，觸發出場！")
             await close_position(sym, cs, abs(s.qty), p, avg, reason="初階移動停利")
             return
 
@@ -1328,8 +1328,8 @@ def risk_guard(sym, side, route="a"):
         lows = np.array([x[3] for x in s.ohlcv])
         closes = np.array([x[4] for x in s.ohlcv])
         adx_val = calculate_adx(highs, lows, closes)
-        if adx_val < 10:
-            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 10")
+        if adx_val < 20:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 20 (要求更強的趨勢)")
             return False
 
     # 實盤最小量限制
@@ -1531,6 +1531,21 @@ def compute_signal_strength(sym):
 async def process_symbols():
     await fetch_all_klines()
     async with STATES_LOCK:
+        # 優先硬停損防護 (在指標運算前執行，確保不被卡頓拖延)
+        for sym in ALL_SYMBOLS:
+            s = STATES[sym]
+            if abs(s.qty) > 0 and s.avg_price > 0:
+                p = s.close_price
+                avg = s.avg_price
+                is_long = s.qty > 0
+                profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
+                usdt_pnl = profit_pct * avg * abs(s.qty)
+                if profit_pct <= -0.02 or usdt_pnl <= -3.0:
+                    cs = 'sell' if is_long else 'buy'
+                    reason_msg = "2%跌幅停損" if profit_pct <= -0.02 else "3U金額停損"
+                    print(f"🚨 [優先防護] {sym} 觸發底線平倉！(指標結算前攔截) 目前虧損: {usdt_pnl:.2f} U")
+                    await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
+
         for sym in ALL_SYMBOLS:
             compute_indicators(sym)
         update_states()
