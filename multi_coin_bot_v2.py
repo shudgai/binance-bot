@@ -1253,9 +1253,9 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
         
-    # 假突破防護：突破當下量能不能過度縮水 (大於均量的 0.85 倍)
-    if current_vol < vol_ma20 * 0.85:
-        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [假突破防護/量能不足] 當前量 {current_vol:.2f} < 要求量能 {vol_ma20 * 0.85:.2f} (0.85x 均量)")
+    # 基礎量能防護 (過濾極度死水)：量能不能過度縮水
+    if current_vol < vol_ma20 * 0.7 and prev_vol < vol_ma20 * 0.7:
+        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 連續兩根量能極低 < 0.7x")
         return False
     return True
 
@@ -1345,8 +1345,8 @@ def risk_guard(sym, side, route="a"):
         lows = np.array([x[3] for x in s.ohlcv])
         closes = np.array([x[4] for x in s.ohlcv])
         adx_val = calculate_adx(highs, lows, closes)
-        if adx_val < 12:
-            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 12 (要求更強的趨勢)")
+        if adx_val < 10:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 10")
             return False
 
     # 實盤最小量限制
