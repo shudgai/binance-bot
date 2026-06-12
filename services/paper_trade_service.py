@@ -213,11 +213,18 @@ def get_paper_positions():
                 state = json.load(f)
         except Exception:
             pass
+    from services.bot_manager_service import get_bot_status
+    active_symbols = get_bot_status().get("active_symbols", [])
+    
     positions = {}
     for coin, data in state.get('positions', {}).items():
-        positions[coin] = {
-            "qty": data.get("qty", 0),
-            "avg_price": data.get("avg_price", 0),
-            "realized_pnl": data.get("realized_pnl", 0)
-        }
+        qty = data.get("qty", 0)
+        raw_coin = coin.replace(":USDT", "USDT").replace(":", "")
+        # 只顯示還有持倉的，或者是目前機器人正在監控的活躍幣種
+        if abs(float(qty)) > 0 or raw_coin in active_symbols:
+            positions[coin] = {
+                "qty": qty,
+                "avg_price": data.get("avg_price", 0),
+                "realized_pnl": data.get("realized_pnl", 0)
+            }
     return positions

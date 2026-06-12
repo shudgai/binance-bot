@@ -103,14 +103,13 @@ def auto_radar_switch(force_start=False):
             add_system_log("⚠️ [雷達掃描] 白名單全數被熔斷，維持原狀", "warning")
             return current_syms
 
-        # 保留仍有持倉的幣種以及 24 小時內有交易紀錄的幣種，避免介面換幣時找不到
+        # 系統指令：嚴格執行交易白名單，不再保留「近期交易過」的幣種
+        # 僅保留「目前仍有實質持倉」的幣種以防孤兒單
         open_syms = _get_open_position_symbols()
-        recent_syms = _get_recently_traded_symbols(hours=24)
-        all_preserved = list(set(open_syms + recent_syms))
+        preserved = [s for s in open_syms if s not in top_20]
         
-        preserved = [s for s in all_preserved if s not in top_20 and not any(bad in s for bad in ['SPACE', 'HMSTR', 'XPL', 'SKYAI'])]
         if preserved:
-            add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(preserved)}", "warning")
+            add_system_log(f"🔒 [持倉保護] 以下幣種仍有實質持倉，將持續監控至平倉: {', '.join(preserved)}", "warning")
         final_symbols = top_20 + preserved
 
         # 排序讓比較不受順序影響
