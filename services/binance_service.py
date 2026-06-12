@@ -155,7 +155,14 @@ def get_1h_volatility(symbol: str):
 def get_top_volume_altcoins(limit=5, ignore_list=None):
     try:
         tickers = client.futures_ticker()
-        exclude_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "USDCUSDT", "SPACEUSDT", "HMSTRUSDT", "XPLUSDT", "SKYAIUSDT"]
+        
+        # 排除名單：包含穩定幣、比特幣、以太幣，以及缺乏基本面支撐的純迷因幣與高危險妖幣
+        exclude_list = [
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "USDCUSDT", 
+            "SPACEUSDT", "HMSTRUSDT", "XPLUSDT", "SKYAIUSDT",
+            "PEPEUSDT", "WIFUSDT", "FLOKIUSDT", "BOMEUSDT", "MEMEUSDT", "BONKUSDT", "NOTUSDT", "DOGEUSDT", "SHIBUSDT", "1000PEPEUSDT", "1000FLOKIUSDT", "1000BONKUSDT"
+        ]
+        
         if ignore_list:
             exclude_list.extend(ignore_list)
         candidates = []
