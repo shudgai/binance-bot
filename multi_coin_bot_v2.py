@@ -283,6 +283,7 @@ def build_symbol_state(sym):
         "max_strength": 0.0,
         "entry_route": "a",
         "last_stop_loss_side": "",
+        "last_stop_loss_price": 0.0,
         "last_stop_loss_time": 0.0,
         "last_exit_time": 0.0,
         "last_exit_type": "normal",
@@ -1014,10 +1015,12 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         old_side = 'buy' if s.qty > 0 else 'sell'
         ls_side = old_side if is_stop_loss else s.last_stop_loss_side
         ls_time = time.time() if is_stop_loss else s.last_stop_loss_time
+        ls_price = price if is_stop_loss else getattr(s, 'last_stop_loss_price', 0.0)
         
         reset_coin_state(sym)
         STATES[sym].last_stop_loss_side = ls_side
         STATES[sym].last_stop_loss_time = ls_time
+        STATES[sym].last_stop_loss_price = ls_price
         STATES[sym].last_exit_time = time.time()
         STATES[sym].last_exit_type = "stop_loss" if is_stop_loss else ("profit" if is_profit else "normal")
         
@@ -1029,11 +1032,19 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
             GLOBAL_STATE["trading_enabled"] = True
 
         GLOBAL_STATE["daily_pnl"] += pnl
+        
+        # 計算實際 % 獲利 (用 pnl / 總成本)
+        cost = avg_price * abs(qty)
+        pct = (pnl / cost) if cost > 0 else 0
+
         route = s.entry_route
         if route in GLOBAL_STATE["route_stats"]:
             if pnl > 0:
                 GLOBAL_STATE["route_stats"][route]["win"] += 1
-                GLOBAL_STATE["consecutive_losses"] = 0
+                if pct > 0.005:
+                    GLOBAL_STATE["consecutive_losses"] = 0
+                else:
+                    logger.info(f"⚠️ {sym} 獲利 {pct*100:.2f}% 太小 (<0.5%)，不足以抵銷連敗紀錄 (目前 {GLOBAL_STATE['consecutive_losses']} 連敗)")
             elif pnl < 0:
                 GLOBAL_STATE["route_stats"][route]["loss"] += 1
                 GLOBAL_STATE["consecutive_losses"] += 1
@@ -1114,11 +1125,11 @@ async def check_position_exits(sym):
         await close_position(sym, cs, abs(s.qty), p, avg, reason=f"AI下令: {ai_reason[:15]}...", is_stop_loss=(profit_pct<0))
         return
 
-    if profit_pct <= -0.005:
+    if profit_pct <= -0.02:
         cs = 'sell' if is_long else 'buy'
-        logger.warning(f"💀 [固定底線停損] {sym} 虧損達 {profit_pct*100:.2f}% (<= -0.5%)，無條件斬倉！")
+        logger.warning(f"💀 [固定底線停損] {sym} 虧損達 {profit_pct*100:.2f}% (<= -2.0%)，無條件斬倉！")
         s.highest_profit_pct = 0.0
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="固定底線停損-0.8%", is_stop_loss=True)
+        await close_position(sym, cs, abs(s.qty), p, avg, reason="固定底線停損-2.0%", is_stop_loss=True)
         return
 
     # 5. 動態 ATR 硬停損 (取代固定的 2%)
@@ -1534,22 +1545,15 @@ def risk_guard(sym, side, route="a"):
         
     cp = s.close_price
 
-    # 避免同方向連續追單 (15分鐘冷卻)
-    if time.time() - s.last_stop_loss_time < STRATEGY_CONF["ENTRY_COOLDOWN_SAME_SIDE_SEC"]:
-        pos_side = 'buy' if side == 'buy' else 'sell'
-        if s.last_stop_loss_side == pos_side:
-            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向追單保護] 15分鐘內剛被停損 {pos_side}，冷卻中")
-            return False
-
     # 動態冷卻 (無論多空)，防止來回反向雙殺
     last_exit = getattr(s, "last_exit_time", 0.0)
     last_exit_type = getattr(s, "last_exit_type", "normal")
-    cooldown_map = {"stop_loss": 300, "profit": 60, "normal": 120}
+    cooldown_map = {"stop_loss": 1800, "profit": 60, "normal": 120}  # 停損強制關小黑屋 30 分鐘 (1800秒)
     required_cool = cooldown_map.get(last_exit_type, 90)
 
     if time.time() - last_exit < required_cool:
-        # 註解掉以免 log 洗版
-        # logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} [{last_exit_type}冷卻] 還需等 {required_cool - (time.time()-last_exit):.0f}秒")
+        if last_exit_type == "stop_loss":
+            logger.info(f"🛑 {sym} 剛被停損，強制關小黑屋中 (剩 {required_cool - (time.time()-last_exit):.0f}秒)，完全禁止開倉")
         return False
 
     # 決定不同幣種的門檻參數
@@ -1858,197 +1862,126 @@ def compute_signal_strength(sym):
     long_base_ok = route_s_long or route_a_long or route_b_long or route_c_long or (momentum_long and last_candle_confirmed_long and (long_macd_cross or long_macd_hist_aligned) and trend_long)
     short_base_ok = route_s_short or route_a_short or route_b_short or route_c_short or (momentum_short and last_candle_confirmed_short and (short_macd_cross or short_macd_hist_aligned) and trend_short)
 
+    long_score = 0.0
+    short_score = 0.0
+    long_route = None
+    short_route = None
+
     if long_base_ok:
-        route = "s" if route_s_long else "c" if route_c_long else "b" if route_b_long else "a"
-        # 左側交易併發控制：如果不允許太多左側交易同時發生
-        if route in ['b', 'c', 's'] and left_side_positions >= 2:  # 寬鬆：允許最多 2 個左側倉位
-            logger.info(f"🛑 [風控] {sym} 觸發左側做多({route})，但目前已有 {left_side_positions} 個左側倉位，放棄開倉。")
-            return (None, 0.0, None, False)
+        long_route = "s" if route_s_long else "c" if route_c_long else "b" if route_b_long else "a"
+        if long_route == "a":
+            long_score = 4.0 + ((close - ema20) / max(ema20, 1e-8) * 100) + 10.0
         else:
-            if route == "a":
-                strength = 4.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
-            else:
-                strength = max(0.0, long_rsi_threshold - rsi) + ((ema20 - close) / max(ema20, 1e-8) * 100) + 4.0
-            if momentum_long:
-                strength += 3.0
-            if long_macd_cross:
-                strength += 5.0
-            if route == "a":
-                strength += 10.0  # Extra score for trend confluence
-                
-            # --- FNG 全局門檻偏移 ---
-            fng = MARKET_WIND.get("fng_value", 50)
-            if fng > 75:
-                strength -= 1.0  # 極度貪婪，做多門檻提高
-            elif fng < 25:
-                strength += 1.0  # 極度恐慌，反向放寬左側反轉門檻
-                
-                
-            fast_path_threshold = STRATEGY_CONF["FAST_PATH_SCORE_LOW_VOL"] if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF["FAST_PATH_SCORE_HIGH_VOL"]
-            
-            fast_path_ok = route == "a" and getattr(s, "htf_trend", None) == "long" and strength >= fast_path_threshold
-            if STRATEGY_CONF["FAST_PATH_REQUIRE_4H"] and getattr(s, "htf_4h_trend", None) != "long":
-                fast_path_ok = False
-                
-            if fast_path_ok:
-                logger.info(f"⚡ [Fast Path] {sym} 觸發做多直通 (Score: {strength:.2f} >= {fast_path_threshold})，無須等待 AI！")
-                if strength > s.max_strength:
-                    s.max_strength = strength
-                return ("buy", strength, route, True)  # is_ai_assisted=True 允許下全倉
-            
-            if strength > s.max_strength:
-                s.max_strength = strength
-
-            # 若分數根本未達送交 AI 的門檻，直接放棄，不須印出「等待 AI」
-            ai_trigger_threshold = 6.0 if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else 8.0
-            if strength < ai_trigger_threshold:
-                return (None, 0.0, None, False)
-
-            # 整合 AI 環境標籤做分流
-            ai_action = getattr(s, "ai_action", "HOLD")
-            ai_regime = getattr(s, "ai_regime", "CHOP")
-            ai_decision = getattr(s, "ai_decision", "REJECT")
-            ai_setup = getattr(s, "ai_setup_type", "None")
-            ai_conf = getattr(s, "ai_confidence", 0.0)
-            ai_updated_at = getattr(s, "ai_updated_at", 0.0)
-            ai_fresh = (time.time() - ai_updated_at) < AI_UPDATE_INTERVAL * STRATEGY_CONF["AI_FRESHNESS_MULTIPLIER"]
-            
-            is_ai_assisted = False
-            if ai_fresh:
-                if ai_decision != "APPROVE" or ai_action != "BUY":
-                    return (None, 0.0, None, False)  # 必須拿到明確的 APPROVE 與 BUY 指令
-                
-                # 動態信心門檻
-                min_conf = STRATEGY_CONF["AI_CONF_CHOP"] if ai_regime == "CHOP" else STRATEGY_CONF["AI_CONF_TREND"]
-                if ai_conf < min_conf:
-                    logger.info(f"🔇 [信心過濾] {sym} AI 信心 {ai_conf:.2f} < {min_conf:.2f} ({ai_regime})，做多訊號被否決")
-                    return (None, 0.0, None, False)
-                
-                is_ai_assisted = True
-                bonus = ai_conf * 3.0
-                if ai_setup == "Breakout" and route == "a":
-                    bonus += 2.0
-                elif ai_setup == "Reversal" and route in ["b", "c", "s"]:
-                    bonus += 2.0
-                
-                if ai_regime == "CHOP":
-                    if route == "a":
-                        return (None, 0.0, None, False)  # 震盪區不追高
-                    strength += bonus
-                elif ai_regime == "TREND_LONG":
-                    if route in ["b", "c"]:
-                        return (None, 0.0, None, False)  # 多頭趨勢不抄底(容易接飛刀)
-                    strength += bonus
-                elif ai_regime == "TREND_SHORT":
-                    return (None, 0.0, None, False)      # 空頭趨勢嚴禁做多
-                
-                if not is_ai_assisted:
-                    return (None, 0.0, None, False)
-            else:
-                # AI 過期（斷線降級模式）：允許超高分訊號繞過 AI 直接開倉
-                ai_stale_secs = time.time() - ai_updated_at
-                degraded_threshold = STRATEGY_CONF.get("AI_DEGRADED_SCORE_MIN", 25.0)
-                if strength >= degraded_threshold:
-                    logger.warning(f"🆘 [AI降級模式] {sym} AI 已 {ai_stale_secs/60:.1f} 分鐘未回應，高分訊號 ({strength:.2f}>={degraded_threshold}) 允許做多")
-                    is_ai_assisted = False  # 不給 AI bonus，但允許開倉
-                else:
-                    logger.info(f"⏳ [等待 AI] {sym} 慢速路徑訊號 (Score: {strength:.2f}) 需等待 AI 審查，暫不開倉。")
-                    return (None, 0.0, None, False)
-            
-        return ("buy", strength if strength >= STRATEGY_CONF["ENTRY_SCORE_MIN"] else 0.0, route, is_ai_assisted)
+            long_score = max(0.0, long_rsi_threshold - rsi) + 4.0
+        if momentum_long: long_score += 3.0
+        if long_macd_cross: long_score += 5.0
 
     if short_base_ok:
-        route = "s" if route_s_short else "c" if route_c_short else "b" if route_b_short else "a"
-        # 左側交易併發控制
-        if route in ['b', 'c', 's'] and left_side_positions >= 2:  # 寬鬆：允許最多 2 個左側倉位
-            logger.info(f"🛑 [風控] {sym} 觸發左側做空({route})，但目前已有 {left_side_positions} 個左側倉位，放棄開倉。")
-            return (None, 0.0, None, False)
+        short_route = "s" if route_s_short else "c" if route_c_short else "b" if route_b_short else "a"
+        if short_route == "a":
+            short_score = 4.0 + ((ema20 - close) / max(ema20, 1e-8) * 100) + 10.0
         else:
-            if route == "a":
-                strength = 4.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-            else:
-                strength = max(0.0, rsi - short_rsi_threshold) + ((close - ema20) / max(ema20, 1e-8) * 100) + 4.0
-            if momentum_short:
-                strength += 3.0
-            if short_macd_cross:
-                strength += 5.0
-            if route == "a":
-                strength += 10.0  # Extra score for trend confluence
-                
-            # --- FNG 全局門檻偏移 ---
-            fng = MARKET_WIND.get("fng_value", 50)
-            if fng < 25:
-                strength -= 1.0  # 極度恐慌，做空門檻提高
-            elif fng > 75:
-                strength += 1.0  # 極度貪婪，大盤可能回調，放寬做空門檻
-                
-                
-            fast_path_threshold = STRATEGY_CONF["FAST_PATH_SCORE_LOW_VOL"] if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF["FAST_PATH_SCORE_HIGH_VOL"]
-            
-            fast_path_ok = route == "a" and getattr(s, "htf_trend", None) == "short" and strength >= fast_path_threshold
-            if STRATEGY_CONF["FAST_PATH_REQUIRE_4H"] and getattr(s, "htf_4h_trend", None) != "short":
-                fast_path_ok = False
-                
-            if fast_path_ok:
-                logger.info(f"⚡ [Fast Path] {sym} 觸發做空直通 (Score: {strength:.2f} >= {fast_path_threshold})，無須等待 AI！")
-                if strength > s.max_strength:
-                    s.max_strength = strength
-                return ("sell", strength, route, True)  # is_ai_assisted=True 允許下全倉
+            short_score = max(0.0, rsi - short_rsi_threshold) + 4.0
+        if momentum_short: short_score += 3.0
+        if short_macd_cross: short_score += 5.0
 
-            # --- Slow Path (AI Review) ---
-            # 整合 AI 環境標籤做分流
-            ai_action = getattr(s, "ai_action", "HOLD")
-            ai_regime = getattr(s, "ai_regime", "CHOP")
-            ai_decision = getattr(s, "ai_decision", "REJECT")
-            ai_setup = getattr(s, "ai_setup_type", "None")
-            ai_conf = getattr(s, "ai_confidence", 0.0)
-            ai_updated_at = getattr(s, "ai_updated_at", 0.0)
-            ai_fresh = (time.time() - ai_updated_at) < AI_UPDATE_INTERVAL * STRATEGY_CONF["AI_FRESHNESS_MULTIPLIER"]
+    # 選分數高的方向，不再固定優先多單
+    if long_score == 0 and short_score == 0:
+        return (None, 0.0, None, False)
+
+    if short_score > long_score:
+        side, strength, route = "sell", short_score, short_route
+    else:
+        side, strength, route = "buy", long_score, long_route
+
+    # --- 以下為統一的進階風控 (套用於勝出方向) ---
+
+    # 左側交易併發控制：如果不允許太多左側交易同時發生
+    if route in ['b', 'c', 's'] and left_side_positions >= 2:  # 寬鬆：允許最多 2 個左側倉位
+        logger.info(f"🛑 [風控] {sym} 觸發左側({route})，但目前已有 {left_side_positions} 個左側倉位，放棄開倉。")
+        return (None, 0.0, None, False)
+
+    # --- FNG 全局門檻偏移 ---
+    fng = MARKET_WIND.get("fng_value", 50)
+    if fng > 75:
+        strength += 1.0 if side == 'sell' else -1.0  # 貪婪：放寬做空，提高做多門檻
+    elif fng < 25:
+        strength += 1.0 if side == 'buy' else -1.0   # 恐慌：放寬做多，提高做空門檻
+        
+    if strength > s.max_strength:
+        s.max_strength = strength
+
+    fast_path_threshold = STRATEGY_CONF["FAST_PATH_SCORE_LOW_VOL"] if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF["FAST_PATH_SCORE_HIGH_VOL"]
+    expected_trend = "long" if side == "buy" else "short"
+    
+    fast_path_ok = route == "a" and getattr(s, "htf_trend", None) == expected_trend and strength >= fast_path_threshold
+    if STRATEGY_CONF["FAST_PATH_REQUIRE_4H"] and getattr(s, "htf_4h_trend", None) != expected_trend:
+        fast_path_ok = False
+        
+    if fast_path_ok:
+        logger.info(f"⚡ [Fast Path] {sym} 觸發做{side}直通 (Score: {strength:.2f} >= {fast_path_threshold})，無須等待 AI！")
+        return (side, strength, route, True)  # is_ai_assisted=True 允許下全倉
+    
+    # 若分數根本未達送交 AI 的門檻，直接放棄
+    ai_trigger_threshold = STRATEGY_CONF.get("AI_TRIGGER_SCORE_LOW_VOL", 5.0) if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF.get("AI_TRIGGER_SCORE_HIGH_VOL", 6.0)
+    if strength < ai_trigger_threshold:
+        return (None, 0.0, None, False)
+
+    # 整合 AI 環境標籤做分流
+    ai_action = getattr(s, "ai_action", "HOLD")
+    ai_regime = getattr(s, "ai_regime", "CHOP")
+    ai_decision = getattr(s, "ai_decision", "REJECT")
+    ai_setup = getattr(s, "ai_setup_type", "None")
+    ai_conf = getattr(s, "ai_confidence", 0.0)
+    ai_updated_at = getattr(s, "ai_updated_at", 0.0)
+    ai_fresh = (time.time() - ai_updated_at) < AI_UPDATE_INTERVAL * STRATEGY_CONF["AI_FRESHNESS_MULTIPLIER"]
+    
+    is_ai_assisted = False
+    if ai_fresh:
+        expected_ai_action = "BUY" if side == "buy" else "SELL"
+        if ai_decision != "APPROVE" or ai_action != expected_ai_action:
+            return (None, 0.0, None, False)  # 必須拿到明確的 APPROVE 與對應方向指令
+        
+        # 動態信心門檻
+        min_conf = STRATEGY_CONF["AI_CONF_CHOP"] if ai_regime == "CHOP" else STRATEGY_CONF["AI_CONF_TREND"]
+        if ai_conf < min_conf:
+            logger.info(f"🔇 [信心過濾] {sym} AI 信心 {ai_conf:.2f} < {min_conf:.2f} ({ai_regime})，做{side}訊號被否決")
+            return (None, 0.0, None, False)
+        
+        is_ai_assisted = True
+        bonus = ai_conf * 3.0
+        if ai_setup == "Breakout" and route == "a":
+            bonus += 2.0
+        elif ai_setup == "Reversal" and route in ["b", "c", "s"]:
+            bonus += 2.0
+        
+        if ai_regime == "CHOP":
+            if route == "a":
+                return (None, 0.0, None, False)  # 震盪區不追高殺低
+            strength += bonus
+        elif ai_regime == "TREND_LONG":
+            if side == "sell" or route in ["b", "c"]:
+                return (None, 0.0, None, False)  # 多頭趨勢不抄底也不做空
+            strength += bonus
+        elif ai_regime == "TREND_SHORT":
+            if side == "buy" or route in ["b", "c"]:
+                return (None, 0.0, None, False)  # 空頭趨勢不摸頭也不做多
+            strength += bonus
             
+        if not is_ai_assisted:
+            return (None, 0.0, None, False)
+    else:
+        # AI 過期（斷線降級模式）：允許超高分訊號繞過 AI 直接開倉
+        ai_stale_secs = time.time() - ai_updated_at
+        degraded_threshold = STRATEGY_CONF.get("AI_DEGRADED_SCORE_MIN", 25.0)
+        if strength >= degraded_threshold:
+            logger.warning(f"🆘 [AI降級模式] {sym} AI 已 {ai_stale_secs/60:.1f} 分鐘未回應，高分訊號 ({strength:.2f}>={degraded_threshold}) 允許進場")
             is_ai_assisted = False
-            if ai_fresh:
-                if ai_decision != "APPROVE" or ai_action != "SELL":
-                    return (None, 0.0, None, False)  # 必須拿到明確的 APPROVE 與 SELL 指令
-                
-                # 動態信心門檻
-                min_conf = STRATEGY_CONF["AI_CONF_CHOP"] if ai_regime == "CHOP" else STRATEGY_CONF["AI_CONF_TREND"]
-                if ai_conf < min_conf:
-                    logger.info(f"🔇 [信心過濾] {sym} AI 信心 {ai_conf:.2f} < {min_conf:.2f} ({ai_regime})，做空訊號被否決")
-                    return (None, 0.0, None, False)
-                
-                is_ai_assisted = True
-                bonus = ai_conf * 3.0
-                if ai_setup == "Breakout" and route == "a":
-                    bonus += 2.0
-                elif ai_setup == "Reversal" and route in ["b", "c", "s"]:
-                    bonus += 2.0
-
-                if ai_regime == "CHOP":
-                    if route == "a":
-                        return (None, 0.0, None, False)  # 震盪區不追殺
-                    strength += bonus
-                elif ai_regime == "TREND_SHORT":
-                    if route in ["b", "c"]:
-                        return (None, 0.0, None, False)  # 空頭趨勢不摸頭
-                    strength += bonus
-                elif ai_regime == "TREND_LONG":
-                    return (None, 0.0, None, False)      # 多頭趨勢嚴禁做空
-                
-                if not is_ai_assisted:
-                    return (None, 0.0, None, False)
-            else:
-                # AI 過期（斷線降級模式）：允許超高分訊號繞過 AI 直接開空
-                ai_stale_secs = time.time() - ai_updated_at
-                degraded_threshold = STRATEGY_CONF.get("AI_DEGRADED_SCORE_MIN", 25.0)
-                if strength >= degraded_threshold:
-                    logger.warning(f"🆘 [AI降級模式] {sym} AI 已 {ai_stale_secs/60:.1f} 分鐘未回應，高分訊號 ({strength:.2f}>={degraded_threshold}) 允許做空")
-                    is_ai_assisted = False
-                else:
-                    logger.info(f"⏳ [等待 AI] {sym} 慢速路徑訊號 (Score: {strength:.2f}) 需等待 AI 審查，暫不開空。")
-                    return (None, 0.0, None, False)
-        return ("sell", strength if strength >= STRATEGY_CONF["ENTRY_SCORE_MIN"] else 0.0, route, is_ai_assisted)
-
-    return (None, 0, None, False)
+        else:
+            logger.info(f"⏳ [等待 AI] {sym} 慢速路徑訊號 (Score: {strength:.2f}) 需等待 AI 審查，暫不開倉。")
+            return (None, 0.0, None, False)
+    
+    return (side, strength if strength >= STRATEGY_CONF["ENTRY_SCORE_MIN"] else 0.0, route, is_ai_assisted)
 
 async def process_symbols():
     logger.info(f"== DEBUG == process_symbols running, trading_enabled={GLOBAL_STATE['trading_enabled']}")
@@ -2063,9 +1996,9 @@ async def process_symbols():
                 is_long = s.qty > 0
                 profit_pct = (p - avg) / max(avg, 1e-8) if is_long else (avg - p) / max(avg, 1e-8)
                 usdt_pnl = profit_pct * avg * abs(s.qty)
-                if profit_pct <= -0.010:
+                if profit_pct <= -0.025:
                     cs = 'sell' if is_long else 'buy'
-                    reason_msg = "1.0%跌幅停損"
+                    reason_msg = "2.5%跌幅停損"
                     print(f"🚨 [{reason_msg}] {sym} 觸發底線平倉！(指標結算前攔截) 目前虧損: {usdt_pnl:.2f} U")
                     await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
 
