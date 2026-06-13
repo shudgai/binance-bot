@@ -248,6 +248,7 @@ def build_symbol_state(sym):
         "ohlcv": [],
         "closes": [],
         "tr_list": [],
+        "pending_entry": None,
         "prev_close": None,
         "last_trade_price": 0.0,
         "last_trade_qty": 0.0,
@@ -1919,6 +1920,23 @@ def compute_signal_strength(sym):
     fast_path_threshold = STRATEGY_CONF["FAST_PATH_SCORE_LOW_VOL"] if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF["FAST_PATH_SCORE_HIGH_VOL"]
     expected_trend = "long" if side == "buy" else "short"
     
+    # === 新增：大盤連動保護 (BTC Master Wind) ===
+    btc_change = MARKET_WIND.get("btc_change_15m", 0.0)
+    if btc_change > 0.005 and side == "buy":
+        logger.info(f"🚀 [大盤保護] BTC 15分鐘急漲 ({btc_change*100:.2f}%)，放行 {sym} 做多訊號")
+        return (side, max(strength, fast_path_threshold), route, True)
+    elif btc_change < -0.005 and side == "sell":
+        logger.info(f"🚀 [大盤保護] BTC 15分鐘急跌 ({btc_change*100:.2f}%)，放行 {sym} 做空訊號")
+        return (side, max(strength, fast_path_threshold), route, True)
+
+    # === 新增：爆量直通車 (Volume Explosion Bypass) ===
+    if s.avg_vol_24h_1m > 0 and s.current_vol > s.avg_vol_24h_1m * 3.0:
+        if len(s.closes) >= 2:
+            c_change = abs(s.closes[-1] - s.closes[-2]) / max(s.closes[-2], 1e-8)
+            if c_change > 0.002:  # 實體大於 0.2%
+                logger.info(f"💥 [爆量直通] {sym} 成交量瞬間放大至 {s.current_vol / s.avg_vol_24h_1m:.1f} 倍！無視規則直接進場！")
+                return (side, max(strength, fast_path_threshold), route, True)
+
     fast_path_ok = route == "a" and getattr(s, "htf_trend", None) == expected_trend and strength >= fast_path_threshold
     if STRATEGY_CONF["FAST_PATH_REQUIRE_4H"] and getattr(s, "htf_4h_trend", None) != expected_trend:
         fast_path_ok = False
@@ -1927,8 +1945,25 @@ def compute_signal_strength(sym):
         logger.info(f"⚡ [Fast Path] {sym} 觸發做{side}直通 (Score: {strength:.2f} >= {fast_path_threshold})，無須等待 AI！")
         return (side, strength, route, True)  # is_ai_assisted=True 允許下全倉
     
-    # 若分數根本未達送交 AI 的門檻，直接放棄
+    # 計算送交 AI 的基本門檻
     ai_trigger_threshold = STRATEGY_CONF.get("AI_TRIGGER_SCORE_LOW_VOL", 5.0) if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF.get("AI_TRIGGER_SCORE_HIGH_VOL", 6.0)
+
+    # === 新增：右側突破二次確認模式 (No-AI Trend Follower) ===
+    # 條件：分數達標 + 大週期完全順風 + 短線突破且站穩 + RSI 健康
+    if strength >= ai_trigger_threshold:
+        htf_ok = getattr(s, "htf_trend", None) == expected_trend and getattr(s, "htf_4h_trend", None) == expected_trend
+        if htf_ok and len(s.closes) >= 2:
+            c1, c2 = s.closes[-2], s.closes[-1]
+            ema20 = s.ema20
+            if ema20 and ema20 > 0:
+                if side == "buy" and c1 > ema20 and c2 > ema20 and s.current_rsi > 50:
+                    logger.info(f"📈 [二次確認突破] {sym} 1H/4H順風且連續兩根K線站穩 EMA20，RSI>50，不須 AI 同意直接開多！")
+                    return (side, strength, route, True)
+                elif side == "sell" and c1 < ema20 and c2 < ema20 and s.current_rsi < 50:
+                    logger.info(f"📉 [二次確認突破] {sym} 1H/4H順風且連續兩根K線跌破 EMA20，RSI<50，不須 AI 同意直接開空！")
+                    return (side, strength, route, True)
+
+    # 若分數根本未達送交 AI 的門檻，且未觸發二次確認，直接放棄
     if strength < ai_trigger_threshold:
         return (None, 0.0, None, False)
 
@@ -2012,7 +2047,46 @@ async def process_symbols():
         update_states()
         for sym in ALL_SYMBOLS:
             await check_position_exits(sym)
+        await check_pending_entries()
         await check_entries()
+
+async def check_pending_entries():
+    if not GLOBAL_STATE["trading_enabled"]:
+        return
+        
+    for sym in ALL_SYMBOLS:
+        s = STATES[sym]
+        pe = s.pending_entry
+        if not pe:
+            continue
+            
+        if time.time() > pe["expire_at"]:
+            logger.info(f"⏳ [掛單過期] {sym} 等待回撤超過 15 分鐘未觸發，取消掛單。")
+            s.pending_entry = None
+            continue
+            
+        cp = s.close_price
+        side = pe["side"]
+        target = pe["target_price"]
+        
+        # 判斷是否觸發 (Buy -> 價格跌到目標價以下; Sell -> 價格漲到目標價以上)
+        triggered = False
+        if side == "buy" and cp <= target:
+            triggered = True
+        elif side == "sell" and cp >= target:
+            triggered = True
+            
+        if triggered:
+            logger.info(f"🎯 [掛單觸發] {sym} 價格已回到目標 {target:.4f} (目前 {cp:.4f})，準備市價進場！")
+            open_count = get_open_position_count()
+            balance = get_balance()
+            max_pos = get_max_positions(balance)
+            if open_count < max_pos:
+                await execute_order(sym, side, cp, pe["route"], pe["is_ai"], pe["strength"])
+            else:
+                logger.warning(f"⚠️ [掛單觸發失敗] {sym} 倉位已滿，放棄掛單。")
+            s.pending_entry = None
+
 
 async def check_entries():
     if not GLOBAL_STATE["trading_enabled"]:
@@ -2076,9 +2150,29 @@ async def check_entries():
         sym, side, strength, route, is_ai = candidates[i]
         s = STATES[sym]
         now = time.time()
+        # 決定是否需要「回撤掛單等待」
+        fast_path_threshold = STRATEGY_CONF["FAST_PATH_SCORE_LOW_VOL"] if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF["FAST_PATH_SCORE_HIGH_VOL"]
+        bypass_pullback = strength >= fast_path_threshold
         
-        # 移除突破確認機制，只要有訊號 (且通過 risk_guard) 就立即開倉
-        await execute_order(sym, side, s.close_price, route, is_ai, strength)
+        if bypass_pullback:
+            logger.info(f"⚡ [強勢直通] {sym} 動能強烈，無須等待回撤，直接市價開倉！")
+            await execute_order(sym, side, s.close_price, route, is_ai, strength)
+        else:
+            # 設定虛擬掛單 (等待價格回到 EMA20 附近)
+            target_price = s.ema20
+            if target_price and target_price > 0:
+                s.pending_entry = {
+                    "side": side,
+                    "target_price": target_price,
+                    "route": route,
+                    "is_ai": is_ai,
+                    "strength": strength,
+                    "expire_at": time.time() + 900  # 15 分鐘過期
+                }
+                logger.info(f"⏳ [掛單等待] {sym} 訊號成立，設定虛擬掛單於 EMA20 ({target_price:.4f})，等待回撤觸發...")
+            else:
+                logger.info(f"⚠️ [掛單失敗] {sym} EMA20 無效，改為直接市價開倉！")
+                await execute_order(sym, side, s.close_price, route, is_ai, strength)
 
 # ── 主循環 ──────────────────────────────────────────────────
 
