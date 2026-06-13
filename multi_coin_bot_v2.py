@@ -1329,6 +1329,21 @@ async def _execute_order_inner(sym, side, price, route="a", is_ai=False, strengt
         logger.warning(f"⚠️ [連敗風控] {sym} 全局已連續虧損 {GLOBAL_STATE['consecutive_losses']} 次，暫停開倉避免上頭")
         return
 
+    # 最近 10 分鐘內停損超過 2 次，暫停開倉
+    recent_stops = sum(
+        1 for k, v in STATES.items()
+        if getattr(v, "last_stop_loss_time", 0) > 0 
+        and (time.time() - v.last_stop_loss_time) < 600
+    )
+    if recent_stops >= 2:
+        logger.warning(f"⚠️ [連續停損風控] 最近10分鐘內全局已停損 {recent_stops} 次，觸發短線冷卻，暫停開倉")
+        return
+
+    # 大盤 1H 趨勢向下，暫停所有做多
+    if side == 'buy' and MARKET_WIND.get("btc_1h_trend") == "DOWN":
+        logger.warning(f"⚠️ [大盤空頭] BTC 1H趨勢向下，暫停做多開倉 ({sym})")
+        return
+
     # 深度與流動性防護 (Bid-Ask Spread & Volume)
     try:
         # 取得 ccxt 格式幣種代號 (ex: BTC/USDT)
