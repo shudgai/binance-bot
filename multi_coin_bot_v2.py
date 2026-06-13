@@ -1138,7 +1138,7 @@ async def check_position_exits(sym):
     #      → 用同一條規則處理「轉負」與「小利回吐」，避免互相搶跑
     MIN_HOLD_FOR_PROFIT_LOCK_SEC = 60   # 開倉滿60秒後才啟動利潤保護
     PROFIT_LOCK_TRIGGER = 0.005          # 曾經到過 0.5% 才啟用
-    PROFIT_LOCK_RATIO   = 0.4            # 回落到只剩 40% (回吐超過60%) 就出場
+    PROFIT_LOCK_RATIO   = 0.8            # 回落到只剩 80% (回吐超過20%) 就出場
 
     if (hold_sec >= MIN_HOLD_FOR_PROFIT_LOCK_SEC
             and s.highest_profit_pct >= PROFIT_LOCK_TRIGGER
@@ -1503,6 +1503,14 @@ def risk_guard(sym, side, route="a"):
     if not GLOBAL_STATE["trading_enabled"]:
         return False
 
+    market_regime = MARKET_WIND.get("market_regime", "NORMAL_CHOP")
+    if side == 'buy' and market_regime == "PANIC_BEAR":
+        logger.info(f"🛑 {sym} 大盤處於極度恐慌(PANIC_BEAR)，禁止做多")
+        return False
+    if side == 'sell' and market_regime == "RAGING_BULL":
+        logger.info(f"🛑 {sym} 大盤處於狂暴牛市(RAGING_BULL)，禁止做空")
+        return False
+
     is_trend = route == "a"
     if side == 'buy' and not MARKET_WIND.get("allow_long", True) and is_trend:
         logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止順勢開多")
@@ -1794,21 +1802,17 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    # 嚴格收盤價確認：要求突破上一根的收盤價，確保動能反轉
-    last_candle_confirmed_long = len(s.ohlcv) >= 2 and close > s.ohlcv[-2][4]
-    last_candle_confirmed_short = len(s.ohlcv) >= 2 and close < s.ohlcv[-2][4]
-
-    # 微觀動能確認 (Micro Momentum) - 方案1(當下K線顏色) + 方案2(超短線 EMA5)
-    current_open = float(s.ohlcv[-1][1]) if len(s.ohlcv) > 0 else close
-    is_green_candle = close > current_open
-    is_red_candle = close < current_open
-    ema5 = calculate_ema(closes, 5) if len(closes) >= 5 else close
-    is_above_ema5 = close > ema5
-    is_below_ema5 = close < ema5
-
-    # 收盤價方向確認：嚴格要求突破上一根的收盤價
-    last_candle_confirmed_long  = (len(s.ohlcv) >= 2 and close > s.ohlcv[-2][4])
-    last_candle_confirmed_short = (len(s.ohlcv) >= 2 and close < s.ohlcv[-2][4])
+    # 收盤價方向確認：嚴格要求突破上一根的收盤價，且連續兩根確認
+    last_candle_confirmed_long = (
+        len(s.ohlcv) >= 3 and 
+        s.ohlcv[-1][4] > s.ohlcv[-2][4] and
+        s.ohlcv[-2][4] > s.ohlcv[-3][4]
+    )
+    last_candle_confirmed_short = (
+        len(s.ohlcv) >= 3 and 
+        s.ohlcv[-1][4] < s.ohlcv[-2][4] and
+        s.ohlcv[-2][4] < s.ohlcv[-3][4]
+    )
 
     logger.debug(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI門檻(L/S: {long_rsi_threshold:.0f}/{short_rsi_threshold:.0f}): {rsi < long_rsi_threshold}/{rsi > short_rsi_threshold} | BB區間(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | MACD滿足(L/S): {long_macd_ok}/{short_macd_ok} (交叉:{long_macd_cross}/{short_macd_cross}, 柱狀體向上/下:{long_macd_hist_aligned}/{short_macd_hist_aligned}) | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
 
@@ -2321,7 +2325,8 @@ async def periodic_status_log():
         banned = sum(1 for s in STATES.values() if s.status == "BANNED")
         open_syms = get_open_symbols()
         open_str = ', '.join(f"{sym}({'多' if STATES[sym].qty>0 else '空'})" for sym in open_syms) if open_syms else "無"
-        logger.info(f"📊 [狀態] ACTIVE={active} COOLDOWN={cooldown} BANNED={banned} | 持倉({len(open_syms)}): {open_str}")
+        btc_1h = MARKET_WIND.get('btc_1h_trend', '未知')
+        logger.info(f"📊 [狀態] ACTIVE={active} COOLDOWN={cooldown} BANNED={banned} | BTC 1H趨勢={btc_1h.upper()} | 持倉({len(open_syms)}): {open_str}")
 
 async def export_states_to_json():
     while True:
