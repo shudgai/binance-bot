@@ -10,7 +10,7 @@ PAPER_STATE_FILE = "paper_state.json"
 if any("pytest" in x or "unittest" in x for x in sys.argv) or "pytest" in sys.modules or "unittest" in sys.modules:
     PAPER_STATE_FILE = "test_paper_state.json"
 
-def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
+def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0, is_ai=False):
     # --- 胖手指與異常價格防禦 ---
     try:
         from services.binance_service import get_price
@@ -73,7 +73,9 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
             "isBuyer": (side == 'buy'),
             "isMaker": False,
             "realized_pnl": pnl if is_close else 0.0,
-            "is_close": is_close
+            "is_close": is_close,
+            "is_opening_trade": not is_close,
+            "is_ai": is_ai
         }
         
         state["trades"].append(trade)
@@ -109,6 +111,8 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
                         pnl_flip = (current_avg - price) * abs(current_qty)
                     pos["realized_pnl"] += pnl_flip
                     state["balance_usdt"] += pnl_flip
+                    trade["realized_pnl"] = pnl_flip
+                    trade["is_close"] = True
                     
                 # 3. 部分平倉 (Partial close - doesn't change avg_price, but realizes some PnL)
                 elif (current_qty > 0 and signed_qty < 0 and new_qty > 0) or (current_qty < 0 and signed_qty > 0 and new_qty < 0):
@@ -119,6 +123,8 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
                         pnl_partial = (current_avg - price) * abs(signed_qty)
                     pos["realized_pnl"] += pnl_partial
                     state["balance_usdt"] += pnl_partial
+                    trade["realized_pnl"] = pnl_partial
+                    trade["is_close"] = True
                     
                 # 4. 全新開倉 (Fresh open)
                 elif current_qty == 0:
@@ -149,6 +155,13 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
                     new_qty = 0.0
                     pos["avg_price"] = 0.0
             
+            
+            # 若倉位歸零或發生翻倉，將所有該幣種先前的交易單標記為已平倉 (is_close=True)
+            if abs(new_qty) < 0.000001 or (current_qty * new_qty < 0):
+                for t in state.get("trades", []):
+                    if t["symbol"] == symbol and t.get("id") != trade["id"]:
+                        t["is_close"] = True
+                        
             pos["qty"] = new_qty
             pos["realized_pnl"] += pnl
             state["balance_usdt"] += pnl
@@ -156,6 +169,13 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
         # 統一扣除手續費 (開平倉皆適用 Binance taker fee 0.05%)
         fee = (price * abs(qty)) * 0.0005
         state["balance_usdt"] -= fee
+        
+        # 把手續費算入單筆交易與倉位的已實現損益中，確保顯示的是「淨利潤」
+        pos["realized_pnl"] -= fee
+        trade["fee"] = fee
+        trade["gross_pnl"] = pnl if is_close else 0.0
+        if is_close:
+            trade["realized_pnl"] -= fee
 
         state["positions"][symbol] = pos
         

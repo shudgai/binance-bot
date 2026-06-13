@@ -36,6 +36,27 @@
         <div id="symbol-status" class="meta"></div>
     </div>
 
+    <div class="card" id="strategy-panel">
+        <strong>⚙️ 策略參數設定 (動態熱更新)</strong>
+        <div class="hint">免重啟即時切換機器人的攻擊與防禦性。</div>
+        <div style="margin-top: 10px; margin-bottom: 10px;">
+            <button id="btn-loose-mode" type="button" style="background-color: #0a7d3e; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; margin-left: 0;">⚡ 一鍵：極速寬鬆模式 (機槍手)</button>
+            <button id="btn-strict-mode" type="button" style="background-color: #c62828; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">🎯 一鍵：保守狙擊模式 (狙擊手)</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 14px;">
+            <div><label>Fast Path (低波動):</label> <input id="conf-fast-path-low" type="number" step="0.1" style="width: 60px;"></div>
+            <div><label>Fast Path (高波動):</label> <input id="conf-fast-path-high" type="number" step="0.1" style="width: 60px;"></div>
+            <div><label>最低開倉分數:</label> <input id="conf-score-min" type="number" step="0.1" style="width: 60px;"></div>
+            <div><label>ADX 門檻:</label> <input id="conf-adx" type="number" step="0.1" style="width: 60px;"></div>
+            <div><label>全域冷卻 (秒):</label> <input id="conf-cooldown" type="number" style="width: 60px;"></div>
+            <div><label>AI 新鮮度倍數:</label> <input id="conf-ai-fresh" type="number" style="width: 60px;"></div>
+        </div>
+        <div style="margin-top: 10px;">
+            <button id="btn-save-strategy" type="button" style="margin-left: 0;">💾 儲存自訂設定</button>
+            <span id="strategy-status" class="meta" style="margin-left: 10px;"></span>
+        </div>
+    </div>
+
     <div id="position-info" class="card"></div>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -129,6 +150,82 @@
                 });
             });
 
+            // Strategy Config Logic
+            let currentStrategy = {};
+
+            function renderStrategyConfig(config) {
+                currentStrategy = config;
+                $('#conf-fast-path-low').val(config.FAST_PATH_SCORE_LOW_VOL);
+                $('#conf-fast-path-high').val(config.FAST_PATH_SCORE_HIGH_VOL);
+                $('#conf-score-min').val(config.ENTRY_SCORE_MIN);
+                $('#conf-adx').val(config.ADX_MIN_THRESHOLD);
+                $('#conf-cooldown').val(config.ENTRY_COOLDOWN_GLOBAL_SEC);
+                $('#conf-ai-fresh').val(config.AI_FRESHNESS_MULTIPLIER);
+            }
+
+            function loadStrategyConfig() {
+                $.get('/api/strategy-config', function(res) {
+                    if (res.status === 'success') {
+                        renderStrategyConfig(res.data);
+                    }
+                });
+            }
+
+            function saveStrategyConfig(newConfig) {
+                $('#strategy-status').text('儲存中...').css('color', '#666');
+                $.ajax({
+                    url: '/api/strategy-config',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(newConfig),
+                    success: function() {
+                        $('#strategy-status').text('✅ 設定已即時套用！').css('color', '#0a7d3e');
+                        setTimeout(() => $('#strategy-status').text(''), 3000);
+                        renderStrategyConfig(newConfig);
+                    },
+                    error: function() {
+                        $('#strategy-status').text('❌ 儲存失敗').css('color', '#c62828');
+                    }
+                });
+            }
+
+            $('#btn-save-strategy').click(function() {
+                const updatedConfig = Object.assign({}, currentStrategy, {
+                    FAST_PATH_SCORE_LOW_VOL: parseFloat($('#conf-fast-path-low').val()),
+                    FAST_PATH_SCORE_HIGH_VOL: parseFloat($('#conf-fast-path-high').val()),
+                    ENTRY_SCORE_MIN: parseFloat($('#conf-score-min').val()),
+                    ADX_MIN_THRESHOLD: parseFloat($('#conf-adx').val()),
+                    ENTRY_COOLDOWN_GLOBAL_SEC: parseInt($('#conf-cooldown').val()),
+                    AI_FRESHNESS_MULTIPLIER: parseInt($('#conf-ai-fresh').val())
+                });
+                saveStrategyConfig(updatedConfig);
+            });
+
+            $('#btn-loose-mode').click(function() {
+                const looseConfig = Object.assign({}, currentStrategy, {
+                    FAST_PATH_SCORE_LOW_VOL: 14.0,
+                    FAST_PATH_SCORE_HIGH_VOL: 17.0,
+                    ENTRY_SCORE_MIN: 6.0,
+                    ADX_MIN_THRESHOLD: 5.0,
+                    ENTRY_COOLDOWN_GLOBAL_SEC: 120,
+                    AI_FRESHNESS_MULTIPLIER: 4
+                });
+                saveStrategyConfig(looseConfig);
+            });
+
+            $('#btn-strict-mode').click(function() {
+                const strictConfig = Object.assign({}, currentStrategy, {
+                    FAST_PATH_SCORE_LOW_VOL: 17.0,
+                    FAST_PATH_SCORE_HIGH_VOL: 20.0,
+                    ENTRY_SCORE_MIN: 8.0,
+                    ADX_MIN_THRESHOLD: 10.0,
+                    ENTRY_COOLDOWN_GLOBAL_SEC: 300,
+                    AI_FRESHNESS_MULTIPLIER: 2
+                });
+                saveStrategyConfig(strictConfig);
+            });
+
+            loadStrategyConfig();
             updateStatus();
             setInterval(updateStatus, 5000);
         });

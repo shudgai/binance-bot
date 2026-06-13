@@ -5,6 +5,7 @@ import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot
 from services.binance_service import get_top_volume_altcoins
+from services.config_service import get_whitelist
 
 # 雷達掃描冷卻
 last_radar_scan = 0
@@ -96,7 +97,7 @@ def auto_radar_switch(force_start=False):
         ignore_list = list(BLACKLIST.keys())
         
         # 系統指令：嚴格執行交易白名單
-        whitelist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT", "AVAXUSDT", "INJUSDT"]
+        whitelist = get_whitelist()
         top_20 = [sym for sym in whitelist if sym not in ignore_list]
 
         if not top_20:

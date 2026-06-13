@@ -1,1 +1,32 @@
-{"is_running": false, "active_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT", "AVAXUSDT", "INJUSDT"], "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"], "trade_amount": 150.0}
+{
+  "is_running": false,
+  "active_symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "BNBUSDT",
+    "TRXUSDT",
+    "AVAXUSDT",
+    "LINKUSDT",
+    "INJUSDT",
+    "DOGEUSDT",
+    "WIFUSDT",
+    "1000PEPEUSDT",
+    "ORDIUSDT",
+    "OPUSDT",
+    "FETUSDT",
+    "APTUSDT",
+    "NEARUSDT",
+    "TONUSDT",
+    "SUIUSDT"
+  ],
+  "watch_symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "BNBUSDT"
+  ],
+  "trade_amount": 150.0
+}

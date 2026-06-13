@@ -459,6 +459,15 @@
         .toast-danger { background: #f6465d; color: #fff; }
         .toast-fade-enter-active, .toast-fade-leave-active { transition: opacity 0.3s, transform 0.3s; }
         .toast-fade-enter-from, .toast-fade-leave-to { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+        /* AI Engine Status */
+        .ai-card { background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+        .ai-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .ai-countdown { font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 700; color: var(--primary); background: rgba(240,185,11,0.1); padding: 2px 6px; border-radius: 4px; }
+        .ai-blink { animation: blink 1s infinite; color: var(--danger); background: rgba(246,70,93,0.1); }
+        @keyframes blink { 50% { opacity: 0.5; } }
+        .ai-section-title { font-size: 10px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+        .ai-code { background: #f4f4f6; color: var(--text-main); padding: 8px; border-radius: 6px; font-family: 'JetBrains Mono'; font-size: 10px; overflow-x: auto; margin: 0; max-height: 150px; overflow-y: auto; }
+        .ai-response-box { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 8px; background: #f4f4f6; padding: 8px; border-radius: 6px; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -473,6 +482,12 @@
     <div class="top-bar">
         <div class="logo"><span>⚡</span> ANTI-BOT</div>
         <div class="topbar-right">
+            <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 8px; white-space: nowrap; width: auto; height: auto;" @click.prevent="showStrategyModal = true; loadStrategyConfig()">
+                ⚙️ 策略參數設定
+            </button>
+            <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 8px;" @click="showWhitelistModal = true; fetchWhitelist()">
+                ⚙️ 白名單設定
+            </button>
             <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;" @click="showHistoryNotebook = true; fetchHistorySummary()">
                 📂 歷史筆記本
             </button>
@@ -517,7 +532,7 @@
                     <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showAllTradesModal = true; fetchAllTradesHistory()">查看完整歷史紀錄</span>
                 </h3>
 
-                <div style="overflow-x:auto; max-height: 250px; overflow-y: auto;">
+                <div style="overflow-x:auto; max-height: 500px; overflow-y: auto;">
                     <table class="trades-table">
                         <thead>
                             <tr>
@@ -532,14 +547,17 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="t in trades" :key="t.id">
+                            <tr v-for="t in sortedTradesTable" :key="t.id">
                                 <td>{{ formatTradeTime(t.time) }}</td>
-                                <td style="font-weight: bold;">{{ t.symbol.replace(':USDT', '').replace('USDT', '') }}</td>
+                                <td style="font-weight: bold;">
+                                    {{ t.symbol.replace(':USDT', '').replace('USDT', '') }}
+                                    <span v-if="t.is_ai" style="background:rgba(240,185,11,0.15); color:var(--primary); padding:2px 6px; border-radius:4px; font-size:9px; font-weight:700; margin-left:4px;" title="AI 輔助進場">🤖 AI</span>
+                                </td>
                                 <td>
-                                    <span v-if="t.isBuyer && !t.is_close" style="color:var(--trade-up);font-weight:700;">買入(多)</span>
-                                    <span v-else-if="!t.isBuyer && t.is_close" style="color:var(--trade-down);font-weight:700;">賣出(平多)</span>
-                                    <span v-else-if="!t.isBuyer && !t.is_close" style="color:var(--trade-down);font-weight:700;">賣出(空)</span>
-                                    <span v-else-if="t.isBuyer && t.is_close" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
+                                    <span v-if="t.isBuyer && (t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-up);font-weight:700;">買入(多)</span>
+                                    <span v-else-if="!t.isBuyer && (t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-down);font-weight:700;">賣出(空)</span>
+                                    <span v-else-if="!t.isBuyer && !(t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-down);font-weight:700;">賣出(平多)</span>
+                                    <span v-else-if="t.isBuyer && !(t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
                                 </td>
                                 <td>{{ t.price }}</td>
                                 <td>{{ t.qty }}</td>
@@ -651,6 +669,26 @@
                 {{ bot.is_running ? '⏹️ 停止交易機器人' : '▶️ 啟動交易機器人' }}
             </button>
 
+            <!-- AI 決策引擎狀態 (NEW) -->
+            <div class="card ai-card">
+                <div class="ai-header">
+                    <span class="info-title">🧠 AI 決策引擎狀態</span>
+                    <span class="ai-countdown" :class="{'ai-blink': aiCountdown <= 5}">倒數 {{ aiCountdown }}s</span>
+                </div>
+                <div v-if="aiStatusData && aiStatusData.symbols && aiStatusData.symbols[activeSymbol]">
+                    <div class="ai-section-title">傳送資料 (Payload)</div>
+                    <pre class="ai-code">{{ JSON.stringify(aiStatusData.symbols[activeSymbol].ai_payload, null, 2) || '無' }}</pre>
+                    
+                    <div class="ai-section-title" style="margin-top: 10px;">獲得資料 (Response)</div>
+                    <div class="ai-response-box">
+                        <div><span style="color:var(--text-muted);">方向:</span> <span :class="aiStatusData.symbols[activeSymbol].ai_bias === 'long' ? 'up' : (aiStatusData.symbols[activeSymbol].ai_bias === 'short' ? 'down' : '')" style="font-weight:bold">{{ aiStatusData.symbols[activeSymbol].ai_bias || 'N/A' }}</span></div>
+                        <div><span style="color:var(--text-muted);">信心:</span> <span style="font-weight:bold">{{ aiStatusData.symbols[activeSymbol].ai_confidence || 0 }}</span></div>
+                        <div style="grid-column: 1 / -1;"><span style="color:var(--text-muted);">理由:</span> {{ aiStatusData.symbols[activeSymbol].ai_reason || 'N/A' }}</div>
+                    </div>
+                </div>
+                <div v-else style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 10px;">尚未獲取資料</div>
+            </div>
+
             <!-- ══ LIMIT ORDER PANEL ══ -->
             <div class="limit-order-card">
                 <div class="lo-title">📋 限價下單 / 市價下單</div>
@@ -752,7 +790,7 @@
                 <button
                     class="btn btn-danger"
                     style="margin-top:8px; font-size:12px; padding:10px;"
-                    @click="placeMarketSell"
+                    @click="closeAllPositions"
                     :disabled="isPlacingOrder"
                 >🔴 一鍵全平倉 (Close All)</button>
             </div>
@@ -788,20 +826,28 @@
                     <thead>
                         <tr>
                             <th>日期</th>
-                            <th>交易次數</th>
-                            <th>總已實現損益 (USDT)</th>
+                            <th>操作次數</th>
+                            <th>毛利潤 (Gross)</th>
+                            <th>手續費 (Fee)</th>
+                            <th>淨利潤 (Net PnL)</th>
                             <th style="text-align:right;">操作</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-if="historySummaries.length === 0">
-                            <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">目前還沒有任何歷史紀錄</td>
+                            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">目前還沒有任何歷史紀錄</td>
                         </tr>
                         <tr v-for="h in historySummaries" :key="h.date">
                             <td>{{ h.date }}</td>
                             <td>{{ h.trades }} 筆</td>
                             <td :style="{color: h.pnl > 0 ? 'var(--success)' : (h.pnl < 0 ? 'var(--danger)' : 'var(--text-main)')}">
                                 {{ h.pnl > 0 ? '+' : '' }}{{ h.pnl.toFixed(4) }}
+                            </td>
+                            <td style="color: var(--danger);">
+                                -{{ h.fee ? h.fee.toFixed(4) : '0.0000' }}
+                            </td>
+                            <td :style="{color: h.net_pnl > 0 ? 'var(--success)' : (h.net_pnl < 0 ? 'var(--danger)' : 'var(--text-main)')}">
+                                <strong style="font-size: 1.1em;">{{ h.net_pnl > 0 ? '+' : '' }}{{ h.net_pnl ? h.net_pnl.toFixed(4) : h.pnl.toFixed(4) }}</strong>
                             </td>
                             <td style="text-align:right;">
                                 <button class="btn" style="background:var(--primary); color:#000; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" @click="downloadHistory(h.date)">下載 CSV</button>
@@ -812,6 +858,62 @@
             </div>
         </div>
     </div>
+
+    <!-- Whitelist Modal -->
+    <div v-if="showWhitelistModal" class="modal-backdrop" @click.self="showWhitelistModal = false">
+        <div class="modal" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>⚙️ 白名單設定</h3>
+                <span class="close-btn" @click="showWhitelistModal = false">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 12px;">
+                    <div style="display:flex; gap: 8px;">
+                        <input type="text" class="lo-input" placeholder="輸入幣種 (例如: ADAUSDT)" v-model="newWhitelistSymbol" @keyup.enter="addToWhitelist">
+                        <button class="btn btn-primary" style="padding: 8px; width: 60px;" @click="addToWhitelist">新增</button>
+                    </div>
+                </div>
+                <div style="max-height: 300px; overflow-y: auto;">
+                    <div v-for="sym in whitelist" :key="sym" style="display:flex; justify-content:space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600;">{{ sym }}</span>
+                        <span style="color: var(--danger); cursor: pointer; font-size: 12px;" @click="removeFromWhitelist(sym)">✕ 移除</span>
+                    </div>
+                </div>
+                <div style="margin-top: 16px;">
+                    <button class="btn btn-primary" @click="saveWhitelist">💾 儲存並套用</button>
+                </div>
+            </div>
+        </div>
+    </div>
+        <!-- Strategy Config Modal -->
+    <div v-if="showStrategyModal" class="modal-backdrop" @click.self="showStrategyModal = false">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>⚙️ 策略參數設定 (動態熱更新)</h3>
+                <span class="close-btn" @click="showStrategyModal = false">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="hint" style="margin-bottom: 12px;">免重啟即時切換機器人的攻擊與防禦性。</div>
+                <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+                    <button type="button" class="btn" style="background-color: rgba(14,203,129,0.15); color: var(--success); border: 1px solid var(--success); flex: 1; padding: 10px;" @click="setLooseStrategy">⚡ 一鍵寬鬆 (機槍手)</button>
+                    <button type="button" class="btn" style="background-color: rgba(246,70,93,0.15); color: var(--danger); border: 1px solid var(--danger); flex: 1; padding: 10px;" @click="setStrictStrategy">🎯 一鍵保守 (狙擊手)</button>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+                    <div><label>Fast Path (低波動):</label> <input type="number" step="0.1" class="lo-input" v-model.number="strategyConfig.FAST_PATH_SCORE_LOW_VOL"></div>
+                    <div><label>Fast Path (高波動):</label> <input type="number" step="0.1" class="lo-input" v-model.number="strategyConfig.FAST_PATH_SCORE_HIGH_VOL"></div>
+                    <div><label>最低開倉分數:</label> <input type="number" step="0.1" class="lo-input" v-model.number="strategyConfig.ENTRY_SCORE_MIN"></div>
+                    <div><label>ADX 門檻:</label> <input type="number" step="0.1" class="lo-input" v-model.number="strategyConfig.ADX_MIN_THRESHOLD"></div>
+                    <div><label>全域冷卻 (秒):</label> <input type="number" class="lo-input" v-model.number="strategyConfig.ENTRY_COOLDOWN_GLOBAL_SEC"></div>
+                    <div><label>AI 新鮮度倍數:</label> <input type="number" class="lo-input" v-model.number="strategyConfig.AI_FRESHNESS_MULTIPLIER"></div>
+                </div>
+                <div style="margin-top: 16px;">
+                    <button class="btn btn-primary" @click="saveStrategyConfig">💾 儲存並即時套用</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
 
 </div>
 
@@ -836,6 +938,30 @@ createApp({
         const showHistoryNotebook = ref(false);
         const historySummaries = ref([]);
 
+        // AI Status Variables
+        const aiStatusData = ref(null);
+        const aiCountdown = ref(60);
+        let aiStatusInterval = null;
+        let aiLocalTickInterval = null;
+
+        const fetchAiStatus = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/ai-status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        aiStatusData.value = data.data;
+                        const nextUpdate = data.data.global?.ai_next_update || 0;
+                        const now = Date.now() / 1000;
+                        let diff = Math.floor(nextUpdate - now);
+                        if (diff < 0) diff = 0;
+                        if (diff > 60) diff = 60;
+                        aiCountdown.value = diff;
+                    }
+                }
+            } catch (e) {}
+        };
+
         // Limit order panel state
         const loSide = ref('long');
         const loOrderType = ref('market');
@@ -850,13 +976,60 @@ createApp({
 
         const position = ref({ asset: '-', qty: 0, avg_price: 0, total_cost: 0, current_price: 0, current_value: 0, pnl: 0, pnl_percent: 0, realized_pnl: 0 });
 
-        const WHITELIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'TRXUSDT', 'NEARUSDT', 'TONUSDT', 'SUIUSDT', 'BNBUSDT', 'LINKUSDT', 'AVAXUSDT', 'INJUSDT'];
+        const whitelist = ref([]);
+        const showWhitelistModal = ref(false);
+        const newWhitelistSymbol = ref('');
+        let _whitelistFetchId = 0;
+
+        const fetchWhitelist = async () => {
+            const fetchId = ++_whitelistFetchId;
+            try {
+                const res = await fetch(`${API_BASE}/whitelist`);
+                const data = await res.json();
+                if (fetchId === _whitelistFetchId && data.status === 'success') whitelist.value = data.whitelist;
+            } catch(e) {}
+        };
+
+        const addToWhitelist = () => {
+            let s = newWhitelistSymbol.value.trim().toUpperCase();
+            if (!s) return;
+            if (!s.endsWith('USDT')) s += 'USDT';
+            if (!whitelist.value.includes(s)) {
+                whitelist.value.push(s);
+            }
+            newWhitelistSymbol.value = '';
+        };
+
+        const removeFromWhitelist = (sym) => {
+            whitelist.value = whitelist.value.filter(s => s !== sym);
+        };
+
+        const saveWhitelist = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/whitelist`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbols: whitelist.value })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast('✅ 白名單已更新', 'success');
+                    whitelist.value = data.whitelist;
+                    showWhitelistModal.value = false;
+                } else {
+                    showToast('⚠️ 更新失敗', 'danger');
+                }
+            } catch(e) {
+                showToast('❌ 更新失敗', 'danger');
+            }
+        };
+
         const customSymbol = ref('');
         const addCustomCoin = () => {
             let s = customSymbol.value.trim().toUpperCase();
             if (!s) return;
             if (!s.endsWith('USDT')) s += 'USDT';
-            if (!WHITELIST.includes(s)) { alert(`⚠️ ${s} 不在白名單中，僅允許白名單幣種`); customSymbol.value = ''; return; }
+            if (!whitelist.value.includes(s)) { alert(`⚠️ ${s} 不在白名單中，僅允許白名單幣種`); customSymbol.value = ''; return; }
             if (!coins.value.find(c => c.symbol === s)) {
                 coins.value.push({ symbol: s, name: s.replace('USDT',''), label: s.replace('USDT',''), price: 0, prevPrice: 0, priceClass: '', custom: true });
                 // Subscribe to ticker immediately
@@ -882,15 +1055,20 @@ createApp({
             { symbol: 'BTCUSDT', name: 'BTC', label: 'BTC', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'ETHUSDT', name: 'ETH', label: 'ETH', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'SOLUSDT', name: 'SOL', label: 'SOL', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'XRPUSDT', name: 'XRP', label: 'XRP', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'TRXUSDT', name: 'TRX', label: 'TRX', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'NEARUSDT', name: 'NEAR', label: 'NEAR', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'TONUSDT', name: 'TON', label: 'TON', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'SUIUSDT', name: 'SUI', label: 'SUI', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'BNBUSDT', name: 'BNB', label: 'BNB', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'AVAX', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'INJUSDT', name: 'INJ', label: 'INJ', price: 0, prevPrice: 0, priceClass: '' }
+            { symbol: 'INJUSDT', name: 'INJ', label: 'INJ', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: '1000PEPEUSDT', name: '1000PEPE', label: '1000PEPE', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'WIFUSDT', name: 'WIF', label: 'WIF', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'ENAUSDT', name: 'ENA', label: 'ENA', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'STGUSDT', name: 'STG', label: 'STG', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'HUSDT', name: 'HUSDT', label: 'HUSDT', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: '1000FLOKIUSDT', name: '1000FLOKI', label: '1000FLOKI', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: '1000BONKUSDT', name: '1000BONK', label: '1000BONK', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'NOTUSDT', name: 'NOT', label: 'NOT', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'BOMEUSDT', name: 'BOME', label: 'BOME', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'WLDUSDT', name: 'WLD', label: 'WLD', price: 0, prevPrice: 0, priceClass: '' }
         ]);
         const activeSymbol = ref(localStorage.getItem('activeSymbol') || 'SUIUSDT');
         const showAllTradesModal = ref(false);
@@ -1456,6 +1634,21 @@ createApp({
             finally { isPlacingOrder.value = false; limitPrice.value = ''; }
         };
 
+        const closeAllPositions = async () => {
+            isPlacingOrder.value = true;
+            addLog(`🔴 正在強制平倉所有持有部位...`);
+            try {
+                const res = await fetch(`${API_BASE}/order/close-all`, { method: 'POST' });
+                const resp = await res.json();
+                const data = resp.data || resp;
+                if (res.ok && data.status === 'success') {
+                    addLog(`✅ 全平倉成功! ${data.detail || ''}`, 'success');
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
+                } else throw new Error(data.detail);
+            } catch(e) { addLog(`❌ 全平倉失敗: ${e.message}`, 'danger'); }
+            finally { isPlacingOrder.value = false; }
+        };
+
         const closeActivePosition = async () => {
             const coin = activeCoin.value; if (!coin) return;
             isPlacingOrder.value = true;
@@ -1482,12 +1675,17 @@ createApp({
 
         const getTradeUnrealizedPnl = (trade) => {
             if (trade.is_close) return 0;
-            const pos = allPositions.value[trade.symbol];
+            const sym = trade.symbol;
+            const pos = allPositions.value[sym];
             if (!pos || Math.abs(pos.qty) < 0.001) return 0;
+            
+            const oldestOpenTrade = [...trades.value].reverse().find(t => t.symbol === sym && !t.is_close);
+            if (trade.id !== oldestOpenTrade?.id) return 0;
+
             const currentPrice = getTradeCurrentPrice(trade);
             if (currentPrice <= 0) return 0;
-            if (trade.isBuyer) return (currentPrice - trade.price) * trade.qty;
-            return (trade.price - currentPrice) * trade.qty;
+            if (pos.qty > 0) return (currentPrice - pos.avg_price) * Math.abs(pos.qty);
+            return (pos.avg_price - currentPrice) * Math.abs(pos.qty);
         };
 
         const getTradeUnrealizedPnlDisplay = (trade) => {
@@ -1496,22 +1694,36 @@ createApp({
             return pnl.toFixed(4);
         };
 
-        const getTradeUnrealizedPnlPercent = (trade) => {
-            const pnl = getTradeUnrealizedPnl(trade);
-            if (pnl === 0 || trade.price * trade.qty === 0) return 0;
-            return pnl / (trade.price * trade.qty) * 100 * (bot.value.leverage || 20);
-        };
-
         const getTradeUnrealizedPnlPercentActual = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
-            if (pnl === 0 || trade.price * trade.qty === 0) return 0;
-            return pnl / (trade.price * trade.qty) * 100;
+            if (pnl === 0) return 0;
+            const sym = trade.symbol;
+            const pos = allPositions.value[sym];
+            if (!pos || pos.avg_price <= 0) return 0;
+            return (pnl / (pos.avg_price * Math.abs(pos.qty))) * 100;
+        };
+
+        const getTradeUnrealizedPnlPercent = (trade) => {
+            const actual = getTradeUnrealizedPnlPercentActual(trade);
+            return actual * (bot.value.leverage || 20);
         };
 
         const canCloseTrade = (trade) => {
             const sym = trade.symbol;
-            return allPositions.value[sym] && Math.abs(allPositions.value[sym].qty) > 0;
+            const pos = allPositions.value[sym];
+            if (!pos || Math.abs(pos.qty) < 0.001) return false;
+            const oldestOpenTrade = [...trades.value].reverse().find(t => t.symbol === sym && !t.is_close);
+            return trade.id === oldestOpenTrade?.id;
         };
+
+        const sortedTradesTable = computed(() => {
+            return [...trades.value].sort((a, b) => {
+                const canA = canCloseTrade(a) ? 1 : 0;
+                const canB = canCloseTrade(b) ? 1 : 0;
+                if (canA !== canB) return canB - canA; // 置頂
+                return b.time - a.time; // 原本的按時間降冪
+            });
+        });
 
         const closeTradePosition = async (trade) => {
             const sym = trade.symbol.replace(':USDT', 'USDT');
@@ -1657,6 +1869,7 @@ createApp({
         onMounted(() => {
             addLog('🚀 Dashboard 初始化...');
             initChart();
+            fetchWhitelist();
             fetchExchangeRate();
             fetchBotStatus();
             fetchPosition();
@@ -1675,6 +1888,12 @@ createApp({
             logsInterval         = setInterval(fetchBackendLogs, 2000);
             klineInterval        = setInterval(loadKlines, 60000);
             openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
+            
+            aiStatusInterval     = setInterval(fetchAiStatus, 2000);
+            aiLocalTickInterval  = setInterval(() => {
+                if (aiCountdown.value > 0) aiCountdown.value--;
+            }, 1000);
+            fetchAiStatus();
         });
 
         onUnmounted(() => {
@@ -1686,6 +1905,7 @@ createApp({
             clearInterval(tradesInterval); clearInterval(rateInterval);
             clearInterval(logsInterval);   clearInterval(klineInterval);
             clearInterval(allPositionsInterval); clearInterval(openOrdersInterval);
+            clearInterval(aiStatusInterval); clearInterval(aiLocalTickInterval);
         });
 
         // ── Submit limit / market order from the new panel ──────────
@@ -1713,14 +1933,75 @@ createApp({
             window.location.href = `${API_BASE}/history/download/${date}`;
         };
 
+        const showStrategyModal = ref(false);
+        const strategyConfig = ref({
+            FAST_PATH_SCORE_LOW_VOL: 14.0,
+            FAST_PATH_SCORE_HIGH_VOL: 17.0,
+            ENTRY_SCORE_MIN: 6.0,
+            ADX_MIN_THRESHOLD: 5.0,
+            ENTRY_COOLDOWN_GLOBAL_SEC: 120,
+            AI_FRESHNESS_MULTIPLIER: 4
+        });
+
+        const loadStrategyConfig = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/strategy-config`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        Object.assign(strategyConfig.value, data.data);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to fetch strategy config", e);
+            }
+        };
+
+        const saveStrategyConfig = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/strategy-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(strategyConfig.value)
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast('✅ 設定已即時套用！', 'success');
+                    showStrategyModal.value = false;
+                } else {
+                    showToast('⚠️ 儲存失敗', 'danger');
+                }
+            } catch (e) {
+                showToast('❌ 儲存失敗', 'danger');
+            }
+        };
+
+        const setLooseStrategy = () => {
+            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 14.0;
+            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 17.0;
+            strategyConfig.value.ENTRY_SCORE_MIN = 6.0;
+            strategyConfig.value.ADX_MIN_THRESHOLD = 5.0;
+            strategyConfig.value.ENTRY_COOLDOWN_GLOBAL_SEC = 120;
+            strategyConfig.value.AI_FRESHNESS_MULTIPLIER = 4;
+        };
+
+        const setStrictStrategy = () => {
+            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 17.0;
+            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 20.0;
+            strategyConfig.value.ENTRY_SCORE_MIN = 8.0;
+            strategyConfig.value.ADX_MIN_THRESHOLD = 10.0;
+            strategyConfig.value.ENTRY_COOLDOWN_GLOBAL_SEC = 300;
+            strategyConfig.value.AI_FRESHNESS_MULTIPLIER = 2;
+        };
+
         return {
             customSymbol, addCustomCoin, coins, sortedCoins, activeSymbol, activeCoin,
             formattedMainPrice, mainPriceClass,
             currentCurrency, currentCurrencySymbol, twdRate,
             toggleCurrency, setActiveCoin,
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
-            bot, position, trades, liveTrades, error,
-            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
+            bot, position, trades, sortedTradesTable, liveTrades, error,
+            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeAllPositions, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
@@ -1730,7 +2011,11 @@ createApp({
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
-            toast, showToast
+            toast, showToast,
+            whitelist, showWhitelistModal, newWhitelistSymbol,
+            fetchWhitelist, addToWhitelist, removeFromWhitelist, saveWhitelist,
+            aiStatusData, aiCountdown, fetchAiStatus,
+            showStrategyModal, strategyConfig, loadStrategyConfig, saveStrategyConfig, setLooseStrategy, setStrictStrategy
         };
     }
 }).mount('#app');

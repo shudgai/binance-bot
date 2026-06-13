@@ -11,11 +11,12 @@ import numpy as np
 import requests
 import pytz
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from typing import List
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field
+import aiohttp
 
 from services.utils import parse_symbol, paper_key
 from services.system_log_service import get_system_logs, add_system_log, clear_system_logs
@@ -32,6 +33,7 @@ from services.paper_trade_service import (
     force_close_all_positions,
 )
 from services.radar_service import trigger_manual_radar, auto_radar_switch
+from services.config_service import get_whitelist, update_whitelist
 
 load_dotenv()
 
@@ -39,7 +41,7 @@ app = FastAPI(title="Binance Bot API Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8005", "http://127.0.0.1:8005"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -166,6 +168,21 @@ def api_radar_scan():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class WhitelistReq(BaseModel):
+    symbols: List[str]
+
+@app.get("/api/whitelist")
+def api_get_whitelist():
+    return {"status": "success", "whitelist": get_whitelist()}
+
+@app.post("/api/whitelist")
+def api_update_whitelist(req: WhitelistReq):
+    try:
+        new_list = update_whitelist(req.symbols)
+        return {"status": "success", "whitelist": new_list}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/klines/{symbol}")
 def api_get_klines(symbol: str, interval: str = "1m", limit: int = 80):
     try:
@@ -186,6 +203,28 @@ def api_get_all_prices():
     try:
         prices = get_all_prices()
         return {"status": "success", "data": prices}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/strategy-config")
+def api_get_strategy_config():
+    config_path = os.path.join(os.path.dirname(__file__), "strategy_config.json")
+    try:
+        if not os.path.exists(config_path):
+            return {"status": "error", "message": "strategy_config.json not found"}
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/strategy-config")
+def api_update_strategy_config(new_config: dict):
+    config_path = os.path.join(os.path.dirname(__file__), "strategy_config.json")
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(new_config, f, indent=4)
+        return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -265,6 +304,75 @@ def api_market_sell(symbol: str):
             return {"status": "success", "order": order}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"平倉失敗: {str(e)}")
+
+# --- AI 定量交易分析中繼端點 ---
+class TradeDataPoint(BaseModel):
+    timestamp: int = Field(..., description="時間戳記")
+    price: float = Field(..., description="價格")
+    volume: float = Field(..., description="成交量")
+    rsi: Optional[float] = Field(None, description="RSI指標 (可選)")
+    macd: Optional[float] = Field(None, description="MACD數值 (可選)")
+
+class AnalyzeRequest(BaseModel):
+    symbol: str = Field(..., description="交易對名稱，例如 BTCUSDT")
+    data: List[TradeDataPoint] = Field(..., description="時間序列交易數據")
+
+class AnalyzeResponse(BaseModel):
+    decision: Literal["BUY", "SELL", "HOLD"]
+    confidence: float
+    analysis: str
+
+@app.post("/api/analyze", response_model=AnalyzeResponse)
+async def api_analyze_trading_data(request: AnalyzeRequest):
+    LLAMA_API_URL = "http://127.0.0.1:8888/v1/chat/completions"
+    SYSTEM_PROMPT = """你是一位專業的「定量交易分析師」。
+請根據使用者提供的時間序列交易數據進行分析，並給出你的交易決策。
+
+你必須「嚴格」只輸出 JSON 格式，且 JSON 必須精確包含以下三個欄位，不能有任何其他欄位或多餘的文字說明：
+1. "decision": 只能是 "BUY", "SELL", 或 "HOLD" 之一。
+2. "confidence": 一個 0.0 到 1.0 之間的浮點數，代表你的信心程度。
+3. "analysis": 100 字以內的簡短分析理由。
+
+範例輸出：
+{"decision": "BUY", "confidence": 0.85, "analysis": "價格突破且成交量放大，MACD呈現黃金交叉，多頭動能強勁。"}"""
+
+    user_prompt = request.model_dump_json()
+    payload = {
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"請分析以下數據：\n{user_prompt}"}
+        ],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"}
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(LLAMA_API_URL, json=payload, timeout=30) as resp:
+                if resp.status != 200:
+                    raise HTTPException(status_code=502, detail="AI 模型伺服器錯誤")
+                result = await resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"與 AI 伺服器連線失敗: {str(e)}")
+
+    ai_content = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    try:
+        parsed_response = json.loads(ai_content)
+        if not all(k in parsed_response for k in ("decision", "confidence", "analysis")):
+            raise ValueError("缺少必要欄位")
+        return parsed_response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="AI 回傳格式錯誤，無法解析為 JSON")
+
+@app.post("/api/order/close-all")
+def api_close_all_positions():
+    try:
+        if is_paper_trading():
+            force_close_all_positions()
+            return {"status": "success", "detail": "已成功平倉所有持有部位"}
+        else:
+            return {"status": "error", "detail": "實盤全平倉功能尚未實作"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"全平倉失敗: {str(e)}")
 
 @app.get("/api/exchangerate/usdtwd")
 def api_get_usd_twd():
@@ -445,11 +553,25 @@ def api_history_summary():
         for t in trades:
             dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
             date_key = dt.strftime("%Y-%m-%d")
-            entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0})
+            entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0, "net_pnl": 0.0})
+            
+            # 每筆紀錄（開倉、平倉）都算入一次操作
             entry["trades"] += 1
-            if t.get("is_close") and t.get("realized_pnl"):
-                entry["pnl"] += t["realized_pnl"]
-        summaries = [{"date": k, "trades": v["trades"], "pnl": round(v["pnl"], 4)} for k, v in sorted(daily.items(), reverse=True)]
+            
+            # 加總所有手續費 (開倉和平倉都有)
+            entry["fee"] += t.get("fee", 0.0)
+            
+            # 總已實現損益 (Gross PnL，尚未扣除該單的雙向手續費)
+            # 在新版中，我們有 gross_pnl，如果有就用，沒有的話用 realized_pnl
+            if t.get("is_close"):
+                gross_pnl = t.get("gross_pnl", t.get("realized_pnl", 0.0))
+                entry["pnl"] += gross_pnl
+
+        # 計算 Net PnL = Gross PnL - Total Fee
+        for k, v in daily.items():
+            v["net_pnl"] = v["pnl"] - v["fee"]
+
+        summaries = [{"date": k, "trades": v["trades"], "pnl": round(v["pnl"], 4), "fee": round(v["fee"], 4), "net_pnl": round(v["net_pnl"], 4)} for k, v in sorted(daily.items(), reverse=True)]
         return {"summaries": summaries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -467,13 +589,17 @@ def api_history_download(date: str):
             raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
         
         output = io.StringIO()
+        # 加入 BOM 解決 Excel 中文亂碼問題
+        output.write('\ufeff')
         writer = csv.writer(output)
         writer.writerow(["時間", "幣種", "方向", "價格", "數量", "已實現損益", "平倉"])
+        tz = pytz.timezone('Asia/Taipei')
         for t in filtered:
-            ts = datetime.datetime.fromtimestamp(t["time"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
-            side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
-                   "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
-                   "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
+            ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+            is_opening = t.get("is_opening_trade", not t.get("is_close"))
+            side = "買入(多)" if t.get("isBuyer") and is_opening else \
+                   "賣出(空)" if not t.get("isBuyer") and is_opening else \
+                   "賣出(平多)" if not t.get("isBuyer") and not is_opening else \
                    "買入(平空)"
             writer.writerow([
                 ts,
@@ -503,6 +629,17 @@ def get_open_orders(symbol: str):
         return {"status": "success", "data": orders}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+@app.get("/api/ai-status")
+def api_get_ai_status():
+    try:
+        if not os.path.exists("bot_states.json"):
+            return {"status": "error", "message": "bot_states.json not found"}
+        with open("bot_states.json", "r") as f:
+            data = json.load(f)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8005)

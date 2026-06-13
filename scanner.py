@@ -5,10 +5,14 @@ import json
 import ccxt
 from dotenv import load_dotenv
 
+# Import whitelist config service
+# Add project root to sys.path if needed to import services
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from services.config_service import get_whitelist
+
 load_dotenv()
 
 # Configuration
-WHITELIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "NEARUSDT", "TONUSDT", "SUIUSDT", "BNBUSDT", "LINKUSDT", "AVAXUSDT", "INJUSDT"]
 MAX_SYMBOLS = 20  # Target count of active symbols
 STATE_FILE = os.path.join(os.path.dirname(__file__), "scanner_state.json")
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
@@ -32,6 +36,8 @@ def run_scan():
         candidates = []
         current_volumes = {}
 
+        whitelist = get_whitelist()
+
         for symbol, ticker in tickers.items():
             # Check for USDT perpetual futures symbols
             if not symbol.endswith('USDT') and not symbol.endswith('USDT:USDT'):
@@ -51,7 +57,7 @@ def run_scan():
             current_volumes[clean_sym] = float(quote_volume)
 
             # Filter candidates: price under $5.0 OR in whitelist
-            if clean_sym not in WHITELIST:
+            if clean_sym not in whitelist:
                 if last_price > 5.0 or last_price == 0:
                     continue
 
@@ -69,7 +75,7 @@ def run_scan():
         # Compute volume growth rates
         growth_rates = []
         for sym in candidates:
-            if sym in WHITELIST:
+            if sym in whitelist:
                 continue
             curr_vol = current_volumes.get(sym, 0.0)
             prev_vol = prev_volumes.get(sym, 0.0)
@@ -86,7 +92,7 @@ def run_scan():
         growth_rates.sort(key=lambda x: (x[1], x[2]), reverse=True)
 
         # 白名單模式：僅採用白名單幣種
-        selected_symbols = list(WHITELIST)
+        selected_symbols = list(whitelist)
         selected_symbols.sort()
 
         # Save to bot_symbols.json
