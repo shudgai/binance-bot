@@ -1977,21 +1977,25 @@ createApp({
         };
 
         const setLooseStrategy = () => {
-            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 14.0;
-            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 17.0;
-            strategyConfig.value.ENTRY_SCORE_MIN = 6.0;
+            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 10.0;
+            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 13.0;
+            strategyConfig.value.ENTRY_SCORE_MIN = 4.0;
             strategyConfig.value.ADX_MIN_THRESHOLD = 5.0;
-            strategyConfig.value.ENTRY_COOLDOWN_GLOBAL_SEC = 120;
+            strategyConfig.value.ENTRY_COOLDOWN_GLOBAL_SEC = 60;
             strategyConfig.value.AI_FRESHNESS_MULTIPLIER = 4;
+            strategyConfig.value.AI_TRIGGER_SCORE_LOW_VOL = 3.0;
+            strategyConfig.value.AI_TRIGGER_SCORE_HIGH_VOL = 4.0;
         };
 
         const setStrictStrategy = () => {
-            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 17.0;
-            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 20.0;
-            strategyConfig.value.ENTRY_SCORE_MIN = 8.0;
+            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 14.0;
+            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 17.0;
+            strategyConfig.value.ENTRY_SCORE_MIN = 6.0;
             strategyConfig.value.ADX_MIN_THRESHOLD = 10.0;
             strategyConfig.value.ENTRY_COOLDOWN_GLOBAL_SEC = 300;
             strategyConfig.value.AI_FRESHNESS_MULTIPLIER = 2;
+            strategyConfig.value.AI_TRIGGER_SCORE_LOW_VOL = 5.0;
+            strategyConfig.value.AI_TRIGGER_SCORE_HIGH_VOL = 6.0;
         };
 
         return {
