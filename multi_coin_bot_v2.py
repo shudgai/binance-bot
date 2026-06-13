@@ -249,6 +249,7 @@ def build_symbol_state(sym):
         "closes": [],
         "tr_list": [],
         "pending_entry": None,
+        "vwap": 0.0,
         "prev_close": None,
         "last_trade_price": 0.0,
         "last_trade_qty": 0.0,
@@ -910,6 +911,12 @@ def compute_indicators(sym):
     lows = np.array([x[3] for x in ohlcv])
     volumes = np.array([x[5] for x in ohlcv])
     s.closes = closes
+    
+    # 計算 VWAP (利用抓取到的 limit=100 根 K 線作為 Rolling Session)
+    typical_prices = (highs + lows + closes) / 3.0
+    vol_sum = np.sum(volumes)
+    s.vwap = float(np.sum(typical_prices * volumes) / vol_sum) if vol_sum > 0 else float(closes[-1])
+
     prev = s.prev_close
     for i in range(len(ohlcv)):
         h, l, c = ohlcv[i][2], ohlcv[i][3], ohlcv[i][4]
@@ -1922,7 +1929,26 @@ def compute_signal_strength(sym):
             if c_change > 0.002:  # 實體大於 0.2%
                 logger.info(f"💥 [爆量直通] {sym} 成交量瞬間放大至 {s.current_vol / s.avg_vol_24h_1m:.1f} 倍！無視規則直接進場！")
                 return (side, max(strength, fast_path_threshold), route, True)
+    # === 新增：鐵血雙鎖 (Strict HTF & VWAP) ===
+    # 放行條件：若是大爆發或大盤急拉 (上方的 Bypass)，則無視雙鎖直接進場。
+    # 對於常規的 Fast Path、Confirmation Path 和 AI Path，皆須受雙鎖限制。
+    
+    # 1. 鐵血大週期鎖 (嚴格順勢)
+    if getattr(s, "htf_trend", None) and getattr(s, "htf_trend", None) != expected_trend:
+        # 特例：如果是 AI 明確判斷的「反轉」模式，給予放行
+        is_ai_reversal = getattr(s, "ai_setup", "") == "Reversal" and route in ["b", "c", "s"]
+        if not is_ai_reversal:
+            logger.info(f"🚫 [逆勢阻斷] {sym} 1H 趨勢 ({s.htf_trend}) 與開單方向 ({side}) 不符，禁止開倉！")
+            return (None, 0.0, None, False)
 
+    # 2. VWAP 機構成本線鎖
+    if s.vwap and s.vwap > 0:
+        if side == "buy" and s.close_price < s.vwap:
+            logger.info(f"🚫 [VWAP 阻斷] {sym} 價格 ({s.close_price:.4f}) 低於 VWAP ({s.vwap:.4f})，禁止做多！")
+            return (None, 0.0, None, False)
+        elif side == "sell" and s.close_price > s.vwap:
+            logger.info(f"🚫 [VWAP 阻斷] {sym} 價格 ({s.close_price:.4f}) 高於 VWAP ({s.vwap:.4f})，禁止做空！")
+            return (None, 0.0, None, False)
     fast_path_ok = route == "a" and getattr(s, "htf_trend", None) == expected_trend and strength >= fast_path_threshold
     if STRATEGY_CONF["FAST_PATH_REQUIRE_4H"] and getattr(s, "htf_4h_trend", None) != expected_trend:
         fast_path_ok = False
