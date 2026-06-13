@@ -1094,13 +1094,13 @@ async def check_position_exits(sym):
 
 
     # 0. 強制保本機制 (Breakeven Protection)
-    if profit_pct >= 0.008:
+    if profit_pct >= 0.003:
         s.is_breakeven_set = True
 
-    if s.is_breakeven_set and profit_pct <= 0.002:
+    if s.is_breakeven_set and profit_pct <= 0.0005:
         cs = 'sell' if is_long else 'buy'
-        print(f"🔒 [強制保本] {sym} 觸發保本機制，防止利潤回吐！")
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="保本防護出場")
+        print(f"🔒 [強制保本] {sym} 觸發保本機制，防止綠單變紅單！")
+        await close_position(sym, cs, abs(s.qty), p, avg, reason="保本防護出場", is_profit=True)
         return
 
     # 4. 固定底線停損 (Hard Stop Loss -0.8%)
@@ -1135,32 +1135,40 @@ async def check_position_exits(sym):
         print(f"🛑 [動態停損] {sym} 虧損達 {profit_pct*100:.2f}% (大於 {dynamic_stop_pct*100:.2f}%)，執行停損")
         await close_position(sym, cs, abs(s.qty), p, avg, reason="動態硬停損", is_stop_loss=True)
         return
-    # ── 統一利潤保護機制 (取代原本三組重疊規則：低利潤鎖利 / 利潤轉負出場 / 80%回吐鎖利) ──
-    # 規則：
-    #   1) 開倉未滿 60 秒不啟動，避免開倉初期正常雜訊把單子洗出去
-    #   2) 必須「曾經」到過 0.5% 獲利才啟用保護 (原本 0.2%/0.3% 太容易被正常震盪觸發)
-    #   3) 不論現在是正還是負，只要回吐到只剩最高獲利的 40% (即回吐超過60%)，就出場
-    #      → 用同一條規則處理「轉負」與「小利回吐」，避免互相搶跑
-    MIN_HOLD_FOR_PROFIT_LOCK_SEC = 60   # 開倉滿60秒後才啟動利潤保護
-    PROFIT_LOCK_TRIGGER = 0.005          # 曾經到過 0.5% 才啟用
-    PROFIT_LOCK_RATIO   = 0.8            # 回落到只剩 80% (回吐超過20%) 就出場
-
-    if (hold_sec >= MIN_HOLD_FOR_PROFIT_LOCK_SEC
-            and s.highest_profit_pct >= PROFIT_LOCK_TRIGGER
-            and profit_pct < s.highest_profit_pct * PROFIT_LOCK_RATIO):
-        cs = 'sell' if is_long else 'buy'
-        kept_pct = (profit_pct / s.highest_profit_pct * 100) if s.highest_profit_pct > 0 else 0
-        logger.info(
-            f"🔐 [利潤保護出場] {sym} 最高 {s.highest_profit_pct*100:.2f}%"
-            f" → 現在 {profit_pct*100:.2f}% (剩 {kept_pct:.0f}%)，回吐超過60%，出場"
-        )
-        await close_position(
-            sym, cs, abs(s.qty), p, avg,
-            reason="利潤保護出場",
-            is_profit=(profit_pct >= 0)
-        )
-        s.highest_profit_pct = 0.0
-        return
+    # ── 動態利潤保護機制 (Dynamic Profit Lock) ──
+    MIN_HOLD_FOR_PROFIT_LOCK_SEC = 60
+    
+    if hold_sec >= MIN_HOLD_FOR_PROFIT_LOCK_SEC and s.highest_profit_pct >= 0.004:
+        # 動態回吐比例
+        profit_lock_ratio = 0.8 if s.highest_profit_pct >= 0.008 else 0.5
+            
+        if profit_pct < s.highest_profit_pct * profit_lock_ratio:
+            cs = 'sell' if is_long else 'buy'
+            kept_pct = (profit_pct / s.highest_profit_pct * 100) if s.highest_profit_pct > 0 else 0
+            logger.info(
+                f"🔐 [利潤保護出場] {sym} 最高 {s.highest_profit_pct*100:.2f}%"
+                f" → 現在 {profit_pct*100:.2f}% (剩 {kept_pct:.0f}%)，出場保利"
+            )
+            await close_position(
+                sym, cs, abs(s.qty), p, avg,
+                reason="利潤保護出場",
+                is_profit=(profit_pct >= 0)
+            )
+            s.highest_profit_pct = 0.0
+            return
+            
+    # ── 新增：EMA 停滯追蹤 (Stagnation Stop) ──
+    if hold_sec > 180 and profit_pct > 0.0015 and s.ema20 > 0:
+        if is_long and p < s.ema20:
+            cs = 'sell'
+            logger.info(f"⏳ [動能衰退] {sym} 持倉超過3分鐘且跌破EMA20，小幅獲利了結 ({profit_pct*100:.2f}%)")
+            await close_position(sym, cs, abs(s.qty), p, avg, reason="動能衰退出場", is_profit=True)
+            return
+        elif not is_long and p > s.ema20:
+            cs = 'buy'
+            logger.info(f"⏳ [動能衰退] {sym} 持倉超過3分鐘且突破EMA20，小幅獲利了結 ({profit_pct*100:.2f}%)")
+            await close_position(sym, cs, abs(s.qty), p, avg, reason="動能衰退出場", is_profit=True)
+            return
     if should_recover_from_reversal(sym, is_long):
         recovery_side = 'sell' if is_long else 'buy'
         logger.info(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手")
