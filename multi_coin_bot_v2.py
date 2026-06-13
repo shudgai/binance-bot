@@ -1545,16 +1545,21 @@ def risk_guard(sym, side, route="a"):
         
     cp = s.close_price
 
-    # 動態冷卻 (無論多空)，防止來回反向雙殺
     last_exit = getattr(s, "last_exit_time", 0.0)
     last_exit_type = getattr(s, "last_exit_type", "normal")
-    cooldown_map = {"stop_loss": 1800, "profit": 60, "normal": 120}  # 停損強制關小黑屋 30 分鐘 (1800秒)
+    cooldown_map = {"stop_loss": 1800, "profit": 60, "normal": 120}
     required_cool = cooldown_map.get(last_exit_type, 90)
 
     if time.time() - last_exit < required_cool:
+        # 停損冷卻：只鎖同方向，反向允許
         if last_exit_type == "stop_loss":
-            logger.info(f"🛑 {sym} 剛被停損，強制關小黑屋中 (剩 {required_cool - (time.time()-last_exit):.0f}秒)，完全禁止開倉")
-        return False
+            stopped_side = s.last_stop_loss_side
+            if stopped_side == side:  # 只擋同向
+                logger.info(f"🛑 {sym} 停損冷卻中 (剩 {required_cool - (time.time()-last_exit):.0f}秒)，禁止同向重開")
+                return False
+            # 反向允許通過，繼續後面的檢查
+        else:
+            return False
 
     # 決定不同幣種的門檻參數
     is_high_vol = sym in HIGH_VOLATILITY_COINS
