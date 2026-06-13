@@ -895,8 +895,9 @@
             <div class="modal-body">
                 <div class="hint" style="margin-bottom: 12px;">免重啟即時切換機器人的攻擊與防禦性。</div>
                 <div style="margin-bottom: 15px; display: flex; gap: 10px;">
-                    <button type="button" class="btn" style="background-color: rgba(14,203,129,0.15); color: var(--success); border: 1px solid var(--success); flex: 1; padding: 10px;" @click="setLooseStrategy">⚡ 一鍵寬鬆 (機槍手)</button>
-                    <button type="button" class="btn" style="background-color: rgba(246,70,93,0.15); color: var(--danger); border: 1px solid var(--danger); flex: 1; padding: 10px;" @click="setStrictStrategy">🎯 一鍵保守 (狙擊手)</button>
+                    <button type="button" class="btn" style="background-color: rgba(14,203,129,0.15); color: var(--success); border: 1px solid var(--success); flex: 1; padding: 10px;" @click="setLooseStrategy">⚡ 寬鬆 (機槍)</button>
+                    <button type="button" class="btn" style="background-color: rgba(240,185,11,0.15); color: var(--primary); border: 1px solid var(--primary); flex: 1; padding: 10px;" @click="setNormalStrategy">⚖️ 標準 (均衡)</button>
+                    <button type="button" class="btn" style="background-color: rgba(246,70,93,0.15); color: var(--danger); border: 1px solid var(--danger); flex: 1; padding: 10px;" @click="setStrictStrategy">🎯 保守 (狙擊)</button>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
                     <div><label>Fast Path (低波動):</label> <input type="number" step="0.1" class="lo-input" v-model.number="strategyConfig.FAST_PATH_SCORE_LOW_VOL"></div>
@@ -1987,6 +1988,17 @@ createApp({
             strategyConfig.value.AI_TRIGGER_SCORE_HIGH_VOL = 4.0;
         };
 
+        const setNormalStrategy = () => {
+            strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 12.0;
+            strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 15.0;
+            strategyConfig.value.ENTRY_SCORE_MIN = 5.0;
+            strategyConfig.value.ADX_MIN_THRESHOLD = 5.0;
+            strategyConfig.value.ENTRY_COOLDOWN_GLOBAL_SEC = 120;
+            strategyConfig.value.AI_FRESHNESS_MULTIPLIER = 4;
+            strategyConfig.value.AI_TRIGGER_SCORE_LOW_VOL = 4.0;
+            strategyConfig.value.AI_TRIGGER_SCORE_HIGH_VOL = 5.0;
+        };
+
         const setStrictStrategy = () => {
             strategyConfig.value.FAST_PATH_SCORE_LOW_VOL = 14.0;
             strategyConfig.value.FAST_PATH_SCORE_HIGH_VOL = 17.0;
@@ -2019,7 +2031,7 @@ createApp({
             whitelist, showWhitelistModal, newWhitelistSymbol,
             fetchWhitelist, addToWhitelist, removeFromWhitelist, saveWhitelist,
             aiStatusData, aiCountdown, fetchAiStatus,
-            showStrategyModal, strategyConfig, loadStrategyConfig, saveStrategyConfig, setLooseStrategy, setStrictStrategy
+            showStrategyModal, strategyConfig, loadStrategyConfig, saveStrategyConfig, setLooseStrategy, setNormalStrategy, setStrictStrategy
         };
     }
 }).mount('#app');
