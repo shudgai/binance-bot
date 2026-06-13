@@ -1435,7 +1435,10 @@ async def _execute_order_inner(sym, side, price, route="a", is_ai=False, strengt
             s.entry_count += 1
             s.entry_route = route  # 記錄是透過哪個策略進場的
             direction = "做多" if side == 'buy' else "做空"
-            print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT)")
+            
+            # 計算 RV 並記錄，幫助後續覆盤
+            rv = s.current_vol / max(s.vol_ma20, 1e-8)
+            print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT) [RV: {rv:.2f}]")
         except Exception as e:
             logger.info(f"🛑 [模擬開倉失敗] {sym}: {e}")
     else:
@@ -1517,12 +1520,16 @@ def is_entry_pin_safe(sym, side):
 
 
 def is_entry_volume_confirmed(s):
-    if len(s.ohlcv) < 6:
+    if len(s.ohlcv) < 20:
         return True
-    current_vol = s.current_vol
-    recent_5_vols = [x[5] for x in s.ohlcv[-6:-1]]
-    avg_vol_5 = sum(recent_5_vols) / 5
-    if current_vol <= avg_vol_5 * STRATEGY_CONF["VOLUME_CONFIRM_RATIO"]:
+    
+    # 計算相對成交量 (Relative Volume, RV)
+    rv = s.current_vol / max(s.vol_ma20, 1e-8)
+    
+    # 嚴格門檻：RV 必須大於 1.5 倍的 20均量 才算有足夠動能突破
+    min_rv = 1.5 
+    
+    if rv < min_rv:
         return False
     return True
 
