@@ -91,7 +91,7 @@ DEFAULT_STRATEGY_CONF = {
     "ENTRY_COOLDOWN_SAME_SIDE_SEC": 600,
     "ADX_MIN_THRESHOLD": 5.0,
     "VOLUME_CONFIRM_RATIO": 0.6,
-    "ATR_SPIKE_MULTIPLIER": 3.0
+    "ATR_SPIKE_MULTIPLIER": 1.5
 }
 
 STRATEGY_CONF = DEFAULT_STRATEGY_CONF.copy()
@@ -285,6 +285,7 @@ def build_symbol_state(sym):
         "last_stop_loss_side": "",
         "last_stop_loss_time": 0.0,
         "last_exit_time": 0.0,
+        "last_exit_type": "normal",
         "ai_bias": None,        # "long" / "short" / "neutral" / None
         "ai_confidence": 0.0,
         "ai_reason": "",
@@ -646,8 +647,14 @@ def mark_exit(sym, is_stop_loss=False, is_profit=False):
         s.status_reason = "平倉冷卻 (90秒)"
 
 def reset_coin_state(sym):
-    STATES.setdefault(sym, build_symbol_state(sym))
+    s = STATES.get(sym)
+    preserved_exit_time = s.last_exit_time if s else 0.0
+    preserved_exit_type = getattr(s, "last_exit_type", "normal") if s else "normal"
+    
+    STATES[sym] = build_symbol_state(sym)
     s = STATES[sym]
+    s.last_exit_time = preserved_exit_time
+    s.last_exit_type = preserved_exit_type
     s.qty = 0.0
     s.avg_price = 0.0
     s.open_time = 0.0
@@ -666,6 +673,8 @@ def reset_coin_state(sym):
     s.avg_entry_price = 0.0
     s.last_entry_time = 0.0
     s.avg_vol_24h_1m = 0.0
+    s.is_breakeven_set = False
+    s.max_strength = 0.0
 
 # ── 大盤與風向監控 (BTC & ETH Filter) ─────────────────────────
 
@@ -697,6 +706,11 @@ async def update_market_wind():
             
             MARKET_WIND["btc_trend"] = "BULL" if btc_price > btc_ema20 else "BEAR"
             MARKET_WIND["btc_change_15m"] = btc_change_15m
+            
+            if len(btc_ohlcv) >= 60:
+                btc_1h_closes = np.array([x[4] for x in btc_ohlcv[-60:]])
+                btc_1h_trend = "bull" if btc_closes[-1] > np.mean(btc_1h_closes) else "bear"
+                MARKET_WIND["btc_1h_trend"] = btc_1h_trend
         else:
             btc_change_15m = 0.0
             
@@ -708,8 +722,8 @@ async def update_market_wind():
         else:
             eth_change_15m = 0.0
             
-        # 1. 瀑布防護 (15m內跌超過1.2%暫停多單，漲超過1.2%暫停空單)
-        if btc_change_15m < -0.012 or eth_change_15m < -0.015:
+        # 1. 瀑布防護 (15m內跌超過0.6%暫停多單，漲超過1.2%暫停空單)
+        if btc_change_15m < -0.006 or eth_change_15m < -0.008:
             MARKET_WIND["allow_long"] = False
             logger.warning(f"⚠️ [大盤瀑布風控] BTC 15m變動 {btc_change_15m*100:.2f}% | ETH 15m變動 {eth_change_15m*100:.2f}% | 🚫 暫停所有小幣多單開倉！")
         elif btc_change_15m > 0.012 or eth_change_15m > 0.015:
@@ -1116,44 +1130,30 @@ async def check_position_exits(sym):
         print(f"🛑 [動態停損] {sym} 虧損達 {profit_pct*100:.2f}% (大於 {dynamic_stop_pct*100:.2f}%)，執行停損")
         await close_position(sym, cs, abs(s.qty), p, avg, reason="動態硬停損", is_stop_loss=True)
         return
-    # ── 新增：低利潤快速鎖利 (避免小利潤回吐變虧損) ──
-    # 最高利潤到過 0.3%，但現在只剩不到一半 → 立刻出場
-    LOW_PROFIT_LOCK_TRIGGER = 0.003   # 曾經到過 0.3%
-    LOW_PROFIT_LOCK_RATIO   = 0.4     # 只剩 40% 就出場（即回吐 60%）
+    # ── 統一利潤保護機制 (取代原本三組重疊規則：低利潤鎖利 / 利潤轉負出場 / 80%回吐鎖利) ──
+    # 規則：
+    #   1) 開倉未滿 60 秒不啟動，避免開倉初期正常雜訊把單子洗出去
+    #   2) 必須「曾經」到過 0.5% 獲利才啟用保護 (原本 0.2%/0.3% 太容易被正常震盪觸發)
+    #   3) 不論現在是正還是負，只要回吐到只剩最高獲利的 40% (即回吐超過60%)，就出場
+    #      → 用同一條規則處理「轉負」與「小利回吐」，避免互相搶跑
+    MIN_HOLD_FOR_PROFIT_LOCK_SEC = 60   # 開倉滿60秒後才啟動利潤保護
+    PROFIT_LOCK_TRIGGER = 0.005          # 曾經到過 0.5% 才啟用
+    PROFIT_LOCK_RATIO   = 0.4            # 回落到只剩 40% (回吐超過60%) 就出場
 
-    if (s.highest_profit_pct >= LOW_PROFIT_LOCK_TRIGGER
-            and profit_pct < s.highest_profit_pct * LOW_PROFIT_LOCK_RATIO
-            and profit_pct >= 0):     # 還沒虧才鎖，虧了讓硬停損處理
-        cs = 'sell' if is_long else 'buy'
-        logger.info(
-            f"🔐 [低利潤鎖利] {sym} 最高 {s.highest_profit_pct*100:.2f}%"
-            f" → 現在 {profit_pct*100:.2f}%，回吐超過60%，出場保住小利"
-        )
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="低利潤快速鎖利", is_profit=True)
-        s.highest_profit_pct = 0.0
-        return
-
-    # ── 新增：利潤曾到過正數，現在轉負 → 立刻平 (不等硬停損 -0.5%) ──
-    PROFIT_TURNED_NEGATIVE_THRESHOLD = 0.002  # 曾經到過 0.2% 才啟用
-    if (s.highest_profit_pct >= PROFIT_TURNED_NEGATIVE_THRESHOLD
-            and profit_pct < 0):
-        cs = 'sell' if is_long else 'buy'
-        logger.info(
-            f"🔄 [利潤轉負出場] {sym} 曾達 {s.highest_profit_pct*100:.2f}%"
-            f" 但現在 {profit_pct*100:.2f}%，利潤歸零立刻出場"
-        )
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="利潤轉負出場")
-        s.highest_profit_pct = 0.0
-        return
-
-    # 4. 分層鎖利與利潤防護機制
-    # 統一公式：回吐 80% 才出場 (profit < highest * 0.2)
-    # 小利 (>=0.8%): 總獲利已縮回至剩下 20% 才出場
-    if s.highest_profit_pct >= 0.008 and profit_pct < s.highest_profit_pct * 0.2:
+    if (hold_sec >= MIN_HOLD_FOR_PROFIT_LOCK_SEC
+            and s.highest_profit_pct >= PROFIT_LOCK_TRIGGER
+            and profit_pct < s.highest_profit_pct * PROFIT_LOCK_RATIO):
         cs = 'sell' if is_long else 'buy'
         kept_pct = (profit_pct / s.highest_profit_pct * 100) if s.highest_profit_pct > 0 else 0
-        print(f"🛡️ [鎖利出場] {sym} 最高獲利 {s.highest_profit_pct*100:.2f}%，目前剩 {profit_pct*100:.2f}% ({kept_pct:.0f}%)，已縮回 80%，出場")
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="80%回吐鎖利", is_profit=True)
+        logger.info(
+            f"🔐 [利潤保護出場] {sym} 最高 {s.highest_profit_pct*100:.2f}%"
+            f" → 現在 {profit_pct*100:.2f}% (剩 {kept_pct:.0f}%)，回吐超過60%，出場"
+        )
+        await close_position(
+            sym, cs, abs(s.qty), p, avg,
+            reason="利潤保護出場",
+            is_profit=(profit_pct >= 0)
+        )
         s.highest_profit_pct = 0.0
         return
     if should_recover_from_reversal(sym, is_long):
@@ -1204,13 +1204,7 @@ async def check_position_exits(sym):
             print(f"🏃 [ATR移動停利] {sym} 最高獲利達 {s.highest_profit_pct*100:.2f}%，回落 {trail_stop_dist/s.current_atr:.1f} ATR，觸發出場！")
             await close_position(sym, cs, abs(s.qty), p, avg, reason="ATR移動停利", is_profit=True)
             return
-    elif s.highest_profit_pct >= base_tp_trend:
-        # 初階防護：最高 1.2%，回落超過 20%（剩 80%）才出場 (適應震盪行情)
-        if profit_pct < s.highest_profit_pct * 0.8:
-            cs = 'sell' if is_long else 'buy'
-            print(f"🏃 [波段停利] {sym} 最高獲利 {s.highest_profit_pct*100:.2f}%，已回落超過 20%，鎖利出場！")
-            await close_position(sym, cs, abs(s.qty), p, avg, reason="波段鎖利", is_profit=True)
-            return
+
 
     # 4. 趨勢感知鎖利 (Trend-Aware Trailing)
     # 若趨勢仍順向則繼續持有，趨勢翻轉才出場
@@ -1351,8 +1345,8 @@ async def _execute_order_inner(sym, side, price, route="a", is_ai=False, strengt
                 ask_qty = float(ask_qty)
                 base_amt_est = (margin * LEVERAGE) / price
                 target_qty = ask_qty if side == 'buy' else bid_qty
-                if target_qty > 0 and base_amt_est > target_qty * 0.05:
-                    logger.warning(f"🛑 [深度風控] {sym} 預估下單量 {base_amt_est:.4f} 超過盤口深度 5% ({target_qty:.4f})，拒絕開倉！")
+                if target_qty > 0 and base_amt_est > target_qty * 5.0:
+                    logger.warning(f"🛑 [深度風控] {sym} 預估下單量 {base_amt_est:.4f} 超過盤口首層深度 500% ({target_qty:.4f})，拒絕開倉！")
                     return
     except Exception as e:
         logger.debug(f"⚠️ [流動性檢查失敗] {sym}: {e}")
@@ -1517,7 +1511,19 @@ def risk_guard(sym, side, route="a"):
         logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤上漲風控] 大盤異常漲勢，禁止順勢開空")
         return False
 
+    if side == 'buy' and MARKET_WIND.get("btc_1h_trend") == "bear":
+        logger.info(f"🛑 {sym} BTC 1H趨勢向下，禁止做多")
+        return False
+
     s = STATES[sym]
+    
+    if side == 'buy' and s.htf_4h_trend == "short":
+        logger.info(f"🛑 {sym} 4H趨勢向下，禁止做多")
+        return False
+    if side == 'sell' and s.htf_4h_trend == "long":
+        logger.info(f"🛑 {sym} 4H趨勢向上，禁止做空")
+        return False
+        
     cp = s.close_price
 
     # 避免同方向連續追單 (15分鐘冷卻)
@@ -1530,7 +1536,7 @@ def risk_guard(sym, side, route="a"):
     # 動態冷卻 (無論多空)，防止來回反向雙殺
     last_exit = getattr(s, "last_exit_time", 0.0)
     last_exit_type = getattr(s, "last_exit_type", "normal")
-    cooldown_map = {"stop_loss": 180, "profit": 60, "normal": 90}
+    cooldown_map = {"stop_loss": 300, "profit": 60, "normal": 120}
     required_cool = cooldown_map.get(last_exit_type, 90)
 
     if time.time() - last_exit < required_cool:
@@ -1542,7 +1548,7 @@ def risk_guard(sym, side, route="a"):
     is_high_vol = sym in HIGH_VOLATILITY_COINS
     is_anchor = sym in ANCHOR_COINS
     
-    min_atr_pct = 0.0020 if is_high_vol else 0.0010
+    min_atr_pct = 0.0010 if is_high_vol else 0.0005
     ema_limit_pct = 0.05 if is_anchor else (0.02 if is_high_vol else 0.03)
 
     # 波動率過濾 (Low Volatility)
@@ -1614,13 +1620,13 @@ def risk_guard(sym, side, route="a"):
             return False
     
     # 均線過濾器：僅限制 Route A (順勢)
-    if is_trend and s.sma200_15m > 0:
-        ma200 = s.sma200_15m
-        if side == 'buy' and cp <= ma200:
-            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200大勢保護] 順勢做多，但價格 {cp:.4f} <= MA200 {ma200:.4f}")
+    if is_trend and s.ema50 > 0:
+        ma_trend = s.ema50
+        if side == 'buy' and cp <= ma_trend:
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA50趨勢保護] 順勢做多，但價格 {cp:.4f} <= MA50 {ma_trend:.4f}")
             return False
-        if side == 'sell' and cp >= ma200:
-            logger.info(f"@@COIN_DEBUG@@ 觸發 [MA200大勢保護] 順勢做空，但價格 {cp:.4f} >= MA200 {ma200:.4f}")
+        if side == 'sell' and cp >= ma_trend:
+            logger.info(f"@@COIN_DEBUG@@ 觸發 [MA50趨勢保護] 順勢做空，但價格 {cp:.4f} >= MA50 {ma_trend:.4f}")
             return False
 
     # 大週期 (HTF) 1H 趨勢過濾器：(恢復寬鬆，僅過濾順勢)
@@ -1822,18 +1828,15 @@ def compute_signal_strength(sym):
     route_a_short = (is_below_sma200 or trend_short) and (short_macd_cross or short_macd_hist_aligned) and last_candle_confirmed_short
 
     # Route B (Left Side / 逆勢反轉)
-    _htf = s.htf_trend
-    b_long_htf_ok  = (_htf != 'short') or (rsi < 32.0)
-    b_short_htf_ok = (_htf != 'long')  or (rsi > 68.0)
-    route_b_long  = rsi < long_rsi_threshold  and is_in_bb_zone_long  and last_candle_confirmed_long  and b_long_htf_ok
-    route_b_short = rsi > short_rsi_threshold and is_in_bb_zone_short and last_candle_confirmed_short and b_short_htf_ok
+    route_b_long = rsi < 30.0 and is_in_bb_zone_long and s.htf_trend == "long" and s.htf_4h_trend == "long"
+    route_b_short = rsi > 70.0 and is_in_bb_zone_short and s.htf_trend == "short" and s.htf_4h_trend == "short"
 
     momentum_long = close > prev_close * 1.001 and (s.current_vol >= max(1000.0, s.vol_ma20 * 0.8) or s.trade_signal_strength > 0.2)
     momentum_short = close < prev_close * 0.999 and (s.current_vol >= max(1000.0, s.vol_ma20 * 0.8) or s.trade_signal_strength > 0.2)
 
     # Route C (Left Side / 搶極端反彈): 只有在有順勢或足夠動能支持時才允許進場
-    route_c_long = rsi <= 25.0 and last_candle_confirmed_long and (trend_long or (momentum_long and s.current_vol >= max(1000.0, s.vol_ma20 * 0.8)))
-    route_c_short = rsi >= 75.0 and last_candle_confirmed_short and (trend_short or (momentum_short and s.current_vol >= max(1000.0, s.vol_ma20 * 0.8)))
+    route_c_long = rsi <= 20.0 and last_candle_confirmed_long and s.htf_trend == "long" and s.htf_4h_trend == "long"
+    route_c_short = rsi >= 80.0 and last_candle_confirmed_short and s.htf_trend == "short" and s.htf_4h_trend == "short"
 
     # Route S (Divergence / 背離確認機制): 最強反轉訊號
     bullish_div, bearish_div = check_rsi_divergence(s.closes, s.rsis, window=60)
@@ -2077,6 +2080,21 @@ async def check_entries():
     balance = get_balance()
     max_pos = get_max_positions(balance)
     
+    # --- 多幣虧損風控 ---
+    open_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym].qty) > 0.000001]
+    losing_count = 0
+    for sym in open_syms:
+        s = STATES[sym]
+        if s.avg_price > 0 and hasattr(s, "close_price"):
+            profit = (s.close_price - s.avg_price) / s.avg_price if s.qty > 0 else (s.avg_price - s.close_price) / s.avg_price
+            if profit < -0.003:
+                losing_count += 1
+                
+    if losing_count >= 2:
+        logger.warning(f"⚠️ [多幣虧損風控] 已有 {losing_count} 個倉位虧損超過 -0.3%，暫停新開倉")
+        return
+    # --------------------
+    
     if open_count >= max_pos:
         return
         
@@ -2113,7 +2131,7 @@ async def check_entries():
     logger.info(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _, _ in candidates[:3])}")
 
     for i in range(min(remaining_slots, len(candidates))):
-        sym, side, _, route, is_ai = candidates[i]
+        sym, side, strength, route, is_ai = candidates[i]
         s = STATES[sym]
         now = time.time()
         
@@ -2418,7 +2436,7 @@ async def periodic_ai_analysis():
                                 STATES[sym].ai_confidence = float(r.get("ai_confidence", 0.0))
                                 STATES[sym].ai_reason = r.get("ai_reason", "")
                                 STATES[sym].ai_updated_at = now
-                                logger.info(f"🤖 [AI決策] {sym}: {r.get('ai_decision','?')} / {r.get('ai_action','?')} (信心:{float(r.get('ai_confidence',0))*100:.0f}%)")
+                                logger.info(f"🤖 [AI決策] {sym}: {r.get('ai_decision','?')} / {r.get('ai_action','?')} (信心:{float(r.get('ai_confidence',0))*100:.0f}%) | 理由: {r.get('ai_reason','無')}")
                     logger.info(f"🤖 [AI訊號更新] 耗時: {ai_latency:.2f}s | 分析 {len(results)} 個幣種")
                 else:
                     # ❌ 有送出但沒有結果 (解析失敗或空回傳)
@@ -2452,5 +2470,20 @@ async def main():
         update_24h_volume(),
     )
 
+import fcntl
+import sys
+
+def enforce_single_instance():
+    lock_file = "/tmp/multi_coin_bot_v2.lock"
+    fp = open(lock_file, 'w')
+    try:
+        fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("🚨 [系統防護] 偵測到 multi_coin_bot_v2 已經在執行中！為防止重複開倉與狀態衝突，本次啟動已自動終止。")
+        sys.exit(1)
+    # 不關閉 fp，讓鎖跟隨這個 process 一起存活，程式結束後 OS 自動釋放
+    return fp
+
 if __name__ == "__main__":
+    _lock_fp = enforce_single_instance()
     asyncio.run(main())
