@@ -1085,20 +1085,6 @@ async def check_position_exits(sym):
     if p < s.trailing_lowest:
         s.trailing_lowest = p
 
-    # ── 快速方向確認機制 (開倉後 90 秒內緊縮停損，預防方向判斷錯誤) ──
-    # 原理：若方向正確，90 秒內通常不會跌超過 0.5%；若已虧損 0.5% 代表方向大概率錯了
-    # 此機制不影響入場條件，只加快「方向錯誤」時的出場速度，減少損失
-    QUICK_SL_WINDOW_SEC = 90
-    QUICK_SL_PCT = 0.003  # -0.3% (硬停損已降至-0.5%，快速確認需在更早觸發)
-    if hold_sec < QUICK_SL_WINDOW_SEC and profit_pct <= -QUICK_SL_PCT:
-        cs = 'sell' if is_long else 'buy'
-        logger.warning(
-            f"⚡ [快速方向確認] {sym} 開倉後 {hold_sec:.0f}s，"
-            f"虧損已達 {profit_pct*100:.2f}% (< -{QUICK_SL_PCT*100:.1f}%)，"
-            f"方向可能錯誤，快速離場！"
-        )
-        await close_position(sym, cs, abs(s.qty), p, avg, reason="快速方向確認停損", is_stop_loss=True)
-        return
 
     # 0. 強制保本機制 (Breakeven Protection)
     if profit_pct >= 0.008:
