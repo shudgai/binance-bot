@@ -183,6 +183,26 @@
         }
         .status-badge.running { color: var(--success); background: rgba(14,203,129,0.1); border-color: rgba(14,203,129,0.2); }
         .status-badge.stopped { color: var(--danger); background: rgba(246,70,93,0.1); border-color: rgba(246,70,93,0.2); }
+        .exit-mode-btn {
+            font-size: 12px; font-weight: 700; padding: 5px 14px;
+            border-radius: 100px; display: flex; align-items: center; gap: 6px;
+            cursor: pointer; user-select: none; transition: all 0.2s ease;
+            white-space: nowrap; border: 1px solid var(--border-color);
+        }
+        .exit-mode-btn.semi-auto {
+            color: #e67e22; background: rgba(230,126,34,0.1); border-color: rgba(230,126,34,0.25);
+        }
+        .exit-mode-btn.semi-auto:hover {
+            background: rgba(230,126,34,0.2);
+            border-color: rgba(230,126,34,0.4);
+        }
+        .exit-mode-btn.fully-auto {
+            color: var(--success); background: rgba(14,203,129,0.1); border-color: rgba(14,203,129,0.25);
+        }
+        .exit-mode-btn.fully-auto:hover {
+            background: rgba(14,203,129,0.2);
+            border-color: rgba(14,203,129,0.4);
+        }
         .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%,100%{transform:scale(0.9);opacity:0.6;} 50%{transform:scale(1.2);opacity:1;} }
 
@@ -491,6 +511,14 @@
             <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;" @click="showHistoryNotebook = true; fetchHistorySummary()">
                 📂 歷史筆記本
             </button>
+            <div
+                :class="['exit-mode-btn', strategyConfig.SEMI_AUTO_EXIT ? 'semi-auto' : 'fully-auto']"
+                @click="toggleSemiAutoExitMode"
+                title="點擊切換：睡眠時請切換至【💤全自動平倉】，看盤時可切換至【🧑‍💻半自動平倉】"
+            >
+                <span class="pulse-dot" v-if="!strategyConfig.SEMI_AUTO_EXIT"></span>
+                <span>{{ strategyConfig.SEMI_AUTO_EXIT ? '🧑‍💻 半自動平倉' : '💤 全自動平倉' }}</span>
+            </div>
             <div class="regime-badge" v-if="bot.regime">
                 <span v-if="bot.regime.includes('牛') || bot.regime.includes('BULL')" style="color:var(--trade-up); font-weight: bold;">🌍 {{ bot.regime }}</span>
                 <span v-else-if="bot.regime.includes('熊') || bot.regime.includes('BEAR')" style="color:var(--trade-down); font-weight: bold;">🌍 {{ bot.regime }}</span>
@@ -503,26 +531,25 @@
         </div>
     </div>
 
+    <!-- Coin chip strip -->
+    <div class="coin-strip">
+        <div
+            v-for="coin in sortedCoins" :key="coin.symbol"
+            :class="['coin-chip', activeSymbol === coin.symbol ? 'active' : '']"
+            @click="setActiveCoin(coin.symbol)"
+        >
+            <span>{{ coin.name }}</span>
+            <span :class="['coin-chip-price', coin.priceClass]">
+                {{ formatMiniPrice(coin.price) }}
+            </span>
+        </div>
+    </div>
+
     <!-- MAIN LAYOUT -->
     <div class="main-layout">
 
         <!-- ══ LEFT PANEL ═══════════════════════════════ -->
         <div class="left-panel">
-
-            <!-- Coin chip strip -->
-            <div class="coin-strip">
-                <div
-                    v-for="coin in sortedCoins" :key="coin.symbol"
-                    :class="['coin-chip', activeSymbol === coin.symbol ? 'active' : '']"
-                    @click="setActiveCoin(coin.symbol)"
-                >
-                    <span>{{ coin.name }}</span>
-                    <span :class="['coin-chip-price', coin.priceClass]">
-                        {{ formatMiniPrice(coin.price) }}
-                    </span>
-                </div>
-
-            </div>
 
             <!-- Trade history restored -->
             <div class="card" style="margin-top: 15px;">
@@ -547,36 +574,46 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="t in sortedTradesTable" :key="t.id">
-                                <td>{{ formatTradeTime(t.time) }}</td>
-                                <td style="font-weight: bold;">
-                                    {{ t.symbol.replace(':USDT', '').replace('USDT', '') }}
-                                    <span v-if="t.is_ai" style="background:rgba(240,185,11,0.15); color:var(--primary); padding:2px 6px; border-radius:4px; font-size:9px; font-weight:700; margin-left:4px;" title="AI 輔助進場">🤖 AI</span>
-                                </td>
-                                <td>
-                                    <span v-if="t.isBuyer && (t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-up);font-weight:700;">買入(多)</span>
-                                    <span v-else-if="!t.isBuyer && (t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-down);font-weight:700;">賣出(空)</span>
-                                    <span v-else-if="!t.isBuyer && !(t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-down);font-weight:700;">賣出(平多)</span>
-                                    <span v-else-if="t.isBuyer && !(t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
-                                </td>
-                                <td>{{ t.price }}</td>
-                                <td>{{ t.qty }}</td>
-                                <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
-                                    {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
-                                    <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                        ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
-                                    </span>
-                                </td>
-                                <td :class="t.realized_pnl > 0 ? 'up' : (t.realized_pnl < 0 ? 'down' : '')">
-                                    {{ t.realized_pnl > 0 ? '+' : '' }}{{ t.realized_pnl === 0 ? '-' : t.realized_pnl.toFixed(4) }}
-                                    <span v-if="t.realized_pnl !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                        ({{ (t.realized_pnl / (t.price * t.qty) * 100 * (bot.leverage || 20)).toFixed(2) }}% / 實: {{ (t.realized_pnl / (t.price * t.qty) * 100).toFixed(2) }}%)
-                                    </span>
-                                </td>
-                                <td>
-                                    <button v-if="!t.is_close && canCloseTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
-                                </td>
-                            </tr>
+                            <template v-for="t in sortedTradesTable" :key="t.id">
+                                <tr :style="t.exit_advice && strategyConfig.SEMI_AUTO_EXIT && !t.is_close ? 'border-bottom: none;' : ''">
+                                    <td>{{ formatTradeTime(t.time) }}</td>
+                                    <td style="font-weight: bold;">
+                                        {{ t.symbol.replace(':USDT', '').replace('USDT', '') }}
+                                        <span v-if="t.is_ai" style="background:rgba(240,185,11,0.15); color:var(--primary); padding:2px 6px; border-radius:4px; font-size:9px; font-weight:700; margin-left:4px;" title="AI 輔助進場">🤖 AI</span>
+                                    </td>
+                                    <td>
+                                        <span v-if="t.isBuyer && (t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-up);font-weight:700;">買入(多)</span>
+                                        <span v-else-if="!t.isBuyer && (t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-down);font-weight:700;">賣出(空)</span>
+                                        <span v-else-if="!t.isBuyer && !(t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-down);font-weight:700;">賣出(平多)</span>
+                                        <span v-else-if="t.isBuyer && !(t.is_opening_trade ?? !t.is_close)" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
+                                    </td>
+                                    <td>{{ t.price }}</td>
+                                    <td>{{ t.qty }}</td>
+                                    <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
+                                        {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
+                                        <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
+                                            ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
+                                        </span>
+                                    </td>
+                                    <td :class="t.realized_pnl > 0 ? 'up' : (t.realized_pnl < 0 ? 'down' : '')">
+                                        {{ t.realized_pnl > 0 ? '+' : '' }}{{ t.realized_pnl === 0 ? '-' : t.realized_pnl.toFixed(4) }}
+                                        <span v-if="t.realized_pnl !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
+                                            ({{ (t.realized_pnl / (t.price * t.qty) * 100 * (bot.leverage || 20)).toFixed(2) }}% / 實: {{ (t.realized_pnl / (t.price * t.qty) * 100).toFixed(2) }}%)
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <button v-if="!t.is_close && canCloseTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="t.exit_advice && strategyConfig.SEMI_AUTO_EXIT && !t.is_close">
+                                    <td colspan="8" style="padding-top: 0; padding-bottom: 12px; border-top: none;">
+                                        <div style="color:#f6465d; font-size:12px; font-weight:bold; background:rgba(246,70,93,0.1); padding:8px 12px; border-radius:8px; border:1px solid rgba(246,70,93,0.2); display: flex; justify-content: space-between; align-items: center; box-shadow: inset 0 0 10px rgba(246,70,93,0.05);">
+                                            <span>🔔 系統提示：{{ t.exit_advice }} (建議獲利了結)</span>
+                                            <button class="btn-close-trade" style="padding: 6px 14px; font-size: 11px;" @click="closeTradePosition(t)" :disabled="isPlacingOrder">立即一鍵平倉</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
                             <tr v-if="trades.length === 0">
                                 <td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px 0;">尚無交易紀錄</td>
                             </tr>
@@ -590,6 +627,7 @@
                 <div class="log-header">
                     <span class="log-header-title">💻 系統紀錄</span>
                     <div>
+                        <span class="log-clear" style="margin-right:10px" @click="copyLogs">複製</span>
                         <span class="log-clear" style="margin-right:10px" @click="showLogs = !showLogs">{{ showLogs ? '▲ 縮起' : '▼ 展開' }}</span>
                         <span class="log-clear" @click="clearLogs">清除</span>
                     </div>
@@ -906,6 +944,12 @@
                     <div><label>ADX 門檻:</label> <input type="number" step="0.1" class="lo-input" v-model.number="strategyConfig.ADX_MIN_THRESHOLD"></div>
                     <div><label>全域冷卻 (秒):</label> <input type="number" class="lo-input" v-model.number="strategyConfig.ENTRY_COOLDOWN_GLOBAL_SEC"></div>
                     <div><label>AI 新鮮度倍數:</label> <input type="number" class="lo-input" v-model.number="strategyConfig.AI_FRESHNESS_MULTIPLIER"></div>
+                    <div style="grid-column: span 2; display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                        <input type="checkbox" id="semi_auto_exit" v-model="strategyConfig.SEMI_AUTO_EXIT" style="width:16px; height:16px;">
+                        <label for="semi_auto_exit" style="font-weight: bold; color: var(--primary); cursor: pointer; user-select: none;">
+                            🤖 半自動平倉模式 (勾選為提示並手動平倉；取消勾選則為全自動睡覺模式)
+                        </label>
+                    </div>
                 </div>
                 <div style="margin-top: 16px;">
                     <button class="btn btn-primary" @click="saveStrategyConfig">💾 儲存並即時套用</button>
@@ -1329,6 +1373,16 @@ createApp({
             toast.show = true;
             if (toastTimer) clearTimeout(toastTimer);
             toastTimer = setTimeout(() => { toast.show = false; }, duration);
+        };
+
+        const copyLogs = () => {
+            const textToCopy = logs.value.map(l => `[${l.time}] ${l.text}`).join('\n');
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                showToast('系統日誌已複製到剪貼簿！', 'success');
+            }).catch(err => {
+                console.error('複製失敗: ', err);
+                showToast('複製失敗，請檢查瀏覽器權限', 'danger');
+            });
         };
 
         let liveTradesWs = null;
@@ -1771,7 +1825,7 @@ createApp({
                         }
                     } catch(e) {}
                 }
-            }, 3000);
+            }, 1000);
         };
 
         const wsConnections = [];
@@ -1870,6 +1924,7 @@ createApp({
         onMounted(() => {
             addLog('🚀 Dashboard 初始化...');
             initChart();
+            loadStrategyConfig();
             fetchWhitelist();
             fetchExchangeRate();
             fetchBotStatus();
@@ -1881,14 +1936,14 @@ createApp({
             initLiveTradesWs();
             fetchBackendLogs();
 
-            statusInterval       = setInterval(fetchBotStatus, 5000);
-            positionInterval     = setInterval(fetchPosition, 5000);
-            allPositionsInterval = setInterval(fetchAllPositions, 3000);
-            tradesInterval       = setInterval(fetchTrades, 8000);
+            statusInterval       = setInterval(fetchBotStatus, 3000);
+            positionInterval     = setInterval(fetchPosition, 1000);
+            allPositionsInterval = setInterval(fetchAllPositions, 1000);
+            tradesInterval       = setInterval(fetchTrades, 3000);
             rateInterval         = setInterval(fetchExchangeRate, 60000);
             logsInterval         = setInterval(fetchBackendLogs, 2000);
             klineInterval        = setInterval(loadKlines, 60000);
-            openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
+            openOrdersInterval   = setInterval(fetchOpenOrders, 3000);
             
             aiStatusInterval     = setInterval(fetchAiStatus, 2000);
             aiLocalTickInterval  = setInterval(() => {
@@ -1941,7 +1996,8 @@ createApp({
             ENTRY_SCORE_MIN: 6.0,
             ADX_MIN_THRESHOLD: 5.0,
             ENTRY_COOLDOWN_GLOBAL_SEC: 120,
-            AI_FRESHNESS_MULTIPLIER: 4
+            AI_FRESHNESS_MULTIPLIER: 4,
+            SEMI_AUTO_EXIT: true
         });
 
         const loadStrategyConfig = async () => {
@@ -1974,6 +2030,31 @@ createApp({
                 }
             } catch (e) {
                 showToast('❌ 儲存失敗', 'danger');
+            }
+        };
+
+        const toggleSemiAutoExitMode = async () => {
+            strategyConfig.value.SEMI_AUTO_EXIT = !strategyConfig.value.SEMI_AUTO_EXIT;
+            try {
+                const res = await fetch(`${API_BASE}/strategy-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(strategyConfig.value)
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    if (strategyConfig.value.SEMI_AUTO_EXIT) {
+                        showToast('🧑‍💻 已切換至半自動平倉模式 (手動確認)', 'success');
+                    } else {
+                        showToast('💤 已切換至全自動平倉模式 (睡覺/全自動)', 'success');
+                    }
+                } else {
+                    showToast('⚠️ 切換模式失敗', 'danger');
+                    strategyConfig.value.SEMI_AUTO_EXIT = !strategyConfig.value.SEMI_AUTO_EXIT;
+                }
+            } catch (e) {
+                showToast('❌ 網路錯誤，切換模式失敗', 'danger');
+                strategyConfig.value.SEMI_AUTO_EXIT = !strategyConfig.value.SEMI_AUTO_EXIT;
             }
         };
 
@@ -2018,7 +2099,7 @@ createApp({
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, sortedTradesTable, liveTrades, error,
             toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeAllPositions, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
-            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs,
+            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
@@ -2031,7 +2112,7 @@ createApp({
             whitelist, showWhitelistModal, newWhitelistSymbol,
             fetchWhitelist, addToWhitelist, removeFromWhitelist, saveWhitelist,
             aiStatusData, aiCountdown, fetchAiStatus,
-            showStrategyModal, strategyConfig, loadStrategyConfig, saveStrategyConfig, setLooseStrategy, setNormalStrategy, setStrictStrategy
+            showStrategyModal, strategyConfig, loadStrategyConfig, saveStrategyConfig, setLooseStrategy, setNormalStrategy, setStrictStrategy, toggleSemiAutoExitMode
         };
     }
 }).mount('#app');
