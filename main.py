@@ -19,9 +19,9 @@ def main():
     try:
         if api_key == "your_api_key_here" or not api_key:
             print("提示: 未偵測到有效的 API Key，將以『唯讀模式』獲取市場公開數據。")
-            client = Client(testnet=use_testnet)
+            client = Client(demo=True)
         else:
-            client = Client(api_key, api_secret, testnet=use_testnet)
+            client = Client(api_key, api_secret, demo=True)
             # 測試帳戶連線狀態
             account_info = client.get_account()
             print("✅ 成功連線帳戶！")

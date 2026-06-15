@@ -48,22 +48,38 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 
+def should_block_for_hugging(strength, ema_dist, vwap_dist, is_altcoin):
+    """強訊號可略過貼近 EMA/VWAP 的守門條件，避免高品質訊號被誤擋。"""
+    if strength >= 14.0:
+        return False
+    hugging_pct = 0.3 if is_altcoin else 0.2
+    return ema_dist < hugging_pct or vwap_dist < hugging_pct
+
+
 from services.utils import paper_key
 from update_paper_state import update_paper_state
 from services.symbol_manager import replace_underperforming_symbol
 
-exchange = ccxtpro.binance({
-    'apiKey': os.getenv('BINANCE_API_KEY') or None,
-    'secret': os.getenv('BINANCE_API_SECRET') or None,
+BINANCE_API_KEY = (os.getenv('BINANCE_API_KEY') or '').strip()
+BINANCE_API_SECRET = (os.getenv('BINANCE_API_SECRET') or '').strip()
+USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
+PAPER_TRADING = os.getenv("PAPER_TRADING", "True").lower() in ("true", "1", "yes")
+
+exchange_config = {
     'options': {
         'defaultType': 'swap',
         'watchOrderBookSnapshot': True,
     },
-})
-USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = True
+}
+if not PAPER_TRADING and BINANCE_API_KEY and BINANCE_API_SECRET:
+    exchange_config['apiKey'] = BINANCE_API_KEY
+    exchange_config['secret'] = BINANCE_API_SECRET
+elif not PAPER_TRADING:
+    logger.warning("⚠️ [Binance] 未提供有效 API key/secret，將以無認證模式運行；如需實盤/私有下單，請設定正確金鑰。")
+
+exchange = ccxtpro.binance(exchange_config)
 TIMEFRAME = '1m'
-LEVERAGE = 5
+LEVERAGE = 3
 RSI_PERIOD = 9
 VOLUME_RATIO_THRESHOLD = 0.7
 FORCE_AI_SCAN = True  # 測試階段開啟，強制抓取高成交量幣種給 AI
@@ -633,8 +649,7 @@ def compute_per_coin_margin():
     per_slot = 150.0 + profit
     
     # 安全防護：單筆最大不可超過可用餘額的平均分配
-    usable = balance * 0.95
-    max_safe_slot = usable / max_pos
+    max_safe_slot = balance * 0.45
     
     final_slot = min(per_slot, max_safe_slot)
     return min(final_slot, 1000.0)
@@ -780,7 +795,7 @@ async def update_market_wind():
             
             if len(btc_ohlcv) >= 60:
                 btc_1h_closes = np.array([x[4] for x in btc_ohlcv[-60:]])
-                btc_1h_trend = "bull" if btc_closes[-1] > np.mean(btc_1h_closes) else "bear"
+                btc_1h_trend = "UP" if btc_closes[-1] > np.mean(btc_1h_closes) else "DOWN"
                 MARKET_WIND["btc_1h_trend"] = btc_1h_trend
         else:
             btc_change_15m = 0.0
@@ -982,6 +997,7 @@ async def fetch_all_htf_trend():
         trend, ema20 = await fetch_htf_trend(sym)
         if trend:
             STATES[sym].htf_trend = trend
+            STATES[sym].htf_1h_trend = trend  # 補上，讓 check_direction_ok 能讀到
             STATES[sym].htf_ema20 = ema20
         await asyncio.sleep(0.1)
 
@@ -1313,7 +1329,7 @@ async def process_signal(sym: str, signal: Signal | None):
                 tech_bypass = signal.strength >= fast_path_threshold
                 
                 # AI 賦能直通標準
-                ai_bypass = is_ai_fresh and ai_conf >= 70 and ai_action == signal.side.upper()
+                ai_bypass = is_ai_fresh and ai_conf >= 0.70 and ai_action == signal.side.upper()
                 
                 bypass_pullback = tech_bypass or ai_bypass
                 
@@ -1327,17 +1343,8 @@ async def process_signal(sym: str, signal: Signal | None):
                     if confirmed:
                         await execute_order(sym, signal.side, s.close_price, signal.route, signal.is_ai, signal.strength)
                 else:
-                    logger.info(f"⏳ [保守掛單] {sym} 技術分數不足且無 AI 高自信背書，強制掛單等回撤 EMA20...")
-                    target_price = s.ema20
-                    if target_price and target_price > 0:
-                        s.pending_entry = {
-                            "side": signal.side,
-                            "target_price": target_price,
-                            "route": signal.route,
-                            "is_ai": signal.is_ai,
-                            "strength": signal.strength,
-                            "expire_at": time.time() + 900
-                        }
+                    logger.info(f"⚡ [直接開倉] {sym} 訊號成立，直接市價開倉！")
+                    await execute_order(sym, signal.side, s.close_price, signal.route, signal.is_ai, signal.strength)
         return
 
     if not signal or pos_side == signal.side:
@@ -1416,8 +1423,8 @@ async def manage_position(sym):
     is_stop_loss = False
 
     NORMAL_STOP_PCT = -max((s.current_atr * 2.0) / max(avg, 1e-8), 0.008)
-    HARD_STOP_PCT = -0.025
-    TAKE_PROFIT_PCT = abs(NORMAL_STOP_PCT) * 2.5
+    HARD_STOP_PCT = -0.020
+    TAKE_PROFIT_PCT = abs(NORMAL_STOP_PCT) * 3.0
 
     if profit_pct >= 0.003:
         s.is_breakeven_set = True
@@ -1428,13 +1435,13 @@ async def manage_position(sym):
     
     if ai_regime == "CHOP" or ai_conf < 50:
         TRAIL_START_PCT = abs(NORMAL_STOP_PCT) * 1.0  # 提早啟動追蹤
-        TRAIL_RETRACE_RATIO = 0.9  # 只容忍 10% 回撤
+        TRAIL_RETRACE_RATIO = 0.9  # 容忍 10% 回撤，達到高點後只要跌 10% 就停利
     else:
         TRAIL_START_PCT = abs(NORMAL_STOP_PCT) * 1.2  # 提早啟動追蹤
-        if ai_conf >= 70 and ai_action.lower() == ('buy' if is_long else 'sell'):
-            TRAIL_RETRACE_RATIO = 0.75  # 容忍 25% 回撤
+        if ai_conf >= 0.70 and ai_action.lower() == ('buy' if is_long else 'sell'):
+            TRAIL_RETRACE_RATIO = 0.9  # 容忍 10% 回撤，讓順勢走勢有空間
         else:
-            TRAIL_RETRACE_RATIO = 0.85  # 容忍 15% 回撤
+            TRAIL_RETRACE_RATIO = 0.9  # 容忍 10% 回撤
     DYNAMIC_STOP_MIN = 0.003
     DYNAMIC_STOP_MAX = 0.006
 
@@ -1445,7 +1452,7 @@ async def manage_position(sym):
 
     elif getattr(s, "is_breakeven_set", False):
         # 動態保本底線：最低 0.1%，隨著最高利潤往上拉，保持 0.2% 的距離
-        dynamic_floor = max(0.001, s.highest_profit_pct - 0.002)
+        dynamic_floor = max(-0.003, s.highest_profit_pct - 0.008)
         if profit_pct <= dynamic_floor:
             exit_triggered = True
             exit_reason = f"動態保本防護 (最高 {s.highest_profit_pct*100:.2f}% -> 回落至 {profit_pct*100:.2f}%)"
@@ -1651,7 +1658,7 @@ async def _execute_order_inner(sym, side, price, route="a", is_ai=False, strengt
         # 智能動態倉位 (Dynamic Position Sizing) - 調整為純技術面模式，不再進行無 AI 縮倉
         size_multiplier = 1.0
         if strength >= 12.0:
-            size_multiplier = 1.5
+            size_multiplier = 1.3
             logger.info(f"💎 [智能倉位] {sym} 訊號極強 (分數:{strength:.1f}) -> 放大倉位至 1.5 倍")
         else:
             logger.info(f"📊 [智能倉位] {sym} 正常技術開倉 (分數:{strength:.1f}) -> 使用標準倉量 1.0 倍")
@@ -2060,8 +2067,8 @@ def risk_guard(sym, side, route="a"):
         return False
         
     # 量能確認過濾器 (已放寬：暫時關閉成交量最低門檻)
-    # if route != "s" and not is_entry_volume_confirmed(s):
-    #     return False
+    if route != "s" and not is_entry_volume_confirmed(s):
+        return False
         
     # ADX 趨勢強度限制：僅限制順勢策略
     if is_trend:
@@ -2502,7 +2509,7 @@ def compute_signal_strength(sym):
     if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)":
         TECHNICAL_ENTRY_THRESHOLD = 12.0
     else:
-        TECHNICAL_ENTRY_THRESHOLD = 7.5
+        TECHNICAL_ENTRY_THRESHOLD = STRATEGY_CONF.get("ENTRY_SCORE_MIN", 7.5)
     
     # 若分數未達鬆動後的門檻，直接過濾掉假突破
     if strength < TECHNICAL_ENTRY_THRESHOLD:
@@ -2537,7 +2544,9 @@ def compute_signal_strength(sym):
 async def process_symbols():
     load_strategy_config()
     logger.info(f"== DEBUG == process_symbols running, trading_enabled={GLOBAL_STATE['trading_enabled']}")
-    await fetch_all_klines()
+    await fetch_all_klines()  # 保持在鎖外，避免阻塞 AI 更新
+
+    pending_actions = []
     async with STATES_LOCK:
         # 優先硬停損防護 (在指標運算前執行，確保不被卡頓拖延)
         for sym in ALL_SYMBOLS:
@@ -2552,19 +2561,25 @@ async def process_symbols():
                     cs = 'sell' if is_long else 'buy'
                     reason_msg = "2.5%跌幅停損"
                     print(f"🚨 [{reason_msg}] {sym} 觸發底線平倉！(指標結算前攔截) 目前虧損: {usdt_pnl:.2f} U")
-                    await close_position(sym, cs, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=True)
+                    pending_actions.append(("close", sym, cs, abs(s.qty), p, avg, reason_msg, True))
 
         for sym in ALL_SYMBOLS:
             compute_indicators(sym)
         update_states()
-        await check_pending_entries()
-        
+
         # 產生訊號
         signals = await generate_signals()
-        
-        # 統一處理訊號與部位管理
-        for sym in ALL_SYMBOLS:
-            await process_signal(sym, signals.get(sym))
+        signal_targets = [(sym, signals.get(sym)) for sym in ALL_SYMBOLS]
+
+    await check_pending_entries()
+
+    for action in pending_actions:
+        action_type, sym, close_side, qty, price, avg_price, reason, is_stop_loss = action
+        if action_type == "close":
+            await close_position(sym, close_side, qty, price, avg_price, reason=reason, is_stop_loss=is_stop_loss)
+
+    for sym, signal in signal_targets:
+        await process_signal(sym, signal)
 
 async def check_pending_entries():
     if not GLOBAL_STATE["trading_enabled"]:
@@ -2612,7 +2627,7 @@ async def check_pending_entries():
 async def wait_for_confirmation(sym, side):
     """等待下一根 K 線收盤確認方向"""
     s = STATES[sym]
-    await asyncio.sleep(10)  # 等 10 秒讓當前 K 線繼續發展
+    await asyncio.sleep(15)  # 等 15 秒觀察價格是否回落
     
     # 重新抓最新 K 線
     try:
@@ -2622,12 +2637,14 @@ async def wait_for_confirmation(sym, side):
             prev_close = res[-2][4]
             
             # 確認方向還在
-            if side == 'buy' and latest_close <= prev_close:
-                logger.info(f"🛑 [方向確認失敗] {sym} 等待期間未創高，取消做多")
-                return False
-            if side == 'sell' and latest_close >= prev_close:
-                logger.info(f"🛑 [方向確認失敗] {sym} 等待期間未創低，取消做空")
-                return False
+            ema20 = s.ema20
+            if ema20 > 0:
+                if side == 'buy' and latest_close > ema20 * 1.003:
+                    logger.info(f"🛑 [追高保護] {sym} 價格偏離EMA20，拒絕追多")
+                    return False
+                if side == 'sell' and latest_close < ema20 * 0.997:
+                    logger.info(f"🛑 [追空保護] {sym} 價格偏離EMA20，拒絕追空")
+                    return False
     except:
         pass
     return True
@@ -2707,36 +2724,37 @@ async def generate_signals() -> dict:
         is_altcoin = sym not in ["BTCUSDT", "ETHUSDT"]
         
         if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)":
-            vol_multi = 1.1 if is_altcoin else 1.0  # 放寬門檻：低波動模式不需太高量突破 (原 1.5/1.2)
+            vol_multi = 1.0 if is_altcoin else 1.0  # 放寬門檻：低波動模式不需太高量突破 (原 1.5/1.2)
         else:
-            vol_multi = 1.2 if is_altcoin else 1.0  # 高波動/正常模式維持不變
+            vol_multi = 1.05 if is_altcoin else 1.0  # 高波動/正常模式維持不變
         hugging_pct = 0.3 if is_altcoin else 0.2
-        ai_conf_threshold = 70 if is_altcoin else 60
+        ai_conf_threshold = 0.70 if is_altcoin else 60
 
         # 2. 強制量能突破 (低波動模式放寬至 1.1x，高波動維持 1.2x)
         #    例外：訊號強度 >= 18 分時豁免量能過濾（非常強的訊號）
         vol_req = getattr(s, "vol_ma20", 0) * vol_multi
         prev_vol = float(s.ohlcv[-2][5]) if getattr(s, "ohlcv", []) and len(s.ohlcv) >= 2 else getattr(s, "current_vol", 0.0)
         if prev_vol <= vol_req:
-            if strength >= 18.0:
+            if strength >= 12.0:
                 logger.debug(f"⚡ [量能豁免] {sym} 訊號強度 {strength:.2f} >= 18，豁免量能門檻 ({vol_multi}x MA20)")
             else:
-                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：無量假突破 (PrevVol < {vol_multi}x MA20, 分數 {strength:.2f} < 18)")
+                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：無量假突破 (PrevVol < {vol_multi}x MA20, 分數 {strength:.2f} < 12)")
                 continue
             
         # 3. 拒絕均線沾毛 (Anti-Hugging)
+        ema_dist = 0.0
+        vwap_dist = 0.0
         if s.ema20 and s.ema20 > 0:
             ema_dist = abs(s.close_price - s.ema20) / s.ema20 * 100
-            if ema_dist < hugging_pct:
-                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：價格過於貼近 EMA20 (乖離率 {ema_dist:.2f}% < {hugging_pct}%)")
-                continue
-                
-        # 4. VWAP 空間擋板
         if getattr(s, "vwap", 0) > 0:
             vwap_dist = abs(s.close_price - s.vwap) / s.vwap * 100
-            if vwap_dist < hugging_pct:
+
+        if should_block_for_hugging(strength, ema_dist, vwap_dist, is_altcoin):
+            if s.ema20 and s.ema20 > 0 and ema_dist < hugging_pct:
+                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：價格過於貼近 EMA20 (乖離率 {ema_dist:.2f}% < {hugging_pct}%)")
+            elif getattr(s, "vwap", 0) > 0 and vwap_dist < hugging_pct:
                 logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：價格過於貼近 VWAP (乖離率 {vwap_dist:.2f}% < {hugging_pct}%)")
-                continue
+            continue
                 
         # 4.5. 突破後回踩與 FOMO 追高防護 (拒絕買在針尖上)
         rsi = getattr(s, "current_rsi", 50)
@@ -3085,7 +3103,7 @@ async def periodic_ai_analysis():
                             reason = "HTF_CONFLICT"
                         
                     if reason:
-                        snapshots.append((sym, copy.copy(s), dict(MARKET_WIND), reason))
+                        snapshots.append((sym, copy.deepcopy(s), dict(MARKET_WIND), reason))
                         
             contexts = []
             for sym, s, wind, reason in snapshots:
@@ -3155,17 +3173,57 @@ async def main():
 
 import fcntl
 import sys
+import atexit
+
+SINGLE_INSTANCE_LOCK_FILE = "/tmp/multi_coin_bot_v2.lock"
+SINGLE_INSTANCE_PID_FILE = "/tmp/multi_coin_bot_v2.pid"
+
+
+def cleanup_single_instance():
+    try:
+        if os.path.exists(SINGLE_INSTANCE_PID_FILE):
+            with open(SINGLE_INSTANCE_PID_FILE, "r", encoding="utf-8") as f:
+                pid = f.read().strip()
+            if pid == str(os.getpid()):
+                os.remove(SINGLE_INSTANCE_PID_FILE)
+    except Exception:
+        pass
+
+
+atexit.register(cleanup_single_instance)
+
 
 def enforce_single_instance():
-    lock_file = "/tmp/multi_coin_bot_v2.lock"
-    fp = open(lock_file, 'w')
+    fp = open(SINGLE_INSTANCE_LOCK_FILE, 'w')
     try:
         fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except IOError:
-        print("🚨 [系統防護] 偵測到 multi_coin_bot_v2 已經在執行中！為防止重複開倉與狀態衝突，本次啟動已自動終止。")
-        sys.exit(1)
+        existing_pid = None
+        try:
+            if os.path.exists(SINGLE_INSTANCE_PID_FILE):
+                with open(SINGLE_INSTANCE_PID_FILE, "r", encoding="utf-8") as f:
+                    existing_pid = int(f.read().strip())
+        except Exception:
+            existing_pid = None
+
+        if existing_pid and os.path.exists(f"/proc/{existing_pid}"):
+            print(f"ℹ️ [系統防護] multi_coin_bot_v2 已有執行中實例 (PID {existing_pid})，本次啟動將直接退出。")
+            sys.exit(0)
+
+        if os.path.exists(SINGLE_INSTANCE_PID_FILE):
+            os.remove(SINGLE_INSTANCE_PID_FILE)
+        try:
+            fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except IOError:
+            print("🚨 [系統防護] 偵測到 multi_coin_bot_v2 已經在執行中！為防止重複開倉與狀態衝突，本次啟動已自動終止。")
+            sys.exit(0)
+
+    with open(SINGLE_INSTANCE_PID_FILE, 'w', encoding='utf-8') as f:
+        f.write(str(os.getpid()))
+
     # 不關閉 fp，讓鎖跟隨這個 process 一起存活，程式結束後 OS 自動釋放
     return fp
+
 
 if __name__ == "__main__":
     _lock_fp = enforce_single_instance()

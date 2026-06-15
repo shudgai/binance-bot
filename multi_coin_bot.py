@@ -1394,7 +1394,7 @@ def compute_signal_strength(sym):
             strength += 10.0  # Extra score for trend confluence
         return ("sell", strength if strength >= 8.0 else 0.0, route)
 
-    return (None, 0, None)
+    return (None, 0.0, None, False)
 
 async def check_entries():
     open_count = get_open_position_count()

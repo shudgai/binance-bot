@@ -14,21 +14,47 @@ load_dotenv()
 # =====================================================================
 # 帳號與參數設定區（方案 A：直接交易 BNB 合約）
 # =====================================================================
+
+# ── Demo API Monkey-patch：跳過 margin 端點 ──────────────────────
+from ccxt.async_support.binance import binance as _bnc_class
+_orig_fetch_markets = _bnc_class.fetch_markets
+
+async def _patched_fetch_markets(self, params={}):
+    # 暫時把 margin/isolated market type 關掉
+    _orig_options = self.options.copy()
+    self.options['fetchMarkets'] = ['spot', 'linear']
+    try:
+        result = await _orig_fetch_markets(self, params)
+    finally:
+        self.options = _orig_options
+    return result
+
+_bnc_class.fetch_markets = _patched_fetch_markets
+# ────────────────────────────────────────────────────────────────
 exchange = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,     # 從 .env 讀取 API Key
     'secret': os.getenv('BINANCE_API_SECRET') or None,   # .env 讀取 Secret Key
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'spot',  # 現貨交易
+        'defaultType': 'future',  # 合約交易
+        'fetchCurrencies': False,  # Demo API 不支援此端點
+        'fetchMarginMode': False,
+        'fetchMarkets': {'types': ['spot', 'linear']},
+        'fetchMargins': False,
+        'enableDemoTrading': False,
+        'fetchMarginMode': False,
+        'marginModes': {},
+        'fetchIsolatedPositions': False,
+        'fetchPositions': False,
+        'margins': False,
     },
 })
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = not bool(os.getenv('BINANCE_API_KEY'))
+PAPER_TRADING = os.getenv('PAPER_TRADING', 'True').lower() in ('true', '1', 'yes')
 
 if USE_TESTNET:
-    # 繞過 CCXT 的 set_sandbox_mode 棄用限制，手動覆寫合約測試網 URL
-    exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
-    exchange.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
+    pass  # Demo Trading 由 enableDemoTrading 控制
+    
 
 if PAPER_TRADING:
     print(f"⚠️ [模式設定] 啟動純數據模擬模式 (Paper Trading) | 連線主網: {not USE_TESTNET}")
@@ -37,7 +63,7 @@ else:
 
 # 接收命令列參數
 parser = argparse.ArgumentParser()
-parser.add_argument('--symbol', type=str, default='SOL/USDT', help='Trading symbol (e.g. SOL/USDT)')
+parser.add_argument('--symbol', type=str, default='SOL/USDT:USDT', help='Trading symbol (e.g. SOL/USDT:USDT)')
 parser.add_argument('--amount', type=float, default=10.0, help='Trade amount in quote currency (USDT)')
 args = parser.parse_args()
 
@@ -108,6 +134,7 @@ async def get_contract_precision():
         return _contract_precision
     try:
         markets = await exchange.load_markets()
+        print(f'DEBUG symbol={repr(symbol)}, has_market={symbol in exchange.markets}, total_markets={len(exchange.markets)}')
         market = markets.get(symbol)
         if market:
             info = market.get('info', {})
@@ -506,7 +533,7 @@ async def monitor_macro_trend():
     while True:
         try:
             # 先抓取 BTC 大盤 1 小時 K 線
-            btc_ohlcv = await exchange.fetch_ohlcv('BTCUSDT', timeframe='1h', limit=30)
+            btc_ohlcv = await exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=30)
             if len(btc_ohlcv) >= 20:
                 btc_closes = np.array([x[4] for x in btc_ohlcv])
                 btc_sma = np.mean(btc_closes[-20:])
@@ -955,6 +982,11 @@ async def stablecoin_scalper_loop():
         await asyncio.sleep(1)
 
 async def main():
+    try:
+        await exchange.load_markets()
+        print(f'DEBUG symbol={repr(symbol)}, has_market={symbol in exchange.markets}, total_markets={len(exchange.markets)}')
+    except Exception as e:
+        print(f"⚠️ [市場預載] {e}")
     try:
         if not PAPER_TRADING:
             # 設定合約槓桿與保證金模式 (逐倉)

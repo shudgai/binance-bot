@@ -63,30 +63,51 @@ async def run_bot():
         await proc.wait()
         exit_code = proc.returncode
 
-        if exit_code != 0:
-            error_log = "".join(log_lines[-30:])  # 最後 30 行
-            print(f"❌ Bot 崩潰 (exit {exit_code})，正在分析...")
+        if exit_code in (0, 1):
+            if exit_code == 1:
+                print("ℹ️ [守護] 機器人啟動被單例保護阻止，暫不重啟。")
+            else:
+                print("ℹ️ [守護] 機器人正常退出，暫不重啟。")
+            return
+        if exit_code in (-15, -9, 143, 137):
+            print("ℹ️ [守護] 機器人被停止，暫不重啟。")
+            return
 
-            # 問 Claude
-            try:
-                if ANTHROPIC_API_KEY:
-                    suggestion = await ask_claude(error_log)
-                else:
-                    suggestion = "未設定 ANTHROPIC_API_KEY，跳過分析。"
-            except Exception as e:
-                suggestion = f"Claude 分析失敗: {e}"
+        error_log = "".join(log_lines[-30:])  # 最後 30 行
+        print(f"❌ Bot 崩潰 (exit {exit_code})，正在分析...")
 
-            # 傳 Telegram
-            msg = (
-                f"🚨 Bot 崩潰了！(exit code: {exit_code})\n\n"
-                f"📋 最後錯誤:\n{error_log[-500:]}\n\n"
-                f"🤖 Claude 分析:\n{suggestion}"
-            )
-            await send_telegram(msg)
-            print(f"🤖 Claude 建議: {suggestion}")
+        # 問 Claude
+        try:
+            if ANTHROPIC_API_KEY:
+                suggestion = await ask_claude(error_log)
+            else:
+                suggestion = "未設定 ANTHROPIC_API_KEY，跳過分析。"
+        except Exception as e:
+            suggestion = f"Claude 分析失敗: {e}"
 
-        print("🔄 10 秒後重啟...")
-        await asyncio.sleep(10)
+        # 傳 Telegram
+        msg = (
+            f"🚨 Bot 崩潰了！(exit code: {exit_code})\n\n"
+            f"📋 最後錯誤:\n{error_log[-500:]}\n\n"
+            f"🤖 Claude 分析:\n{suggestion}"
+        )
+        await send_telegram(msg)
+        print(f"🤖 Claude 建議: {suggestion}")
+
+        lock_file = "/tmp/multi_coin_bot_v2.lock"
+        if os.path.exists(lock_file):
+            # 確認 lock file 對應的進程還活著
+            import subprocess
+            result = subprocess.run(["pgrep", "-f", "multi_coin_bot_v2.py"], capture_output=True)
+            if result.returncode == 0:
+                print("🔒 [守護] 機器人仍在運行，60 秒後再確認...")
+                await asyncio.sleep(60)
+                continue
+            else:
+                print("⚠️ [守護] Lock file 殘留但進程已死，清除 lock 準備重啟...")
+                os.remove(lock_file)
+        print("🔄 5 秒後重啟...")
+        await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(run_bot())

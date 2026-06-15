@@ -144,7 +144,14 @@ def read_bot_output(proc, sym):
     proc.stdout.close()
     proc.wait()
     
-    if proc.returncode == 4:
+    if proc.returncode in (0, 1):
+        if proc.returncode == 1:
+            add_system_log("ℹ️ [系統守護] 機器人啟動被單例保護跳過，未重啟。", "info")
+        return
+    elif proc.returncode in (-15, -9, 143, 137):
+        add_system_log("ℹ️ [系統守護] 機器人被停止，暫不重啟。", "info")
+        return
+    elif proc.returncode == 4:
         # 單幣熔斷停牌 (Exit Code 4)
         from services.radar_service import replace_dead_coin, blacklist_coin
         blacklist_coin(sym, duration_sec=24*3600)
