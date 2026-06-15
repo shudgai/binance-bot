@@ -1,20 +1,536 @@
-Traceback (most recent call last):
-  File "/home/shudgai999/project/binance-bot/multi_coin_bot_v2.py", line 2, in <module>
-    import ccxt
-ModuleNotFoundError: No module named 'ccxt'
-Traceback (most recent call last):
-  File "/home/shudgai999/project/binance-bot/multi_coin_bot_v2.py", line 2, in <module>
-    import ccxt
-ModuleNotFoundError: No module named 'ccxt'
-Traceback (most recent call last):
-  File "/home/shudgai999/project/binance-bot/multi_coin_bot_v2.py", line 2, in <module>
-    import ccxt
-ModuleNotFoundError: No module named 'ccxt'
-Traceback (most recent call last):
-  File "/home/shudgai999/project/binance-bot/multi_coin_bot_v2.py", line 2, in <module>
-    import ccxt
-ModuleNotFoundError: No module named 'ccxt'
-Traceback (most recent call last):
-  File "/home/shudgai999/project/binance-bot/multi_coin_bot_v2.py", line 2, in <module>
-    import ccxt
-ModuleNotFoundError: No module named 'ccxt'
+nohup: ignoring input
+[2026-06-15 00:38:26] [INFO] 💰 初始餘額: 115.46 USDT
+[2026-06-15 00:38:26] [INFO] 📊 動態最大持倉上限: 2 個 (隨本金增長自動調整)
+📡 模式: 模擬
+@@LEVERAGE@@5
+📋 監控幣種: 1000PEPEUSDT, WIFUSDT, 1000BONKUSDT, 1000FLOKIUSDT, BOMEUSDT, NOTUSDT, WLDUSDT, ARKMUSDT, PEOPLEUSDT, ORDIUSDT, SOLUSDT, NEARUSDT
+⏳ [初始化] 開始獲取 1000 根 1m K線以預熱 ATR 歷史...
+[2026-06-15 00:38:27] [INFO] 🧠 [情緒指標] 當前恐懼與貪婪指數: 20 | 大盤狀態: NORMAL_CHOP
+[2026-06-15 00:38:27] [INFO] 📊 [背景更新] 24小時平均成交量更新完成
+[2026-06-15 00:38:33] [INFO] ✅ [初始化] 1000PEPEUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:33] [INFO] ✅ [初始化] WIFUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:33] [INFO] ✅ [初始化] 1000BONKUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:33] [INFO] ✅ [初始化] 1000FLOKIUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] BOMEUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] NOTUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] WLDUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] ARKMUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] PEOPLEUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] ORDIUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] SOLUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] ✅ [初始化] NEARUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+[2026-06-15 00:38:34] [INFO] == DEBUG == initialize_atr_history done
+[2026-06-15 00:38:34] [INFO] == DEBUG == fetch_real_balance done
+[2026-06-15 00:38:34] [INFO] == DEBUG == load_open_positions done
+[2026-06-15 00:38:37] [INFO] == DEBUG == fetch_all_sma200 done
+[2026-06-15 00:38:39] [INFO] == DEBUG == fetch_all_htf_trend done
+[2026-06-15 00:38:42] [INFO] == DEBUG == fetch_all_htf_4h_trend done
+[2026-06-15 00:38:42] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:38:42] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.6 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 37.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.1 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 47.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 35.8 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:38:43] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:38:43] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:38:43] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 38.5 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 37.2 | Price: 71.1900 (BB: 71.0899 - 71.6501) | MACD: -0.0385/0.0032 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11786 / 24h Avg: 0.07098)
+[2026-06-15 00:38:43] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:45] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:38:45] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.8 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 37.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.1 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 47.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 35.8 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:38:47] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:38:47] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:38:47] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 38.5 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 37.2 | Price: 71.1900 (BB: 71.0899 - 71.6501) | MACD: -0.0385/0.0032 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11786 / 24h Avg: 0.07103)
+[2026-06-15 00:38:47] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:48] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:38:48] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 36.6 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.1 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 47.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 35.8 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:38:50] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:38:50] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:38:50] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 38.5 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 36.0 | Price: 71.1800 (BB: 71.0881 - 71.6509) | MACD: -0.0393/0.0031 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11786 / 24h Avg: 0.07108)
+[2026-06-15 00:38:50] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:51] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:38:51] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 34.5 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 33.0 | Price: 0.1642 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 36.6 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.1 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 52.3 | Price: 0.0005 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): True/False | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): True/False
+[2026-06-15 00:38:53] [DEBUG] 📊 [分數明細] BOMEUSDT 總分: 15.04 | 基礎(14.04) + ATR加權(+0.0) + FNG恐慌(+1.0)
+[2026-06-15 00:38:53] [INFO] ⚡ [純技術面觸發] BOMEUSDT 訊號達標 (Score: 15.04 >= 7.5)，直接開倉！
+[2026-06-15 00:38:53] [DEBUG] 🛑 [進場過濾] BOMEUSDT 拒絕進場：無量假突破 (PrevVol < 1.5x MA20)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 35.8 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:53] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:38:53] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:38:53] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:38:53] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 36.0 | Price: 71.1800 (BB: 71.0881 - 71.6509) | MACD: -0.0393/0.0031 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11786 / 24h Avg: 0.07113)
+[2026-06-15 00:38:53] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:54] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:38:55] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 34.5 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 38.4 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 40.6 | Price: 0.0256 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 52.3 | Price: 0.0005 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): True/False | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): True/False
+[2026-06-15 00:38:56] [DEBUG] 📊 [分數明細] BOMEUSDT 總分: 18.04 | 基礎(14.04) + ATR加權(+3.0) + FNG恐慌(+1.0)
+[2026-06-15 00:38:56] [INFO] ⚡ [Fast Path] BOMEUSDT 觸發做buy直通 (Score: 18.04 >= 17)，無須等待 AI！
+[2026-06-15 00:38:56] [DEBUG] 🛑 [進場過濾] BOMEUSDT 拒絕進場：無量假突破 (PrevVol < 1.5x MA20)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 35.8 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:56] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:38:56] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:38:56] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:38:56] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 38.3 | Price: 71.2000 (BB: 71.0917 - 71.6493) | MACD: -0.0377/0.0034 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11857 / 24h Avg: 0.07117)
+[2026-06-15 00:38:56] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:57] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:38:58] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 35.7 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 38.4 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 40.6 | Price: 0.0256 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 52.3 | Price: 0.0005 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): True/False | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): True/False
+[2026-06-15 00:38:59] [DEBUG] 📊 [分數明細] BOMEUSDT 總分: 18.04 | 基礎(14.04) + ATR加權(+3.0) + FNG恐慌(+1.0)
+[2026-06-15 00:38:59] [INFO] ⚡ [Fast Path] BOMEUSDT 觸發做buy直通 (Score: 18.04 >= 17)，無須等待 AI！
+[2026-06-15 00:38:59] [DEBUG] 🛑 [進場過濾] BOMEUSDT 拒絕進場：無量假突破 (PrevVol < 1.5x MA20)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 35.8 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:59] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:38:59] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:38:59] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:38:59] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 42.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 38.3 | Price: 71.2000 (BB: 71.0917 - 71.6493) | MACD: -0.0377/0.0034 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11857 / 24h Avg: 0.07122)
+[2026-06-15 00:38:59] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:00] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:01] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 35.7 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 38.4 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 40.6 | Price: 0.0256 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 52.3 | Price: 0.0005 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): True/False | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): True/False
+[2026-06-15 00:39:02] [DEBUG] 📊 [分數明細] BOMEUSDT 總分: 18.04 | 基礎(14.04) + ATR加權(+3.0) + FNG恐慌(+1.0)
+[2026-06-15 00:39:02] [INFO] ⚡ [Fast Path] BOMEUSDT 觸發做buy直通 (Score: 18.04 >= 17)，無須等待 AI！
+[2026-06-15 00:39:02] [DEBUG] 🛑 [進場過濾] BOMEUSDT 拒絕進場：無量假突破 (PrevVol < 1.5x MA20)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 38.2 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:02] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:02] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:02] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:02] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 37.2 | Price: 71.1800 (BB: 71.0733 - 71.6347) | MACD: -0.0428/-0.0057 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11571 / 24h Avg: 0.07127)
+[2026-06-15 00:39:02] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:04] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:04] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 35.7 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 36.4 | Price: 0.1643 (BB: 0.1640 - 0.1659) | MACD: -0.0002/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00038 / 24h Avg: 0.00023)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 36.1 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 40.6 | Price: 0.0256 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 52.3 | Price: 0.0005 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): True/False | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 37.4 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:05] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:05] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:05] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:05] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 36.5 | Price: 71.1700 (BB: 71.0716 - 71.6354) | MACD: -0.0436/-0.0059 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11643 / 24h Avg: 0.07131)
+[2026-06-15 00:39:05] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:07] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:07] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 33.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00037 / 24h Avg: 0.00023)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 36.1 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 49.0 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 37.4 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 39.6 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 36.5 | Price: 71.1700 (BB: 71.0716 - 71.6354) | MACD: -0.0436/-0.0059 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.11643 / 24h Avg: 0.07136)
+[2026-06-15 00:39:08] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:10] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:10] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 30.8 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00037 / 24h Avg: 0.00023)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.0 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 44.4 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 38.2 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:11] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:11] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:11] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:11] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 34.0 | Price: 71.1300 (BB: 71.0639 - 71.6391) | MACD: -0.0468/-0.0065 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07141)
+[2026-06-15 00:39:11] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:13] [INFO] == DEBUG == LOOP START
+/home/shudgai999/project/binance-bot/multi_coin_bot_v2.py:2713: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  current_day = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+[2026-06-15 00:39:13] [INFO] 📅 [每日重置] 記錄初始本金: 115.46 U
+[2026-06-15 00:39:13] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 30.8 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 29.7 | Price: 0.1639 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:15] [DEBUG] ⚠️ [VWAP 逆勢] WIFUSDT 價格低於 VWAP，短線做多扣分 (-1.0)
+[2026-06-15 00:39:15] [DEBUG] ⚠️ [均線逆勢] WIFUSDT 價格低於 EMA50，短線做多扣分 (-1.5)
+[2026-06-15 00:39:15] [DEBUG] 📊 [分數明細] WIFUSDT 總分: 13.84 | 基礎(4.0) + RSI紅利(8.34) + ATR加權(+3.0) + FNG恐慌(+1.0) + VWAP逆勢(-1.0) + 均線逆勢(-1.5)
+[2026-06-15 00:39:15] [INFO] ⚡ [純技術面觸發] WIFUSDT 訊號達標 (Score: 13.84 >= 7.5)，直接開倉！
+[2026-06-15 00:39:15] [DEBUG] 🛑 [進場過濾] WIFUSDT 拒絕進場：無量假突破 (PrevVol < 1.5x MA20)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.0 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 44.4 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 39.5 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): True/False
+[2026-06-15 00:39:15] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:15] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:15] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:15] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 32.9 | Price: 71.1100 (BB: 71.0597 - 71.6413) | MACD: -0.0484/-0.0068 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07146)
+[2026-06-15 00:39:15] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:16] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:16] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 30.5 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 31.1 | Price: 0.1640 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 44.4 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 38.2 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT | RSI: 39.0 | Price: 0.5261 (BB: 0.5258 - 0.5330) | MACD: 0.0003/0.0010 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00214 / 24h Avg: 0.00150)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:18] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:18] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:18] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 32.9 | Price: 71.1100 (BB: 71.0597 - 71.6413) | MACD: -0.0484/-0.0068 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07150)
+[2026-06-15 00:39:18] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:19] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:19] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 31.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 31.1 | Price: 0.1640 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 44.4 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 39.5 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): True/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT | RSI: 39.0 | Price: 0.5261 (BB: 0.5258 - 0.5330) | MACD: 0.0003/0.0010 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00214 / 24h Avg: 0.00150)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:21] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:21] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:21] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 32.9 | Price: 71.1100 (BB: 71.0597 - 71.6413) | MACD: -0.0484/-0.0068 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07155)
+[2026-06-15 00:39:21] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:22] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:23] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 46.1 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/True | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 38.2 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:24] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:24] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:24] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 32.9 | Price: 71.1100 (BB: 71.0597 - 71.6413) | MACD: -0.0484/-0.0068 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07160)
+[2026-06-15 00:39:24] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:25] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:26] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:26] [INFO] 📊 [狀態] ACTIVE=19 COOLDOWN=0 BANNED=0 | BTC 1H趨勢=BEAR | 持倉(0): 無
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.8 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 42.7 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 36.7 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 33.4 | Price: 71.1200 (BB: 71.0618 - 71.6402) | MACD: -0.0476/-0.0067 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07165)
+[2026-06-15 00:39:27] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:28] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:29] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.8 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 36.7 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 33.4 | Price: 71.1200 (BB: 71.0618 - 71.6402) | MACD: -0.0476/-0.0067 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12000 / 24h Avg: 0.07170)
+[2026-06-15 00:39:30] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:30] [DEBUG] ⚠️ NEARUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:30] [DEBUG] 📊 [分數明細] NEARUSDT 總分: 13.08 | 基礎(14.08) + ATR加權(+0.0) + FNG恐慌(+1.0) + 低波動(-2.0)
+[2026-06-15 00:39:30] [INFO] 📈 [二次確認突破] NEARUSDT 1H/4H順風且連續兩根K線站穩 EMA20，RSI>50，不須 AI 同意直接開多！
+[2026-06-15 00:39:30] [DEBUG] 🛑 [進場過濾] NEARUSDT 拒絕進場：無量假突破 (PrevVol < 2.0x MA20)
+[2026-06-15 00:39:32] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:32] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 31.5 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.8 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 36.7 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:33] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:33] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:33] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 36.4 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 31.8 | Price: 71.0900 (BB: 71.0553 - 71.6437) | MACD: -0.0500/-0.0071 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12286 / 24h Avg: 0.07175)
+[2026-06-15 00:39:33] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:35] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:35] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 31.4 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.5 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 38.8 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 36.7 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:36] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:36] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:36] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 33.7 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 32.3 | Price: 71.1000 (BB: 71.0575 - 71.6425) | MACD: -0.0492/-0.0070 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12286 / 24h Avg: 0.07180)
+[2026-06-15 00:39:36] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:38] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:38] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 31.1 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 32.7 | Price: 0.1641 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.0 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 37.4 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT | RSI: 39.4 | Price: 0.5262 (BB: 0.5258 - 0.5329) | MACD: 0.0003/0.0010 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00214 / 24h Avg: 0.00151)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:39] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:39] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:39] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 33.7 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 32.3 | Price: 71.1000 (BB: 71.0575 - 71.6425) | MACD: -0.0492/-0.0070 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12286 / 24h Avg: 0.07185)
+[2026-06-15 00:39:39] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:41] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:41] [WARNING] ⚠️ [大盤瀑布風控] BTC 15m變動 -0.32% | ETH 15m變動 -0.26% | 🚫 暫停所有小幣多單開倉！
+[2026-06-15 00:39:41] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 32.4 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 31.1 | Price: 0.1640 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.0 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 37.4 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:43] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:43] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:43] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 33.7 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 31.8 | Price: 71.0900 (BB: 71.0553 - 71.6437) | MACD: -0.0500/-0.0071 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12286 / 24h Avg: 0.07190)
+[2026-06-15 00:39:43] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:43] [DEBUG] ⚠️ NEARUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:43] [DEBUG] 📊 [分數明細] NEARUSDT 總分: 16.08 | 基礎(14.08) + ATR加權(+3.0) + FNG恐慌(+1.0) + 低波動(-2.0)
+[2026-06-15 00:39:43] [INFO] ⚡ [Fast Path] NEARUSDT 觸發做buy直通 (Score: 16.08 >= 14)，無須等待 AI！
+[2026-06-15 00:39:43] [DEBUG] 🛑 [進場過濾] NEARUSDT 拒絕進場：無量假突破 (PrevVol < 2.0x MA20)
+[2026-06-15 00:39:44] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:44] [WARNING] ⚠️ [大盤瀑布風控] BTC 15m變動 -0.31% | ETH 15m變動 -0.25% | 🚫 暫停所有小幣多單開倉！
+[2026-06-15 00:39:44] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 31.4 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 31.1 | Price: 0.1640 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.0 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 36.7 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:46] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:46] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:46] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 33.7 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 31.8 | Price: 71.0900 (BB: 71.0553 - 71.6437) | MACD: -0.0500/-0.0071 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12286 / 24h Avg: 0.07195)
+[2026-06-15 00:39:46] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:46] [DEBUG] ⚠️ NEARUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:46] [DEBUG] 📊 [分數明細] NEARUSDT 總分: 16.08 | 基礎(14.08) + ATR加權(+3.0) + FNG恐慌(+1.0) + 低波動(-2.0)
+[2026-06-15 00:39:46] [INFO] ⚡ [Fast Path] NEARUSDT 觸發做buy直通 (Score: 16.08 >= 14)，無須等待 AI！
+[2026-06-15 00:39:46] [DEBUG] 🛑 [進場過濾] NEARUSDT 拒絕進場：無量假突破 (PrevVol < 2.0x MA20)
+[2026-06-15 00:39:47] [INFO] == DEBUG == LOOP START
+[2026-06-15 00:39:47] [WARNING] ⚠️ [大盤瀑布風控] BTC 15m變動 -0.30% | ETH 15m變動 -0.26% | 🚫 暫停所有小幣多單開倉！
+[2026-06-15 00:39:47] [INFO] == DEBUG == process_symbols running, trading_enabled=True
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT | RSI: 31.3 | Price: 0.0029 (BB: 0.0029 - 0.0029) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 1000PEPEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT | RSI: 29.7 | Price: 0.1639 (BB: 0.1639 - 0.1659) | MACD: -0.0003/-0.0001 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00039 / 24h Avg: 0.00023)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 WIFUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] ⚠️ [VWAP 逆勢] WIFUSDT 價格低於 VWAP，短線做多扣分 (-1.0)
+[2026-06-15 00:39:49] [DEBUG] ⚠️ [均線逆勢] WIFUSDT 價格低於 EMA50，短線做多扣分 (-1.5)
+[2026-06-15 00:39:49] [DEBUG] 📊 [分數明細] WIFUSDT 總分: 13.84 | 基礎(4.0) + RSI紅利(8.34) + ATR加權(+3.0) + FNG恐慌(+1.0) + VWAP逆勢(-1.0) + 均線逆勢(-1.5)
+[2026-06-15 00:39:49] [INFO] ⚡ [純技術面觸發] WIFUSDT 訊號達標 (Score: 13.84 >= 7.5)，直接開倉！
+[2026-06-15 00:39:49] [DEBUG] 🛑 [進場過濾] WIFUSDT 拒絕進場：無量假突破 (PrevVol < 1.5x MA20)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT | RSI: 35.0 | Price: 0.0046 (BB: 0.0046 - 0.0047) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 1000BONKUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT | RSI: 37.2 | Price: 0.0255 (BB: 0.0255 - 0.0257) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00004 / 24h Avg: 0.00002)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 1000FLOKIUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT | RSI: 41.2 | Price: 0.0004 (BB: 0.0004 - 0.0005) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 BOMEUSDT 條件檢測 | RSI門檻(L/S: 38/62): False/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT | RSI: 36.7 | Price: 0.0005 (BB: 0.0005 - 0.0005) | MACD: -0.0000/-0.0000 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00000 / 24h Avg: 0.00000)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 NOTUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): True/False (交叉:False/False, 柱狀體向上/下:True/False) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT | RSI: 39.4 | Price: 0.5262 (BB: 0.5258 - 0.5329) | MACD: 0.0003/0.0010 | Trend (L/S): False/True | VolMode: 低波動模式 (Low Vol) (ATR: 0.00214 / 24h Avg: 0.00151)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 WLDUSDT 條件檢測 | RSI門檻(L/S: 42/58): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] ⚠️ ARKMUSDT 處於低波動模式，扣分 -2.0，防止指標虛胖。
+[2026-06-15 00:39:49] [DEBUG] ⚠️ [大週期逆勢] ARKMUSDT 1H 趨勢 (long) 與開單方向 (sell) 不符，短線扣分 (-1.0)
+[2026-06-15 00:39:49] [DEBUG] ⚠️ [VWAP 逆勢] ARKMUSDT 價格高於 VWAP，短線做空扣分 (-1.0)
+[2026-06-15 00:39:49] [DEBUG] ⚠️ [均線逆勢] ARKMUSDT 價格高於 EMA50，短線做空扣分 (-1.5)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT | RSI: 33.7 | Price: 0.0056 (BB: 0.0056 - 0.0056) | MACD: -0.0000/0.0000 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.00001 / 24h Avg: 0.00001)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 PEOPLEUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT | RSI: 31.8 | Price: 71.0900 (BB: 71.0553 - 71.6437) | MACD: -0.0500/-0.0071 | Trend (L/S): False/True | VolMode: 高波動模式 (High Vol) (ATR: 0.12286 / 24h Avg: 0.07200)
+[2026-06-15 00:39:49] [DEBUG] @@COIN_DEBUG@@ 🔍 SOLUSDT 條件檢測 | RSI門檻(L/S: 38/62): True/False | BB區間(L/S): True/False | MACD滿足(L/S): False/True (交叉:False/False, 柱狀體向上/下:False/True) | 收盤價確認(L/S): False/False

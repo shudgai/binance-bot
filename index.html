@@ -1706,10 +1706,19 @@ createApp({
 
         const closeActivePosition = async () => {
             const coin = activeCoin.value; if (!coin) return;
+            const sym = coin.symbol;
+            
+            // Check if holding a short position to use market-buy instead of market-sell
+            let closeEndpoint = 'market-sell';
+            const pos = allPositions.value.find(p => p.symbol === sym || p.symbol === sym.replace('USDT', ':USDT'));
+            if (pos && parseFloat(pos.qty) < 0) {
+                closeEndpoint = 'market-buy';
+            }
+            
             isPlacingOrder.value = true;
             addLog(`🔴 平倉 ${coin.name} (${activeSymbol.value})...`);
             try {
-                const res = await fetch(`${API_BASE}/order/market-sell/${coin.symbol}`, { method: 'POST' });
+                const res = await fetch(`${API_BASE}/order/${closeEndpoint}/${sym}`, { method: 'POST' });
                 const resp = await res.json();
                 const data = resp.data || resp;
                 if (res.ok && data.status === 'success') {
@@ -1782,11 +1791,12 @@ createApp({
 
         const closeTradePosition = async (trade) => {
             const sym = trade.symbol.replace(':USDT', 'USDT');
+            const closeEndpoint = trade.side === 'sell' ? 'market-buy' : 'market-sell';
             isPlacingOrder.value = true;
             showToast(`⏳ 平倉 ${sym}...`, 'info');
             addLog(`🔴 平倉 ${sym}...`);
             try {
-                const res = await fetch(`${API_BASE}/order/market-sell/${sym}`, { method: 'POST' });
+                const res = await fetch(`${API_BASE}/order/${closeEndpoint}/${sym}`, { method: 'POST' });
                 const resp = await res.json();
                 const data = resp.data || resp;
                 if (res.ok && (data.status === 'success' || data.detail)) {
