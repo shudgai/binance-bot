@@ -50,6 +50,7 @@ if not logger.handlers:
 
 from services.utils import paper_key
 from update_paper_state import update_paper_state
+from services.symbol_manager import replace_underperforming_symbol
 
 exchange = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,
@@ -73,17 +74,21 @@ if USE_TESTNET:
     exchange.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
 
 DEFAULT_SYMBOLS = [
-    # 錨定幣種 (Anchor)
-    "BTCUSDT", "ETHUSDT",
-    # 趨勢跟隨者 (Trend Follower)
-    "SOLUSDT", "SUIUSDT", "AVAXUSDT", "FETUSDT", "LINKUSDT", "NEARUSDT", "INJUSDT",
-    # 高波動幣種 (High Volatility)
-    "WIFUSDT", "1000PEPEUSDT", "ORDIUSDT"
+    "SOLUSDT",   # 主力 L1
+    "BNBUSDT",   # 流動性穩定
+    "XRPUSDT",   # 高流動性
+    "TAOUSDT",   # AI 板塊代表
+    "NEARUSDT",  # 你已熟悉
+    "DOGEUSDT",  # 高波動、成交量大
+    "WLDUSDT"    # ATR 正常、訊號明顯
 ]
 SLOW_OR_LOW_QUALITY_SYMBOLS = {
     "AERO", "ADA", "DOT", "UNI", "FET",
-    "STG",   # 流動性差，容易被插針造成 -6%+ 損失
-    "SEI",   # 低流動性，訊號容易被 3 分鐘守護線洗掉
+    "STG", "SEI",
+    "NOT",     # ATR = 0，精度問題
+    "BOME",    # ATR = 0，精度問題
+    "PEOPLE",  # ATR 幾乎為 0
+    "1000PEPEUSDT", "1000BONKUSDT", "1000FLOKIUSDT", "WIFUSDT", "ARKMUSDT"
 }
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 
@@ -142,7 +147,16 @@ def normalize_symbol(sym):
     return sym
 
 
-BANNED_TOKENS = ['CROSS', 'HANA', 'COAI', 'PHA', 'BAN', 'FOGO', 'ESPORTS', 'PLAY', 'HOME', 'VELVET', 'AIO', 'ALLO']
+BANNED_TOKENS = [
+    'CROSS', 'HANA', 'COAI', 'PHA', 'BAN', 'FOGO', 
+    'ESPORTS', 'PLAY', 'HOME', 'VELVET', 'AIO', 'ALLO',
+    'H', 'CL', 'BZ', 'SIREN', 'BEAT', 'OPG', 'EVAA',
+    'XAU', 'XAG',
+    'ZEC',
+    'NOT', 'BOME', 'PEOPLE',
+    'SHIB', 'FLOKI', 'WIF', 'SEI', 'STRK', 'CRV',
+    'ARB', 'OP'
+]
 
 def filter_short_term_symbols(symbols, max_count=10):
     normalized = []
@@ -288,8 +302,8 @@ def build_symbol_state(sym):
         "trail_tp_price": 0.0,
         "entry_count": 0,
         "avg_entry_price": 0.0,
-        "max_additional_entries": 2,
-        "entry_cooldown_sec": 45,
+        "max_additional_entries": 3,
+        "entry_cooldown_sec": 30,
         "last_entry_time": 0.0,
         "stop_times": [],
         "adjusted_this_tick": False,
@@ -321,7 +335,10 @@ GLOBAL_STATE = {
     "consecutive_losses": 0,
     "trading_enabled": True,
     "recent_entries": [],
-    "route_stats": {"a": {"win": 0, "loss": 0}, "b": {"win": 0, "loss": 0}, "c": {"win": 0, "loss": 0}, "s": {"win": 0, "loss": 0}}
+    "route_stats": {"a": {"win": 0, "loss": 0}, "b": {"win": 0, "loss": 0}, "c": {"win": 0, "loss": 0}, "s": {"win": 0, "loss": 0}},
+    "low_vol_days": {},
+    "last_vol_check_day": "",
+    "initial_prices": {}
 }
 
 STATE_SYMBOLS = list(dict.fromkeys(DEFAULT_SYMBOLS + ALL_SYMBOLS))
@@ -670,8 +687,15 @@ def mark_exit(sym, is_stop_loss=False, is_profit=False):
         if s.stop_count >= max_stops:
             s.status = "BANNED"
             s.next_status_time = now + BAN_DURATION
-            s.status_reason = f"封禁中 (24h，{max_stops}次停損)"
-            logger.warning(f"🚫 [狀態] {sym} {max_stops}次停損 → BANNED 24h")
+            s.status_reason = f"封禁中 ({max_stops}次停損，準備替換)"
+            logger.warning(f"🚫 [狀態] {sym} {max_stops}次停損 → 觸發替換機制")
+            
+            async def _replace_and_apply():
+                new_sym = await replace_underperforming_symbol(exchange, sym)
+                if new_sym:
+                    apply_symbol_pool_change(load_symbol_pool())
+            
+            asyncio.create_task(_replace_and_apply())
     else:
         # 一般平倉（時間停損、趨勢翻轉等）：90 秒
         s.status = "COOLDOWN"
@@ -683,10 +707,25 @@ def reset_coin_state(sym):
     preserved_exit_time = s.last_exit_time if s else 0.0
     preserved_exit_type = getattr(s, "last_exit_type", "normal") if s else "normal"
     
+    # Preserve safety ban state
+    preserved_status = getattr(s, "status", "ACTIVE") if s else "ACTIVE"
+    preserved_stop_count = getattr(s, "stop_count", 0) if s else 0
+    preserved_stop_times = getattr(s, "stop_times", []) if s else []
+    preserved_first_stop_time = getattr(s, "first_stop_time", 0.0) if s else 0.0
+    preserved_next_status_time = getattr(s, "next_status_time", 0.0) if s else 0.0
+    preserved_status_reason = getattr(s, "status_reason", "") if s else ""
+    
     STATES[sym] = build_symbol_state(sym)
     s = STATES[sym]
+    
     s.last_exit_time = preserved_exit_time
     s.last_exit_type = preserved_exit_type
+    s.status = preserved_status
+    s.stop_count = preserved_stop_count
+    s.stop_times = preserved_stop_times
+    s.first_stop_time = preserved_first_stop_time
+    s.next_status_time = preserved_next_status_time
+    s.status_reason = preserved_status_reason
     s.qty = 0.0
     s.avg_price = 0.0
     s.open_time = 0.0
@@ -797,11 +836,68 @@ async def update_24h_volume():
     while True:
         try:
             tickers = await asyncio.wait_for(exchange.fetch_tickers(ALL_SYMBOLS), timeout=15)
-            for sym, ticker in tickers.items():
+            symbols_to_replace = []
+            now_day = datetime.datetime.now().strftime("%Y-%m-%d")
+            
+            for ccxt_sym, ticker in tickers.items():
+                sym = ticker.get('info', {}).get('symbol', '')
+                if not sym:
+                    sym = ccxt_sym.replace('/', '').replace(':USDT', '')
+                    
                 if sym in STATES:
                     # Binance 的 baseVolume 是 24h 內的基礎幣種總成交量
                     vol_24h = float(ticker.get('baseVolume', 0.0))
                     STATES[sym].avg_vol_24h_1m = vol_24h / 1440.0
+                    
+                    price = float(ticker.get('lastPrice', 0.0))
+                    if price > 0:
+                        if sym not in GLOBAL_STATE["initial_prices"]:
+                            GLOBAL_STATE["initial_prices"][sym] = price
+                        
+                        initial_p = GLOBAL_STATE["initial_prices"][sym]
+                        price_change_pct = float(ticker.get('percentage', 0.0))
+                        
+                        drop_below_initial = price < initial_p * 0.4
+                        
+                        if price_change_pct <= -30.0 or drop_below_initial:
+                            reason = "暴跌超過 30%" if price_change_pct <= -30.0 else "跌破初始監控價格的 40%"
+                            logger.warning(f"🚨 [緊急替換] {sym} {reason}，觸發淘汰機制！")
+                            symbols_to_replace.append((sym, reason))
+
+            # 每日結算量能不足天數
+            if now_day != GLOBAL_STATE.get("last_vol_check_day"):
+                if GLOBAL_STATE.get("last_vol_check_day"):  # 確保不是第一次啟動
+                    # 建立反向對應表 sym -> ccxt_sym
+                    sym_to_ccxt = {}
+                    for ccxt_sym, t in tickers.items():
+                        s = t.get('info', {}).get('symbol', '')
+                        if not s:
+                            s = ccxt_sym.replace('/', '').replace(':USDT', '')
+                        sym_to_ccxt[s] = ccxt_sym
+                        
+                    for sym in ALL_SYMBOLS:
+                        ccxt_sym = sym_to_ccxt.get(sym)
+                        ticker = tickers.get(ccxt_sym, {}) if ccxt_sym else {}
+                        q_vol = float(ticker.get('quoteVolume', 0.0))
+                        if q_vol > 0 and q_vol < 30_000_000:
+                            GLOBAL_STATE["low_vol_days"][sym] = GLOBAL_STATE["low_vol_days"].get(sym, 0) + 1
+                            if GLOBAL_STATE["low_vol_days"][sym] >= 5:
+                                logger.warning(f"🚨 [量能不足] {sym} 連續 5 天 24h 成交額低於 30M USDT，觸發淘汰機制！")
+                                symbols_to_replace.append((sym, "連續 5 天量能不足"))
+                                GLOBAL_STATE["low_vol_days"][sym] = 0
+                        elif q_vol >= 30_000_000:
+                            GLOBAL_STATE["low_vol_days"][sym] = 0
+                GLOBAL_STATE["last_vol_check_day"] = now_day
+                
+            for sym, reason in symbols_to_replace:
+                if sym in STATES and STATES[sym].status != "BANNED":
+                    STATES[sym].status = "BANNED"
+                    STATES[sym].status_reason = reason
+                    # 進行替換
+                    new_sym = await replace_underperforming_symbol(exchange, sym)
+                    if new_sym:
+                        apply_symbol_pool_change(load_symbol_pool())
+                        
             logger.info("📊 [背景更新] 24小時平均成交量更新完成")
         except Exception as e:
             logger.warning(f"⚠️ [Ticker API 失敗]: {e}")
@@ -994,7 +1090,14 @@ def compute_indicators(sym):
 
     if len(highs) >= 15:
         adx_val = calculate_adx(highs, lows, closes, period=14)
-        s.adx = float(adx_val) if adx_val is not None and not np.isnan(adx_val) else None
+        if adx_val is None or np.isnan(adx_val):
+            s.adx = 0.0
+            if hasattr(s, "recent_adx") and isinstance(s.recent_adx, list):
+                s.recent_adx.append(0.0)
+        else:
+            s.adx = float(adx_val)
+            if hasattr(s, "recent_adx") and isinstance(s.recent_adx, list):
+                s.recent_adx.append(s.adx)
 
 # ── 出場邏輯 ──────────────────────────────────────────────────
 
@@ -1294,15 +1397,29 @@ async def manage_position(sym):
     if p < s.trailing_lowest:
         s.trailing_lowest = p
 
+    # ── 死水滯留自動平倉 (Stagnation Exit) ──
+    STAGNATION_HOLD_SEC = 5400  # 持倉超過 90 分鐘
+    STAGNATION_RANGE_PCT = 0.003  # 價格在開倉價 ±0.3% 內沒動
+    adx_val = getattr(s, "adx", 99.0)
+
+    if hold_sec > STAGNATION_HOLD_SEC and adx_val < 18.0:
+        price_drift = abs(p - avg) / max(avg, 1e-8)
+        if price_drift < STAGNATION_RANGE_PCT:
+            close_side = 'sell' if is_long else 'buy'
+            reason_msg = f"死水滯留平倉 (持倉 {hold_sec/60:.0f}min，震幅 {price_drift*100:.2f}%，ADX={adx_val:.1f})"
+            logger.info(f"🧊 [死水滯留] {sym} {reason_msg}")
+            await close_position(sym, close_side, abs(s.qty), p, avg, reason=reason_msg, is_stop_loss=False, is_profit=False)
+            return
+
     exit_triggered = False
     exit_reason = ""
     is_stop_loss = False
 
     NORMAL_STOP_PCT = -max((s.current_atr * 2.0) / max(avg, 1e-8), 0.008)
-    HARD_STOP_PCT = NORMAL_STOP_PCT * 1.5
+    HARD_STOP_PCT = -0.025
     TAKE_PROFIT_PCT = abs(NORMAL_STOP_PCT) * 2.5
 
-    if profit_pct >= 0.010:
+    if profit_pct >= 0.003:
         s.is_breakeven_set = True
     
     ai_conf = getattr(s, "ai_confidence", 0)
@@ -1310,14 +1427,14 @@ async def manage_position(sym):
     ai_action = (getattr(s, "ai_action", None) or "HOLD")
     
     if ai_regime == "CHOP" or ai_conf < 50:
-        TRAIL_START_PCT = abs(NORMAL_STOP_PCT) * 1.2
-        TRAIL_RETRACE_RATIO = 0.6
+        TRAIL_START_PCT = abs(NORMAL_STOP_PCT) * 1.0  # 提早啟動追蹤
+        TRAIL_RETRACE_RATIO = 0.9  # 只容忍 10% 回撤
     else:
-        TRAIL_START_PCT = abs(NORMAL_STOP_PCT) * 1.5
+        TRAIL_START_PCT = abs(NORMAL_STOP_PCT) * 1.2  # 提早啟動追蹤
         if ai_conf >= 70 and ai_action.lower() == ('buy' if is_long else 'sell'):
-            TRAIL_RETRACE_RATIO = 0.4  # 放寬停利，讓利潤奔跑
+            TRAIL_RETRACE_RATIO = 0.75  # 容忍 25% 回撤
         else:
-            TRAIL_RETRACE_RATIO = 0.55
+            TRAIL_RETRACE_RATIO = 0.85  # 容忍 15% 回撤
     DYNAMIC_STOP_MIN = 0.003
     DYNAMIC_STOP_MAX = 0.006
 
@@ -1326,10 +1443,13 @@ async def manage_position(sym):
         exit_reason = f"硬底線停損 (虧損達 {profit_pct*100:.2f}%)"
         is_stop_loss = True
 
-    elif getattr(s, "is_breakeven_set", False) and profit_pct <= 0.002:
-        exit_triggered = True
-        exit_reason = f"保本防護 (獲利回落至 {profit_pct*100:.2f}%)"
-        is_stop_loss = False
+    elif getattr(s, "is_breakeven_set", False):
+        # 動態保本底線：最低 0.1%，隨著最高利潤往上拉，保持 0.2% 的距離
+        dynamic_floor = max(0.001, s.highest_profit_pct - 0.002)
+        if profit_pct <= dynamic_floor:
+            exit_triggered = True
+            exit_reason = f"動態保本防護 (最高 {s.highest_profit_pct*100:.2f}% -> 回落至 {profit_pct*100:.2f}%)"
+            is_stop_loss = False
 
     elif hold_sec < 90:
         return
@@ -1349,7 +1469,7 @@ async def manage_position(sym):
         exit_reason = f"主停利達標 (獲利 {profit_pct*100:.2f}%)"
         is_stop_loss = False
 
-    elif profit_pct >= TRAIL_START_PCT:
+    elif s.highest_profit_pct >= TRAIL_START_PCT:
         retrace_floor = s.highest_profit_pct * TRAIL_RETRACE_RATIO
         if profit_pct <= retrace_floor:
             exit_triggered = True
@@ -1382,6 +1502,8 @@ async def manage_position(sym):
         is_stop_loss=is_stop_loss,
         is_profit=(not is_stop_loss)
     )
+
+
 
 async def execute_order(sym, side, price, route="a", is_ai=False, strength=0.0):
     # ── 防止同一幣種並發重複開倉 ──
@@ -1418,6 +1540,12 @@ async def _execute_order_inner(sym, side, price, route="a", is_ai=False, strengt
         logger.warning(f"⚠️ [風控] {sym} 無可用保證金")
         return
 
+    # ── 大盤豁免縮倉標記 (Half-Size Override) ──
+    if getattr(s, "_half_size_override", False):
+        margin *= 0.5
+        s._half_size_override = False
+        logger.info(f"⚖️ [縮倉豁免] {sym} 大盤逆風，倉位自動縮減至 50%")
+
     now = time.time()
     if s.entry_count > 0:
         if now - s.last_entry_time < s.entry_cooldown_sec:
@@ -1427,11 +1555,22 @@ async def _execute_order_inner(sym, side, price, route="a", is_ai=False, strengt
             logger.warning(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
             return
         if s.avg_price > 0 and price > 0:
-            profit_pct = (price - s.avg_price) / max(s.avg_price, 1e-8) if side == 'buy' else (s.avg_price - price) / max(s.avg_price, 1e-8)
-            required_profit = 0.006 if s.entry_count == 1 else 0.012
+            profit_pct = (price - s.avg_price) / max(s.avg_price, 1e-8) if side == 'buy' \
+                         else (s.avg_price - price) / max(s.avg_price, 1e-8)
+
+            # ── 獲利保護加倉 Pyramiding：ATR 動態門檻 ──
+            atr_pct = s.current_atr / max(s.avg_price, 1e-8)
+            required_profit = atr_pct * 1.0 if s.entry_count == 1 else atr_pct * 2.0
+            required_profit = max(required_profit, 0.004)  # 至少 0.4% 才加倉
+
             if profit_pct < required_profit:
-                logger.info(f"🛑 [順勢加碼風控] {sym} {'多' if side=='buy' else '空'}單獲利未達 {required_profit*100:.1f}% (目前: {profit_pct*100:.2f}%)，禁止過早加倉")
+                logger.info(f"🛑 [順勢加碼風控] {sym} 獲利未達 {required_profit*100:.2f}% ATR門檻 (目前: {profit_pct*100:.2f}%)，禁止加倉")
                 return
+
+            # ✅ 獲利已達 1 ATR：自動拉保本線，加倉風險歸零
+            if atr_pct > 0 and profit_pct >= atr_pct and not getattr(s, 'is_breakeven_set', False):
+                s.is_breakeven_set = True
+                logger.info(f"🔒 [保本鎖定] {sym} 獲利達 {profit_pct*100:.2f}%，止損自動移至開倉價")
 
     if GLOBAL_STATE["consecutive_losses"] >= 5:
         logger.warning(f"⚠️ [連敗風控] {sym} 全局已連續虧損 {GLOBAL_STATE['consecutive_losses']} 次，暫停開倉避免上頭")
@@ -1713,8 +1852,15 @@ def risk_guard(sym, side, route="a"):
 
     is_trend = route == "a"
     if side == 'buy' and not MARKET_WIND.get("allow_long", True) and is_trend:
-        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止順勢開多")
-        return False
+        # 原本直接封殺，現在改為：相對強度夠高就縮半倉放行
+        s_rg = STATES[sym]
+        rv = s_rg.current_vol / max(s_rg.avg_vol_24h_1m, 1e-8) if s_rg.avg_vol_24h_1m > 0 else 0
+        if rv >= 4.0:
+            logger.info(f"⚡ [大盤微跌豁免] {sym} RV={rv:.1f}x 超強，縮半倉允許開多")
+            s_rg._half_size_override = True
+        else:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止順勢開多 (RV={rv:.1f}x 不足豁免)")
+            return False
     if side == 'sell' and not MARKET_WIND.get("allow_short", True) and is_trend:
         logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤上漲風控] 大盤異常漲勢，禁止順勢開空")
         return False
@@ -1798,6 +1944,15 @@ def risk_guard(sym, side, route="a"):
             logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [過度擴張過濾] 價格偏離 EMA20 低於 -{ema_limit_pct*100:.1f}% (追空風險)，拒絕進空")
             return False
 
+    # VWAP 乖離率防追高 (Anti-FOMO)
+    if getattr(s, "vwap", 0) > 0:
+        if side == 'buy' and cp > s.vwap * 1.015:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [VWAP防追高過濾] 價格 {cp:.4f} > VWAP {s.vwap:.4f} * 1.015，放棄追高多單")
+            return False
+        if side == 'sell' and cp < s.vwap * 0.985:
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [VWAP防追空過濾] 價格 {cp:.4f} < VWAP {s.vwap:.4f} * 0.985，放棄追空空單")
+            return False
+
     # 極端行情保護 (Extreme Volatility in 5m & Dynamic ATR Spike)
     if len(s.ohlcv) >= 5:
         recent_5 = s.ohlcv[-5:]
@@ -1836,8 +1991,7 @@ def risk_guard(sym, side, route="a"):
     if side == 'buy' and route == 'a':
         # 條件 1：1H 趨勢必須同向 (已放寬：改為警告日誌，不硬性封鎖)
         if getattr(s, "htf_trend", None) != "long":
-            logger.info(f"🛑 [多單過濾] {sym} 1H 趨勢非多頭 ({s.htf_trend})，拒絕開倉")
-            return False
+            logger.info(f"⚠️ [多單過濾] {sym} 1H 趨勢非多頭 ({s.htf_trend})，放行但記錄")
 
         # 條件 2：價格必須站上 EMA20 或 VWAP
         price_above_ema20 = s.ema20 > 0 and cp >= s.ema20
@@ -1850,8 +2004,7 @@ def risk_guard(sym, side, route="a"):
     if side == 'sell' and route == 'a':
         # 條件 1：1H 趨勢必須同向 (已放寬：改為警告日誌，不硬性封鎖)
         if getattr(s, "htf_trend", None) != "short":
-            logger.info(f"🛑 [空單過濾] {sym} 1H 趨勢非空頭 ({s.htf_trend})，拒絕開倉")
-            return False
+            logger.info(f"⚠️ [空單過濾] {sym} 1H 趨勢非空頭 ({s.htf_trend})，放行但記錄")
 
         # 條件 2：價格必須跌破 EMA20 且低於 VWAP
         price_below_ema20 = s.ema20 > 0 and cp <= s.ema20
@@ -1961,6 +2114,7 @@ def check_rsi_divergence(closes, rsis, window=60):
 
 def compute_signal_strength(sym):
     s = STATES[sym]
+    btc_trend = MARKET_WIND.get("btc_1h_trend", "").lower()
     ohlcv = getattr(s, "ohlcv", None) or []
     if len(s.closes) > 0:
         closes = np.array(s.closes, dtype=float)
@@ -1969,7 +2123,7 @@ def compute_signal_strength(sym):
     else:
         closes = np.array([], dtype=float)
     if len(closes) < 20 and not ohlcv and s.close_price == 0.0 and (s.prev_close is None or s.prev_close == 0.0):
-        return (None, 0, None)
+        return (None, 0.0, None, False)
     if len(closes) >= 20:
         s.closes = closes
 
@@ -2114,30 +2268,63 @@ def compute_signal_strength(sym):
     short_score = 0.0
     long_route = None
     short_route = None
+    
+    long_details = {}
+    short_details = {}
 
     if long_base_ok:
         long_route = "s" if route_s_long else "c" if route_c_long else "b" if route_b_long else "a"
         if long_route == "a":
-            long_score = 4.0 + ((close - ema20) / max(ema20, 1e-8) * 100) + 10.0
+            base_score = 4.0 + ((close - ema20) / max(ema20, 1e-8) * 100) + 10.0
+            long_score = base_score
+            long_details["基礎"] = f"{base_score:.2f}"
         else:
             rsi_bonus = max(0.0, long_rsi_threshold - rsi)
             if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)":
                 rsi_bonus *= 0.5
+            # [修正] RSI 紅利不可無上限，最高 3.0 分，且逆勢時不給紅利
+            if btc_trend == "bear" or s.trend_1h == "short" or s.trend_4h == "short":
+                rsi_bonus = 0.0 # 逆大趨勢去摸底，不給紅利
+            else:
+                rsi_bonus = min(3.0, rsi_bonus)
+                
             long_score = rsi_bonus + 4.0
-        if momentum_long: long_score += 3.0
-        if long_macd_cross: long_score += 5.0
+            long_details["基礎"] = "4.0"
+            if rsi_bonus > 0:
+                long_details["RSI紅利"] = f"{rsi_bonus:.2f}"
+        if momentum_long: 
+            long_score += 3.0
+            long_details["動能"] = "3.0"
+        if long_macd_cross: 
+            long_score += 5.0
+            long_details["MACD"] = "5.0"
 
     if short_base_ok:
         short_route = "s" if route_s_short else "c" if route_c_short else "b" if route_b_short else "a"
         if short_route == "a":
-            short_score = 4.0 + ((ema20 - close) / max(ema20, 1e-8) * 100) + 10.0
+            base_score = 4.0 + ((ema20 - close) / max(ema20, 1e-8) * 100) + 10.0
+            short_score = base_score
+            short_details["基礎"] = f"{base_score:.2f}"
         else:
             rsi_bonus = max(0.0, rsi - short_rsi_threshold)
             if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)":
                 rsi_bonus *= 0.5
+            # [修正] RSI 紅利不可無上限，最高 3.0 分，且逆勢時不給紅利
+            if btc_trend == "bull" or s.trend_1h == "long" or s.trend_4h == "long":
+                rsi_bonus = 0.0 # 逆大趨勢去摸頭，不給紅利
+            else:
+                rsi_bonus = min(3.0, rsi_bonus)
+                
             short_score = rsi_bonus + 4.0
-        if momentum_short: short_score += 3.0
-        if short_macd_cross: short_score += 5.0
+            short_details["基礎"] = "4.0"
+            if rsi_bonus > 0:
+                short_details["RSI紅利"] = f"{rsi_bonus:.2f}"
+        if momentum_short: 
+            short_score += 3.0
+            short_details["動能"] = "3.0"
+        if short_macd_cross: 
+            short_score += 5.0
+            short_details["MACD"] = "5.0"
 
     # 選分數高的方向，不再固定優先多單
     if long_score == 0 and short_score == 0:
@@ -2155,22 +2342,28 @@ def compute_signal_strength(sym):
             
         if long_score > 0:
             long_score = max(0.0, long_score + atr_modifier)
+            long_details["ATR加權"] = f"{atr_modifier:+.1f}"
         if short_score > 0:
             short_score = max(0.0, short_score + atr_modifier)
+            short_details["ATR加權"] = f"{atr_modifier:+.1f}"
 
     if long_score == 0 and short_score == 0:
         # 即使 ATR 將分數扣光，只要有初始訊號方向，我們仍保留 side 給「爆量直通車」與「大盤保護」最後一次強行過關的機會
         if long_base_ok and not short_base_ok:
             side, strength, route = "buy", 0.0, long_route
+            details_str = " + ".join([f"{k}({v})" for k,v in long_details.items()]) if long_details else "無"
         elif short_base_ok and not long_base_ok:
             side, strength, route = "sell", 0.0, short_route
+            details_str = " + ".join([f"{k}({v})" for k,v in short_details.items()]) if short_details else "無"
         else:
             return (None, 0.0, None, False)
-
-    if short_score > long_score:
-        side, strength, route = "sell", short_score, short_route
     else:
-        side, strength, route = "buy", long_score, long_route
+        if short_score > long_score:
+            side, strength, route = "sell", short_score, short_route
+            details_str = " + ".join([f"{k}({v})" for k,v in short_details.items()])
+        else:
+            side, strength, route = "buy", long_score, long_route
+            details_str = " + ".join([f"{k}({v})" for k,v in long_details.items()])
 
     # --- 以下為統一的進階風控 (套用於勝出方向) ---
 
@@ -2182,22 +2375,27 @@ def compute_signal_strength(sym):
     # --- FNG 全局門檻偏移 ---
     fng = MARKET_WIND.get("fng_value", 50)
     if fng > 75:
-        strength += 1.0 if side == 'sell' else -1.0  # 貪婪：放寬做空，提高做多門檻
+        offset = 1.0 if side == 'sell' else -1.0
+        strength += offset  # 貪婪：放寬做空，提高做多門檻
+        details_str += f" + FNG貪婪({offset:+.1f})"
     elif fng < 25:
-        strength += 1.0 if side == 'buy' else -1.0   # 恐慌：放寬做多，提高做空門檻
+        offset = 1.0 if side == 'buy' else -1.0
+        strength += offset   # 恐慌：放寬做多，提高做空門檻
+        details_str += f" + FNG恐慌({offset:+.1f})"
         
     if strength > s.max_strength:
         s.max_strength = strength
 
     # === 快車道動能算分邏輯 ===
     if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)":
-        # 1. 低波動模式下，如果是假突破，直接硬過濾攔截 (Hard Filter)，杜絕無量震盪
-        logger.debug(f"🛑 [進場過濾] {sym} 處於低波動模式，直接攔截，拒絕假突破進場！")
-        return (None, 0.0, "", False)
+        strength -= 1.0
+        details_str += " + 低波動(-1.0)"
+        logger.debug(f"⚠️ {sym} 處於低波動模式，扣分 -1.0，防止指標虛胖。")
         
     # 2. 只有在真正爆量（current_atr > ma20 * 1.2）時，才給予動能加分
     if getattr(s, "atr_ma20", 0) > 0 and getattr(s, "current_atr", 0) > s.atr_ma20 * 1.2:
         strength += 3.0
+        details_str += " + 爆量(+3.0)"
 
     fast_path_threshold = STRATEGY_CONF["FAST_PATH_SCORE_LOW_VOL"] if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)" else STRATEGY_CONF["FAST_PATH_SCORE_HIGH_VOL"]
     expected_trend = "long" if side == "buy" else "short"
@@ -2205,9 +2403,11 @@ def compute_signal_strength(sym):
     # === 新增：大盤連動保護 (BTC Master Wind) ===
     btc_change = MARKET_WIND.get("btc_change_15m", 0.0)
     if btc_change > 0.005 and side == "buy":
+        logger.debug(f"📊 [分數明細] {sym} 總分: {max(strength, fast_path_threshold):.2f} | {details_str} + 大盤保護放行")
         logger.info(f"🚀 [大盤保護] BTC 15分鐘急漲 ({btc_change*100:.2f}%)，放行 {sym} 做多訊號")
         return (side, max(strength, fast_path_threshold), route, False)
     elif btc_change < -0.005 and side == "sell":
+        logger.debug(f"📊 [分數明細] {sym} 總分: {max(strength, fast_path_threshold):.2f} | {details_str} + 大盤保護放行")
         logger.info(f"🚀 [大盤保護] BTC 15分鐘急跌 ({btc_change*100:.2f}%)，放行 {sym} 做空訊號")
         return (side, max(strength, fast_path_threshold), route, False)
 
@@ -2216,6 +2416,7 @@ def compute_signal_strength(sym):
         if len(s.closes) >= 2:
             c_change = abs(s.closes[-1] - s.closes[-2]) / max(s.closes[-2], 1e-8)
             if c_change > 0.002:  # 實體大於 0.2%
+                logger.debug(f"📊 [分數明細] {sym} 總分: {max(strength, fast_path_threshold):.2f} | {details_str} + 爆量直通")
                 logger.info(f"💥 [爆量直通] {sym} 成交量瞬間放大至 {s.current_vol / s.avg_vol_24h_1m:.1f} 倍！無視規則直接進場！")
                 return (side, max(strength, fast_path_threshold), route, False)
     # === 剝頭皮解鎖 (Scalping HTF & VWAP) ===
@@ -2226,24 +2427,29 @@ def compute_signal_strength(sym):
         # 特例：如果是 AI 明確判斷的「反轉」模式，免扣分
         is_ai_reversal = getattr(s, "ai_setup", "") == "Reversal" and route in ["b", "c", "s"]
         if not is_ai_reversal:
-            strength -= 1.0
-            logger.debug(f"⚠️ [大週期逆勢] {sym} 1H 趨勢 ({s.htf_trend}) 與開單方向 ({side}) 不符，短線扣分 (-1.0)")
+            strength -= 3.0
+            details_str += " + 大週期逆勢(-3.0)"
+            logger.debug(f"⚠️ [大週期逆勢] {sym} 1H 趨勢 ({s.htf_trend}) 與開單方向 ({side}) 不符，短線扣分 (-3.0)")
 
     # 2. VWAP 機構成本線扣分
     if s.vwap and s.vwap > 0:
         if side == "buy" and s.close_price < s.vwap:
             strength -= 1.0
+            details_str += " + VWAP逆勢(-1.0)"
             logger.debug(f"⚠️ [VWAP 逆勢] {sym} 價格低於 VWAP，短線做多扣分 (-1.0)")
         elif side == "sell" and s.close_price > s.vwap:
             strength -= 1.0
+            details_str += " + VWAP逆勢(-1.0)"
             logger.debug(f"⚠️ [VWAP 逆勢] {sym} 價格高於 VWAP，短線做空扣分 (-1.0)")
 
     # 3. EMA50 微觀護城河壓力/支撐線扣分 (由硬封殺降級為扣分)
     if side == "buy" and not trend_confluence_long:
         strength -= 1.5
+        details_str += " + 均線逆勢(-1.5)"
         logger.debug(f"⚠️ [均線逆勢] {sym} 價格低於 EMA50，短線做多扣分 (-1.5)")
     elif side == "sell" and not trend_confluence_short:
         strength -= 1.5
+        details_str += " + 均線逆勢(-1.5)"
         logger.debug(f"⚠️ [均線逆勢] {sym} 價格高於 EMA50，短線做空扣分 (-1.5)")
             
     # 解除快車道的大週期限制
@@ -2269,6 +2475,7 @@ def compute_signal_strength(sym):
                     fast_path_ok = False
 
     if fast_path_ok:
+        logger.debug(f"📊 [分數明細] {sym} 總分: {strength:.2f} | {details_str}")
         logger.info(f"⚡ [Fast Path] {sym} 觸發做{side}直通 (Score: {strength:.2f} >= {fast_path_threshold})，無須等待 AI！")
         return (side, strength, route, False)  # is_ai_assisted=False
     
@@ -2284,9 +2491,11 @@ def compute_signal_strength(sym):
             ema20 = s.ema20
             if ema20 and ema20 > 0:
                 if side == "buy" and c1 > ema20 and c2 > ema20 and s.current_rsi > 50:
+                    logger.debug(f"📊 [分數明細] {sym} 總分: {strength:.2f} | {details_str}")
                     logger.info(f"📈 [二次確認突破] {sym} 1H/4H順風且連續兩根K線站穩 EMA20，RSI>50，不須 AI 同意直接開多！")
                     return (side, strength, route, False)
                 elif side == "sell" and c1 < ema20 and c2 < ema20 and s.current_rsi < 50:
+                    logger.debug(f"📊 [分數明細] {sym} 總分: {strength:.2f} | {details_str}")
                     logger.info(f"📉 [二次確認突破] {sym} 1H/4H順風且連續兩根K線跌破 EMA20，RSI<50，不須 AI 同意直接開空！")
                     return (side, strength, route, False)
 
@@ -2299,10 +2508,29 @@ def compute_signal_strength(sym):
     if strength < TECHNICAL_ENTRY_THRESHOLD:
         return (None, 0.0, None, False)
 
+    # ── 多時區共振快速通道 (MTF Confluence Fast Path) ──
+    htf_1h = getattr(s, "htf_trend", None)
+    htf_4h = getattr(s, "htf_4h_trend", None)
+    expected = "long" if side == "buy" else "short"
+
+    is_mtf_aligned = (htf_1h == expected and htf_4h == expected)
+    is_vol_spike = s.avg_vol_24h_1m > 0 and s.current_vol > s.avg_vol_24h_1m * 2.0
+
+    if is_mtf_aligned and is_vol_spike:
+        MTF_THRESHOLD = 5.0   # 共振時降低門檻（原本 7.5）
+        if strength >= MTF_THRESHOLD:
+            logger.info(
+                f"🌊 [MTF共振通道] {sym} 1H/4H/1m 三層順風 + 爆量 "
+                f"(Vol: {s.current_vol/s.avg_vol_24h_1m:.1f}x)，"
+                f"門檻降至 {MTF_THRESHOLD}，Score={strength:.2f} 直接放行！"
+            )
+            return (side, strength, route, False)
+
     # ==========================================
     # 🚀 極致短線模式：純技術面高標進場
     # 只要指標分數達標 (>= 7.5)，代表確認為強勢訊號，直接開槍進場！
     # ==========================================
+    logger.debug(f"📊 [分數明細] {sym} 總分: {strength:.2f} | {details_str}")
     logger.info(f"⚡ [純技術面觸發] {sym} 訊號達標 (Score: {strength:.2f} >= {TECHNICAL_ENTRY_THRESHOLD})，直接開倉！")
     return (side, strength, route, False)
 
@@ -2452,6 +2680,14 @@ async def generate_signals() -> dict:
         if strength <= 0.0:
             continue
             
+        # 0. 盤整過濾 (CHOP Filter)
+        ai_regime = getattr(s, "ai_regime", "CHOP")
+        if ai_regime == "CHOP":
+            profit_potential = s.current_atr / max(s.close_price, 1e-8)
+            if profit_potential < 0.0015:
+                logger.debug(f"🛑 [進場過濾] {sym} 處於盤整且波幅過小 (ATR: {profit_potential*100:.2f}% < 0.15%)，拒絕進場")
+                continue
+            
         # 1. 強制 HTF 同向 (逆勢單全面封殺)
         is_counter_trend = False
         htf = getattr(s, "htf_trend", None)
@@ -2462,25 +2698,31 @@ async def generate_signals() -> dict:
             is_counter_trend = True
             
         if is_counter_trend:
-            logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：大週期逆勢 (1H:{htf}, 4H:{htf4h})")
-            continue
+            logger.debug(f"⚠️ [進場過濾] {sym} 大週期逆勢 (1H:{htf}, 4H:{htf4h})，扣分但放行")
+            strength -= 3.0
+            if strength <= 0:
+                continue
             
         # 區分大幣與小幣 (Altcoins) 的防護等級
         is_altcoin = sym not in ["BTCUSDT", "ETHUSDT"]
         
         if getattr(s, "vol_mode", "") == "低波動模式 (Low Vol)":
-            vol_multi = 2.0 if is_altcoin else 1.5
+            vol_multi = 1.1 if is_altcoin else 1.0  # 放寬門檻：低波動模式不需太高量突破 (原 1.5/1.2)
         else:
-            vol_multi = 1.5 if is_altcoin else 1.0
+            vol_multi = 1.2 if is_altcoin else 1.0  # 高波動/正常模式維持不變
         hugging_pct = 0.3 if is_altcoin else 0.2
         ai_conf_threshold = 70 if is_altcoin else 60
 
-        # 2. 強制量能突破 (小幣需 1.5 倍以上量能)
+        # 2. 強制量能突破 (低波動模式放寬至 1.1x，高波動維持 1.2x)
+        #    例外：訊號強度 >= 18 分時豁免量能過濾（非常強的訊號）
         vol_req = getattr(s, "vol_ma20", 0) * vol_multi
         prev_vol = float(s.ohlcv[-2][5]) if getattr(s, "ohlcv", []) and len(s.ohlcv) >= 2 else getattr(s, "current_vol", 0.0)
         if prev_vol <= vol_req:
-            logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：無量假突破 (PrevVol < {vol_multi}x MA20)")
-            continue
+            if strength >= 18.0:
+                logger.debug(f"⚡ [量能豁免] {sym} 訊號強度 {strength:.2f} >= 18，豁免量能門檻 ({vol_multi}x MA20)")
+            else:
+                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：無量假突破 (PrevVol < {vol_multi}x MA20, 分數 {strength:.2f} < 18)")
+                continue
             
         # 3. 拒絕均線沾毛 (Anti-Hugging)
         if s.ema20 and s.ema20 > 0:
@@ -2496,15 +2738,45 @@ async def generate_signals() -> dict:
                 logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：價格過於貼近 VWAP (乖離率 {vwap_dist:.2f}% < {hugging_pct}%)")
                 continue
                 
-        # 4.5. 突破後回踩與 FOMO 追高防護 (小幣專用)
+        # 4.5. 突破後回踩與 FOMO 追高防護 (拒絕買在針尖上)
+        rsi = getattr(s, "current_rsi", 50)
+        
+        # [防禦 1] K棒型態過濾 (拒絕長影線)
+        if getattr(s, "ohlcv", []) and len(s.ohlcv) >= 1:
+            last_candle = s.ohlcv[-1]
+            c_open = float(last_candle[1])
+            c_high = float(last_candle[2])
+            c_low = float(last_candle[3])
+            c_close = float(last_candle[4])
+            c_len = c_high - c_low
+            if c_len > 0:
+                if side == "buy":
+                    upper_wick = c_high - max(c_open, c_close)
+                    if (upper_wick / c_len) > 0.4:
+                        logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：上影線過長 ({upper_wick/c_len*100:.0f}%)，大戶賣壓沉重")
+                        continue
+                else:
+                    lower_wick = min(c_open, c_close) - c_low
+                    if (lower_wick / c_len) > 0.4:
+                        logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：下影線過長 ({lower_wick/c_len*100:.0f}%)，底部買盤強勁")
+                        continue
+                        
+        # [防禦 2 & 3] 布林通道天花板過濾 & RSI 收緊 (小幣專用)
         if is_altcoin:
-            rsi = getattr(s, "current_rsi", 50)
-            if side == "buy" and rsi > 75:
-                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：RSI 過高 ({rsi:.1f} > 75)，防範 FOMO 追高，等待回踩")
-                continue
-            elif side == "sell" and rsi < 25:
-                logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：RSI 過低 ({rsi:.1f} < 25)，防範 FOMO 殺跌，等待反抽")
-                continue
+            if side == "buy":
+                if rsi > 70:
+                    logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：RSI 過高 ({rsi:.1f} > 70)，防範 FOMO 追高")
+                    continue
+                if getattr(s, "bb_up", 0) > 0 and s.close_price >= s.bb_up * 1.010:
+                    logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：價格突破布林上軌超過 1%，防範過度追高")
+                    continue
+            elif side == "sell":
+                if rsi < 30:
+                    logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：RSI 過低 ({rsi:.1f} < 30)，防範 FOMO 殺跌")
+                    continue
+                if getattr(s, "bb_low", 0) > 0 and s.close_price <= s.bb_low * 0.990:
+                    logger.debug(f"🛑 [進場過濾] {sym} 拒絕進場：價格跌破布林下軌超過 1%，防範過度殺跌")
+                    continue
 
         # 5. AI 絕對否決權
         ai_conf = getattr(s, "ai_confidence", 0)
