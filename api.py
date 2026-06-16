@@ -466,11 +466,17 @@ def api_history_summary():
         for t in trades:
             dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
             date_key = dt.strftime("%Y-%m-%d")
-            entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0})
+            entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
             entry["trades"] += 1
             if t.get("is_close") and t.get("realized_pnl"):
                 entry["pnl"] += t["realized_pnl"]
-        summaries = [{"date": k, "trades": v["trades"], "pnl": round(v["pnl"], 4)} for k, v in sorted(daily.items(), reverse=True)]
+            
+            # 手續費加總 (支援相容舊紀錄)
+            fee = t.get("fee", (t["price"] * abs(t["qty"])) * 0.0005)
+            entry["fee"] += fee
+
+        # 將 fee 也回傳，並將 pnl 扣除 fee
+        summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"] - v["fee"], 4)} for k, v in sorted(daily.items(), reverse=True)]
         return {"summaries": summaries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

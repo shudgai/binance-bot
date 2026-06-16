@@ -31,6 +31,7 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
             
         state.setdefault("trades", [])
         pos = state.setdefault("positions", {}).setdefault(symbol, {"qty": 0.0, "avg_price": 0.0, "realized_pnl": 0.0})
+        fee = (price * abs(qty)) * 0.0005
         
         trade = {
             "id": str(uuid.uuid4())[:8],
@@ -43,6 +44,7 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
             "isBuyer": (side == 'buy'),
             "isMaker": False,
             "realized_pnl": pnl if is_close else 0.0,
+            "fee": fee,
             "is_close": is_close
         }
         
@@ -124,7 +126,6 @@ def update_paper_state(symbol, side, price, qty, is_close=False, pnl=0.0):
             state["balance_usdt"] += pnl
             
         # 統一扣除手續費 (開平倉皆適用 Binance taker fee 0.05%)
-        fee = (price * abs(qty)) * 0.0005
         state["balance_usdt"] -= fee
 
         state["positions"][symbol] = pos

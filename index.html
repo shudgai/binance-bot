@@ -784,13 +784,9 @@
 
             <!-- Trade amount -->
             <div class="card">
-                <div class="amount-row">
-                    <span class="info-title">單次自動交易金額</span>
-                    <span class="amount-val">{{ tempTradeAmount }} {{ getQuoteAsset() }}</span>
-                </div>
-                <div class="slider-row">
-                    <input type="range" min="0" max="150" step="1" v-model.number="tempTradeAmount" @change="updateTradeAmount">
-                    <input type="number" min="0" max="150" class="amount-input" v-model.number="tempTradeAmount" @blur="updateTradeAmount" @keyup.enter="updateTradeAmount">
+                <div class="amount-row" style="margin-bottom:0;">
+                    <span class="info-title">單次自動交易金額 (隨帳戶餘額動態調整)</span>
+                    <span class="amount-val">{{ formatCurrencyVal(bot.balance_quote) }} {{ getQuoteAsset() }}</span>
                 </div>
             </div>
 
@@ -845,11 +841,12 @@
                 <div class="lo-field">
                     <label>下單金額 (USDT)</label>
                     <input
-                        type="number" min="1" max="150" step="1"
+                        type="number"
                         placeholder="金額..."
                         class="lo-input"
-                        v-model.number="tempTradeAmount"
-                        @blur="updateTradeAmount"
+                        :value="bot.balance_quote"
+                        disabled
+                        style="opacity: 0.7; cursor: not-allowed;"
                     >
                 </div>
 
@@ -939,17 +936,19 @@
                         <tr>
                             <th>日期</th>
                             <th>交易次數</th>
+                            <th>手續費</th>
                             <th>總已實現損益 (USDT)</th>
                             <th style="text-align:right;">操作</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-if="historySummaries.length === 0">
-                            <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">目前還沒有任何歷史紀錄</td>
+                            <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">目前還沒有任何歷史紀錄</td>
                         </tr>
                         <tr v-for="h in historySummaries" :key="h.date">
                             <td>{{ h.date }}</td>
                             <td>{{ h.trades }} 筆</td>
+                            <td>{{ h.fee !== undefined ? h.fee.toFixed(4) : '0.0000' }}</td>
                             <td :style="{color: h.pnl > 0 ? 'var(--success)' : (h.pnl < 0 ? 'var(--danger)' : 'var(--text-main)')}">
                                 {{ h.pnl > 0 ? '+' : '' }}{{ h.pnl.toFixed(4) }}
                             </td>
@@ -1002,7 +1001,7 @@ createApp({
         const isPlacingOrder = ref(false);
         const trades = ref([]);
         const liveTrades = ref([]);
-        const tempTradeAmount = ref(150);
+        const tempTradeAmount = computed(() => parseFloat((bot.value.balance_quote || 0).toFixed(4)));
         const limitPrice = ref('');
         const openOrders = ref([]);
         const selectedTf = ref('1m');
@@ -1433,23 +1432,12 @@ createApp({
                     }
                 }
 
-                if (data.trade_amount !== undefined) {
-                    if (document.activeElement?.type !== 'number' && document.activeElement?.type !== 'range')
-                        tempTradeAmount.value = data.trade_amount;
-                }
                 if (error.value) error.value = '';
             } catch(e) { error.value = '後端連線失敗。'; }
         };
 
         const updateTradeAmount = async () => {
-            let a = Math.max(0, Math.min(150, tempTradeAmount.value));
-            tempTradeAmount.value = a;
-            try {
-                const res = await fetch(`${API_BASE}/bot-status/set-amount/${a}`, { method: 'POST' });
-                const resp = await res.json();
-                const data = resp.data || resp;
-                if (res.ok) addLog(`交易金額設為 ${data.trade_amount} ${getQuoteAsset()}`, 'success');
-            } catch(e) { addLog('設定金額失敗', 'danger'); }
+            // 已棄用：現已強制使用餘額做為交易金額
         };
 
         const fetchPosition = async () => {
