@@ -619,8 +619,8 @@
                 </div>
                 <div class="info-card">
                     <div class="info-title">總已實現利潤</div>
-                    <div :class="['info-val mono', (bot.balance_quote - 150) > 0 ? 'up' : (bot.balance_quote - 150) < 0 ? 'down' : '']" style="font-size:15px;">
-                        {{ (bot.balance_quote - 150) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot.balance_quote - 150) }} USDT
+                    <div :class="['info-val mono', (bot.balance_quote - bot.session_start_balance) > 0 ? 'up' : (bot.balance_quote - bot.session_start_balance) < 0 ? 'down' : '']" style="font-size:15px;">
+                        {{ (bot.balance_quote - bot.session_start_balance) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot.balance_quote - bot.session_start_balance) }} USDT
                     </div>
                 </div>
                 <div class="balance-box ms-auto text-end" style="cursor: pointer;" @click="toggleCurrency" title="點擊切換顯示幣別">
@@ -901,7 +901,7 @@ createApp({
 
         const showLogs = ref(false);
 
-        const bot = ref({ is_running: false, strategy: '-', balance_quote: 0, active_orders: 0, regime: '-' });
+        const bot = ref({ is_running: false, strategy: '-', balance_quote: 0, session_start_balance: 150, active_orders: 0, regime: '-' });
         const allPositions = ref({});
 
         // ── Volume bars ───────────────────────────────────────────

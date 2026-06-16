@@ -204,6 +204,51 @@ def force_close_all_positions():
                 add_system_log(f"⚠️ [每日淨空] 平倉 {sym} 失敗: {e}", "danger")
 
 
+def reset_paper_state(starting_balance: float = 150.0):
+    """將 paper_state.json 重置為初始值，並回復起始資金。"""
+    bot_status = get_bot_status()
+    if bot_status.get("is_running"):
+        add_system_log("🧹 正在停止機器人以進行紙交易重置...", "warning")
+        try:
+            from services.bot_manager_service import kill_bot
+            kill_bot()
+        except Exception:
+            pass
+
+    state = {
+        "balance_usdt": float(starting_balance),
+        "session_start_balance": float(starting_balance),
+        "positions": {},
+        "trades": []
+    }
+    import fcntl
+    with open(PAPER_STATE_FILE, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        json.dump(state, f, indent=4)
+        f.truncate()
+        fcntl.flock(f, fcntl.LOCK_UN)
+
+    add_system_log(f"🧹 紙交易狀態已重置為 {starting_balance} USDT，持倉與交易紀錄已清空。", "success")
+
+    if bot_status.get("is_running"):
+        add_system_log("♻️ 已重置紙交易狀態，將重新啟動機器人以套用初始資金。", "warning")
+        restart_bot()
+
+    return state
+
+
+def get_session_start_balance():
+    """回傳本次 session 的起始資金（reset 時記錄），預設 150.0。"""
+    if os.path.exists(PAPER_STATE_FILE):
+        try:
+            with open(PAPER_STATE_FILE, "r") as f:
+                state = json.load(f)
+                return float(state.get("session_start_balance", 150.0))
+        except:
+            pass
+    return 150.0
+
+
 def get_paper_positions():
     """Return all positions for the current paper state."""
     state = {}

@@ -30,6 +30,8 @@ from services.paper_trade_service import (
     market_short as paper_market_short, 
     market_sell as paper_market_sell,
     force_close_all_positions,
+    reset_paper_state,
+    get_session_start_balance,
 )
 from services.radar_service import trigger_manual_radar, auto_radar_switch
 
@@ -39,8 +41,8 @@ app = FastAPI(title="Binance Bot API Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8005", "http://127.0.0.1:8005"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -108,6 +110,7 @@ def api_get_bot_status():
     status = get_bot_status()
     if is_paper_trading():
         status["balance_quote"] = get_paper_balance()
+        status["session_start_balance"] = get_session_start_balance()
     else:
         # 實盤餘額的取得可放在 binance_service，為簡化先保留原本邏輯(這部分會用到 binance_service，為快速先這樣)
         pass 
@@ -273,6 +276,15 @@ def api_close_all_orders():
         return {"status": "success", "detail": "已強制平倉所有持有部位"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"一鍵平倉失敗: {str(e)}")
+
+
+@app.post("/api/paper-state/reset")
+def api_reset_paper_state(balance: float = 150.0):
+    try:
+        reset_paper_state(balance)
+        return {"status": "success", "detail": f"紙交易狀態已重置為 {balance} USDT"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"紙交易重置失敗: {str(e)}")
 
 
 @app.get("/api/exchangerate/usdtwd")
