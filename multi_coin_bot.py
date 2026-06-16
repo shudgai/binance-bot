@@ -101,8 +101,8 @@ BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 4.0
-TP_ATR_MULTIPLIER = 0.8
-HARD_STOP_LOSS_PCT = 0.02
+TP_ATR_MULTIPLIER = 1.5
+HARD_STOP_LOSS_PCT = 0.01
 
 def build_symbol_state(sym):
     return {
@@ -563,6 +563,8 @@ async def load_open_positions():
     try:
         with open("paper_state.json", "r") as f:
             state = json.load(f)
+            
+        current_time = time.time()
         for sym in ALL_SYMBOLS:
             pk = paper_key(sym)
             pos = state.get("positions", {}).get(pk, {})
@@ -570,6 +572,20 @@ async def load_open_positions():
             if abs(qty) > 0.000001:
                 STATES[sym]["qty"] = qty
                 STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+
+        # 檢查最近的平倉紀錄，加上冷卻時間，防止剛平倉完馬上又自動開倉
+        trades = state.get("trades", [])
+        for t in reversed(trades):
+            if t.get("is_close"):
+                # 將 "BTC:USDT" 還原為 "BTCUSDT" 以匹配 STATES 的鍵
+                sym = t.get("symbol", "").replace(":USDT", "USDT")
+                if sym in STATES:
+                    trade_time_sec = t.get("time", 0) / 1000.0
+                    # 如果這筆平倉是在最近 5 分鐘內發生的，且當前沒有持倉
+                    if current_time - trade_time_sec < 300 and STATES[sym]["qty"] == 0:
+                        if STATES[sym]["status"] != "COOLDOWN":
+                            STATES[sym]["status"] = "COOLDOWN"
+                            STATES[sym]["next_status_time"] = trade_time_sec + 300
     except Exception as e:
         print(f"⚠️ [讀取持倉失敗] {e}")
 
@@ -723,6 +739,8 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
     s["adjusted_this_tick"] = True
+    if abs(s["qty"]) < 0.000001:
+        return
     pk = paper_key(sym)
     qty = min(abs(qty), abs(s["qty"]))
     if qty < 0.000001:
@@ -753,13 +771,15 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
 
 async def check_exits(sym):
     s = STATES[sym]
+    if s.get("adjusted_this_tick", False):
+        return
     if abs(s["qty"]) < 0.000001 or s["avg_price"] <= 0:
         return
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
-    cooldown_limit = 3.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 10.0
+    cooldown_limit = 60.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
     if hold_sec < cooldown_limit:
         return
 
@@ -819,7 +839,7 @@ async def check_exits(sym):
     # 1. 趨勢反轉：MACD 反向交叉 → 立即認賠出場 (無視盈虧)
     m_death = s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]
     m_golden = s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"]
-    if (is_long and m_death) or (not is_long and m_golden):
+    if ((is_long and m_death) or (not is_long and m_golden)) and (s["has_been_negative"] or abs(profit_pct) > 0.005):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
         print(f"📉 [反轉出場] {sym} MACD反向交叉，立即平倉 (損益: {profit_pct*100:.2f}%)")
@@ -865,7 +885,7 @@ async def check_exits(sym):
         return
 
     # 見好就收：先以 0.3% 進行停利，若後續價格再創新高，就把停利線往上移動
-    early_take_profit_pct = 0.003
+    early_take_profit_pct = 0.005
     if s["highest_profit_pct"] >= early_take_profit_pct and profit_pct >= 0.001:
         should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
         if should_exit:
@@ -902,7 +922,7 @@ async def check_exits(sym):
             s["has_partial_closed"] = False
             return
         # 弱勢快速停利：0.3% 就走
-        weak_tp = 0.003
+        weak_tp = 0.005
         if s["highest_profit_pct"] >= weak_tp:
             cs = 'sell' if is_long else 'buy'
             print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%")
@@ -920,7 +940,7 @@ async def check_exits(sym):
         # ── 強勢路線 ────────────────────────────────────
         # 強勢動態停利：高點回撤 0.5%
         if s["highest_profit_pct"] >= 0.01:
-            if (is_long and p <= s["trailing_highest"] * 0.995) or (not is_long and p >= s["trailing_lowest"] * 1.005):
+            if (is_long and p <= s["trailing_highest"] * 0.990) or (not is_long and p >= s["trailing_lowest"] * 1.010):
                 cs = 'sell' if is_long else 'buy'
                 print(f"🏃 [動態停利] {sym} 強勢回撤0.5%")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動態停利")
@@ -973,7 +993,7 @@ async def check_position_exits(sym):
 
     # MACD 反轉搶救 (已在 check_exits 三叉樹中處理，此處保留 10% 硬停損與 3x ATR 停利)
     # 15分鐘時間停損
-    if hold_sec > 900 and profit_pct < -0.01:
+    if hold_sec > 900 and profit_pct < -0.005:
         cs = 'sell' if is_long else 'buy'
         print(f"⏱️ [時間停損] {sym} {hold_sec/60:.1f}分仍虧損")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="時間停損", is_stop_loss=True)
@@ -1004,6 +1024,9 @@ async def execute_order(sym, side, price):
                 return
 
     base_amt = margin / price
+    max_notional = 500.0  # 最大名義價值 500 USDT
+    if base_amt * price > max_notional:
+        base_amt = max_notional / price
     if base_amt < 0.001:
         print(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
         return
@@ -1151,8 +1174,8 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 12:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 12")
+    if adx_val < 20:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 20")
         return False
 
     # 實盤最小量限制
@@ -1177,8 +1200,8 @@ def compute_signal_strength(sym):
     trend_short = ema20 > 0 and close < ema20
 
     # Define parameters for dynamic RSI thresholds
-    LONG_RSI_NORMAL = 40.0
-    SHORT_RSI_NORMAL = 60.0
+    LONG_RSI_NORMAL = 45.0
+    SHORT_RSI_NORMAL = 55.0
     LONG_RSI_HIGH_VOL = 30.0
     SHORT_RSI_HIGH_VOL = 70.0
 
@@ -1235,8 +1258,8 @@ def compute_signal_strength(sym):
     route_a_short = is_below_sma200 and short_macd_cross and last_candle_confirmed_short
 
     # Route B (Mean Reversion): RSI極度超賣 AND 價格低於布林下軌 AND K線方向確認
-    route_b_long = rsi < long_rsi_threshold and is_in_bb_zone_long and last_candle_confirmed_long
-    route_b_short = rsi > short_rsi_threshold and is_in_bb_zone_short and last_candle_confirmed_short
+    route_b_long = rsi < long_rsi_threshold and is_in_bb_zone_long and last_candle_confirmed_long and trend_long
+    route_b_short = rsi > short_rsi_threshold and is_in_bb_zone_short and last_candle_confirmed_short and trend_short
 
     # Route C (Counter-Trend Scalp / 反轉搶短機制): RSI超賣/超買 (30/70)，無視 EMA 趨勢濾網，允許開倉搶反彈
     route_c_long = rsi < 30.0 and last_candle_confirmed_long

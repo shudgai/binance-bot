@@ -266,6 +266,15 @@ def api_market_sell(symbol: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"平倉失敗: {str(e)}")
 
+@app.post("/api/order/close-all")
+def api_close_all_orders():
+    try:
+        force_close_all_positions()
+        return {"status": "success", "detail": "已強制平倉所有持有部位"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"一鍵平倉失敗: {str(e)}")
+
+
 @app.get("/api/exchangerate/usdtwd")
 def api_get_usd_twd():
     try:

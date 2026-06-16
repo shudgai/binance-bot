@@ -158,7 +158,7 @@ def build_symbol_state(sym):
         "trail_tp_price": 0.0,
         "entry_count": 0,
         "avg_entry_price": 0.0,
-        "max_additional_entries": 2,
+        "max_additional_entries": 1,
         "entry_cooldown_sec": 90,
         "last_entry_time": 0.0,
     }
@@ -563,6 +563,8 @@ async def load_open_positions():
     try:
         with open("paper_state.json", "r") as f:
             state = json.load(f)
+        
+        current_time = time.time()
         for sym in ALL_SYMBOLS:
             pk = paper_key(sym)
             pos = state.get("positions", {}).get(pk, {})
@@ -570,6 +572,20 @@ async def load_open_positions():
             if abs(qty) > 0.000001:
                 STATES[sym]["qty"] = qty
                 STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+
+        # 檢查最近的平倉紀錄，加上冷卻時間，防止剛平倉完馬上又自動開倉
+        trades = state.get("trades", [])
+        for t in reversed(trades):
+            if t.get("is_close"):
+                # 將 "BTC:USDT" 還原為 "BTCUSDT" 以匹配 STATES 的鍵
+                sym = t.get("symbol", "").replace(":USDT", "USDT")
+                if sym in STATES:
+                    trade_time_sec = t.get("time", 0) / 1000.0
+                    # 如果這筆平倉是在最近 5 分鐘內發生的，且當前沒有持倉
+                    if current_time - trade_time_sec < 300 and STATES[sym]["qty"] == 0:
+                        if STATES[sym]["status"] != "COOLDOWN":
+                            STATES[sym]["status"] = "COOLDOWN"
+                            STATES[sym]["next_status_time"] = trade_time_sec + 300
     except Exception as e:
         print(f"⚠️ [讀取持倉失敗] {e}")
 
@@ -637,23 +653,65 @@ def update_trailing_take_profit(sym, current_price, is_long):
     if avg_price <= 0:
         return False, 0.0
 
-    if s.get("trail_tp_price", 0.0) <= 0:
-        if is_long:
-            s["trail_tp_price"] = avg_price * 1.003
-        else:
-            s["trail_tp_price"] = avg_price * 0.997
+    TRAIL_PCT = 0.003      # 回撤 0.3% 停利
+    HARD_SL_PCT = 0.10     # 虧損 10% 硬停損
+
+    # 硬停損：虧損超過 10%
+    if is_long:
+        hard_sl_price = avg_price * (1 - HARD_SL_PCT)
+        if current_price <= hard_sl_price:
+            print(f"🛑 [硬停損] {sym} 虧損超過 10%，強制出場")
+            return True, current_price
+    else:
+        hard_sl_price = avg_price * (1 + HARD_SL_PCT)
+        if current_price >= hard_sl_price:
+            print(f"🛑 [硬停損] {sym} 虧損超過 10%，強制出場")
+            return True, current_price
+
+    # 動能檢查：MACD 死叉或 RSI 下降趨勢
+    macd_line = s.get("macd_line", 0.0)
+    macd_signal = s.get("macd_signal", 0.0)
+    prev_macd_line = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
+    rsi = s.get("current_rsi", 50.0)
+    rsis = s.get("rsis", [])
 
     if is_long:
-        if current_price <= s["trail_tp_price"]:
-            return True, s["trail_tp_price"]
-        new_tp = current_price * 0.997
-        s["trail_tp_price"] = max(s["trail_tp_price"], new_tp)
-        return False, s["trail_tp_price"]
+        macd_death = prev_macd_line > prev_macd_signal and macd_line < macd_signal
+        rsi_falling = len(rsis) >= 3 and rsis[-1] < rsis[-2] < rsis[-3]
+        momentum_lost = macd_death or (rsi_falling and rsi < 50)
+    else:
+        macd_golden = prev_macd_line < prev_macd_signal and macd_line > macd_signal
+        rsi_rising = len(rsis) >= 3 and rsis[-1] > rsis[-2] > rsis[-3]
+        momentum_lost = macd_golden or (rsi_rising and rsi > 50)
 
-    if current_price >= s["trail_tp_price"]:
-        return True, s["trail_tp_price"]
-    new_tp = current_price * 1.003
-    s["trail_tp_price"] = min(s["trail_tp_price"], new_tp)
+    if momentum_lost:
+        profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+        if profit_pct > 0:
+            print(f"📉 [動能消失] {sym} MACD/RSI 動能衰退，獲利了結 ({profit_pct*100:.2f}%)")
+            return True, current_price
+
+    # 移動停利：初始化停利線
+    if s.get("trail_tp_price", 0.0) <= 0:
+        if is_long:
+            s["trail_tp_price"] = current_price * (1 - TRAIL_PCT)
+        else:
+            s["trail_tp_price"] = current_price * (1 + TRAIL_PCT)
+
+    # 移動停利：趨勢向上就把停利線往上移
+    if is_long:
+        new_tp = current_price * (1 - TRAIL_PCT)
+        s["trail_tp_price"] = max(s["trail_tp_price"], new_tp)
+        if current_price <= s["trail_tp_price"]:
+            print(f"🎯 [移動停利] {sym} 回撤超過 {TRAIL_PCT*100:.1f}%，停利出場")
+            return True, s["trail_tp_price"]
+    else:
+        new_tp = current_price * (1 + TRAIL_PCT)
+        s["trail_tp_price"] = min(s["trail_tp_price"], new_tp)
+        if current_price >= s["trail_tp_price"]:
+            print(f"🎯 [移動停利] {sym} 回撤超過 {TRAIL_PCT*100:.1f}%，停利出場")
+            return True, s["trail_tp_price"]
+
     return False, s["trail_tp_price"]
 
 
@@ -769,7 +827,8 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
 
-    sl_mult = SL_ATR_MULTIPLIER * 2 if hold_sec < 120 else SL_ATR_MULTIPLIER
+    # 動態停損：ATR × 2（開倉前2分鐘保護期 × 3）
+    sl_mult = 3.0 if hold_sec < 120 else 2.0
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
 
     if profit_pct > s["highest_profit_pct"]:
@@ -952,7 +1011,19 @@ async def check_position_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
 
+    if hold_sec < 30:
+        return
+    
+    # 進場後30秒~2分鐘：快速止損 0.15%，快速確認 0.1%
     if hold_sec < 120:
+        if is_long and profit_pct < -0.0015:
+            print(f"⚡ [快速止損] {sym} 進場後反向跌 0.15%，立即出場")
+            await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="快速止損", is_stop_loss=True)
+            return
+        if not is_long and profit_pct < -0.0015:
+            print(f"⚡ [快速止損] {sym} 進場後反向漲 0.15%，立即出場")
+            await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="快速止損", is_stop_loss=True)
+            return
         return
 
     # 10% 硬停損
@@ -1058,6 +1129,38 @@ async def execute_order(sym, side, price):
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
 
+def is_entry_confirmed(sym, side):
+    """進場確認：K線方向、突破確認"""
+    s = STATES[sym]
+    if len(s["ohlcv"]) < 2:
+        return False
+    
+    curr = s["ohlcv"][-1]
+    prev = s["ohlcv"][-2]
+    
+    curr_open = float(curr[1])
+    curr_close = float(curr[4])
+    prev_high = float(prev[2])
+    prev_low = float(prev[3])
+    
+    # 條件1：當前K線方向要跟訊號一致
+    if side == 'buy' and curr_close <= curr_open:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [K線方向過濾] 做多但當前K線收黑，拒絕進場")
+        return False
+    if side == 'sell' and curr_close >= curr_open:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [K線方向過濾] 做空但當前K線收紅，拒絕進場")
+        return False
+    
+    # 條件2：價格要突破前一根K線高低點
+    if side == 'buy' and curr_close <= prev_high:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [突破過濾] 做多但未突破前K高點 {prev_high:.4f}，拒絕進場")
+        return False
+    if side == 'sell' and curr_close >= prev_low:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [突破過濾] 做空但未跌破前K低點 {prev_low:.4f}，拒絕進場")
+        return False
+    
+    return True
+
 def is_entry_pin_safe(sym, side):
     s = STATES[sym]
     if len(s["ohlcv"]) < 2:
@@ -1140,6 +1243,8 @@ def is_entry_allowed(sym, side, route="a"):
         return False
     if not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
+        return False
+    if not is_entry_confirmed(sym, side):
         return False
         
     # 量能確認過濾器

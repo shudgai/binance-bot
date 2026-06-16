@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 
-<html lang="en">
+<html lang="zh-TW" translate="no">
 <head>
     <meta charset="UTF-8">
-    <title>Trade Platform</title>
+    <meta name="google" content="notranslate">
     <title>Binance Bot Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -505,6 +505,12 @@
                     <span :class="['coin-chip-price', coin.priceClass]">
                         {{ formatMiniPrice(coin.price) }}
                     </span>
+                    <button 
+                        v-if="allPositions[coin.symbol.replace('USDT', ':USDT')] && Math.abs(allPositions[coin.symbol.replace('USDT', ':USDT')].qty) > 0"
+                        @click.stop="closePositionBySymbol(coin.symbol)"
+                        class="btn btn-danger"
+                        style="padding: 2px 6px; font-size: 10px; margin-top: 4px; border-radius: 4px; width: 100%;"
+                    >平倉</button>
                 </div>
 
             </div>
@@ -753,7 +759,7 @@
                 <button
                     class="btn btn-danger"
                     style="margin-top:8px; font-size:12px; padding:10px;"
-                    @click="placeMarketSell"
+                    @click="closeAllPositions"
                     :disabled="isPlacingOrder"
                 >🔴 一鍵全平倉 (Close All)</button>
             </div>
@@ -878,11 +884,11 @@ createApp({
             customSymbol.value = '';
         };
         const coins = ref([
-            { symbol: 'XRPUSDT', name: 'XRP', label: '瑞波幣', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'XRPUSDT', name: 'XRP', label: 'XRP', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'ADAUSDT', name: 'ADA', label: 'ADA', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'Layer 1', price: 0, prevPrice: 0, priceClass: '' },
+            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'AVAX', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'DOTUSDT', name: 'DOT', label: 'DOT', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'UNIUSDT', name: 'UNI', label: 'UNI', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'NEARUSDT', name: 'NEAR', label: 'NEAR', price: 0, prevPrice: 0, priceClass: '' },
@@ -1140,36 +1146,35 @@ createApp({
                 return;
             }
             const payload = logs.value.map(l => `[${l.time}] ${l.text}`).join('\n');
+            
+            let success = false;
             try {
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(payload);
-                } else {
-                    const textarea = document.createElement('textarea');
-                    textarea.value = payload;
-                    textarea.setAttribute('readonly', '');
-                    textarea.style.position = 'absolute';
-                    textarea.style.left = '-9999px';
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textarea);
-                }
-                showToast('系統紀錄已複製到剪貼簿', 'success');
-            } catch (e) {
                 const textarea = document.createElement('textarea');
                 textarea.value = payload;
                 textarea.setAttribute('readonly', '');
-                textarea.style.position = 'absolute';
+                textarea.style.position = 'fixed';
                 textarea.style.left = '-9999px';
                 document.body.appendChild(textarea);
                 textarea.select();
-                const successful = document.execCommand('copy');
+                textarea.setSelectionRange(0, textarea.value.length);
+                success = document.execCommand('copy');
                 document.body.removeChild(textarea);
-                if (successful) {
+            } catch (e) {}
+
+            if (success) {
+                showToast('系統紀錄已複製到剪貼簿', 'success');
+                return;
+            }
+
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(payload);
                     showToast('系統紀錄已複製到剪貼簿', 'success');
                 } else {
-                    showToast('複製失敗，請手動選取內容', 'danger');
+                    throw new Error('No clipboard API');
                 }
+            } catch (e) {
+                showToast('複製失敗，請手動選取內容', 'danger');
             }
         };
         const toggleCurrency = () => { currentCurrency.value = currentCurrency.value === 'USD' ? 'TWD' : 'USD'; };
@@ -1481,6 +1486,20 @@ createApp({
             finally { isPlacingOrder.value = false; limitPrice.value = ''; }
         };
 
+        const closeAllPositions = async () => {
+            isPlacingOrder.value = true;
+            addLog(`🔴 準備強制平倉所有持有部位...`);
+            try {
+                const res = await fetch(`${API_BASE}/order/close-all`, { method: 'POST' });
+                const resp = await res.json();
+                if (res.ok && resp.status === 'success') {
+                    addLog(`✅ 一鍵全平倉成功! ${resp.detail}`, 'success');
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
+                } else throw new Error(resp.detail || '平倉失敗');
+            } catch(e) { addLog(`❌ 一鍵全平倉失敗: ${e.message}`, 'danger'); }
+            finally { isPlacingOrder.value = false; }
+        };
+
         const closeActivePosition = async () => {
             const coin = activeCoin.value; if (!coin) return;
             isPlacingOrder.value = true;
@@ -1490,6 +1509,21 @@ createApp({
                 const resp = await res.json();
                 const data = resp.data || resp;
                 if (res.ok && data.status === 'success') {
+                    addLog(`✅ 平倉成功! ${data.detail || data.order?.orderId || ''}`, 'success');
+                    setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
+                } else throw new Error(data.detail);
+            } catch(e) { addLog(`❌ 平倉失敗: ${e.message}`, 'danger'); }
+            finally { isPlacingOrder.value = false; }
+        };
+
+        const closePositionBySymbol = async (sym) => {
+            isPlacingOrder.value = true;
+            addLog(`🔴 平倉 ${sym}...`);
+            try {
+                const res = await fetch(`${API_BASE}/order/market-sell/${sym}`, { method: 'POST' });
+                const resp = await res.json();
+                const data = resp.data || resp;
+                if (res.ok && (data.status === 'success' || data.detail)) {
                     addLog(`✅ 平倉成功! ${data.detail || data.order?.orderId || ''}`, 'success');
                     setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
                 } else throw new Error(data.detail);
@@ -1745,14 +1779,14 @@ createApp({
             toggleCurrency, setActiveCoin,
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, liveTrades, error,
-            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
+            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
             allPositions, openOrders,
             showLogs,
-            showAllTradesModal, allTradesHistory, fetchAllAllTradesHistory,
+            showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
             toast, showToast
