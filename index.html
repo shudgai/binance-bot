@@ -573,6 +573,7 @@
                     <span class="log-header-title">💻 系統紀錄</span>
                     <div>
                         <span class="log-clear" style="margin-right:10px" @click="showLogs = !showLogs">{{ showLogs ? '▲ 縮起' : '▼ 展開' }}</span>
+                        <span class="log-clear" style="margin-right:10px" @click="copyLogs">複製</span>
                         <span class="log-clear" @click="clearLogs">清除</span>
                     </div>
                 </div>
@@ -1133,6 +1134,44 @@ createApp({
         };
 
         const clearLogs = () => { logs.value = []; addLog('控制台已清空。'); };
+        const copyLogs = async () => {
+            if (!logs.value.length) {
+                showToast('目前沒有系統紀錄可複製', 'warning');
+                return;
+            }
+            const payload = logs.value.map(l => `[${l.time}] ${l.text}`).join('\n');
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(payload);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = payload;
+                    textarea.setAttribute('readonly', '');
+                    textarea.style.position = 'absolute';
+                    textarea.style.left = '-9999px';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+                showToast('系統紀錄已複製到剪貼簿', 'success');
+            } catch (e) {
+                const textarea = document.createElement('textarea');
+                textarea.value = payload;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'absolute';
+                textarea.style.left = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.select();
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                if (successful) {
+                    showToast('系統紀錄已複製到剪貼簿', 'success');
+                } else {
+                    showToast('複製失敗，請手動選取內容', 'danger');
+                }
+            }
+        };
         const toggleCurrency = () => { currentCurrency.value = currentCurrency.value === 'USD' ? 'TWD' : 'USD'; };
 
         // ── Toast notification ──────────────────────────────────
@@ -1707,13 +1746,13 @@ createApp({
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, liveTrades, error,
             toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
-            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs,
+            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
             allPositions, openOrders,
             showLogs,
-            showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
+            showAllTradesModal, allTradesHistory, fetchAllAllTradesHistory,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
             toast, showToast

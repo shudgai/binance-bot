@@ -135,14 +135,29 @@ def read_bot_output(proc, sym):
         add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止，將在 5 秒後自動重啟...", "danger")
         def daemon_restart():
             time.sleep(5)
-            if bot_status["is_running"] and sym in bot_status.get("active_symbols", []):
+            if not bot_status["is_running"]:
+                return
+            if sym == "__multi__":
+                _start_multi_coin_bot(bot_status["trade_amount"])
+            else:
                 _start_single_bot(sym, bot_status["trade_amount"])
         threading.Thread(target=daemon_restart, daemon=True).start()
+
+
+def _start_single_bot(symbol: str, trade_amt: float):
+    global bot_processes
+    if symbol == "__multi__":
+        _start_multi_coin_bot(trade_amt)
+        return
+    bot_status["active_symbols"] = [symbol]
+    save_symbol_config(bot_status["active_symbols"])
+    _start_multi_coin_bot(trade_amt)
+
 
 def _start_multi_coin_bot(trade_amt: float):
     global bot_processes
     cmd = [sys.executable, "-u", "multi_coin_bot.py"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
     count = len(bot_status.get("active_symbols", []))
