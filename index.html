@@ -3,7 +3,10 @@
 <html lang="zh-TW" translate="no">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="google" content="notranslate">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>Binance Bot Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -157,33 +160,34 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 14px 28px;
+            padding: 12px 20px;
             border-bottom: 1px solid var(--border-color);
-            background: rgba(255,255,255,0.9);
+            background: rgba(255,255,255,0.95);
             backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             position: sticky; top: 0; z-index: 100;
         }
         .logo { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
         .logo span { color: var(--primary-color); }
-        .topbar-right { display: flex; align-items: center; gap: 16px; }
+        .topbar-right { display: flex; align-items: center; gap: 10px; }
         .regime-badge {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 500;
             background: var(--bg-card);
-            padding: 4px 12px;
+            padding: 4px 10px;
             border-radius: 12px;
             border: 1px solid var(--border-color);
             white-space: nowrap;
         }
         .status-badge {
-            font-size: 12px; font-weight: 600; padding: 5px 14px;
+            font-size: 12px; font-weight: 600; padding: 5px 12px;
             border-radius: 100px; display: flex; align-items: center; gap: 6px;
             background: rgba(0,0,0,0.03); border: 1px solid var(--border-color);
-            white-space: nowrap;
+            white-space: nowrap; cursor: pointer; user-select: none;
         }
         .status-badge.running { color: var(--success); background: rgba(14,203,129,0.1); border-color: rgba(14,203,129,0.2); }
         .status-badge.stopped { color: var(--danger); background: rgba(246,70,93,0.1); border-color: rgba(246,70,93,0.2); }
-        .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.5s infinite; }
+        .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.5s infinite; flex-shrink: 0; }
         @keyframes pulse { 0%,100%{transform:scale(0.9);opacity:0.6;} 50%{transform:scale(1.2);opacity:1;} }
 
         /* ── TWO-COLUMN LAYOUT ───────────────────── */
@@ -199,8 +203,8 @@
             order: 1;
             display: flex;
             flex-direction: column;
-            overflow: auto; /* Changed from hidden to auto since it now holds tables */
-            padding: 20px 22px; /* Added padding to match right panel */
+            overflow: auto;
+            padding: 20px 22px;
         }
         
         .right-panel {
@@ -210,6 +214,144 @@
             scrollbar-width: thin;
             scrollbar-color: rgba(0,0,0,0.1) transparent;
             border-left: 1px solid var(--border-color);
+        }
+
+        /* ── BOTTOM NAV (mobile only) ────────────── */
+        .bottom-nav {
+            display: none;
+        }
+
+        /* ══════════════════════════════════════════
+           RESPONSIVE — Mobile ≤ 768px
+        ══════════════════════════════════════════ */
+        @media (max-width: 768px) {
+
+            body {
+                -webkit-tap-highlight-color: transparent;
+            }
+
+            /* Top bar compact */
+            .top-bar {
+                padding: 10px 14px;
+            }
+            .logo { font-size: 15px; }
+            .regime-badge { display: none; }
+            .topbar-right > button { display: none; } /* 歷史筆記本移至 tab */
+
+            /* Full-width single-column layout */
+            .main-layout {
+                display: block;
+                height: calc(100vh - 50px - 60px); /* topbar + bottomnav */
+                overflow: hidden;
+            }
+
+            /* Panels become pages toggled by activeTab */
+            .left-panel, .right-panel {
+                width: 100%;
+                height: calc(100vh - 50px - 60px);
+                overflow-y: auto;
+                border: none;
+                padding: 12px 14px;
+                display: none;        /* hidden by default */
+                flex-direction: column;
+            }
+            .left-panel.tab-active,
+            .right-panel.tab-active {
+                display: flex;
+            }
+
+            /* Coin strip horizontal scroll */
+            .coin-strip {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding: 10px 14px;
+                gap: 8px;
+                scrollbar-width: none;
+            }
+            .coin-strip::-webkit-scrollbar { display: none; }
+            .coin-chip {
+                flex-shrink: 0;
+                padding: 8px 14px;
+                font-size: 13px;
+                min-width: 58px;
+                text-align: center;
+            }
+
+            /* Price hero larger font on mobile */
+            .price-hero-value { font-size: 26px; }
+
+            /* Chart container fixed height on mobile */
+            .chart-section { flex: none; }
+            #chart-container { height: 240px !important; min-height: 240px; }
+
+            /* Info grid: 2 cols on mobile */
+            .info-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+            .info-card { padding: 10px 12px; border-radius: 12px; }
+            .info-title { font-size: 10px; }
+            .info-val { font-size: 14px; }
+
+            /* Trade table: horizontal scroll */
+            .trades-table { font-size: 12px; }
+            .trades-table th, .trades-table td { padding: 8px 5px; font-size: 11px; }
+
+            /* Buttons: larger tap targets */
+            .btn { padding: 14px; font-size: 15px; border-radius: 14px; }
+            .lo-submit-long, .lo-submit-short { padding: 14px; font-size: 14px; }
+            .lo-tab { padding: 10px 8px; font-size: 13px; }
+            .lo-input { padding: 10px 12px; font-size: 14px; border-radius: 10px; }
+
+            /* Balance box full row */
+            .balance-box { display: none; } /* hidden, shown inside info-grid */
+
+            /* Log console */
+            .log-console { height: 80px; font-size: 10px; }
+
+            /* Modal full screen */
+            .modal { width: 96%; max-height: 88vh; border-radius: 20px; }
+
+            /* Bottom nav */
+            .bottom-nav {
+                display: flex;
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                height: 60px;
+                background: rgba(255,255,255,0.97);
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
+                border-top: 1px solid var(--border-color);
+                z-index: 200;
+                box-shadow: 0 -4px 20px rgba(0,0,0,0.06);
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+            .nav-tab {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 3px;
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--text-muted);
+                cursor: pointer;
+                transition: color 0.15s;
+                border: none;
+                background: none;
+                padding: 6px 0;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .nav-tab .nav-icon { font-size: 20px; line-height: 1; }
+            .nav-tab.active { color: var(--primary); }
+            .nav-tab.active .nav-icon { transform: scale(1.1); }
+            .nav-tab-divider { width: 1px; background: var(--border-color); align-self: stretch; margin: 10px 0; }
+        }
+
+        /* Tablet: stack but keep larger padding */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .main-layout {
+                grid-template-columns: 1fr 280px;
+            }
         }
 
         /* Coin selector strip */
@@ -492,7 +634,7 @@
     <div class="main-layout">
 
         <!-- ══ LEFT PANEL ═══════════════════════════════ -->
-        <div class="left-panel">
+        <div :class="['left-panel', activeTab === 'chart' || activeTab === 'history' ? 'tab-active' : '']">
 
             <!-- Coin chip strip -->
             <div class="coin-strip">
@@ -594,7 +736,7 @@
         </div>
 
         <!-- ══ RIGHT PANEL ══════════════════════════════ -->
-        <div class="right-panel">
+        <div :class="['right-panel', activeTab === 'trade' || activeTab === 'settings' ? 'tab-active' : '']">
 
             <div v-if="error" class="error-msg">⚠️ {{ error }}</div>
 
@@ -820,6 +962,29 @@
         </div>
     </div>
 
+    <!-- BOTTOM NAV (mobile only) -->
+    <nav class="bottom-nav">
+        <button :class="['nav-tab', activeTab === 'chart' ? 'active' : '']" @click="activeTab = 'chart'">
+            <span class="nav-icon">📈</span>
+            <span>圖表</span>
+        </button>
+        <div class="nav-tab-divider"></div>
+        <button :class="['nav-tab', activeTab === 'trade' ? 'active' : '']" @click="activeTab = 'trade'">
+            <span class="nav-icon">⚡</span>
+            <span>交易</span>
+        </button>
+        <div class="nav-tab-divider"></div>
+        <button :class="['nav-tab', activeTab === 'history' ? 'active' : '']" @click="activeTab = 'history'; fetchAllTradesHistory()">
+            <span class="nav-icon">📋</span>
+            <span>紀錄</span>
+        </button>
+        <div class="nav-tab-divider"></div>
+        <button :class="['nav-tab', activeTab === 'settings' ? 'active' : '']" @click="activeTab = 'settings'">
+            <span class="nav-icon">⚙️</span>
+            <span>設定</span>
+        </button>
+    </nav>
+
 </div>
 
 <script>
@@ -831,6 +996,7 @@ createApp({
         const currentCurrency = ref('USD');
         const twdRate = ref(32.5);
         const logs = ref([]);
+        const activeTab = ref('chart');  // mobile tab: 'chart' | 'trade' | 'history' | 'settings'
         const consoleRef = ref(null);
         const isPlacingOrder = ref(false);
         const trades = ref([]);
@@ -1789,6 +1955,7 @@ createApp({
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
+            activeTab,
             toast, showToast
         };
     }
