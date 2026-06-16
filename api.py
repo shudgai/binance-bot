@@ -495,20 +495,26 @@ def api_history_download(date: str):
         
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["時間", "幣種", "方向", "價格", "數量", "已實現損益", "平倉"])
+        writer.writerow(["時間", "幣種", "方向", "價格", "數量", "手續費", "已實現損益", "平倉"])
         for t in filtered:
             ts = datetime.datetime.fromtimestamp(t["time"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
             side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
                    "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
                    "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
                    "買入(平空)"
+            
+            fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+            # 將單筆的 realized_pnl 扣除手續費，確保整欄加總等於總淨利潤
+            net_pnl = t.get("realized_pnl", 0) - fee
+
             writer.writerow([
                 ts,
                 t.get("symbol", "").replace(":USDT", ""),
                 side,
                 t.get("price", ""),
                 t.get("qty", ""),
-                t.get("realized_pnl", 0),
+                round(fee, 6),
+                round(net_pnl, 6),
                 "是" if t.get("is_close") else "否"
             ])
         
