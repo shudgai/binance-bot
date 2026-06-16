@@ -152,7 +152,7 @@ def get_1h_volatility(symbol: str):
         pass
     return symbol, 0
 
-def get_top_volume_altcoins(limit=5, ignore_list=None):
+def get_top_volume_altcoins(limit=12, ignore_list=None):
     try:
         tickers = client.futures_ticker()
         exclude_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT"]
@@ -170,17 +170,27 @@ def get_top_volume_altcoins(limit=5, ignore_list=None):
                 q_vol = float(t.get('quoteVolume', 0))
             except (ValueError, TypeError):
                 continue
-                
+
             # Filter for "small coins": price under $5.0
             if price > 5.0 or price == 0:
                 continue
-                
+
             if q_vol > 0:
                 candidates.append((sym, q_vol))
-        
-        # Sort by quoteVolume descending
+
+        # Sort by quoteVolume descending and compute volatility-based score for the top candidates
         candidates.sort(key=lambda x: x[1], reverse=True)
-        return [sym for sym, vol in candidates[:limit]]
+        top_candidates = candidates[: max(limit * 4, 20)]
+        scored = []
+        for sym, q_vol in top_candidates:
+            _, volatility = get_1h_volatility(sym)
+            # Combine volume and short-term volatility into a single ranking score
+            vol_factor = 1.0 + min(max(volatility, 0.0), 50.0) / 20.0
+            score = q_vol * vol_factor
+            scored.append((sym, score, q_vol, volatility))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, *_ in scored[:limit]]
     except Exception as e:
         print(f"Error fetching top volume altcoins: {e}")
         return []

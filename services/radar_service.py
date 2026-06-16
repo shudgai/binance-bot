@@ -35,10 +35,19 @@ def trigger_manual_radar():
     global last_radar_scan
     elapsed = time.time() - last_radar_scan
     if elapsed < RADAR_SCAN_COOLDOWN:
-        return {"status": "success", "best_symbols": get_bot_status().get("active_symbols", []), "cooldown": round(RADAR_SCAN_COOLDOWN - elapsed, 1)}
+        return {
+            "status": "success",
+            "active_symbols": get_bot_status().get("active_symbols", []),
+            "best_symbols": get_bot_status().get("active_symbols", []),
+            "cooldown": round(RADAR_SCAN_COOLDOWN - elapsed, 1)
+        }
     last_radar_scan = time.time()
     best_symbols = auto_radar_switch(force_start=True)
-    return {"status": "success", "best_symbols": best_symbols}
+    return {
+        "status": "success",
+        "active_symbols": best_symbols,
+        "best_symbols": best_symbols
+    }
 
 def _get_recently_traded_symbols(hours=24):
     try:
@@ -82,7 +91,7 @@ def auto_radar_switch(force_start=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
-        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 20 成交額)...", "warning")
+        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 12 高量高波動小幣)...", "warning")
         
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
@@ -94,21 +103,23 @@ def auto_radar_switch(force_start=False):
         
         clean_blacklist()
         ignore_list = list(BLACKLIST.keys())
-        top_20 = get_top_volume_altcoins(20, ignore_list=ignore_list)
+        top_symbols = get_top_volume_altcoins(12, ignore_list=ignore_list)
 
-        if not top_20:
-            add_system_log("⚠️ [雷達掃描] 無法獲取 Top 20 榜單，維持原狀", "warning")
+        if not top_symbols:
+            add_system_log("⚠️ [雷達掃描] 無法獲取熱門小幣榜單，維持原狀", "warning")
             return current_syms
 
         # 保留仍有持倉的幣種以及 24 小時內有交易紀錄的幣種，避免介面換幣時找不到
         open_syms = _get_open_position_symbols()
         recent_syms = _get_recently_traded_symbols(hours=24)
-        all_preserved = list(set(open_syms + recent_syms))
-        
-        preserved = [s for s in all_preserved if s not in top_20]
-        if preserved:
-            add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(preserved)}", "warning")
-        final_symbols = top_20 + preserved
+        all_preserved = [s for s in list(dict.fromkeys(open_syms + recent_syms)) if s not in top_symbols]
+
+        if all_preserved:
+            add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(all_preserved)}", "warning")
+
+        final_symbols = all_preserved + top_symbols
+        if len(final_symbols) > 12:
+            final_symbols = final_symbols[:12]
 
         # 排序讓比較不受順序影響
         if sorted(final_symbols) == sorted(current_syms):
@@ -117,9 +128,9 @@ def auto_radar_switch(force_start=False):
                 start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
             return final_symbols
 
-        add_system_log(f"🎯 [雷達鎖定] 最新熱門小幣榜單: {', '.join(top_20)}", "success")
-        if preserved:
-            add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(preserved)}", "warning")
+        add_system_log(f"🎯 [雷達鎖定] 最新熱門小幣榜單: {', '.join(top_symbols)}", "success")
+        if all_preserved:
+            add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(all_preserved)}", "warning")
         bot_status["active_symbols"] = final_symbols
         
         if bot_status.get("is_running") or force_start:

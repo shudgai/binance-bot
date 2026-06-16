@@ -46,6 +46,10 @@ TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
 VOLUME_RATIO_THRESHOLD = 1.2
+ATR_WARMUP_BATCH_SIZE = 2
+ATR_WARMUP_SYMBOL_COUNT = 12
+ATR_WARMUP_LIMIT = 1000
+ATR_WARMUP_PAUSE_SEC = 0.4
 
 if USE_TESTNET:
     exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
@@ -406,13 +410,11 @@ def get_balance():
 
 def compute_per_coin_margin():
     balance = get_balance()
-    open_count = get_open_position_count()
-    remaining_slots = MAX_POSITIONS - open_count
-    if remaining_slots <= 0:
+    if balance <= 0:
         return 0
-    usable = balance * LEVERAGE * 0.95
-    per_slot = usable / MAX_POSITIONS
-    return per_slot
+    # 交易金額直接與帳戶餘額掛鉤，使用約 95% 的可用資金
+    usable = balance * 0.95
+    return usable
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
@@ -522,28 +524,39 @@ async def update_market_wind():
 
 # ── 資料獲取 ──────────────────────────────────────────────────
 
-async def initialize_atr_history():
-    print("⏳ [初始化] 開始獲取 1000 根 1m K線以預熱 ATR 歷史...")
-    tasks = {}
-    for sym in ALL_SYMBOLS:
-        tasks[sym] = exchange.fetch_ohlcv(sym, '1m', limit=1000)
-    results = await asyncio.gather(*[tasks[sym] for sym in ALL_SYMBOLS], return_exceptions=True)
-    for i, sym in enumerate(ALL_SYMBOLS):
-        if not isinstance(results[i], Exception) and results[i]:
-            ohlcv = results[i]
-            tr_list = []
-            for j in range(1, len(ohlcv)):
-                h = ohlcv[j][2]
-                l = ohlcv[j][3]
-                pc = ohlcv[j-1][4]
-                tr = max(h - l, abs(h - pc), abs(l - pc))
-                tr_list.append(tr)
-                if len(tr_list) >= 14:
-                    atr = float(np.mean(tr_list[-14:]))
-                    STATES[sym]["atr_history"].append(atr)
-            print(f"✅ [初始化] {sym} 歷史 ATR 預熱完成，載入 {len(STATES[sym]['atr_history'])} 筆數據")
-        else:
-            print(f"⚠️ [初始化] {sym} 歷史 ATR 預熱失敗: {results[i]}")
+async def initialize_atr_history(batch_size: int = ATR_WARMUP_BATCH_SIZE, limit: int = ATR_WARMUP_LIMIT, pause_sec: float = ATR_WARMUP_PAUSE_SEC):
+    target_symbols = ALL_SYMBOLS[:ATR_WARMUP_SYMBOL_COUNT]
+    print(f"⏳ [初始化] 開始分批獲取 {limit} 根 1m K線，以預熱前 {len(target_symbols)} 個主攻幣種的 ATR 歷史，下次批次間隔 {pause_sec}s...")
+    total = len(target_symbols)
+    if total == 0:
+        print("⚠️ [初始化] 監控幣種清單為空，跳過 ATR 歷史預熱")
+        return
+
+    for batch_index in range(0, total, batch_size):
+        batch = target_symbols[batch_index:batch_index + batch_size]
+        print(f"⏳ [初始化] 進行第 {batch_index // batch_size + 1} 批：{len(batch)} 個幣種")
+        tasks = [exchange.fetch_ohlcv(sym, '1m', limit=limit) for sym in batch]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for sym, result in zip(batch, results):
+            if not isinstance(result, Exception) and result:
+                ohlcv = result
+                tr_list = []
+                for j in range(1, len(ohlcv)):
+                    h = ohlcv[j][2]
+                    l = ohlcv[j][3]
+                    pc = ohlcv[j-1][4]
+                    tr = max(h - l, abs(h - pc), abs(l - pc))
+                    tr_list.append(tr)
+                    if len(tr_list) >= 14:
+                        atr = float(np.mean(tr_list[-14:]))
+                        STATES[sym]["atr_history"].append(atr)
+                print(f"✅ [初始化] {sym} 歷史 ATR 預熱完成，載入 {len(STATES[sym]['atr_history'])} 筆數據")
+            else:
+                print(f"⚠️ [初始化] {sym} 歷史 ATR 預熱失敗: {result}")
+
+        if batch_index + batch_size < total:
+            await asyncio.sleep(pause_sec)
 
 async def fetch_all_klines():
     tasks = {}
@@ -1418,7 +1431,7 @@ async def main_loop():
     
     print(f"📋 監控幣種: {', '.join(ALL_SYMBOLS)}")
     try:
-        await asyncio.wait_for(initialize_atr_history(), timeout=30)
+        await asyncio.wait_for(initialize_atr_history(), timeout=60)
     except (asyncio.TimeoutError, Exception) as e:
         print(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
     await fetch_real_balance()

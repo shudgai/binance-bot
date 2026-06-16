@@ -1497,25 +1497,28 @@ createApp({
                 const res = await fetch(`${API_BASE}/radar/scan`);
                 if (res.ok) {
                     const resp = await res.json();
-                const data = resp.data || resp;
+                    const data = resp.data || resp;
                     if (data.status === 'success') {
                         if (data.cooldown) {
                             addLog(`⏳ 冷卻中，請等 ${data.cooldown} 秒後再試`, "warning");
-                        } else if (data.best_symbol) {
-                            if (data.best_symbol === activeSymbol.value) {
-                                addLog(`✅ 當前 ${data.best_symbol} 仍是最飆幣種，無需切換`, "success");
-                            } else {
-                                addLog(`🎯 狙擊成功！已切換至最飆幣種：${data.best_symbol}`, "success");
-                                activeSymbol.value = data.best_symbol;
-                                localStorage.setItem('activeSymbol', data.best_symbol);
-                                initChart();
-                                for (const w of wsConnections) { try { w.close(); } catch(e) {} }
-                                wsConnections.length = 0;
-                                initWebSocket();
-            initLiveTradesWs();
-                            }
                         } else {
-                            addLog("⚠️ 掃描完成但無合適目標", "warning");
+                            const symbols = data.active_symbols || data.best_symbols || [];
+                            if (symbols.length > 0) {
+                                addLog(`🎯 狙擊成功！已選出 ${symbols.length} 個熱門小幣`, "success");
+                                coins.value = symbols.map(sym => {
+                                    const existing = coins.value.find(c => c.symbol === sym);
+                                    if (existing) return existing;
+                                    const name = sym.replace('USDT', '');
+                                    return { symbol: sym, name: name, label: name, price: 0, prevPrice: 0, priceClass: '' };
+                                });
+                                if (!symbols.includes(activeSymbol.value)) {
+                                    setActiveCoin(symbols[0]);
+                                } else {
+                                    initWebSocket();
+                                }
+                            } else {
+                                addLog("⚠️ 掃描完成但無合適目標", "warning");
+                            }
                         }
                     } else {
                         addLog(`⚠️ 掃描失敗: ${data.detail || data.msg}`, "warning");

@@ -181,6 +181,9 @@ def _get_open_position_symbols():
 
 def start_bot(symbols=None, trade_amt: float = None):
     global bot_processes
+    # 確保啟動新 bot 前先清除舊的 bot 進程，避免系統中存在重複執行
+    kill_bot()
+
     if symbols is None:
         symbols = load_symbol_config()
     elif isinstance(symbols, str):
@@ -203,11 +206,6 @@ def start_bot(symbols=None, trade_amt: float = None):
     bot_status["active_symbols"] = symbols
     bot_status["trade_amount"] = trade_amt
     
-    # 關閉所有現有行程
-    current_running = list(bot_processes.keys())
-    for s in current_running:
-        _kill_single_bot(s)
-            
     # 啟動單一多幣行程
     _start_multi_coin_bot(trade_amt)
 
