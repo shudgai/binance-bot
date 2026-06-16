@@ -236,7 +236,8 @@
             }
             .logo { font-size: 15px; }
             .regime-badge { display: none; }
-            .topbar-right > button { display: none; } /* 歷史筆記本移至 tab */
+            .topbar-right > button span.text { display: none; }
+            .topbar-right > button { padding: 6px 10px !important; font-size: 16px !important; }
 
             /* Full-width single-column layout */
             .main-layout {
@@ -616,7 +617,7 @@
         <div class="logo"><span>⚡</span> ANTI-BOT</div>
         <div class="topbar-right">
             <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;" @click="showHistoryNotebook = true; fetchHistorySummary()">
-                📂 歷史筆記本
+                📂 <span class="text">歷史筆記本</span>
             </button>
             <div class="regime-badge" v-if="bot.regime">
                 <span v-if="bot.regime.includes('牛') || bot.regime.includes('BULL')" style="color:var(--trade-up); font-weight: bold;">🌍 {{ bot.regime }}</span>
