@@ -14,6 +14,22 @@ from update_paper_state import update_paper_state
 
 load_dotenv()
 
+LOCK_FILE = "/tmp/binance_bot_single_instance.lock"
+lock_file_handle = None
+
+def ensure_single_instance():
+    global lock_file_handle
+    lock_file_handle = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("🚨 錯誤: 偵測到系統中已有另一個機器人正在執行！")
+        print("💡 為了避免重複下單與邏輯衝突，本次啟動已自動攔截並退出。")
+        print("💡 提示: 請確保只透過網頁儀表板來啟動，不要在終端機重複手動啟動。")
+        sys.exit(1)
+
+ensure_single_instance()
+
 exchange = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,
     'secret': os.getenv('BINANCE_API_SECRET') or None,
@@ -29,7 +45,7 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 0.7
+VOLUME_RATIO_THRESHOLD = 0.9
 
 if USE_TESTNET:
     exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
@@ -1178,19 +1194,19 @@ def is_entry_pin_safe(sym, side):
     lower_wick = min(open_price, close_price) - low
 
     if side == 'buy':
-        if close_price <= open_price:
-            return False
         if close_price <= prev_close:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} <= 前K收盤 {prev_close:.4f}")
             return False
-        if upper_wick > body * 2.0:
+        if upper_wick > body * 3.0:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * 3)")
             return False
         return True
 
-    if close_price >= open_price:
-        return False
     if close_price >= prev_close:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} >= 前K收盤 {prev_close:.4f}")
         return False
-    if lower_wick > body * 2.0:
+    if lower_wick > body * 3.0:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * 3)")
         return False
     return True
 
@@ -1224,19 +1240,13 @@ def is_entry_allowed(sym, side, route="a"):
     # 均線過濾器：受 15m SMA200 趨勢保護，防止逆勢接刀
     if s.get("sma200_15m", 0) > 0:
         ma200 = s["sma200_15m"]
-        rsi = s.get("current_rsi", 50)
         
-        # 破例：當 RSI 極度超賣 (<25) 或極度超買 (>75) 時，允許逆勢搶反彈 (Route C)
-        is_extreme_long = (side == 'buy' and rsi < 25.0)
-        is_extreme_short = (side == 'sell' and rsi > 75.0)
-        
-        if not (is_extreme_long or is_extreme_short):
-            if side == 'buy' and cp <= ma200:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
-                return False
-            if side == 'sell' and cp >= ma200:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
-                return False
+        if side == 'buy' and cp <= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
+            return False
+        if side == 'sell' and cp >= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
+            return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
@@ -1326,8 +1336,6 @@ def compute_signal_strength(sym):
     last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
     last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
 
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI門檻(L/S: {long_rsi_threshold:.0f}/{short_rsi_threshold:.0f}): {rsi < long_rsi_threshold}/{rsi > short_rsi_threshold} | BB區間(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | MACD滿足(L/S): {long_macd_ok}/{short_macd_ok} (交叉:{long_macd_cross}/{short_macd_cross}, 柱狀體向上/下:{long_macd_hist_aligned}/{short_macd_hist_aligned}) | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
-
     ema50 = s.get("ema50", 0.0)
     trend_confluence_long = ema50 == 0.0 or close > ema50
     trend_confluence_short = ema50 == 0.0 or close < ema50
@@ -1335,45 +1343,38 @@ def compute_signal_strength(sym):
     is_above_sma200 = s.get("sma200_15m", 0) > 0 and close > s.get("sma200_15m", 0) * 0.999
     is_below_sma200 = s.get("sma200_15m", 0) > 0 and close < s.get("sma200_15m", 0) * 1.001
 
-    # Route A (Trend Following): 站上 SMA200 AND MACD黃金交叉 AND K線方向確認
-    route_a_long = is_above_sma200 and long_macd_cross and last_candle_confirmed_long
-    route_a_short = is_below_sma200 and short_macd_cross and last_candle_confirmed_short
+    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>45/S<55): {rsi > 45.0}/{rsi < 55.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
 
-    # Route B (Mean Reversion): RSI極度超賣 AND 價格低於布林下軌 AND K線方向確認
-    route_b_long = rsi < long_rsi_threshold and is_in_bb_zone_long and last_candle_confirmed_long
-    route_b_short = rsi > short_rsi_threshold and is_in_bb_zone_short and last_candle_confirmed_short
+    # Route A (Trend Following): 站上 SMA200 AND (MACD交叉或柱狀體為正) AND K線方向確認 AND 動能確認
+    route_a_long = (
+        is_above_sma200 and 
+        (long_macd_cross or macd_hist > 0) and 
+        last_candle_confirmed_long and 
+        rsi > 45.0                      # 放寬：只要 RSI > 45 (脫離空頭區間) 即可
+    )
+    
+    route_a_short = (
+        is_below_sma200 and 
+        (short_macd_cross or macd_hist < 0) and 
+        last_candle_confirmed_short and 
+        rsi < 55.0                      # 放寬：只要 RSI < 55 (脫離多頭區間) 即可
+    )
 
-    # Route C (Counter-Trend Scalp / 反轉搶短機制): RSI超賣/超買 (30/70)，無視 EMA 趨勢濾網，允許開倉搶反彈
-    route_c_long = rsi < 30.0 and last_candle_confirmed_long
-    route_c_short = rsi > 70.0 and last_candle_confirmed_short
-
-    long_base_ok = route_a_long or route_b_long or route_c_long
-    short_base_ok = route_a_short or route_b_short or route_c_short
+    long_base_ok = route_a_long
+    short_base_ok = route_a_short
 
     if long_base_ok:
-        route = "c" if route_c_long else "b" if route_b_long else "a"
-        if route == "a":
-            strength = 5.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
-        else:
-            strength = max(0.0, long_rsi_threshold - rsi) + ((ema20 - close) / max(ema20, 1e-8) * 100) + 5.0
-            
+        route = "a"
+        strength = 15.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
-        if route == "a":
-            strength += 10.0  # Extra score for trend confluence
         return ("buy", strength if strength >= 8.0 else 0.0, route)
 
     if short_base_ok:
-        route = "c" if route_c_short else "b" if route_b_short else "a"
-        if route == "a":
-            strength = 5.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-        else:
-            strength = max(0.0, rsi - short_rsi_threshold) + ((close - ema20) / max(ema20, 1e-8) * 100) + 5.0
-            
+        route = "a"
+        strength = 15.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
-        if route == "a":
-            strength += 10.0  # Extra score for trend confluence
         return ("sell", strength if strength >= 8.0 else 0.0, route)
 
     return (None, 0, None)

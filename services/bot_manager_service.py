@@ -230,6 +230,14 @@ def kill_bot():
     symbols = list(bot_processes.keys())
     for s in symbols:
         _kill_single_bot(s)
+    
+    # 確保所有遺留的 bot 行程都被清除，防止 API 重啟後產生孤兒行程
+    import os
+    try:
+        os.system("pkill -f multi_coin_bot_v2.py")
+        os.system("pkill -f multi_coin_bot.py")
+    except:
+        pass
 
 def restart_bot():
     kill_bot()
