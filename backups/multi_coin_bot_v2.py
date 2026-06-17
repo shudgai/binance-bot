@@ -4,12 +4,10 @@ import ccxt.pro as ccxtpro
 import numpy as np
 import json
 import os
-import signal
 import time
 import sys
 import uuid
 import fcntl
-import math
 from dotenv import load_dotenv
 from services.utils import paper_key
 from update_paper_state import update_paper_state
@@ -19,94 +17,15 @@ load_dotenv()
 LOCK_FILE = "/tmp/binance_bot_single_instance.lock"
 lock_file_handle = None
 
-
-def _process_exists(pid):
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
-def _terminate_process(pid):
-    try:
-        os.kill(pid, signal.SIGTERM)
-        time.sleep(0.2)
-        if _process_exists(pid):
-            os.kill(pid, signal.SIGKILL)
-        return True
-    except Exception:
-        return False
-
-
 def ensure_single_instance():
     global lock_file_handle
-    lock_file_handle = open(LOCK_FILE, "a+")
+    lock_file_handle = open(LOCK_FILE, "w")
     try:
         fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        lock_file_handle.seek(0)
-        lock_file_handle.truncate()
-        lock_file_handle.write(str(os.getpid()))
-        lock_file_handle.flush()
-        return
     except IOError:
-        lock_file_handle.seek(0)
-        pid_text = lock_file_handle.read().strip()
-        stale_pid = None
-        try:
-            stale_pid = int(pid_text)
-        except Exception:
-            stale_pid = None
-
-        if stale_pid and stale_pid != os.getpid() and _process_exists(stale_pid):
-            print(f"⚠️ 偵測到系統中已有另一個機器人正在執行 (PID={stale_pid})，將自動終止舊進程並繼續啟動...")
-            _terminate_process(stale_pid)
-            try:
-                lock_file_handle.close()
-            except Exception:
-                pass
-            try:
-                os.remove(LOCK_FILE)
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
-            lock_file_handle = open(LOCK_FILE, "a+")
-            try:
-                fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                lock_file_handle.seek(0)
-                lock_file_handle.truncate()
-                lock_file_handle.write(str(os.getpid()))
-                lock_file_handle.flush()
-                return
-            except IOError:
-                pass
-        elif stale_pid and stale_pid != os.getpid() and not _process_exists(stale_pid):
-            print(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並繼續啟動...")
-            try:
-                lock_file_handle.close()
-            except Exception:
-                pass
-            try:
-                os.remove(LOCK_FILE)
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
-            lock_file_handle = open(LOCK_FILE, "a+")
-            try:
-                fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                lock_file_handle.seek(0)
-                lock_file_handle.truncate()
-                lock_file_handle.write(str(os.getpid()))
-                lock_file_handle.flush()
-                return
-            except IOError:
-                pass
-
         print("🚨 錯誤: 偵測到系統中已有另一個機器人正在執行！")
         print("💡 為了避免重複下單與邏輯衝突，本次啟動已自動攔截並退出。")
-        print("💡 提示: 若是意外關閉舊程式，請先刪除過期的鎖定檔 /tmp/binance_bot_single_instance.lock，再重新啟動。")
+        print("💡 提示: 請確保只透過網頁儀表板來啟動，不要在終端機重複手動啟動。")
         sys.exit(1)
 
 ensure_single_instance()
@@ -126,7 +45,7 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 1.0
+VOLUME_RATIO_THRESHOLD = 0.9
 ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 12
 ATR_WARMUP_LIMIT = 1000
@@ -138,152 +57,9 @@ if USE_TESTNET:
 
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSUSDT", "SUIUSDT"
+    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
-
-PERSONALITY_TEMPLATES = {
-    "calm": {
-        "personality": "calm",
-        "risk_multiplier": 0.7,
-        "volume_multiplier": 0.8,
-        "entry_cooldown_sec": 180,
-        "max_additional_entries": 1,
-        "entry_size_pct": 0.3,
-        "add_entry_pct": 0.15,
-        "sl_atr_multiplier": 5.0,
-        "tp_atr_multiplier": 1.8,
-        "hard_stop_loss_pct": 0.04,
-    },
-    "balanced": {
-        "personality": "balanced",
-        "risk_multiplier": 1.0,
-        "volume_multiplier": 1.0,
-        "entry_cooldown_sec": 90,
-        "max_additional_entries": 2,
-        "entry_size_pct": 0.5,
-        "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 4.0,
-        "tp_atr_multiplier": 2.0,
-        "hard_stop_loss_pct": 0.03,
-    },
-    "aggressive": {
-        "personality": "aggressive",
-        "risk_multiplier": 1.2,
-        "volume_multiplier": 1.2,
-        "entry_cooldown_sec": 60,
-        "max_additional_entries": 3,
-        "entry_size_pct": 0.7,
-        "add_entry_pct": 0.4,
-        "sl_atr_multiplier": 3.5,
-        "tp_atr_multiplier": 2.5,
-        "hard_stop_loss_pct": 0.02,
-    },
-    "adaptive": {
-        "personality": "adaptive",
-        "risk_multiplier": 1.0,
-        "volume_multiplier": 1.0,
-        "entry_cooldown_sec": 90,
-        "max_additional_entries": 2,
-        "entry_size_pct": 0.5,
-        "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 4.0,
-        "tp_atr_multiplier": 2.2,
-        "hard_stop_loss_pct": 0.03,
-    },
-}
-
-SYMBOL_EXIT_OVERRIDES = {
-    "HUSDT": {
-        "tp_atr_multiplier": 1.8,
-        "sl_atr_multiplier": 4.0,
-    },
-    "XRPUSDT": {
-        "tp_atr_multiplier": 2.0,
-        "sl_atr_multiplier": 4.5,
-    },
-    "LINKUSDT": {
-        "tp_atr_multiplier": 1.8,
-        "sl_atr_multiplier": 4.5,
-    },
-}
-
-DEFAULT_REVERSAL_SETTINGS = {
-    "trade_signal_threshold": 1.8,
-    "volume_multiplier": 3.0,
-    "price_jump_pct": 0.01,
-    "min_reverse_pct": 0.008,
-}
-
-SYMBOL_REVERSAL_SETTINGS = {
-    "XRPUSDT": {
-        "trade_signal_threshold": 2.5,
-        "volume_multiplier": 3.5,
-        "price_jump_pct": 0.012,
-        "min_reverse_pct": 0.01,
-    },
-}
-
-_PRECISION_CACHE = {}
-
-
-def convert_to_ccxt_symbol(symbol: str) -> str:
-    symbol = str(symbol).upper().strip()
-    if symbol == "PEPEUSDT":
-        return "1000PEPE/USDT"
-    if symbol.endswith("USDT"):
-        return f"{symbol[:-4]}/USDT"
-    return symbol
-
-
-async def get_contract_precision(sym: str):
-    if sym in _PRECISION_CACHE:
-        return _PRECISION_CACHE[sym]
-
-    ccxt_symbol = convert_to_ccxt_symbol(sym)
-    if not exchange.markets:
-        try:
-            await exchange.load_markets()
-        except Exception:
-            pass
-
-    try:
-        market = exchange.market(ccxt_symbol)
-        amount_limits = market.get('limits', {}).get('amount', {})
-        step_size = float(amount_limits.get('min', 0.001) or 0.001)
-        min_qty = float(amount_limits.get('min', step_size) or step_size)
-        precision = int(round(-math.log10(step_size))) if step_size > 0 else 8
-        _PRECISION_CACHE[sym] = {
-            'step_size': step_size,
-            'min_qty': min_qty,
-            'qty_prec': market.get('precision', {}).get('amount', precision),
-            'price_prec': market.get('precision', {}).get('price', precision)
-        }
-    except Exception:
-        _PRECISION_CACHE[sym] = {
-            'step_size': 0.001,
-            'min_qty': 0.001,
-            'qty_prec': 3,
-            'price_prec': 3
-        }
-
-    return _PRECISION_CACHE[sym]
-
-
-def round_step(qty, step_size):
-    if qty <= 0 or step_size <= 0:
-        return 0.0
-    precision = int(round(-math.log10(step_size)))
-    rounded = math.floor(qty / step_size) * step_size
-    return round(rounded, precision)
-
-
-async def sanitize_order_qty(sym: str, qty: float):
-    prec = await get_contract_precision(sym)
-    qty = round_step(qty, prec['step_size'])
-    if qty < prec['min_qty']:
-        return 0.0
-    return qty
 
 
 def normalize_symbol(sym):
@@ -314,255 +90,28 @@ def normalize_symbol_list(symbols, max_count=20):
     return seen[:max_count]
 
 
-def load_symbol_config():
-    global SYMBOL_EXIT_OVERRIDES, SYMBOL_REVERSAL_SETTINGS
+def load_symbol_pool():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        symbols = []
-        profiles = {}
-        exit_overrides = {}
-        reversal_settings = {}
         if isinstance(data, dict):
-            symbols = normalize_symbol_list(data.get("symbols", []))
-            raw_profiles = data.get("profiles", {})
-            if isinstance(raw_profiles, dict):
-                for sym, profile in raw_profiles.items():
-                    normalized = normalize_symbol(sym)
-                    if not normalized or not isinstance(profile, dict):
-                        continue
-                    profile_copy = dict(profile)
-                    overrides = profile_copy.get("exit_overrides")
-                    if isinstance(overrides, dict):
-                        exit_overrides[normalized] = overrides
-                    settings = profile_copy.get("reversal_settings")
-                    if isinstance(settings, dict):
-                        reversal_settings[normalized] = settings
-                    profiles[normalized] = profile_copy
-        SYMBOL_EXIT_OVERRIDES = exit_overrides
-        SYMBOL_REVERSAL_SETTINGS = reversal_settings
-        return symbols or list(DEFAULT_SYMBOLS), profiles
+            return normalize_symbol_list(data.get("symbols", []))
+        return normalize_symbol_list(data)
     except FileNotFoundError:
-        return list(DEFAULT_SYMBOLS), {}
+        return list(DEFAULT_SYMBOLS)
     except Exception as e:
         print(f"⚠️ 讀取幣種清單失敗: {e}")
-        return list(DEFAULT_SYMBOLS), {}
-
-
-def load_symbol_pool():
-    symbols, _ = load_symbol_config()
-    return symbols
-
-
-def load_symbol_profiles():
-    _, profiles = load_symbol_config()
-    return profiles
+        return list(DEFAULT_SYMBOLS)
 
 
 def save_symbol_pool(symbols):
     normalized = normalize_symbol_list(symbols)
-    profiles = load_symbol_profiles()
-    payload = {"symbols": normalized}
-    if profiles:
-        payload["profiles"] = profiles
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+        json.dump({"symbols": normalized}, f, ensure_ascii=False)
     return normalized
 
 
-def save_symbol_profiles(profiles):
-    symbols = load_symbol_pool()
-    normalized_profiles = {}
-    for sym, profile in (profiles or {}).items():
-        normalized = normalize_symbol(sym)
-        if normalized and isinstance(profile, dict):
-            normalized_profiles[normalized] = profile
-    payload = {"symbols": symbols, "profiles": normalized_profiles}
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    return normalized_profiles
-
-
-def infer_symbol_personality(sym):
-    if sym in ("BTCUSDT", "ETHUSDT"):
-        return "calm"
-    if sym == "HUSDT":
-        return "calm"
-    aggressive_coins = {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT", "XRPUSDT", "SANDUSDT", "MANAUSDT", "FIOUSDT", "BEATUSDT", "STGUSDT", "BLESSUSDT", "SIRENUSDT", "ESPORTSUSDT", "FXSUSDT", "FISUSDT", "PORT3USDT", "BSBUSDT", "VELVETUSDT", "BRUSDT", "SYSUSDT", "RDNTUSDT", "SKYAIUSDT", "PORTALUSDT", "SENTUSDT", "BEATUSDT", "STGUSDT", "BLESSUSDT", "SIRENUSDT", "ESPORTSUSDT", "FXSUSDT", "FISUSDT", "PORT3USDT", "BSBUSDT", "VELVETUSDT", "BRUSDT", "SYSUSDT", "RDNTUSDT", "SKYAIUSDT", "PORTALUSDT", "SENTUSDT"}
-    balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "UNIUSDT", "NEARUSDT", "SUIUSDT"}
-    if sym in aggressive_coins:
-        return "aggressive"
-    if sym in balanced_coins:
-        return "balanced"
-    return "adaptive"
-
-
-def get_personality_template(personality):
-    if not personality:
-        return PERSONALITY_TEMPLATES["balanced"]
-    return PERSONALITY_TEMPLATES.get(personality.lower(), PERSONALITY_TEMPLATES["balanced"])
-
-
-def get_symbol_exit_override(sym):
-    return SYMBOL_EXIT_OVERRIDES.get(sym, {})
-
-
-def should_require_strong_exit(overrides):
-    return bool(
-        overrides.get("require_strong_momentum")
-        or overrides.get("volume_threshold") is not None
-        or overrides.get("momentum_threshold") is not None
-    )
-
-
-def is_strong_exit_condition(sym, is_long):
-    overrides = get_symbol_exit_override(sym)
-    if not overrides:
-        return False
-    if overrides.get("require_strong_momentum"):
-        return has_strong_momentum(sym, is_long)
-    volume_threshold = overrides.get("volume_threshold")
-    momentum_threshold = overrides.get("momentum_threshold")
-    s = STATES[sym]
-    if s.get("vol_ma20", 0.0) <= 0 or len(s.get("closes", [])) < 4:
-        return False
-    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
-    recent_return = abs((s["closes"][-1] - s["closes"][-4]) / max(abs(s["closes"][-4]), 1e-8))
-    if volume_threshold is not None and volume_ratio < float(volume_threshold):
-        return False
-    if momentum_threshold is not None and recent_return < float(momentum_threshold):
-        return False
-    return True
-
-
-def get_effective_exit_setting(sym, key, base_value, is_long):
-    overrides = get_symbol_exit_override(sym)
-    if not overrides:
-        return base_value
-    value = overrides.get(key)
-    if not isinstance(value, (int, float)):
-        return base_value
-    if key == "tp_atr_multiplier":
-        if should_require_strong_exit(overrides) and not is_strong_exit_condition(sym, is_long):
-            return base_value
-        return value
-    if key in ("sl_atr_multiplier", "hard_stop_loss_pct"):
-        if value > base_value:
-            return base_value
-    return value
-
-
-def apply_symbol_profile(sym, profile):
-    if sym not in STATES:
-        return
-    state = STATES[sym]
-    if isinstance(profile, str):
-        profile = {"personality": profile}
-    personality = profile.get("personality") or state.get("personality") or infer_symbol_personality(sym)
-    personality_source = "manual" if profile.get("personality") else state.get("personality_source", "infer")
-    template = get_personality_template(personality)
-    state.update(template)
-    for key in [
-        "risk_multiplier", "volume_multiplier", "entry_cooldown_sec",
-        "max_additional_entries", "entry_size_pct", "add_entry_pct",
-        "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
-    ]:
-        if key in profile and isinstance(profile[key], (int, float)):
-            state[key] = profile[key]
-    state["personality"] = personality
-    state["personality_source"] = personality_source
-    if personality_source == "manual":
-        state["last_personality_update"] = time.time()
-
-
-def apply_all_symbol_profiles():
-    for sym in ALL_SYMBOLS:
-        profile = SYMBOL_PROFILES.get(sym, {})
-        apply_symbol_profile(sym, profile)
-
-
-def has_manual_personality(sym):
-    profile = SYMBOL_PROFILES.get(sym, {})
-    return isinstance(profile, dict) and "personality" in profile
-
-
-def evaluate_dynamic_personality(sym):
-    s = STATES[sym]
-    if s["current_atr"] <= 0 or s["vol_ma20"] <= 0 or len(s["ohlcv"]) < 20:
-        return s.get("personality", "balanced")
-
-    close = s["close_price"]
-    atr_pct = s["current_atr"] / max(close, 1e-8)
-    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
-    recent_candles = s["ohlcv"][-20:]
-    highs = np.array([x[2] for x in recent_candles])
-    lows = np.array([x[3] for x in recent_candles])
-    recent_high = float(np.max(highs))
-    recent_low = float(np.min(lows))
-    range_width_pct = (recent_high - recent_low) / max(recent_low, 1e-8)
-    rsi = s.get("current_rsi", 50.0)
-    macd_hist = s.get("macd_hist", 0.0)
-
-    quiet_market = volume_ratio < 1.15 and atr_pct < 0.008 and range_width_pct < 0.02
-    high_volatility = volume_ratio > 1.9 or atr_pct > 0.02 or range_width_pct > 0.04
-    strong_trend = abs(rsi - 50.0) > 12.0 or abs(macd_hist) > close * 0.0006
-
-    if quiet_market:
-        return "calm"
-    if high_volatility or strong_trend:
-        return "aggressive"
-    if range_width_pct >= 0.03 or abs(rsi - 50.0) > 8.0:
-        return "balanced"
-    return "adaptive"
-
-
-def measure_personality_traits(sym):
-    s = STATES[sym]
-    close = max(s.get("close_price", 0.0), 1e-8)
-    atr_pct = s.get("current_atr", 0.0) / close
-    volume_ratio = s.get("current_vol", 0.0) / max(s.get("vol_ma20", 1e-8), 1e-8)
-    recent_candles = s.get("ohlcv", [])[-20:]
-    highs = np.array([x[2] for x in recent_candles]) if recent_candles else np.array([close])
-    lows = np.array([x[3] for x in recent_candles]) if recent_candles else np.array([close])
-    recent_high = float(np.max(highs))
-    recent_low = float(np.min(lows))
-    range_width_pct = (recent_high - recent_low) / max(recent_low, 1e-8)
-    rsi = s.get("current_rsi", 50.0)
-    return volume_ratio, atr_pct, rsi, range_width_pct
-
-
-def update_dynamic_personality(sym):
-    if has_manual_personality(sym):
-        return False
-    s = STATES[sym]
-    new_personality = evaluate_dynamic_personality(sym)
-    old_personality = s.get("personality", "balanced")
-    if new_personality == old_personality and s.get("personality_source") == "dynamic":
-        s["last_personality_update"] = time.time()
-        return False
-    if new_personality != old_personality:
-        s.update(get_personality_template(new_personality))
-        s["personality"] = new_personality
-        s["personality_source"] = "dynamic"
-        s["last_personality_update"] = time.time()
-        volume_ratio, atr_pct, rsi, range_width_pct = measure_personality_traits(sym)
-        print(f"🔧 [動態個性] {sym} 由 {old_personality} 變更為 {new_personality} | vol={volume_ratio:.2f} atr_pct={atr_pct:.4f} rsi={rsi:.1f} range={range_width_pct:.3f}")
-        return True
-    return False
-
-
-def update_all_dynamic_personalities():
-    now = time.time()
-    for sym in ALL_SYMBOLS:
-        s = STATES[sym]
-        if has_manual_personality(sym):
-            continue
-        if now - s.get("last_personality_update", 0.0) < 300:
-            continue
-        update_dynamic_personality(sym)
-
-
-ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
+ALL_SYMBOLS = load_symbol_pool()
 
 MAX_POSITIONS = 2
 COOLDOWN_SEC = 300
@@ -572,7 +121,7 @@ BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 4.0
-TP_ATR_MULTIPLIER = 2.0
+TP_ATR_MULTIPLIER = 0.8
 HARD_STOP_LOSS_PCT = 0.02
 
 def build_symbol_state(sym):
@@ -629,23 +178,12 @@ def build_symbol_state(sym):
         "trail_tp_price": 0.0,
         "entry_count": 0,
         "avg_entry_price": 0.0,
-        "max_additional_entries": 2,
+        "max_additional_entries": 1,
         "entry_cooldown_sec": 90,
-        "entry_size_pct": 0.5,
-        "add_entry_pct": 0.25,
-        "risk_multiplier": 1.0,
-        "volume_multiplier": 1.0,
-        "sl_atr_multiplier": 4.0,
-        "tp_atr_multiplier": 1.5,
-        "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
-        "personality": "balanced",
-        "personality_source": "infer",
-        "last_personality_update": 0.0,
         "last_entry_time": 0.0,
     }
 
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
-apply_all_symbol_profiles()
 WATCH_TASKS = {}
 
 # ── 指標計算函數 ──────────────────────────────────────────────
@@ -795,7 +333,6 @@ def apply_symbol_pool_change(requested_symbols):
     ALL_SYMBOLS = new_symbols[:target_count]
     for sym in ALL_SYMBOLS:
         STATES.setdefault(sym, build_symbol_state(sym))
-    apply_all_symbol_profiles()
     save_symbol_pool(ALL_SYMBOLS)
     return list(ALL_SYMBOLS)
 
@@ -871,7 +408,7 @@ def get_balance():
     except:
         return 150.0
 
-def compute_per_coin_margin(sym=None):
+def compute_per_coin_margin():
     balance = get_balance()
     if balance <= 0:
         return 0
@@ -1055,7 +592,7 @@ async def load_open_positions():
     try:
         with open("paper_state.json", "r") as f:
             state = json.load(f)
-            
+        
         current_time = time.time()
         for sym in ALL_SYMBOLS:
             pk = paper_key(sym)
@@ -1145,23 +682,65 @@ def update_trailing_take_profit(sym, current_price, is_long):
     if avg_price <= 0:
         return False, 0.0
 
-    if s.get("trail_tp_price", 0.0) <= 0:
-        if is_long:
-            s["trail_tp_price"] = avg_price * 1.003
-        else:
-            s["trail_tp_price"] = avg_price * 0.997
+    TRAIL_PCT = 0.003      # 回撤 0.3% 停利
+    HARD_SL_PCT = 0.10     # 虧損 10% 硬停損
+
+    # 硬停損：虧損超過 10%
+    if is_long:
+        hard_sl_price = avg_price * (1 - HARD_SL_PCT)
+        if current_price <= hard_sl_price:
+            print(f"🛑 [硬停損] {sym} 虧損超過 10%，強制出場")
+            return True, current_price
+    else:
+        hard_sl_price = avg_price * (1 + HARD_SL_PCT)
+        if current_price >= hard_sl_price:
+            print(f"🛑 [硬停損] {sym} 虧損超過 10%，強制出場")
+            return True, current_price
+
+    # 動能檢查：MACD 死叉或 RSI 下降趨勢
+    macd_line = s.get("macd_line", 0.0)
+    macd_signal = s.get("macd_signal", 0.0)
+    prev_macd_line = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
+    rsi = s.get("current_rsi", 50.0)
+    rsis = s.get("rsis", [])
 
     if is_long:
-        if current_price <= s["trail_tp_price"]:
-            return True, s["trail_tp_price"]
-        new_tp = current_price * 0.997
-        s["trail_tp_price"] = max(s["trail_tp_price"], new_tp)
-        return False, s["trail_tp_price"]
+        macd_death = prev_macd_line > prev_macd_signal and macd_line < macd_signal
+        rsi_falling = len(rsis) >= 3 and rsis[-1] < rsis[-2] < rsis[-3]
+        momentum_lost = macd_death or (rsi_falling and rsi < 50)
+    else:
+        macd_golden = prev_macd_line < prev_macd_signal and macd_line > macd_signal
+        rsi_rising = len(rsis) >= 3 and rsis[-1] > rsis[-2] > rsis[-3]
+        momentum_lost = macd_golden or (rsi_rising and rsi > 50)
 
-    if current_price >= s["trail_tp_price"]:
-        return True, s["trail_tp_price"]
-    new_tp = current_price * 1.003
-    s["trail_tp_price"] = min(s["trail_tp_price"], new_tp)
+    if momentum_lost:
+        profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+        if profit_pct > 0:
+            print(f"📉 [動能消失] {sym} MACD/RSI 動能衰退，獲利了結 ({profit_pct*100:.2f}%)")
+            return True, current_price
+
+    # 移動停利：初始化停利線
+    if s.get("trail_tp_price", 0.0) <= 0:
+        if is_long:
+            s["trail_tp_price"] = current_price * (1 - TRAIL_PCT)
+        else:
+            s["trail_tp_price"] = current_price * (1 + TRAIL_PCT)
+
+    # 移動停利：趨勢向上就把停利線往上移
+    if is_long:
+        new_tp = current_price * (1 - TRAIL_PCT)
+        s["trail_tp_price"] = max(s["trail_tp_price"], new_tp)
+        if current_price <= s["trail_tp_price"]:
+            print(f"🎯 [移動停利] {sym} 回撤超過 {TRAIL_PCT*100:.1f}%，停利出場")
+            return True, s["trail_tp_price"]
+    else:
+        new_tp = current_price * (1 + TRAIL_PCT)
+        s["trail_tp_price"] = min(s["trail_tp_price"], new_tp)
+        if current_price >= s["trail_tp_price"]:
+            print(f"🎯 [移動停利] {sym} 回撤超過 {TRAIL_PCT*100:.1f}%，停利出場")
+            return True, s["trail_tp_price"]
+
     return False, s["trail_tp_price"]
 
 
@@ -1173,28 +752,20 @@ def should_recover_from_reversal(sym, is_long):
     macd_reversal = (is_long and s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]) or \
                     (not is_long and s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"])
 
-    if not macd_reversal or not s.get("prev_close") or len(s["ohlcv"]) < 2:
-        return False
-
-    current_price = s["close_price"]
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
-    prev_bar_idx = -2
-    prev_bar_high = s["ohlcv"][prev_bar_idx][2]
-    prev_bar_low = s["ohlcv"][prev_bar_idx][3]
     breakout_confirmed = False
-    if is_long:
-        breakout_confirmed = current_price < prev_bar_low and prev_bar_low - current_price > max(atr_val * 0.25, 0.001)
-    else:
-        breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
+    if s["prev_close"] and len(s["ohlcv"]) >= 1:
+        prev_bar_idx = -2 if len(s["ohlcv"]) >= 2 else -1
+        prev_bar_high = s["ohlcv"][prev_bar_idx][2]
+        prev_bar_low = s["ohlcv"][prev_bar_idx][3]
+        break_high = s["close_price"] > s["prev_close"] and s["close_price"] >= prev_bar_high
+        break_low = s["close_price"] < s["prev_close"] and s["close_price"] <= prev_bar_low
+        breakout_confirmed = (is_long and break_low) or (not is_long and break_high)
 
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
-
-    volume_confirmed = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
+    volume_confirmed = s["current_vol"] > s["vol_ma20"] * 2.0
     trade_signal = s.get("trade_signal_strength", 0.0)
-    trade_confirmed = trade_signal >= reversal_settings["trade_signal_threshold"]
+    trade_confirmed = trade_signal >= 1.5
 
-    if macd_reversal and breakout_confirmed and volume_confirmed and trade_confirmed:
+    if macd_reversal and breakout_confirmed and (volume_confirmed or trade_confirmed):
         return True
 
     return False
@@ -1216,27 +787,14 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
     atr_pct = atr_val / current_price if current_price > 0 else 0
 
-    # 1) 即時成交流監聽：大額異常成交 + 明顯逆向價格跳動才判定為突破反轉
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
+    # 1) 即時成交流監聽：大額成交且價格急速變動，優先判定為突破反轉
     trade_signal = s.get("trade_signal_strength", 0.0)
-    reversal_threshold = reversal_settings["trade_signal_threshold"]
-    prev_close = s.get("prev_close")
-    if trade_signal >= reversal_threshold and prev_close:
-        price_move_pct = (current_price - prev_close) / max(prev_close, 1e-8)
-        if (is_long and price_move_pct < -max(reversal_settings["min_reverse_pct"], atr_pct * 1.2)) or \
-           (not is_long and price_move_pct > max(reversal_settings["min_reverse_pct"], atr_pct * 1.2)):
-            return "BREAKOUT_REVERSAL", f"即時大額成交異常 {s['trade_signal_reason']}"
+    if trade_signal >= 1.1:
+        return "BREAKOUT_REVERSAL", f"即時大額成交異常 {s['trade_signal_reason']}"
 
-    # 2) 簡化的大單/突發行情判斷：必須是與持倉方向相反的急速價格跳動
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
-    volume_surge = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
-    if prev_close:
-        price_jump = (prev_close - current_price) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2) if is_long else \
-                     (current_price - prev_close) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2)
-    else:
-        price_jump = False
+    # 2) 簡化的大單/突發行情判斷：放量且價格急速變動
+    volume_surge = s["current_vol"] > s["vol_ma20"] * 2.5
+    price_jump = abs(current_price - s["prev_close"]) / max(s["prev_close"], 1e-8) > 0.01 if s["prev_close"] else False
     if volume_surge and price_jump:
         return "BREAKOUT_REVERSAL", "放量突發且價格急速變動"
 
@@ -1249,33 +807,14 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
 
     return "HOLD", "未達出場條件"
 
-
-def has_strong_momentum(sym, is_long):
-    s = STATES[sym]
-    if s.get("vol_ma20", 0.0) <= 0 or len(s.get("closes", [])) < 4:
-        return False
-    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
-    recent_return = (s["closes"][-1] - s["closes"][-4]) / max(abs(s["closes"][-4]), 1e-8)
-    if is_long:
-        return volume_ratio > 1.2 and s["close_price"] > s.get("bb_mid", 0.0) and s["current_rsi"] > 52 and s.get("macd_hist", 0.0) > 0 and recent_return > 0.005
-    return volume_ratio > 1.2 and s["close_price"] < s.get("bb_mid", 0.0) and s["current_rsi"] < 48 and s.get("macd_hist", 0.0) < 0 and recent_return < -0.005
-
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
     s["adjusted_this_tick"] = True
-    if abs(s["qty"]) < 0.000001:
-        return
     pk = paper_key(sym)
     qty = min(abs(qty), abs(s["qty"]))
     if qty < 0.000001:
         return
-
-    sanitized_qty = await sanitize_order_qty(sym, qty)
-    if sanitized_qty <= 0.0:
-        print(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
-        return
-    qty = min(qty, sanitized_qty)
-
+    close_qty = qty if close_side == 'sell' else -qty
     if PAPER_TRADING:
         if s["qty"] > 0:
             pnl = (price - avg_price) * qty
@@ -1289,7 +828,6 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         except Exception as e:
             print(f"🚨 [平倉錯誤] {sym}: {e}")
             return
-
     remaining = abs(s["qty"]) - qty
     if remaining < 0.01:
         if remaining > 0.000001:
@@ -1302,16 +840,13 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
 
 async def check_exits(sym):
     s = STATES[sym]
-    if s.get("adjusted_this_tick", False):
-        return
     if abs(s["qty"]) < 0.000001 or s["avg_price"] <= 0:
         return
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
-    # 高波動期縮短保護盲區到 20 秒，低波動維持 60 秒
-    cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
+    cooldown_limit = 3.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 10.0
     if hold_sec < cooldown_limit:
         return
 
@@ -1321,9 +856,8 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
 
-    # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
-    sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
-    sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
+    # 動態停損：ATR × 2（開倉前2分鐘保護期 × 3）
+    sl_mult = 3.0 if hold_sec < 120 else 2.0
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
 
     if profit_pct > s["highest_profit_pct"]:
@@ -1341,7 +875,7 @@ async def check_exits(sym):
 
     if should_recover_from_reversal(sym, is_long):
         recovery_side = 'sell' if is_long else 'buy'
-        print(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手 | current={p:.4f} | prev_close={s.get('prev_close', 0):.4f} | trade_signal={s.get('trade_signal_strength', 0.0):.2f} | vol={s.get('current_vol', 0):.0f}/{s.get('vol_ma20', 0):.0f} | MACD反向交叉")
+        print(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手")
         await close_position(sym, recovery_side, abs(s["qty"]), p, avg, reason="反轉補救", is_stop_loss=True)
         s["highest_profit_pct"] = 0.0
         return
@@ -1354,13 +888,13 @@ async def check_exits(sym):
 
     # 動能衰減檢查：利潤溜滑梯
     s["pnl_history"].append(profit_pct * 100)
-    if len(s["pnl_history"]) > 8:
+    if len(s["pnl_history"]) > 5:
         s["pnl_history"].pop(0)
-    if len(s["pnl_history"]) == 8:
-        is_decaying = all(s["pnl_history"][i] > s["pnl_history"][i+1] for i in range(7))
-        if is_decaying and profit_pct * 100 > 1.0:
+    if len(s["pnl_history"]) == 5:
+        is_decaying = all(s["pnl_history"][i] > s["pnl_history"][i+1] for i in range(4))
+        if is_decaying and profit_pct * 100 > 0.5:
             cs = 'sell' if is_long else 'buy'
-            print(f"📉 [動能衰減] {sym} 利潤連8次下滑 ({profit_pct*100:.2f}%)，即時出場")
+            print(f"📉 [動能衰減] {sym} 利潤連5次下滑 ({profit_pct*100:.2f}%)，即時出場")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動能衰減")
             s["highest_profit_pct"] = 0.0
             return
@@ -1373,7 +907,7 @@ async def check_exits(sym):
     # 1. 趨勢反轉：MACD 反向交叉 → 立即認賠出場 (無視盈虧)
     m_death = s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]
     m_golden = s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"]
-    if ((is_long and m_death) or (not is_long and m_golden)) and (s["has_been_negative"] or abs(profit_pct) > 0.005):
+    if (is_long and m_death) or (not is_long and m_golden):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
         print(f"📉 [反轉出場] {sym} MACD反向交叉，立即平倉 (損益: {profit_pct*100:.2f}%)")
@@ -1384,53 +918,47 @@ async def check_exits(sym):
     is_strong = (is_long and s["current_rsi"] > 50) or (not is_long and s["current_rsi"] <= 50)
 
     # ATR TP/SL 價格 (兩條路線共用)
-    tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     if is_long:
-        tp = avg + max(atr_val * tp_base, avg * 0.003)
+        tp = avg + max(atr_val * TP_ATR_MULTIPLIER, avg * 0.003)
         sl = avg - (atr_val * sl_mult)
     else:
-        tp = avg - max(atr_val * tp_base, avg * 0.003)
+        tp = avg - max(atr_val * TP_ATR_MULTIPLIER, avg * 0.003)
         sl = avg + (atr_val * sl_mult)
 
     # ── 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock) ──
     # 實施分級保本與回撤防護，防止「有利潤不平倉，最後被打到停損」
-    
-    # 趨勢確認：如果 MACD 仍在趨勢方向，則放寬鎖利條件
-    is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
-    
-    # 鎖利門檻放寬：如果趨勢還在，回撤門檻提高到 85% (原本是 70%)
-    if s["highest_profit_pct"] >= 0.01 and profit_pct < s["highest_profit_pct"] * (0.85 if is_trend_ok else 0.6):
+    if s["highest_profit_pct"] >= 0.008 and profit_pct < s["highest_profit_pct"] * 0.5:
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達{((1 - profit_pct / s['highest_profit_pct'])*100):.1f}% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
+        print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達50% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="回撤鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.008 and profit_pct < (0.0045 if is_trend_ok else 0.0035):
+    elif s["highest_profit_pct"] >= 0.006 and profit_pct < 0.0025:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [高利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發高利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="高利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0030 if is_trend_ok else 0.0020):
+    elif s["highest_profit_pct"] >= 0.004 and profit_pct < 0.0015:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發中利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="中利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.004 and profit_pct < (0.0025 if is_trend_ok else 0.0015):
+    elif s["highest_profit_pct"] >= 0.0025 and profit_pct < 0.0010:
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="微利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
 
-    # 見好就收：先以 1% 進行停利，若後續價格再創新高，就把停利線往上移動
-    early_take_profit_pct = 0.01
-    if s["highest_profit_pct"] >= early_take_profit_pct and profit_pct >= 0.002:
+    # 見好就收：先以 0.3% 進行停利，若後續價格再創新高，就把停利線往上移動
+    early_take_profit_pct = 0.003
+    if s["highest_profit_pct"] >= early_take_profit_pct and profit_pct >= 0.001:
         should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
         if should_exit:
             cs = 'sell' if is_long else 'buy'
-            print(f"🎯 [移動停利] {sym} 已達到 1% 目標，按移動停利出場")
+            print(f"🎯 [移動停利] {sym} 已達到 0.3% 目標，按移動停利出場")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="移動停利")
             s["highest_profit_pct"] = 0.0
             return
@@ -1461,18 +989,14 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             s["has_partial_closed"] = False
             return
-        # 弱勢快速停利：穩健型幣種可以等更久，再決定是否落袋
-        weak_tp = 0.005
-        if s.get("personality") == "calm":
-            weak_tp = 0.007
+        # 弱勢快速停利：0.3% 就走
+        weak_tp = 0.003
         if s["highest_profit_pct"] >= weak_tp:
-            if not has_strong_momentum(sym, is_long):
-                cs = 'sell' if is_long else 'buy'
-                print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%，動能不足則落袋")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="快速停利")
-                s["highest_profit_pct"] = 0.0
-                return
-            print(f"⚡ [保留動能] {sym} 弱勢已達{weak_tp*100:.1f}%但動能仍強，暫不停利")
+            cs = 'sell' if is_long else 'buy'
+            print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="快速停利")
+            s["highest_profit_pct"] = 0.0
+            return
         # 弱勢 ATR 停損直接觸發 (停利在弱勢下先抓快速停利)
         if (is_long and p <= sl) or (not is_long and p >= sl):
             cs = 'sell' if is_long else 'buy'
@@ -1481,19 +1005,10 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停損", is_stop_loss=True)
             return
     else:
-        # ── 強勢路徑也啟動追高停利，避免高點回撤時提早離場
-        if s["highest_profit_pct"] >= 0.005 and profit_pct >= 0.001:
-            should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
-            if should_exit:
-                cs = 'sell' if is_long else 'buy'
-                print(f"🎯 [追高停利] {sym} 觸發追高停利 {trail_tp:.6f}")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="追高停利")
-                s["highest_profit_pct"] = 0.0
-                return
-
+        # ── 強勢路線 ────────────────────────────────────
         # 強勢動態停利：高點回撤 0.5%
         if s["highest_profit_pct"] >= 0.01:
-            if (is_long and p <= s["trailing_highest"] * 0.990) or (not is_long and p >= s["trailing_lowest"] * 1.010):
+            if (is_long and p <= s["trailing_highest"] * 0.995) or (not is_long and p >= s["trailing_lowest"] * 1.005):
                 cs = 'sell' if is_long else 'buy'
                 print(f"🏃 [動態停利] {sym} 強勢回撤0.5%")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動態停利")
@@ -1525,17 +1040,27 @@ async def check_position_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
 
+    if hold_sec < 30:
+        return
+    
+    # 進場後30秒~2分鐘：快速止損 0.15%，快速確認 0.1%
     if hold_sec < 120:
+        if is_long and profit_pct < -0.0015:
+            print(f"⚡ [快速止損] {sym} 進場後反向跌 0.15%，立即出場")
+            await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="快速止損", is_stop_loss=True)
+            return
+        if not is_long and profit_pct < -0.0015:
+            print(f"⚡ [快速止損] {sym} 進場後反向漲 0.15%，立即出場")
+            await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="快速止損", is_stop_loss=True)
+            return
         return
 
-    # 硬停損：以百分比計算觸發價格（HARD_STOP_LOSS_PCT = 0.01 = 虧損 1%）
-    hard_stop_loss_pct = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
-    hard_sl_long = avg * (1 - hard_stop_loss_pct)
-    hard_sl_short = avg * (1 + hard_stop_loss_pct)
-    if (is_long and p <= hard_sl_long) or (not is_long and p >= hard_sl_short):
+    # 10% 硬停損
+    hard_sl = avg * HARD_STOP_LOSS_PCT
+    if (is_long and p <= avg - hard_sl) or (not is_long and p >= avg + hard_sl):
         cs = 'sell' if is_long else 'buy'
-        print(f"⛔ [硬停損{hard_stop_loss_pct*100:.1f}%] {sym} 均價:{avg:.6f} 現價:{p:.6f}")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"硬停損{hard_stop_loss_pct*100:.1f}%", is_stop_loss=True)
+        print(f"⛔ [10%停損] {sym}")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="10%停損", is_stop_loss=True)
         return
 
     # 3x ATR 停利
@@ -1548,7 +1073,7 @@ async def check_position_exits(sym):
 
     # MACD 反轉搶救 (已在 check_exits 三叉樹中處理，此處保留 10% 硬停損與 3x ATR 停利)
     # 15分鐘時間停損
-    if hold_sec > 900 and profit_pct < -0.005:
+    if hold_sec > 900 and profit_pct < -0.01:
         cs = 'sell' if is_long else 'buy'
         print(f"⏱️ [時間停損] {sym} {hold_sec/60:.1f}分仍虧損")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="時間停損", is_stop_loss=True)
@@ -1559,7 +1084,7 @@ async def check_position_exits(sym):
 async def execute_order(sym, side, price):
     s = STATES[sym]
     pk = paper_key(sym)
-    margin = compute_per_coin_margin(sym)
+    margin = compute_per_coin_margin()
     if margin <= 0:
         print(f"⚠️ [風控] {sym} 無可用保證金")
         return
@@ -1579,20 +1104,14 @@ async def execute_order(sym, side, price):
                 return
 
     base_amt = margin / price
-    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
-    base_amt *= allocation_pct
-    max_notional = 500.0  # 最大名義價值 500 USDT
-    if base_amt * price > max_notional:
-        base_amt = max_notional / price
-
-    base_amt = await sanitize_order_qty(sym, base_amt)
-    if base_amt <= 0.0:
-        print(f"⚠️ [風控] {sym} 無有效開倉數量 ({margin:.6f}/{price:.6f})")
-        return
-
     if base_amt < 0.001:
         print(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
         return
+
+    if side == 'buy':
+        base_amt *= 0.5 if s["entry_count"] == 0 else 0.25
+    else:
+        base_amt *= 0.5 if s["entry_count"] == 0 else 0.25
 
     if PAPER_TRADING:
         try:
@@ -1639,6 +1158,38 @@ async def execute_order(sym, side, price):
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
 
+def is_entry_confirmed(sym, side):
+    """進場確認：K線方向、突破確認"""
+    s = STATES[sym]
+    if len(s["ohlcv"]) < 2:
+        return False
+    
+    curr = s["ohlcv"][-1]
+    prev = s["ohlcv"][-2]
+    
+    curr_open = float(curr[1])
+    curr_close = float(curr[4])
+    prev_high = float(prev[2])
+    prev_low = float(prev[3])
+    
+    # 條件1：當前K線方向要跟訊號一致
+    if side == 'buy' and curr_close <= curr_open:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [K線方向過濾] 做多但當前K線收黑，拒絕進場")
+        return False
+    if side == 'sell' and curr_close >= curr_open:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [K線方向過濾] 做空但當前K線收紅，拒絕進場")
+        return False
+    
+    # 條件2：價格要突破前一根K線高低點
+    if side == 'buy' and curr_close <= prev_high:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [突破過濾] 做多但未突破前K高點 {prev_high:.4f}，拒絕進場")
+        return False
+    if side == 'sell' and curr_close >= prev_low:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} [突破過濾] 做空但未跌破前K低點 {prev_low:.4f}，拒絕進場")
+        return False
+    
+    return True
+
 def is_entry_pin_safe(sym, side):
     s = STATES[sym]
     if len(s["ohlcv"]) < 2:
@@ -1655,38 +1206,20 @@ def is_entry_pin_safe(sym, side):
     upper_wick = high - max(open_price, close_price)
     lower_wick = min(open_price, close_price) - low
 
-    pin_threshold = 4.0
-    candle_range = max(high - low, 1e-8)
-    body_ratio = body / candle_range
-    if body_ratio < 0.35 or s.get("current_vol", 0.0) < max(100.0, s.get("vol_ma20", 0.0) * 0.5):
-        pin_threshold = 3.0
-    ema20 = s.get("ema20", 0.0)
-    if ema20 > 0:
-        if side == 'buy' and close_price < ema20:
-            pin_threshold = 3.0
-        if side == 'sell' and close_price > ema20:
-            pin_threshold = 3.0
-
-    enabled = pin_threshold < 4.0
-    if enabled:
-        print(f"@@COIN_DEBUG@@ 🔧 {sym} 反插針門檻收緊為 {pin_threshold:.1f} (body_ratio={body_ratio:.2f}, vol={s.get('current_vol',0):.0f}, ema20={ema20:.4f}) [enabled]")
-    else:
-        print(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
-
     if side == 'buy':
         if close_price <= prev_close:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} <= 前K收盤 {prev_close:.4f}")
             return False
-        if upper_wick > body * pin_threshold:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
+        if upper_wick > body * 3.0:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * 3)")
             return False
         return True
 
     if close_price >= prev_close:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} >= 前K收盤 {prev_close:.4f}")
         return False
-    if lower_wick > body * pin_threshold:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
+    if lower_wick > body * 3.0:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * 3)")
         return False
     return True
 
@@ -1699,9 +1232,8 @@ def is_entry_volume_confirmed(sym, side):
     vol_ma20 = s["vol_ma20"]
     if vol_ma20 <= 0:
         return False
-    threshold = vol_ma20 * VOLUME_RATIO_THRESHOLD * s.get("volume_multiplier", 1.0)
-    if current_vol < threshold:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 均量門檻 {threshold:.2f}")
+    if current_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 均量門檻 {vol_ma20 * VOLUME_RATIO_THRESHOLD:.2f}")
         return False
     return True
 
@@ -1718,19 +1250,24 @@ def is_entry_allowed(sym, side, route="a"):
     s = STATES[sym]
     cp = s["close_price"]
     
-    # 均線過濾器已移除 - 寬鬆進場模式允許價格在SMA200上下開單
-    # if s.get("sma200_15m", 0) > 0:
-    #     ma200 = s["sma200_15m"]
-    #     if side == 'buy' and cp <= ma200:
-    #         return False
-    #     if side == 'sell' and cp >= ma200:
-    #         return False
+    # 均線過濾器：受 15m SMA200 趨勢保護，防止逆勢接刀
+    if s.get("sma200_15m", 0) > 0:
+        ma200 = s["sma200_15m"]
+        
+        if side == 'buy' and cp <= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
+            return False
+        if side == 'sell' and cp >= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
+            return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
         return False
     if not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
+        return False
+    if not is_entry_confirmed(sym, side):
         return False
         
     # 量能確認過濾器
@@ -1742,8 +1279,8 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 20:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 20")
+    if adx_val < 12:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 12")
         return False
 
     # 實盤最小量限制
@@ -1768,8 +1305,8 @@ def compute_signal_strength(sym):
     trend_short = ema20 > 0 and close < ema20
 
     # Define parameters for dynamic RSI thresholds
-    LONG_RSI_NORMAL = 45.0
-    SHORT_RSI_NORMAL = 55.0
+    LONG_RSI_NORMAL = 40.0
+    SHORT_RSI_NORMAL = 60.0
     LONG_RSI_HIGH_VOL = 30.0
     SHORT_RSI_HIGH_VOL = 70.0
 
@@ -1809,15 +1346,8 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    # --- 優化：要求連續兩根 K 線收盤價方向一致 ---
-    # 確保最後兩根 K 線的收盤價都是上升的 (多頭) 或下降的 (空頭)
-    # 這樣可以過濾掉單一 K 線的異常跳動或插針
-    last_two_candles_long = len(s["ohlcv"]) >= 3 and \
-                              s["ohlcv"][-1][4] > s["ohlcv"][-2][4] and \
-                              s["ohlcv"][-2][4] > s["ohlcv"][-3][4]
-    last_two_candles_short = len(s["ohlcv"]) >= 3 and \
-                               s["ohlcv"][-1][4] < s["ohlcv"][-2][4] and \
-                               s["ohlcv"][-2][4] < s["ohlcv"][-3][4]
+    last_candle_confirmed_long = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
+    last_candle_confirmed_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
 
     ema50 = s.get("ema50", 0.0)
     trend_confluence_long = ema50 == 0.0 or close > ema50
@@ -1826,47 +1356,21 @@ def compute_signal_strength(sym):
     is_above_sma200 = s.get("sma200_15m", 0) > 0 and close > s.get("sma200_15m", 0) * 0.999
     is_below_sma200 = s.get("sma200_15m", 0) > 0 and close < s.get("sma200_15m", 0) * 1.001
 
-    # 限制開倉不要太偏離短期趨勢線，避免追價開倉
-    close_near_ema20_long = ema20 <= 0 or close <= ema20 * 1.05
-    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.95
-    is_in_bb_zone_long = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
-    is_in_bb_zone_short = s.get("bb_up", 0) > 0 and close >= s["bb_up"] * 0.99
+    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>45/S<55): {rsi > 45.0}/{rsi < 55.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
 
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
-
-    # 寬鬆的RSI條件：>50時正常，或在45-55中立區但MACD確認時也允許
-    rsi_ok_long = rsi > 50.0 or (rsi >= 45.0 and (long_macd_cross or macd_hist > 0))
-    rsi_ok_short = rsi < 50.0 or (rsi <= 55.0 and (short_macd_cross or macd_hist < 0))
-
-    # Route A (Trend Following): 簡化版 - 只需4個核心條件
-    # 1. MACD確認 2. K線方向 3. RSI動能(寬鬆) 4. EMA20合理範圍
-    # 移除SMA200要求，允許更多進場機會
-    
-    # --- 優化：加入趨勢加分機制 ---
-    # 如果方向與 EMA50 趨勢一致，加 5 分，否則扣 5 分
-    trend_score = 0
-    if trend_confluence_long and (long_macd_cross or macd_hist > 0):
-        trend_score = 5
-    elif trend_confluence_short and (short_macd_cross or macd_hist < 0):
-        trend_score = 5
-    elif (trend_confluence_long and (short_macd_cross or macd_hist < 0)) or \
-         (trend_confluence_short and (long_macd_cross or macd_hist > 0)):
-        trend_score = -5
-    else:
-        trend_score = 0
-
+    # Route A (Trend Following): 站上 SMA200 AND (MACD交叉或柱狀體為正) AND K線方向確認 AND 動能確認
     route_a_long = (
+        is_above_sma200 and 
         (long_macd_cross or macd_hist > 0) and 
-        last_two_candles_long and 
-        rsi_ok_long and 
-        close_near_ema20_long
+        last_candle_confirmed_long and 
+        rsi > 45.0                      # 放寬：只要 RSI > 45 (脫離空頭區間) 即可
     )
     
     route_a_short = (
+        is_below_sma200 and 
         (short_macd_cross or macd_hist < 0) and 
-        last_two_candles_short and 
-        rsi_ok_short and 
-        close_near_ema20_short
+        last_candle_confirmed_short and 
+        rsi < 55.0                      # 放寬：只要 RSI < 55 (脫離多頭區間) 即可
     )
 
     long_base_ok = route_a_long
@@ -1874,19 +1378,17 @@ def compute_signal_strength(sym):
 
     if long_base_ok:
         route = "a"
-        strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
+        strength = 15.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
-        strength += trend_score
-        return ("buy", strength if strength >= 6.0 else 0.0, route)
+        return ("buy", strength if strength >= 8.0 else 0.0, route)
 
     if short_base_ok:
         route = "a"
-        strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
+        strength = 15.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
-        strength += trend_score
-        return ("sell", strength if strength >= 6.0 else 0.0, route)
+        return ("sell", strength if strength >= 8.0 else 0.0, route)
 
     return (None, 0, None)
 
@@ -2041,7 +1543,6 @@ async def main_loop():
                 await check_exits(sym)
             for sym in ALL_SYMBOLS:
                 await check_position_exits(sym)
-            update_all_dynamic_personalities()
             await check_entries()
             
             # 成功執行，重置連續錯誤計數器

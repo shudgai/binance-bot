@@ -1,38 +1,16 @@
 {
   "symbols": [
-    "SIRENUSDT",
+    "SENTUSDT",
+    "PORTALUSDT",
+    "STGUSDT",
+    "BLESSUSDT",
     "XRPUSDT",
     "DOGEUSDT",
+    "SIRENUSDT",
     "ESPORTSUSDT",
     "FXSUSDT",
     "FIOUSDT",
     "HUSDT",
-    "FISUSDT",
-    "BEATUSDT",
-    "PORT3USDT",
-    "BSBUSDT",
-    "VELVETUSDT"
-  ],
-  "profiles": {
-    "HUSDT": {
-      "personality": "calm",
-      "exit_overrides": {
-        "tp_atr_multiplier": 1.8,
-        "require_strong_momentum": true,
-        "volume_threshold": 1.2,
-        "momentum_threshold": 0.005
-      }
-    },
-    "DOGEUSDT": {
-      "personality": "balanced"
-    },
-    "XRPUSDT": {
-      "reversal_settings": {
-        "trade_signal_threshold": 2.5,
-        "volume_multiplier": 3.5,
-        "price_jump_pct": 0.012,
-        "min_reverse_pct": 0.01
-      }
-    }
-  }
+    "BEATUSDT"
+  ]
 }
