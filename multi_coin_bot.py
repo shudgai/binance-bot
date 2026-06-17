@@ -18,15 +18,56 @@ load_dotenv()
 LOCK_FILE = "/tmp/binance_bot_single_instance.lock"
 lock_file_handle = None
 
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def ensure_single_instance():
     global lock_file_handle
-    lock_file_handle = open(LOCK_FILE, "w")
+    lock_file_handle = open(LOCK_FILE, "a+")
     try:
         fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file_handle.seek(0)
+        lock_file_handle.truncate()
+        lock_file_handle.write(str(os.getpid()))
+        lock_file_handle.flush()
     except IOError:
+        lock_file_handle.seek(0)
+        pid_text = lock_file_handle.read().strip()
+        stale_pid = None
+        try:
+            stale_pid = int(pid_text)
+        except Exception:
+            stale_pid = None
+
+        if stale_pid and not _process_exists(stale_pid):
+            print(f"⚠️ 偵測到舊的鎖定進程已終止 (PID={stale_pid})，清理過期鎖檔後繼續啟動...")
+            try:
+                lock_file_handle.close()
+            except Exception:
+                pass
+            try:
+                os.remove(LOCK_FILE)
+            except FileNotFoundError:
+                pass
+            lock_file_handle = open(LOCK_FILE, "a+")
+            try:
+                fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file_handle.seek(0)
+                lock_file_handle.truncate()
+                lock_file_handle.write(str(os.getpid()))
+                lock_file_handle.flush()
+                return
+            except IOError:
+                pass
+
         print("🚨 錯誤: 偵測到系統中已有另一個機器人正在執行！")
         print("💡 為了避免重複下單與邏輯衝突，本次啟動已自動攔截並退出。")
-        print("💡 提示: 請確保只透過網頁儀表板來啟動，不要在終端機重複手動啟動。")
+        print("💡 提示: 若是意外關閉舊程式，請先刪除過期的鎖定檔 /tmp/binance_bot_single_instance.lock，再重新啟動。")
         sys.exit(1)
 
 ensure_single_instance()
