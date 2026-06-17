@@ -259,6 +259,14 @@ def kill_bot():
     except:
         pass
 
+    # 移除單例鎖定檔，避免已終止程序遺留鎖定導致新進程啟動失敗
+    try:
+        os.remove("/tmp/binance_bot_single_instance.lock")
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
 def restart_bot():
     kill_bot()
     start_bot()

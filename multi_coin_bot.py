@@ -4,6 +4,7 @@ import ccxt.pro as ccxtpro
 import numpy as np
 import json
 import os
+import signal
 import time
 import sys
 import uuid
@@ -18,12 +19,24 @@ load_dotenv()
 LOCK_FILE = "/tmp/binance_bot_single_instance.lock"
 lock_file_handle = None
 
+
 def _process_exists(pid):
     try:
         os.kill(pid, 0)
     except OSError:
         return False
     return True
+
+
+def _terminate_process(pid):
+    try:
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.2)
+        if _process_exists(pid):
+            os.kill(pid, signal.SIGKILL)
+        return True
+    except Exception:
+        return False
 
 
 def ensure_single_instance():
@@ -35,6 +48,7 @@ def ensure_single_instance():
         lock_file_handle.truncate()
         lock_file_handle.write(str(os.getpid()))
         lock_file_handle.flush()
+        return
     except IOError:
         lock_file_handle.seek(0)
         pid_text = lock_file_handle.read().strip()
@@ -44,8 +58,9 @@ def ensure_single_instance():
         except Exception:
             stale_pid = None
 
-        if stale_pid and not _process_exists(stale_pid):
-            print(f"⚠️ 偵測到舊的鎖定進程已終止 (PID={stale_pid})，清理過期鎖檔後繼續啟動...")
+        if stale_pid and stale_pid != os.getpid() and _process_exists(stale_pid):
+            print(f"⚠️ 偵測到系統中已有另一個機器人正在執行 (PID={stale_pid})，將自動終止舊進程並繼續啟動...")
+            _terminate_process(stale_pid)
             try:
                 lock_file_handle.close()
             except Exception:
@@ -53,6 +68,30 @@ def ensure_single_instance():
             try:
                 os.remove(LOCK_FILE)
             except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+            lock_file_handle = open(LOCK_FILE, "a+")
+            try:
+                fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file_handle.seek(0)
+                lock_file_handle.truncate()
+                lock_file_handle.write(str(os.getpid()))
+                lock_file_handle.flush()
+                return
+            except IOError:
+                pass
+        elif stale_pid and stale_pid != os.getpid() and not _process_exists(stale_pid):
+            print(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並繼續啟動...")
+            try:
+                lock_file_handle.close()
+            except Exception:
+                pass
+            try:
+                os.remove(LOCK_FILE)
+            except FileNotFoundError:
+                pass
+            except Exception:
                 pass
             lock_file_handle = open(LOCK_FILE, "a+")
             try:
@@ -157,7 +196,7 @@ PERSONALITY_TEMPLATES = {
 SYMBOL_EXIT_OVERRIDES = {
     "HUSDT": {
         "tp_atr_multiplier": 1.8,
-        "sl_atr_multiplier": 5.0,
+        "sl_atr_multiplier": 4.0,
     },
 }
 
@@ -526,7 +565,7 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 4.0
 TP_ATR_MULTIPLIER = 1.5
-HARD_STOP_LOSS_PCT = 0.025
+HARD_STOP_LOSS_PCT = 0.02
 
 def build_symbol_state(sym):
     return {
@@ -1307,13 +1346,13 @@ async def check_exits(sym):
 
     # 動能衰減檢查：利潤溜滑梯
     s["pnl_history"].append(profit_pct * 100)
-    if len(s["pnl_history"]) > 5:
+    if len(s["pnl_history"]) > 8:
         s["pnl_history"].pop(0)
-    if len(s["pnl_history"]) == 5:
-        is_decaying = all(s["pnl_history"][i] > s["pnl_history"][i+1] for i in range(4))
+    if len(s["pnl_history"]) == 8:
+        is_decaying = all(s["pnl_history"][i] > s["pnl_history"][i+1] for i in range(7))
         if is_decaying and profit_pct * 100 > 0.5:
             cs = 'sell' if is_long else 'buy'
-            print(f"📉 [動能衰減] {sym} 利潤連5次下滑 ({profit_pct*100:.2f}%)，即時出場")
+            print(f"📉 [動能衰減] {sym} 利潤連8次下滑 ({profit_pct*100:.2f}%)，即時出場")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動能衰減")
             s["highest_profit_pct"] = 0.0
             return
@@ -1347,25 +1386,30 @@ async def check_exits(sym):
 
     # ── 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock) ──
     # 實施分級保本與回撤防護，防止「有利潤不平倉，最後被打到停損」
-    if s["highest_profit_pct"] >= 0.008 and profit_pct < s["highest_profit_pct"] * 0.5:
+    
+    # 趨勢確認：如果 MACD 仍在趨勢方向，則放寬鎖利條件
+    is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
+    
+    # 鎖利門檻放寬：如果趨勢還在，回撤門檻提高到 70% (原本是 50%)
+    if s["highest_profit_pct"] >= 0.008 and profit_pct < s["highest_profit_pct"] * (0.7 if is_trend_ok else 0.5):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達50% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
+        print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達{((1 - profit_pct / s['highest_profit_pct'])*100):.1f}% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="回撤鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.006 and profit_pct < 0.0025:
+    elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0035 if is_trend_ok else 0.0025):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [高利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發高利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="高利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.004 and profit_pct < 0.0015:
+    elif s["highest_profit_pct"] >= 0.004 and profit_pct < (0.0020 if is_trend_ok else 0.0015):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發中利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="中利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.0025 and profit_pct < 0.0010:
+    elif s["highest_profit_pct"] >= 0.0025 and profit_pct < (0.0015 if is_trend_ok else 0.0010):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="微利鎖利防護")
@@ -1603,20 +1647,38 @@ def is_entry_pin_safe(sym, side):
     upper_wick = high - max(open_price, close_price)
     lower_wick = min(open_price, close_price) - low
 
+    pin_threshold = 3.0
+    candle_range = max(high - low, 1e-8)
+    body_ratio = body / candle_range
+    if body_ratio < 0.35 or s.get("current_vol", 0.0) < max(100.0, s.get("vol_ma20", 0.0) * 0.5):
+        pin_threshold = 2.0
+    ema20 = s.get("ema20", 0.0)
+    if ema20 > 0:
+        if side == 'buy' and close_price < ema20:
+            pin_threshold = 2.0
+        if side == 'sell' and close_price > ema20:
+            pin_threshold = 2.0
+
+    enabled = pin_threshold < 3.0
+    if enabled:
+        print(f"@@COIN_DEBUG@@ 🔧 {sym} 反插針門檻收緊為 {pin_threshold:.1f} (body_ratio={body_ratio:.2f}, vol={s.get('current_vol',0):.0f}, ema20={ema20:.4f}) [enabled]")
+    else:
+        print(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
+
     if side == 'buy':
         if close_price <= prev_close:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} <= 前K收盤 {prev_close:.4f}")
             return False
-        if upper_wick > body * 3.0:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * 3)")
+        if upper_wick > body * pin_threshold:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
             return False
         return True
 
     if close_price >= prev_close:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} >= 前K收盤 {prev_close:.4f}")
         return False
-    if lower_wick > body * 3.0:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * 3)")
+    if lower_wick > body * pin_threshold:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
         return False
     return True
 
@@ -1648,16 +1710,13 @@ def is_entry_allowed(sym, side, route="a"):
     s = STATES[sym]
     cp = s["close_price"]
     
-    # 均線過濾器：受 15m SMA200 趨勢保護，防止逆勢接刀
-    if s.get("sma200_15m", 0) > 0:
-        ma200 = s["sma200_15m"]
-        
-        if side == 'buy' and cp <= ma200:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做多但價格 {cp:.4f} <= MA200 {ma200:.4f}")
-            return False
-        if side == 'sell' and cp >= ma200:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MA200過濾] 做空但價格 {cp:.4f} >= MA200 {ma200:.4f}")
-            return False
+    # 均線過濾器已移除 - 寬鬆進場模式允許價格在SMA200上下開單
+    # if s.get("sma200_15m", 0) > 0:
+    #     ma200 = s["sma200_15m"]
+    #     if side == 'buy' and cp <= ma200:
+    #         return False
+    #     if side == 'sell' and cp >= ma200:
+    #         return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
@@ -1675,8 +1734,8 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 20:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 20")
+    if adx_val < 25:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 25")
         return False
 
     # 實盤最小量限制
@@ -1764,25 +1823,37 @@ def compute_signal_strength(sym):
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
-    # Route A (Trend Following): 站上 SMA200 AND (MACD交叉或柱狀體為正) AND K線方向確認 AND 動能確認
+    # 寬鬆的RSI條件：>50時正常，或在45-55中立區但MACD確認時也允許
+    rsi_ok_long = rsi > 50.0 or (rsi >= 45.0 and (long_macd_cross or macd_hist > 0))
+    rsi_ok_short = rsi < 50.0 or (rsi <= 55.0 and (short_macd_cross or macd_hist < 0))
+
+    # Route A (Trend Following): 簡化版 - 只需4個核心條件
+    # 1. MACD確認 2. K線方向 3. RSI動能(寬鬆) 4. EMA20合理範圍
+    # 移除SMA200要求，允許更多進場機會
+    
+    # --- 優化：加入趨勢加分機制 ---
+    # 如果方向與 EMA50 趨勢一致，加 5 分，否則扣 5 分
+    trend_score = 0
+    if trend_confluence_long and (long_macd_cross or macd_hist > 0):
+        trend_score = 5
+    elif trend_confluence_short and (short_macd_cross or macd_hist < 0):
+        trend_score = 5
+    elif (trend_confluence_long and (short_macd_cross or macd_hist < 0)) or \
+         (trend_confluence_short and (long_macd_cross or macd_hist > 0)):
+        trend_score = -5
+
     route_a_long = (
-        is_above_sma200 and 
         (long_macd_cross or macd_hist > 0) and 
         last_candle_confirmed_long and 
-        rsi > 50.0 and 
-        close_near_ema20_long and 
-        trend_confluence_long and 
-        (is_in_bb_zone_long or close <= ema20 * 1.01)
+        rsi_ok_long and 
+        close_near_ema20_long
     )
     
     route_a_short = (
-        is_below_sma200 and 
         (short_macd_cross or macd_hist < 0) and 
         last_candle_confirmed_short and 
-        rsi < 50.0 and 
-        close_near_ema20_short and 
-        trend_confluence_short and 
-        (is_in_bb_zone_short or close >= ema20 * 0.99)
+        rsi_ok_short and 
+        close_near_ema20_short
     )
 
     long_base_ok = route_a_long
@@ -1793,6 +1864,7 @@ def compute_signal_strength(sym):
         strength = 15.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
+        strength += trend_score
         return ("buy", strength if strength >= 8.0 else 0.0, route)
 
     if short_base_ok:
@@ -1800,7 +1872,10 @@ def compute_signal_strength(sym):
         strength = 15.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
+        strength += trend_score
         return ("sell", strength if strength >= 8.0 else 0.0, route)
+
+    return (None, 0, None)
 
     return (None, 0, None)
 

@@ -1,22 +1,4 @@
 {
-  "_schema": {
-    "description": "Symbol configuration file for bot_symbols.json. This file supports `symbols` and `profiles`, where `profiles` can include custom personality settings, exit overrides, and reversal settings.",
-    "symbols": "list of symbols to monitor (will be normalized to uppercase USDT pairs).",
-    "profiles": "per-symbol profile overrides.",
-    "profiles.<symbol>.personality": "optional personality label to manually apply (calm/balanced/aggressive/adaptive).",
-    "profiles.<symbol>.exit_overrides": "optional object for symbol-specific exit tuning.",
-    "profiles.<symbol>.exit_overrides.tp_atr_multiplier": "override TP ATR multiplier. If larger than base, this value is applied while keeping stop loss conservative.",
-    "profiles.<symbol>.exit_overrides.sl_atr_multiplier": "override SL ATR multiplier. Larger values than base are ignored to prevent stop loss widening.",
-    "profiles.<symbol>.exit_overrides.hard_stop_loss_pct": "optional hard stop loss percentage override. Larger values than base are ignored.",
-    "profiles.<symbol>.exit_overrides.require_strong_momentum": "if true, TP override only applies when strong momentum is present.",
-    "profiles.<symbol>.exit_overrides.volume_threshold": "optional volume multiplier threshold required before applying TP exit override.",
-    "profiles.<symbol>.exit_overrides.momentum_threshold": "optional recent return threshold required before applying TP exit override.",
-    "profiles.<symbol>.reversal_settings": "optional symbol-specific reversal detection tuning.",
-    "profiles.<symbol>.reversal_settings.trade_signal_threshold": "larger values require stronger trade signal to confirm reversals.",
-    "profiles.<symbol>.reversal_settings.volume_multiplier": "volume surge multiplier needed for reversal confirmation.",
-    "profiles.<symbol>.reversal_settings.price_jump_pct": "minimum price jump percent to trigger reversal detection.",
-    "profiles.<symbol>.reversal_settings.min_reverse_pct": "minimum reverse move percent before reversal triggers."
-  },
   "symbols": [
     "SIRENUSDT",
     "XRPUSDT",
@@ -40,6 +22,9 @@
         "volume_threshold": 1.2,
         "momentum_threshold": 0.005
       }
+    },
+    "DOGEUSDT": {
+      "personality": "balanced"
     },
     "XRPUSDT": {
       "reversal_settings": {

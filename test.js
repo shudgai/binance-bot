@@ -717,6 +717,15 @@ createApp({
             return coin?.price || 0;
         };
 
+        const updateTradesPrice = (symbol, price) => {
+            trades.value.forEach((trade) => {
+                const tradeSym = trade.symbol.replace(':USDT', 'USDT');
+                if (tradeSym === symbol) {
+                    trade.current_price = price;
+                }
+            });
+        };
+
         const getTradeUnrealizedPnl = (trade) => {
             if (trade.is_close) return 0;
             const pos = allPositions.value[trade.symbol];
@@ -792,10 +801,11 @@ createApp({
                                 setTimeout(() => { coin.priceClass = ''; }, 400);
                             }
                             if (coin.symbol === activeSymbol.value) updateLatestCandle(coin.symbol, coin.price);
+                            updateTradesPrice(coin.symbol, coin.price);
                         }
                     } catch(e) {}
                 }
-            }, 3000);
+            }, 1500);
         };
 
         const wsConnections = [];
@@ -840,7 +850,15 @@ createApp({
                                         position.value.pnl = position.value.current_value - position.value.total_cost;
                                         position.value.pnl_percent = position.value.total_cost > 0 ? (position.value.pnl / position.value.total_cost) * 100 : 0;
                                     }
+                                    const pos = allPositions.value[data.s];
+                                    if (pos) {
+                                        pos.current_price = c.price;
+                                        pos.current_value = pos.qty * c.price;
+                                        pos.pnl = pos.current_value - pos.total_cost;
+                                        pos.pnl_percent = pos.total_cost > 0 ? (pos.pnl / pos.total_cost) * 100 : 0;
+                                    }
                                 }
+                                updateTradesPrice(data.s, c.price);
                             }
                         }
                     } catch(e) {}
@@ -904,10 +922,10 @@ createApp({
             initLiveTradesWs();
             fetchBackendLogs();
 
-            statusInterval       = setInterval(fetchBotStatus, 5000);
-            positionInterval     = setInterval(fetchPosition, 5000);
-            allPositionsInterval = setInterval(fetchAllPositions, 3000);
-            tradesInterval       = setInterval(fetchTrades, 8000);
+            statusInterval       = setInterval(fetchBotStatus, 4000);
+            positionInterval     = setInterval(fetchPosition, 3000);
+            allPositionsInterval = setInterval(fetchAllPositions, 1500);
+            tradesInterval       = setInterval(fetchTrades, 5000);
             rateInterval         = setInterval(fetchExchangeRate, 60000);
             logsInterval         = setInterval(fetchBackendLogs, 2000);
             klineInterval        = setInterval(loadKlines, 60000);
