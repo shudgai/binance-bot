@@ -57,9 +57,83 @@ if USE_TESTNET:
 
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
+    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSUSDT", "SUIUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
+
+PERSONALITY_TEMPLATES = {
+    "calm": {
+        "personality": "calm",
+        "risk_multiplier": 0.8,
+        "volume_multiplier": 0.9,
+        "entry_cooldown_sec": 120,
+        "max_additional_entries": 1,
+        "entry_size_pct": 0.4,
+        "add_entry_pct": 0.2,
+        "sl_atr_multiplier": 4.5,
+        "tp_atr_multiplier": 1.6,
+        "hard_stop_loss_pct": 0.035,
+    },
+    "balanced": {
+        "personality": "balanced",
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "entry_cooldown_sec": 90,
+        "max_additional_entries": 2,
+        "entry_size_pct": 0.5,
+        "add_entry_pct": 0.25,
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 1.5,
+        "hard_stop_loss_pct": 0.03,
+    },
+    "aggressive": {
+        "personality": "aggressive",
+        "risk_multiplier": 1.15,
+        "volume_multiplier": 1.1,
+        "entry_cooldown_sec": 60,
+        "max_additional_entries": 3,
+        "entry_size_pct": 0.6,
+        "add_entry_pct": 0.35,
+        "sl_atr_multiplier": 3.5,
+        "tp_atr_multiplier": 1.3,
+        "hard_stop_loss_pct": 0.025,
+    },
+    "adaptive": {
+        "personality": "adaptive",
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "entry_cooldown_sec": 90,
+        "max_additional_entries": 2,
+        "entry_size_pct": 0.5,
+        "add_entry_pct": 0.25,
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 1.4,
+        "hard_stop_loss_pct": 0.03,
+    },
+}
+
+SYMBOL_EXIT_OVERRIDES = {
+    "HUSDT": {
+        "tp_atr_multiplier": 1.8,
+        "sl_atr_multiplier": 5.0,
+    },
+}
+
+DEFAULT_REVERSAL_SETTINGS = {
+    "trade_signal_threshold": 1.8,
+    "volume_multiplier": 3.0,
+    "price_jump_pct": 0.01,
+    "min_reverse_pct": 0.008,
+}
+
+SYMBOL_REVERSAL_SETTINGS = {
+    "XRPUSDT": {
+        "trade_signal_threshold": 2.5,
+        "volume_multiplier": 3.5,
+        "price_jump_pct": 0.012,
+        "min_reverse_pct": 0.01,
+    },
+}
 
 
 def normalize_symbol(sym):
@@ -90,28 +164,255 @@ def normalize_symbol_list(symbols, max_count=20):
     return seen[:max_count]
 
 
-def load_symbol_pool():
+def load_symbol_config():
+    global SYMBOL_EXIT_OVERRIDES, SYMBOL_REVERSAL_SETTINGS
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+        symbols = []
+        profiles = {}
+        exit_overrides = {}
+        reversal_settings = {}
         if isinstance(data, dict):
-            return normalize_symbol_list(data.get("symbols", []))
-        return normalize_symbol_list(data)
+            symbols = normalize_symbol_list(data.get("symbols", []))
+            raw_profiles = data.get("profiles", {})
+            if isinstance(raw_profiles, dict):
+                for sym, profile in raw_profiles.items():
+                    normalized = normalize_symbol(sym)
+                    if not normalized or not isinstance(profile, dict):
+                        continue
+                    profile_copy = dict(profile)
+                    overrides = profile_copy.get("exit_overrides")
+                    if isinstance(overrides, dict):
+                        exit_overrides[normalized] = overrides
+                    settings = profile_copy.get("reversal_settings")
+                    if isinstance(settings, dict):
+                        reversal_settings[normalized] = settings
+                    profiles[normalized] = profile_copy
+        SYMBOL_EXIT_OVERRIDES = exit_overrides
+        SYMBOL_REVERSAL_SETTINGS = reversal_settings
+        return symbols or list(DEFAULT_SYMBOLS), profiles
     except FileNotFoundError:
-        return list(DEFAULT_SYMBOLS)
+        return list(DEFAULT_SYMBOLS), {}
     except Exception as e:
         print(f"⚠️ 讀取幣種清單失敗: {e}")
-        return list(DEFAULT_SYMBOLS)
+        return list(DEFAULT_SYMBOLS), {}
+
+
+def load_symbol_pool():
+    symbols, _ = load_symbol_config()
+    return symbols
+
+
+def load_symbol_profiles():
+    _, profiles = load_symbol_config()
+    return profiles
 
 
 def save_symbol_pool(symbols):
     normalized = normalize_symbol_list(symbols)
+    profiles = load_symbol_profiles()
+    payload = {"symbols": normalized}
+    if profiles:
+        payload["profiles"] = profiles
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump({"symbols": normalized}, f, ensure_ascii=False)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     return normalized
 
 
-ALL_SYMBOLS = load_symbol_pool()
+def save_symbol_profiles(profiles):
+    symbols = load_symbol_pool()
+    normalized_profiles = {}
+    for sym, profile in (profiles or {}).items():
+        normalized = normalize_symbol(sym)
+        if normalized and isinstance(profile, dict):
+            normalized_profiles[normalized] = profile
+    payload = {"symbols": symbols, "profiles": normalized_profiles}
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return normalized_profiles
+
+
+def infer_symbol_personality(sym):
+    if sym in ("BTCUSDT", "ETHUSDT"):
+        return "calm"
+    if sym == "HUSDT":
+        return "calm"
+    aggressive_coins = {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT", "XRPUSDT", "SANDUSDT", "MANAUSDT", "FIOUSDT"}
+    balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "UNIUSDT", "NEARUSDT", "SUIUSDT"}
+    if sym in aggressive_coins:
+        return "aggressive"
+    if sym in balanced_coins:
+        return "balanced"
+    return "adaptive"
+
+
+def get_personality_template(personality):
+    if not personality:
+        return PERSONALITY_TEMPLATES["balanced"]
+    return PERSONALITY_TEMPLATES.get(personality.lower(), PERSONALITY_TEMPLATES["balanced"])
+
+
+def get_symbol_exit_override(sym):
+    return SYMBOL_EXIT_OVERRIDES.get(sym, {})
+
+
+def should_require_strong_exit(overrides):
+    return bool(
+        overrides.get("require_strong_momentum")
+        or overrides.get("volume_threshold") is not None
+        or overrides.get("momentum_threshold") is not None
+    )
+
+
+def is_strong_exit_condition(sym, is_long):
+    overrides = get_symbol_exit_override(sym)
+    if not overrides:
+        return False
+    if overrides.get("require_strong_momentum"):
+        return has_strong_momentum(sym, is_long)
+    volume_threshold = overrides.get("volume_threshold")
+    momentum_threshold = overrides.get("momentum_threshold")
+    s = STATES[sym]
+    if s.get("vol_ma20", 0.0) <= 0 or len(s.get("closes", [])) < 4:
+        return False
+    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
+    recent_return = abs((s["closes"][-1] - s["closes"][-4]) / max(abs(s["closes"][-4]), 1e-8))
+    if volume_threshold is not None and volume_ratio < float(volume_threshold):
+        return False
+    if momentum_threshold is not None and recent_return < float(momentum_threshold):
+        return False
+    return True
+
+
+def get_effective_exit_setting(sym, key, base_value, is_long):
+    overrides = get_symbol_exit_override(sym)
+    if not overrides:
+        return base_value
+    value = overrides.get(key)
+    if not isinstance(value, (int, float)):
+        return base_value
+    if key == "tp_atr_multiplier":
+        if should_require_strong_exit(overrides) and not is_strong_exit_condition(sym, is_long):
+            return base_value
+        return value
+    if key in ("sl_atr_multiplier", "hard_stop_loss_pct"):
+        if value > base_value:
+            return base_value
+    return value
+
+
+def apply_symbol_profile(sym, profile):
+    if sym not in STATES:
+        return
+    state = STATES[sym]
+    if isinstance(profile, str):
+        profile = {"personality": profile}
+    personality = profile.get("personality") or state.get("personality") or infer_symbol_personality(sym)
+    personality_source = "manual" if profile.get("personality") else state.get("personality_source", "infer")
+    template = get_personality_template(personality)
+    state.update(template)
+    for key in [
+        "risk_multiplier", "volume_multiplier", "entry_cooldown_sec",
+        "max_additional_entries", "entry_size_pct", "add_entry_pct",
+        "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
+    ]:
+        if key in profile and isinstance(profile[key], (int, float)):
+            state[key] = profile[key]
+    state["personality"] = personality
+    state["personality_source"] = personality_source
+    if personality_source == "manual":
+        state["last_personality_update"] = time.time()
+
+
+def apply_all_symbol_profiles():
+    for sym in ALL_SYMBOLS:
+        profile = SYMBOL_PROFILES.get(sym, {})
+        apply_symbol_profile(sym, profile)
+
+
+def has_manual_personality(sym):
+    profile = SYMBOL_PROFILES.get(sym, {})
+    return isinstance(profile, dict) and "personality" in profile
+
+
+def evaluate_dynamic_personality(sym):
+    s = STATES[sym]
+    if s["current_atr"] <= 0 or s["vol_ma20"] <= 0 or len(s["ohlcv"]) < 20:
+        return s.get("personality", "balanced")
+
+    close = s["close_price"]
+    atr_pct = s["current_atr"] / max(close, 1e-8)
+    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
+    recent_candles = s["ohlcv"][-20:]
+    highs = np.array([x[2] for x in recent_candles])
+    lows = np.array([x[3] for x in recent_candles])
+    recent_high = float(np.max(highs))
+    recent_low = float(np.min(lows))
+    range_width_pct = (recent_high - recent_low) / max(recent_low, 1e-8)
+    rsi = s.get("current_rsi", 50.0)
+    macd_hist = s.get("macd_hist", 0.0)
+
+    quiet_market = volume_ratio < 1.15 and atr_pct < 0.008 and range_width_pct < 0.02
+    high_volatility = volume_ratio > 1.9 or atr_pct > 0.02 or range_width_pct > 0.04
+    strong_trend = abs(rsi - 50.0) > 12.0 or abs(macd_hist) > close * 0.0006
+
+    if quiet_market:
+        return "calm"
+    if high_volatility or strong_trend:
+        return "aggressive"
+    if range_width_pct >= 0.03 or abs(rsi - 50.0) > 8.0:
+        return "balanced"
+    return "adaptive"
+
+
+def measure_personality_traits(sym):
+    s = STATES[sym]
+    close = max(s.get("close_price", 0.0), 1e-8)
+    atr_pct = s.get("current_atr", 0.0) / close
+    volume_ratio = s.get("current_vol", 0.0) / max(s.get("vol_ma20", 1e-8), 1e-8)
+    recent_candles = s.get("ohlcv", [])[-20:]
+    highs = np.array([x[2] for x in recent_candles]) if recent_candles else np.array([close])
+    lows = np.array([x[3] for x in recent_candles]) if recent_candles else np.array([close])
+    recent_high = float(np.max(highs))
+    recent_low = float(np.min(lows))
+    range_width_pct = (recent_high - recent_low) / max(recent_low, 1e-8)
+    rsi = s.get("current_rsi", 50.0)
+    return volume_ratio, atr_pct, rsi, range_width_pct
+
+
+def update_dynamic_personality(sym):
+    if has_manual_personality(sym):
+        return False
+    s = STATES[sym]
+    new_personality = evaluate_dynamic_personality(sym)
+    old_personality = s.get("personality", "balanced")
+    if new_personality == old_personality and s.get("personality_source") == "dynamic":
+        s["last_personality_update"] = time.time()
+        return False
+    if new_personality != old_personality:
+        s.update(get_personality_template(new_personality))
+        s["personality"] = new_personality
+        s["personality_source"] = "dynamic"
+        s["last_personality_update"] = time.time()
+        volume_ratio, atr_pct, rsi, range_width_pct = measure_personality_traits(sym)
+        print(f"🔧 [動態個性] {sym} 由 {old_personality} 變更為 {new_personality} | vol={volume_ratio:.2f} atr_pct={atr_pct:.4f} rsi={rsi:.1f} range={range_width_pct:.3f}")
+        return True
+    return False
+
+
+def update_all_dynamic_personalities():
+    now = time.time()
+    for sym in ALL_SYMBOLS:
+        s = STATES[sym]
+        if has_manual_personality(sym):
+            continue
+        if now - s.get("last_personality_update", 0.0) < 300:
+            continue
+        update_dynamic_personality(sym)
+
+
+ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
 
 MAX_POSITIONS = 2
 COOLDOWN_SEC = 300
@@ -180,10 +481,21 @@ def build_symbol_state(sym):
         "avg_entry_price": 0.0,
         "max_additional_entries": 2,
         "entry_cooldown_sec": 90,
+        "entry_size_pct": 0.5,
+        "add_entry_pct": 0.25,
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 1.5,
+        "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
+        "personality": "balanced",
+        "personality_source": "infer",
+        "last_personality_update": 0.0,
         "last_entry_time": 0.0,
     }
 
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
+apply_all_symbol_profiles()
 WATCH_TASKS = {}
 
 # ── 指標計算函數 ──────────────────────────────────────────────
@@ -333,6 +645,7 @@ def apply_symbol_pool_change(requested_symbols):
     ALL_SYMBOLS = new_symbols[:target_count]
     for sym in ALL_SYMBOLS:
         STATES.setdefault(sym, build_symbol_state(sym))
+    apply_all_symbol_profiles()
     save_symbol_pool(ALL_SYMBOLS)
     return list(ALL_SYMBOLS)
 
@@ -710,20 +1023,28 @@ def should_recover_from_reversal(sym, is_long):
     macd_reversal = (is_long and s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]) or \
                     (not is_long and s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"])
 
+    if not macd_reversal or not s.get("prev_close") or len(s["ohlcv"]) < 2:
+        return False
+
+    current_price = s["close_price"]
+    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
+    prev_bar_idx = -2
+    prev_bar_high = s["ohlcv"][prev_bar_idx][2]
+    prev_bar_low = s["ohlcv"][prev_bar_idx][3]
     breakout_confirmed = False
-    if s["prev_close"] and len(s["ohlcv"]) >= 1:
-        prev_bar_idx = -2 if len(s["ohlcv"]) >= 2 else -1
-        prev_bar_high = s["ohlcv"][prev_bar_idx][2]
-        prev_bar_low = s["ohlcv"][prev_bar_idx][3]
-        break_high = s["close_price"] > s["prev_close"] and s["close_price"] >= prev_bar_high
-        break_low = s["close_price"] < s["prev_close"] and s["close_price"] <= prev_bar_low
-        breakout_confirmed = (is_long and break_low) or (not is_long and break_high)
+    if is_long:
+        breakout_confirmed = current_price < prev_bar_low and prev_bar_low - current_price > max(atr_val * 0.25, 0.001)
+    else:
+        breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
 
-    volume_confirmed = s["current_vol"] > s["vol_ma20"] * 2.0
+    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
+    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
+
+    volume_confirmed = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
     trade_signal = s.get("trade_signal_strength", 0.0)
-    trade_confirmed = trade_signal >= 1.5
+    trade_confirmed = trade_signal >= reversal_settings["trade_signal_threshold"]
 
-    if macd_reversal and breakout_confirmed and (volume_confirmed or trade_confirmed):
+    if macd_reversal and breakout_confirmed and volume_confirmed and trade_confirmed:
         return True
 
     return False
@@ -745,14 +1066,27 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
     atr_pct = atr_val / current_price if current_price > 0 else 0
 
-    # 1) 即時成交流監聽：大額成交且價格急速變動，優先判定為突破反轉
+    # 1) 即時成交流監聽：大額異常成交 + 明顯逆向價格跳動才判定為突破反轉
+    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
+    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
     trade_signal = s.get("trade_signal_strength", 0.0)
-    if trade_signal >= 1.1:
-        return "BREAKOUT_REVERSAL", f"即時大額成交異常 {s['trade_signal_reason']}"
+    reversal_threshold = reversal_settings["trade_signal_threshold"]
+    prev_close = s.get("prev_close")
+    if trade_signal >= reversal_threshold and prev_close:
+        price_move_pct = (current_price - prev_close) / max(prev_close, 1e-8)
+        if (is_long and price_move_pct < -max(reversal_settings["min_reverse_pct"], atr_pct * 1.2)) or \
+           (not is_long and price_move_pct > max(reversal_settings["min_reverse_pct"], atr_pct * 1.2)):
+            return "BREAKOUT_REVERSAL", f"即時大額成交異常 {s['trade_signal_reason']}"
 
-    # 2) 簡化的大單/突發行情判斷：放量且價格急速變動
-    volume_surge = s["current_vol"] > s["vol_ma20"] * 2.5
-    price_jump = abs(current_price - s["prev_close"]) / max(s["prev_close"], 1e-8) > 0.01 if s["prev_close"] else False
+    # 2) 簡化的大單/突發行情判斷：必須是與持倉方向相反的急速價格跳動
+    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
+    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
+    volume_surge = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
+    if prev_close:
+        price_jump = (prev_close - current_price) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2) if is_long else \
+                     (current_price - prev_close) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2)
+    else:
+        price_jump = False
     if volume_surge and price_jump:
         return "BREAKOUT_REVERSAL", "放量突發且價格急速變動"
 
@@ -764,6 +1098,17 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
             return "RANGE_PROFIT_TAKE", f"盤整區間內已獲利 {profit_pct * 100:.2f}%"
 
     return "HOLD", "未達出場條件"
+
+
+def has_strong_momentum(sym, is_long):
+    s = STATES[sym]
+    if s.get("vol_ma20", 0.0) <= 0 or len(s.get("closes", [])) < 4:
+        return False
+    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
+    recent_return = (s["closes"][-1] - s["closes"][-4]) / max(abs(s["closes"][-4]), 1e-8)
+    if is_long:
+        return volume_ratio > 1.2 and s["close_price"] > s.get("bb_mid", 0.0) and s["current_rsi"] > 52 and s.get("macd_hist", 0.0) > 0 and recent_return > 0.005
+    return volume_ratio > 1.2 and s["close_price"] < s.get("bb_mid", 0.0) and s["current_rsi"] < 48 and s.get("macd_hist", 0.0) < 0 and recent_return < -0.005
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
@@ -820,7 +1165,8 @@ async def check_exits(sym):
 
 
     # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
-    sl_mult = SL_ATR_MULTIPLIER * 1.5 if hold_sec < 120 else SL_ATR_MULTIPLIER
+    sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
+    sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
 
     if profit_pct > s["highest_profit_pct"]:
@@ -838,7 +1184,7 @@ async def check_exits(sym):
 
     if should_recover_from_reversal(sym, is_long):
         recovery_side = 'sell' if is_long else 'buy'
-        print(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手")
+        print(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手 | current={p:.4f} | prev_close={s.get('prev_close', 0):.4f} | trade_signal={s.get('trade_signal_strength', 0.0):.2f} | vol={s.get('current_vol', 0):.0f}/{s.get('vol_ma20', 0):.0f} | MACD反向交叉")
         await close_position(sym, recovery_side, abs(s["qty"]), p, avg, reason="反轉補救", is_stop_loss=True)
         s["highest_profit_pct"] = 0.0
         return
@@ -881,11 +1227,12 @@ async def check_exits(sym):
     is_strong = (is_long and s["current_rsi"] > 50) or (not is_long and s["current_rsi"] <= 50)
 
     # ATR TP/SL 價格 (兩條路線共用)
+    tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     if is_long:
-        tp = avg + max(atr_val * TP_ATR_MULTIPLIER, avg * 0.003)
+        tp = avg + max(atr_val * tp_base, avg * 0.003)
         sl = avg - (atr_val * sl_mult)
     else:
-        tp = avg - max(atr_val * TP_ATR_MULTIPLIER, avg * 0.003)
+        tp = avg - max(atr_val * tp_base, avg * 0.003)
         sl = avg + (atr_val * sl_mult)
 
     # ── 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock) ──
@@ -952,14 +1299,18 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             s["has_partial_closed"] = False
             return
-        # 弱勢快速停利：0.3% 就走
+        # 弱勢快速停利：穩健型幣種可以等更久，再決定是否落袋
         weak_tp = 0.005
+        if s.get("personality") == "calm":
+            weak_tp = 0.007
         if s["highest_profit_pct"] >= weak_tp:
-            cs = 'sell' if is_long else 'buy'
-            print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="快速停利")
-            s["highest_profit_pct"] = 0.0
-            return
+            if not has_strong_momentum(sym, is_long):
+                cs = 'sell' if is_long else 'buy'
+                print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%，動能不足則落袋")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="快速停利")
+                s["highest_profit_pct"] = 0.0
+                return
+            print(f"⚡ [保留動能] {sym} 弱勢已達{weak_tp*100:.1f}%但動能仍強，暫不停利")
         # 弱勢 ATR 停損直接觸發 (停利在弱勢下先抓快速停利)
         if (is_long and p <= sl) or (not is_long and p >= sl):
             cs = 'sell' if is_long else 'buy'
@@ -1007,12 +1358,13 @@ async def check_position_exits(sym):
         return
 
     # 硬停損：以百分比計算觸發價格（HARD_STOP_LOSS_PCT = 0.01 = 虧損 1%）
-    hard_sl_long = avg * (1 - HARD_STOP_LOSS_PCT)
-    hard_sl_short = avg * (1 + HARD_STOP_LOSS_PCT)
+    hard_stop_loss_pct = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
+    hard_sl_long = avg * (1 - hard_stop_loss_pct)
+    hard_sl_short = avg * (1 + hard_stop_loss_pct)
     if (is_long and p <= hard_sl_long) or (not is_long and p >= hard_sl_short):
         cs = 'sell' if is_long else 'buy'
-        print(f"⛔ [硬停損{HARD_STOP_LOSS_PCT*100:.0f}%] {sym} 均價:{avg:.6f} 現價:{p:.6f}")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"硬停損{HARD_STOP_LOSS_PCT*100:.0f}%", is_stop_loss=True)
+        print(f"⛔ [硬停損{hard_stop_loss_pct*100:.1f}%] {sym} 均價:{avg:.6f} 現價:{p:.6f}")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"硬停損{hard_stop_loss_pct*100:.1f}%", is_stop_loss=True)
         return
 
     # 3x ATR 停利
@@ -1036,7 +1388,7 @@ async def check_position_exits(sym):
 async def execute_order(sym, side, price):
     s = STATES[sym]
     pk = paper_key(sym)
-    margin = compute_per_coin_margin()
+    margin = compute_per_coin_margin(sym)
     if margin <= 0:
         print(f"⚠️ [風控] {sym} 無可用保證金")
         return
@@ -1056,17 +1408,14 @@ async def execute_order(sym, side, price):
                 return
 
     base_amt = margin / price
+    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
+    base_amt *= allocation_pct
     max_notional = 500.0  # 最大名義價值 500 USDT
     if base_amt * price > max_notional:
         base_amt = max_notional / price
     if base_amt < 0.001:
         print(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
         return
-
-    if side == 'buy':
-        base_amt *= 0.5 if s["entry_count"] == 0 else 0.25
-    else:
-        base_amt *= 0.5 if s["entry_count"] == 0 else 0.25
 
     if PAPER_TRADING:
         try:
@@ -1155,8 +1504,9 @@ def is_entry_volume_confirmed(sym, side):
     vol_ma20 = s["vol_ma20"]
     if vol_ma20 <= 0:
         return False
-    if current_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 均量門檻 {vol_ma20 * VOLUME_RATIO_THRESHOLD:.2f}")
+    threshold = vol_ma20 * VOLUME_RATIO_THRESHOLD * s.get("volume_multiplier", 1.0)
+    if current_vol < threshold:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 均量門檻 {threshold:.2f}")
         return False
     return True
 
@@ -1464,6 +1814,7 @@ async def main_loop():
                 await check_exits(sym)
             for sym in ALL_SYMBOLS:
                 await check_position_exits(sym)
+            update_all_dynamic_personalities()
             await check_entries()
             
             # 成功執行，重置連續錯誤計數器
