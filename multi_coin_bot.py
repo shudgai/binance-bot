@@ -8,6 +8,7 @@ import time
 import sys
 import uuid
 import fcntl
+import math
 from dotenv import load_dotenv
 from services.utils import paper_key
 from update_paper_state import update_paper_state
@@ -134,6 +135,67 @@ SYMBOL_REVERSAL_SETTINGS = {
         "min_reverse_pct": 0.01,
     },
 }
+
+_PRECISION_CACHE = {}
+
+
+def convert_to_ccxt_symbol(symbol: str) -> str:
+    symbol = str(symbol).upper().strip()
+    if symbol == "PEPEUSDT":
+        return "1000PEPE/USDT"
+    if symbol.endswith("USDT"):
+        return f"{symbol[:-4]}/USDT"
+    return symbol
+
+
+async def get_contract_precision(sym: str):
+    if sym in _PRECISION_CACHE:
+        return _PRECISION_CACHE[sym]
+
+    ccxt_symbol = convert_to_ccxt_symbol(sym)
+    if not exchange.markets:
+        try:
+            await exchange.load_markets()
+        except Exception:
+            pass
+
+    try:
+        market = exchange.market(ccxt_symbol)
+        amount_limits = market.get('limits', {}).get('amount', {})
+        step_size = float(amount_limits.get('min', 0.001) or 0.001)
+        min_qty = float(amount_limits.get('min', step_size) or step_size)
+        precision = int(round(-math.log10(step_size))) if step_size > 0 else 8
+        _PRECISION_CACHE[sym] = {
+            'step_size': step_size,
+            'min_qty': min_qty,
+            'qty_prec': market.get('precision', {}).get('amount', precision),
+            'price_prec': market.get('precision', {}).get('price', precision)
+        }
+    except Exception:
+        _PRECISION_CACHE[sym] = {
+            'step_size': 0.001,
+            'min_qty': 0.001,
+            'qty_prec': 3,
+            'price_prec': 3
+        }
+
+    return _PRECISION_CACHE[sym]
+
+
+def round_step(qty, step_size):
+    if qty <= 0 or step_size <= 0:
+        return 0.0
+    precision = int(round(-math.log10(step_size)))
+    rounded = math.floor(qty / step_size) * step_size
+    return round(rounded, precision)
+
+
+async def sanitize_order_qty(sym: str, qty: float):
+    prec = await get_contract_precision(sym)
+    qty = round_step(qty, prec['step_size'])
+    if qty < prec['min_qty']:
+        return 0.0
+    return qty
 
 
 def normalize_symbol(sym):
@@ -721,7 +783,7 @@ def get_balance():
     except:
         return 150.0
 
-def compute_per_coin_margin():
+def compute_per_coin_margin(sym=None):
     balance = get_balance()
     if balance <= 0:
         return 0
@@ -1119,7 +1181,13 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     qty = min(abs(qty), abs(s["qty"]))
     if qty < 0.000001:
         return
-    close_qty = qty if close_side == 'sell' else -qty
+
+    sanitized_qty = await sanitize_order_qty(sym, qty)
+    if sanitized_qty <= 0.0:
+        print(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
+        return
+    qty = min(qty, sanitized_qty)
+
     if PAPER_TRADING:
         if s["qty"] > 0:
             pnl = (price - avg_price) * qty
@@ -1133,6 +1201,7 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         except Exception as e:
             print(f"🚨 [平倉錯誤] {sym}: {e}")
             return
+
     remaining = abs(s["qty"]) - qty
     if remaining < 0.01:
         if remaining > 0.000001:
@@ -1319,7 +1388,16 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停損", is_stop_loss=True)
             return
     else:
-        # ── 強勢路線 ────────────────────────────────────
+        # ── 強勢路徑也啟動追高停利，避免高點回撤時提早離場
+        if s["highest_profit_pct"] >= 0.005 and profit_pct >= 0.001:
+            should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
+            if should_exit:
+                cs = 'sell' if is_long else 'buy'
+                print(f"🎯 [追高停利] {sym} 觸發追高停利 {trail_tp:.6f}")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="追高停利")
+                s["highest_profit_pct"] = 0.0
+                return
+
         # 強勢動態停利：高點回撤 0.5%
         if s["highest_profit_pct"] >= 0.01:
             if (is_long and p <= s["trailing_highest"] * 0.990) or (not is_long and p >= s["trailing_lowest"] * 1.010):
@@ -1413,6 +1491,12 @@ async def execute_order(sym, side, price):
     max_notional = 500.0  # 最大名義價值 500 USDT
     if base_amt * price > max_notional:
         base_amt = max_notional / price
+
+    base_amt = await sanitize_order_qty(sym, base_amt)
+    if base_amt <= 0.0:
+        print(f"⚠️ [風控] {sym} 無有效開倉數量 ({margin:.6f}/{price:.6f})")
+        return
+
     if base_amt < 0.001:
         print(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
         return
@@ -1627,21 +1711,37 @@ def compute_signal_strength(sym):
     is_above_sma200 = s.get("sma200_15m", 0) > 0 and close > s.get("sma200_15m", 0) * 0.999
     is_below_sma200 = s.get("sma200_15m", 0) > 0 and close < s.get("sma200_15m", 0) * 1.001
 
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>45/S<55): {rsi > 45.0}/{rsi < 55.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short}")
+    # 限制開倉不要太偏離短期趨勢線，避免追價開倉
+    close_near_ema20_long = ema20 <= 0 or close <= ema20 * 1.02
+    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.98
+    is_in_bb_zone_long = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
+    is_in_bb_zone_short = s.get("bb_up", 0) > 0 and close >= s["bb_up"] * 0.99
+
+    ema50 = s.get("ema50", 0.0)
+    trend_confluence_long = ema50 == 0.0 or close > ema50
+    trend_confluence_short = ema50 == 0.0 or close < ema50
+
+    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_confirmed_long}/{last_candle_confirmed_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # Route A (Trend Following): 站上 SMA200 AND (MACD交叉或柱狀體為正) AND K線方向確認 AND 動能確認
     route_a_long = (
         is_above_sma200 and 
         (long_macd_cross or macd_hist > 0) and 
         last_candle_confirmed_long and 
-        rsi > 45.0                      # 放寬：只要 RSI > 45 (脫離空頭區間) 即可
+        rsi > 50.0 and 
+        close_near_ema20_long and 
+        trend_confluence_long and 
+        (is_in_bb_zone_long or close <= ema20 * 1.01)
     )
     
     route_a_short = (
         is_below_sma200 and 
         (short_macd_cross or macd_hist < 0) and 
         last_candle_confirmed_short and 
-        rsi < 55.0                      # 放寬：只要 RSI < 55 (脫離多頭區間) 即可
+        rsi < 50.0 and 
+        close_near_ema20_short and 
+        trend_confluence_short and 
+        (is_in_bb_zone_short or close >= ema20 * 0.99)
     )
 
     long_base_ok = route_a_long

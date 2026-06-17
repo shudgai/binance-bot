@@ -97,10 +97,19 @@ def run_scan():
         # Sort selected symbols alphabetically
         selected_symbols.sort()
 
-        # Save to bot_symbols.json
+        # Save to bot_symbols.json and preserve existing symbol profiles if any
         print(f"🎯 Selected {len(selected_symbols)} symbols (sorted): {selected_symbols}")
+        payload = {"symbols": selected_symbols}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+                if isinstance(existing, dict) and isinstance(existing.get('profiles'), dict):
+                    payload['profiles'] = existing['profiles']
+            except Exception:
+                pass
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump({"symbols": selected_symbols}, f, ensure_ascii=False)
+            json.dump(payload, f, ensure_ascii=False)
 
         # Save current volumes as state for the next run
         with open(STATE_FILE, 'w', encoding='utf-8') as f:

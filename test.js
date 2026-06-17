@@ -736,7 +736,7 @@ createApp({
         const getTradeUnrealizedPnlPercent = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
             if (pnl === 0 || trade.price * trade.qty === 0) return 0;
-            return pnl / (trade.price * trade.qty) * 100 * (bot.value.leverage || 20);
+            return pnl / (trade.price * trade.qty) * 100 * (bot.value.leverage || 5);
         };
 
         const getTradeUnrealizedPnlPercentActual = (trade) => {

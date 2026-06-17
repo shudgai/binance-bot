@@ -64,10 +64,32 @@ def load_symbol_config():
         return list(DEFAULT_SYMBOLS)
 
 
+def load_symbol_profiles():
+    try:
+        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            raw_profiles = data.get("profiles", {})
+            if isinstance(raw_profiles, dict):
+                normalized_profiles = {}
+                for sym, profile in raw_profiles.items():
+                    normalized = normalize_symbol(sym)
+                    if normalized and isinstance(profile, dict):
+                        normalized_profiles[normalized] = profile
+                return normalized_profiles
+        return {}
+    except Exception:
+        return {}
+
+
 def save_symbol_config(symbols):
     normalized = normalize_symbol_list(symbols)
+    profiles = load_symbol_profiles()
+    payload = {"symbols": normalized}
+    if profiles:
+        payload["profiles"] = profiles
     with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"symbols": normalized}, f, ensure_ascii=False)
+        json.dump(payload, f, ensure_ascii=False)
     return normalized
 
 
