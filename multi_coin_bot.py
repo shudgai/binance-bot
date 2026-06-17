@@ -1564,6 +1564,19 @@ async def execute_order(sym, side, price):
         print(f"⚠️ [風控] {sym} 無可用保證金")
         return
 
+    # --- 價格偏離檢查 ---
+    try:
+        ticker = await exchange.fetch_ticker(sym)
+        market_price = ticker.get('last')
+        if market_price and market_price > 0:
+            deviation = abs(price - market_price) / market_price
+            if deviation > 0.05:
+                print(f"🚨 [風控] {sym} 訂單價格 {price} 嚴重偏離市價 {market_price} (偏離 {deviation*100:.2f}%)，拒絕執行！")
+                return
+    except Exception as e:
+        print(f"⚠️ [價格偏離檢查失敗] {e}")
+    # --------------------
+
     now = time.time()
     if side == 'buy' and s["entry_count"] > 0:
         if now - s["last_entry_time"] < s["entry_cooldown_sec"]:
@@ -1849,7 +1862,7 @@ def compute_signal_strength(sym):
         trend_score = 5
     elif trend_confluence_short and (short_macd_cross or macd_hist < 0):
         trend_score = 5
-    elif (trend_confluence_long and (short_macd_cross or macd_hist < 0)) or \
+    elif (trend_conflueB弓nce_long and (short_macd_cross or macd_hist < 0)) or \
          (trend_confluence_short and (long_macd_cross or macd_hist > 0)):
         trend_score = -5
     else:

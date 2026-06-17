@@ -1,16 +1,16 @@
 {
   "symbols": [
-    "SENTUSDT",
     "PORTALUSDT",
+    "SENTUSDT",
     "STGUSDT",
-    "BLESSUSDT",
+    "BRUSDT",
     "XRPUSDT",
-    "DOGEUSDT",
     "SIRENUSDT",
+    "DOGEUSDT",
     "ESPORTSUSDT",
     "FXSUSDT",
-    "FIOUSDT",
     "HUSDT",
-    "BEATUSDT"
+    "FIOUSDT",
+    "BSBUSDT"
   ]
 }
