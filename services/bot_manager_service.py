@@ -230,10 +230,10 @@ def kill_bot():
         _kill_single_bot(s)
     
     # 確保所有遺留的 bot 行程都被清除，防止 API 重啟後產生孤兒行程
-    import os
+    # 使用精確字串匹配，避免誤殺 multi_coin_bot_v2.py（其名稱包含 multi_coin_bot.py 作為子字串）
     try:
-        os.system("pkill -f multi_coin_bot_v2.py")
-        os.system("pkill -f multi_coin_bot.py")
+        os.system("pkill -f 'multi_coin_bot_v2\\.py'")
+        os.system("pkill -f '[^2]multi_coin_bot\\.py'")
     except:
         pass
 

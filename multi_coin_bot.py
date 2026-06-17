@@ -122,7 +122,7 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 4.0
 TP_ATR_MULTIPLIER = 1.5
-HARD_STOP_LOSS_PCT = 0.01
+HARD_STOP_LOSS_PCT = 0.025
 
 def build_symbol_state(sym):
     return {
@@ -808,7 +808,8 @@ async def check_exits(sym):
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
-    cooldown_limit = 60.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
+    # 高波動期縮短保護盲區到 20 秒，低波動維持 60 秒
+    cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
     if hold_sec < cooldown_limit:
         return
 
@@ -818,7 +819,8 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
 
-    sl_mult = SL_ATR_MULTIPLIER * 2 if hold_sec < 120 else SL_ATR_MULTIPLIER
+    # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
+    sl_mult = SL_ATR_MULTIPLIER * 1.5 if hold_sec < 120 else SL_ATR_MULTIPLIER
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
 
     if profit_pct > s["highest_profit_pct"]:
@@ -1004,12 +1006,13 @@ async def check_position_exits(sym):
     if hold_sec < 120:
         return
 
-    # 10% 硬停損
-    hard_sl = avg * HARD_STOP_LOSS_PCT
-    if (is_long and p <= avg - hard_sl) or (not is_long and p >= avg + hard_sl):
+    # 硬停損：以百分比計算觸發價格（HARD_STOP_LOSS_PCT = 0.01 = 虧損 1%）
+    hard_sl_long = avg * (1 - HARD_STOP_LOSS_PCT)
+    hard_sl_short = avg * (1 + HARD_STOP_LOSS_PCT)
+    if (is_long and p <= hard_sl_long) or (not is_long and p >= hard_sl_short):
         cs = 'sell' if is_long else 'buy'
-        print(f"⛔ [10%停損] {sym}")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="10%停損", is_stop_loss=True)
+        print(f"⛔ [硬停損{HARD_STOP_LOSS_PCT*100:.0f}%] {sym} 均價:{avg:.6f} 現價:{p:.6f}")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"硬停損{HARD_STOP_LOSS_PCT*100:.0f}%", is_stop_loss=True)
         return
 
     # 3x ATR 停利

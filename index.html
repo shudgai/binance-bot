@@ -675,6 +675,7 @@
                                 <th>方向</th>
                                 <th>價格</th>
                                 <th>數量</th>
+                                <th>手續費</th>
                                 <th>未實現損益</th>
                                 <th>已實現損益 (%)</th>
                                 <th>操作</th>
@@ -692,6 +693,7 @@
                                 </td>
                                 <td>{{ t.price }}</td>
                                 <td>{{ t.qty }}</td>
+                                <td>{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }} USDT</td>
                                 <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
                                     {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
                                     <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
@@ -709,7 +711,7 @@
                                 </td>
                             </tr>
                             <tr v-if="trades.length === 0">
-                                <td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px 0;">尚無交易紀錄</td>
+                                <td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px 0;">尚無交易紀錄</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1030,21 +1032,8 @@ createApp({
             if (!s.endsWith('USDT')) s += 'USDT';
             if (!coins.value.find(c => c.symbol === s)) {
                 coins.value.push({ symbol: s, name: s.replace('USDT',''), label: '自訂', price: 0, prevPrice: 0, priceClass: '' });
-                // Subscribe to ticker immediately
-                try {
-                    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${s.toLowerCase()}@ticker`);
-                    ws.onmessage = (event) => {
-                        const data = JSON.parse(event.data);
-                        const c = coins.value.find(x => x.symbol === s);
-                        if (c) {
-                            c.prevPrice = c.price; c.price = parseFloat(data.c);
-                            if (c.prevPrice > 0) {
-                                c.priceClass = c.price > c.prevPrice ? 'up' : c.price < c.prevPrice ? 'down' : '';
-                                setTimeout(() => { c.priceClass = ''; }, 400);
-                            }
-                        }
-                    };
-                } catch(e){}
+                // Reinitialize unified websocket to include the new custom coin
+                initWebSocket();
             }
             setActiveCoin(s);
             customSymbol.value = '';
@@ -1384,6 +1373,14 @@ createApp({
                     }
                 } catch(e) {}
             };
+            liveTradesWs.onclose = () => {
+                setTimeout(() => {
+                    // Only reconnect if this is still the active symbol
+                    if (activeSymbol.value && activeSymbol.value.toLowerCase() === sym) {
+                        initLiveTradesWs();
+                    }
+                }, 5000);
+            };
         };
 
         const setActiveCoin = async (symbol) => {
@@ -1402,11 +1399,34 @@ createApp({
             } catch(e) {}
         };
 
+        // ── 後端自動重連機制 ─────────────────────────────────────
+        let _backoffDelay = 2000;   // 起始 2 秒，最大 30 秒
+        let _reconnectTimer = null;
+        let _isBackendDown = false;
+
+        const scheduleReconnect = () => {
+            if (_reconnectTimer) return;  // 已有排程，不重複
+            _reconnectTimer = setTimeout(() => {
+                _reconnectTimer = null;
+                fetchBotStatus();
+            }, _backoffDelay);
+            _backoffDelay = Math.min(_backoffDelay * 2, 30000);  // 指數退避，最大 30s
+        };
+
         const fetchBotStatus = async () => {
             try {
                 const res = await fetch(`${API_BASE}/bot-status`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const resp = await res.json();
                 const data = resp.data || resp;
+
+                // 後端恢復後重置退避計時器
+                if (_isBackendDown) {
+                    _isBackendDown = false;
+                    _backoffDelay = 2000;
+                    addLog('✅ 後端連線已恢復', 'success');
+                }
+
                 if (bot.value.is_running !== data.is_running && bot.value.strategy !== '-')
                     addLog(`機器人狀態: ${data.is_running ? '🚀 啟動' : '⏹️ 停止'}`);
                 bot.value = data;
@@ -1433,7 +1453,14 @@ createApp({
                 }
 
                 if (error.value) error.value = '';
-            } catch(e) { error.value = '後端連線失敗。'; }
+            } catch(e) {
+                if (!_isBackendDown) {
+                    _isBackendDown = true;
+                    addLog(`⚠️ 後端連線失敗，${_backoffDelay/1000}秒後自動重試...`, 'danger');
+                }
+                error.value = `⚠️ 後端連線失敗，${_backoffDelay/1000}秒後自動重連...`;
+                scheduleReconnect();
+            }
         };
 
         const updateTradeAmount = async () => {
