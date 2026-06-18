@@ -139,7 +139,7 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 1.0
+VOLUME_RATIO_THRESHOLD = 0.7
 ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 12
 ATR_WARMUP_LIMIT = 1000
@@ -167,9 +167,9 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 1,
         "entry_size_pct": 0.3,
         "add_entry_pct": 0.15,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 1.8,
-        "hard_stop_loss_pct": 0.04,
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 2.5,
+        "hard_stop_loss_pct": 0.03,
     },
     "balanced": {
         "personality": "balanced",
@@ -179,9 +179,9 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 2,
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 2.5,
+        "sl_atr_multiplier": 1.2,
         "tp_atr_multiplier": 2.0,
-        "hard_stop_loss_pct": 0.03,
+        "hard_stop_loss_pct": 0.02,
     },
     "aggressive": {
         "personality": "aggressive",
@@ -191,9 +191,9 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 3,
         "entry_size_pct": 0.7,
         "add_entry_pct": 0.4,
-        "sl_atr_multiplier": 2.0,
-        "tp_atr_multiplier": 2.5,
-        "hard_stop_loss_pct": 0.02,
+        "sl_atr_multiplier": 1.0,
+        "tp_atr_multiplier": 1.8,
+        "hard_stop_loss_pct": 0.015,
     },
     "adaptive": {
         "personality": "adaptive",
@@ -203,24 +203,24 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 2,
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 2.2,
-        "hard_stop_loss_pct": 0.03,
+        "sl_atr_multiplier": 1.2,
+        "tp_atr_multiplier": 2.0,
+        "hard_stop_loss_pct": 0.02,
     },
 }
 
 SYMBOL_EXIT_OVERRIDES = {
     "HUSDT": {
-        "tp_atr_multiplier": 1.8,
-        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 2.5,
+        "sl_atr_multiplier": 1.5,
     },
     "XRPUSDT": {
-        "tp_atr_multiplier": 2.0,
-        "sl_atr_multiplier": 4.5,
+        "tp_atr_multiplier": 2.5,
+        "sl_atr_multiplier": 1.5,
     },
     "LINKUSDT": {
-        "tp_atr_multiplier": 1.8,
-        "sl_atr_multiplier": 4.5,
+        "tp_atr_multiplier": 2.5,
+        "sl_atr_multiplier": 1.5,
     },
 }
 
@@ -257,14 +257,14 @@ async def get_contract_precision(sym: str):
         return _PRECISION_CACHE[sym]
 
     ccxt_symbol = convert_to_ccxt_symbol(sym)
-    if not exchange.markets:
+    if not exchange_futures.markets:
         try:
-            await exchange.load_markets()
+            await exchange_futures.load_markets()
         except Exception:
             pass
 
     try:
-        market = exchange.market(ccxt_symbol)
+        market = exchange_futures.market(ccxt_symbol)
         amount_limits = market.get('limits', {}).get('amount', {})
         step_size = float(amount_limits.get('min', 0.001) or 0.001)
         min_qty = float(amount_limits.get('min', step_size) or step_size)
@@ -632,9 +632,9 @@ PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
-SL_ATR_MULTIPLIER = 4.0
-TP_ATR_MULTIPLIER = 2.0
-HARD_STOP_LOSS_PCT = 0.01
+SL_ATR_MULTIPLIER = 1.5
+TP_ATR_MULTIPLIER = 2.5
+HARD_STOP_LOSS_PCT = 0.02
 
 def build_symbol_state(sym):
     return {
@@ -698,8 +698,8 @@ def build_symbol_state(sym):
         "add_entry_pct": 0.25,
         "risk_multiplier": 1.0,
         "volume_multiplier": 1.0,
-        "sl_atr_multiplier": 4.0,
-        "tp_atr_multiplier": 1.5,
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 2.5,
         "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
         "personality": "balanced",
         "personality_source": "infer",
@@ -773,7 +773,7 @@ def get_dynamic_stagnation_limit(current_atr, atr_ma20):
 
 def check_binance_weight():
     try:
-        headers = getattr(exchange, 'last_response_headers', {})
+        headers = getattr(exchange_futures, 'last_response_headers', {})
         weight = None
         for k, v in headers.items():
             if k.lower() == 'x-mbx-used-weight-1m':
@@ -809,13 +809,13 @@ def is_symbol_locked(sym):
     return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED")
 
 
-def filter_valid_symbols(symbols):
-    if not exchange.markets:
+def filter_valid_symbols(exchange, symbols):
+    if not exchange_futures.markets:
         return list(symbols)
     valid = []
     for sym in symbols:
         found = False
-        for m in exchange.markets.values():
+        for m in exchange_futures.markets.values():
             if m['id'] == sym or m['symbol'] == sym:
                 found = True
                 break
@@ -918,7 +918,7 @@ async def fetch_real_balance():
     if PAPER_TRADING:
         return
     try:
-        balance_info = await exchange.fetch_balance()
+        balance_info = await exchange_futures.fetch_balance()
         usdt_balance = float(balance_info.get('USDT', {}).get('total', 150.0))
         REAL_BALANCE = usdt_balance
     except Exception as e:
@@ -1002,9 +1002,9 @@ def reset_coin_state(sym):
     s["add_entry_pct"] = 0.25
     s["risk_multiplier"] = 1.0
     s["volume_multiplier"] = 1.0
-    s["sl_atr_multiplier"] = 4.0
-    s["tp_atr_multiplier"] = 1.5
-    s["hard_stop_loss_pct"] = HARD_STOP_LOSS_PCT
+    s["sl_atr_multiplier"] = 1.5
+    s["tp_atr_multiplier"] = 2.5
+    s["hard_stop_loss_pct"] = 0.02
     s["personality"] = "balanced"
     s["personality_source"] = "infer"
     s["last_personality_update"] = 0.0
@@ -1020,12 +1020,12 @@ MARKET_WIND = {
     "eth_change_15m": 0.0
 }
 
-async def update_market_wind():
+async def update_market_wind(exchange):
     global MARKET_WIND
     try:
         # 抓取 BTC 和 ETH
-        btc_ohlcv = await exchange.fetch_ohlcv("BTCUSDT", TIMEFRAME, limit=100)
-        eth_ohlcv = await exchange.fetch_ohlcv("ETHUSDT", TIMEFRAME, limit=100)
+        btc_ohlcv = await exchange.fetch_ohlcv("BTC/USDT", TIMEFRAME, limit=100)
+        eth_ohlcv = await exchange.fetch_ohlcv("ETH/USDT", TIMEFRAME, limit=100)
         
         MARKET_WIND["allow_long"] = True
         MARKET_WIND["allow_short"] = True
@@ -1062,7 +1062,7 @@ async def update_market_wind():
 
 # ── 資料獲取 ──────────────────────────────────────────────────
 
-async def initialize_atr_history(batch_size: int = ATR_WARMUP_BATCH_SIZE, limit: int = ATR_WARMUP_LIMIT, pause_sec: float = ATR_WARMUP_PAUSE_SEC):
+async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SIZE, limit: int = ATR_WARMUP_LIMIT, pause_sec: float = ATR_WARMUP_PAUSE_SEC):
     target_symbols = ALL_SYMBOLS[:ATR_WARMUP_SYMBOL_COUNT]
     print(f"⏳ [初始化] 開始分批獲取 {limit} 根 1m K線，以預熱前 {len(target_symbols)} 個主攻幣種的 ATR 歷史，下次批次間隔 {pause_sec}s...")
     total = len(target_symbols)
@@ -1096,7 +1096,7 @@ async def initialize_atr_history(batch_size: int = ATR_WARMUP_BATCH_SIZE, limit:
         if batch_index + batch_size < total:
             await asyncio.sleep(pause_sec)
 
-async def fetch_all_klines():
+async def fetch_all_klines(exchange):
     tasks = {}
     for sym in ALL_SYMBOLS:
         tasks[sym] = exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
@@ -1108,7 +1108,7 @@ async def fetch_all_klines():
         else:
             print(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
 
-async def fetch_sma200_15m(sym):
+async def fetch_sma200_15m(exchange, sym):
     try:
         ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=200)
         closes = np.array([x[4] for x in ohlcv])
@@ -1117,9 +1117,9 @@ async def fetch_sma200_15m(sym):
         print(f"⚠️ [SMA200獲取失敗] {sym}: {e}")
         return 0.0
 
-async def fetch_all_sma200():
-    tasks = {sym: fetch_sma200_15m(sym) for sym in ALL_SYMBOLS}
-    results = await asyncio.gather(*[tasks[sym] for sym in tasks], return_exceptions=True)
+async def fetch_all_sma200(exchange):
+    tasks = [fetch_sma200_15m(exchange, sym) for sym in ALL_SYMBOLS]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, sym in enumerate(ALL_SYMBOLS):
         if not isinstance(results[i], Exception):
             STATES[sym]["sma200_15m"] = results[i]
@@ -1225,10 +1225,13 @@ def update_trailing_stop(sym, current_price, is_long):
         return False, 0.0
 
     # 讀取配置參數
-    config = load_symbol_config()[1] # 這裡假設 profiles 裡有相關設定，或者從 global 讀取
-    # 為了簡化，我們直接從 strategy_config.json 讀取的參數
-    import strategy_config
-    trailing_multiplier = strategy_config.get("trailing_stop_multiplier", 2.0)
+    # 從 strategy_config.json 讀取 trailing_stop_multiplier
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "strategy_config.json"), "r") as _f:
+            _cfg = json.load(_f)
+        trailing_multiplier = float(_cfg.get("trailing_stop_multiplier", 2.0))
+    except Exception:
+        trailing_multiplier = 2.0
 
     # 初始化移動停損價 (若尚未設定)
     if s.get("trailing_stop_price", 0.0) <= 0:
@@ -1243,7 +1246,7 @@ def update_trailing_stop(sym, current_price, is_long):
     
     # 獲取爆倉價 (預計爆倉價)
     # 這裡我們需要知道當前槓桿，假設為 LEVERAGE 變數
-    liq_price = calculate_liquidation_price(sym, "long" if is_long else "short", avg_price, LEVERAGE)
+    liq_price = avg_price * (1 - 1.0 / LEVERAGE) if is_long else avg_price * (1 + 1.0 / LEVERAGE)
 
     if is_long:
         # 檢查是否觸發停損
@@ -1292,8 +1295,26 @@ def update_trailing_stop(sym, current_price, is_long):
             
         return False, s["trailing_stop_price"]
 
-# 移除舊的 update_trailing_take_profit 並替換為新的 update_trailing_stop
-# (注意：我會同時更新呼叫處)
+def update_trailing_take_profit(sym, current_price, is_long):
+    """移動停利：價格創新高/新低時上移停利線，回撤超過門檻則觸發平倉。"""
+    s = STATES[sym]
+    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.005)
+    trail_pct = 0.005  # 回撤 0.5% 觸發
+
+    if is_long:
+        if current_price > s.get("trail_tp_price", 0.0):
+            s["trail_tp_price"] = current_price
+        trigger = s["trail_tp_price"] * (1.0 - trail_pct)
+        if current_price <= trigger:
+            return True, trigger
+        return False, s["trail_tp_price"]
+    else:
+        if s.get("trail_tp_price", float('inf')) == float('inf') or current_price < s["trail_tp_price"]:
+            s["trail_tp_price"] = current_price
+        trigger = s["trail_tp_price"] * (1.0 + trail_pct)
+        if current_price >= trigger:
+            return True, trigger
+        return False, s["trail_tp_price"]
 
 
 
@@ -1416,7 +1437,7 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
     else:
         try:
-            await exchange.create_order(sym, type='market', side=close_side, amount=qty,
+            await exchange_futures.create_order(sym, type='market', side=close_side, amount=qty,
                                         params={'reduceOnly': True, 'marginMode': 'isolated'})
         except Exception as e:
             print(f"🚨 [平倉錯誤] {sym}: {e}")
@@ -1645,7 +1666,7 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停損", is_stop_loss=True)
             return
 
-async def check_position_exits(sym):
+async def check_position_exits(exchange, sym):
     s = STATES[sym]
     if s.get("adjusted_this_tick", False):
         return
@@ -1734,7 +1755,7 @@ async def execute_order(sym, side, price):
 
     # --- 價格偏離檢查 ---
     try:
-        ticker = await exchange.fetch_ticker(sym)
+        ticker = await exchange_futures.fetch_ticker(sym)
         market_price = ticker.get('last')
         if market_price and market_price > 0:
             deviation = abs(price - market_price) / market_price
@@ -1796,7 +1817,7 @@ async def execute_order(sym, side, price):
             print(f"🛑 [模擬開倉失敗] {sym}: {e}")
     else:
         try:
-            order = await exchange.create_order(sym, type='market', side=side, amount=base_amt,
+            order = await exchange_futures.create_order(sym, type='market', side=side, amount=base_amt,
                                                 params={'marginMode': 'isolated'})
             fill_price = float(order.get('price', 0) or price)
             if fill_price <= 0:
@@ -1923,8 +1944,8 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 20:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 20")
+    if adx_val < 15:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 15")
         return False
 
     # 實盤最小量限制
@@ -1990,15 +2011,11 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    # --- 優化：要求連續兩根 K 線收盤價方向一致 ---
-    # 確保最後兩根 K 線的收盤價都是上升的 (多頭) 或下降的 (空頭)
-    # 這樣可以過濾掉單一 K 線的異常跳動或插針
-    last_two_candles_long = len(s["ohlcv"]) >= 3 and \
-                              s["ohlcv"][-1][4] > s["ohlcv"][-2][4] and \
-                              s["ohlcv"][-2][4] > s["ohlcv"][-3][4]
-    last_two_candles_short = len(s["ohlcv"]) >= 3 and \
-                               s["ohlcv"][-1][4] < s["ohlcv"][-2][4] and \
-                               s["ohlcv"][-2][4] < s["ohlcv"][-3][4]
+    # --- 只需要最後 2 根 K 線方向一致 (放寬：不再要求連續 3 根) ---
+    last_two_candles_long = len(s["ohlcv"]) >= 2 and \
+                              s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
+    last_two_candles_short = len(s["ohlcv"]) >= 2 and \
+                               s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
 
     ema50 = s.get("ema50", 0.0)
     trend_confluence_long = ema50 == 0.0 or close > ema50
@@ -2138,10 +2155,10 @@ async def check_entries():
 
 # ── 主循環 ──────────────────────────────────────────────────
 
-async def watch_symbol_trades(sym):
+async def watch_symbol_trades(exchange, sym):
     while True:
         try:
-            trades = await exchange.watch_trades(sym)
+            trades = await exchange_futures.fetch_trades(sym, limit=50)
             if isinstance(trades, list):
                 for trade in trades:
                     update_trade_signal(sym, trade)
@@ -2149,10 +2166,7 @@ async def watch_symbol_trades(sym):
                 update_trade_signal(sym, trades)
         except Exception as e:
             print(f"⚠️ [成交流監聽異常] {sym}: {e}")
-            await asyncio.sleep(3)
-
-
-async def ensure_watch_tasks():
+        await asyncio.sleep(3)
     global WATCH_TASKS
     desired_symbols = set(ALL_SYMBOLS)
     current_symbols = set(WATCH_TASKS.keys())
@@ -2163,41 +2177,33 @@ async def ensure_watch_tasks():
             task.cancel()
 
     for sym in desired_symbols - current_symbols:
-        WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(sym))
+        WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(sym, exchange))
 
 
-async def watch_all_trades():
-    while True:
-        try:
-            await ensure_watch_tasks()
-            await asyncio.sleep(5)
-        except Exception as e:
-            print(f"❌ [成交流監聽錯誤] {e}")
-            await asyncio.sleep(3)
+async def ensure_watch_tasks(exchange):
+    """No-op stub kept for compatibility."""
+    pass
 
 
-async def main_loop():
-    print("🚀 [多幣輪動] 啟動多幣種輪動交易機器人")
-    print(f"📊 最大同時持倉: {MAX_POSITIONS}")
-    print(f"📡 模式: {'模擬' if PAPER_TRADING else '實盤'}")
-    print(f"@@LEVERAGE@@{LEVERAGE}")
+async def main_loop(exchange):
+    """初始化後進入主交易循環"""
     try:
-        await asyncio.wait_for(exchange.load_markets(), timeout=15)
+        await asyncio.wait_for(exchange_futures.load_markets(), timeout=15)
     except Exception as e:
         print(f"⚠️ load_markets 失敗 ({e})，使用預設市場清單")
-    
+
     global ALL_SYMBOLS
-    ALL_SYMBOLS = filter_valid_symbols(ALL_SYMBOLS)
+    ALL_SYMBOLS = filter_valid_symbols(exchange, ALL_SYMBOLS)
     save_symbol_pool(ALL_SYMBOLS)
-    
+
     print(f"📋 監控幣種: {', '.join(ALL_SYMBOLS)}")
     try:
-        await asyncio.wait_for(initialize_atr_history(), timeout=60)
+        await asyncio.wait_for(initialize_atr_history(exchange), timeout=60)
     except (asyncio.TimeoutError, Exception) as e:
         print(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
     await fetch_real_balance()
     await load_open_positions()
-    await fetch_all_sma200()
+    await fetch_all_sma200(exchange)
 
     last_balance_update = time.time()
 
@@ -2210,27 +2216,25 @@ async def main_loop():
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
-            # apply_symbol_pool_change(load_symbol_pool())  # 註解掉以避免 NameError
-            await ensure_watch_tasks()
-            await update_market_wind()
-            await fetch_all_klines()
+            await update_market_wind(exchange)
+            await fetch_all_klines(exchange)
             for sym in ALL_SYMBOLS:
                 compute_indicators(sym)
             update_states()
             for sym in ALL_SYMBOLS:
                 await check_exits(sym)
             for sym in ALL_SYMBOLS:
-                await check_position_exits(sym)
+                await check_position_exits(exchange, sym)
             update_all_dynamic_personalities()
             await check_entries()
-            
+
             # 成功執行，重置連續錯誤計數器
             global CONSECUTIVE_ERRORS
             CONSECUTIVE_ERRORS = 0
-            
+
             # 權重節流檢測
             weight_sleep = check_binance_weight()
-            
+
             elapsed = time.time() - loop_start
             sleep_time = max(1.5, MAIN_LOOP_INTERVAL_SEC - elapsed) + weight_sleep
             await asyncio.sleep(sleep_time)
@@ -2249,7 +2253,7 @@ async def main_loop():
             CONSECUTIVE_ERRORS += 1
             print(f"❌ [主循環錯誤] 當前連續錯誤數: {CONSECUTIVE_ERRORS} | 錯誤: {e}")
             traceback.print_exc()
-            
+
             # 連續錯誤防爆防封禁冷卻機制
             if CONSECUTIVE_ERRORS >= 3:
                 cooldown = min(120, 15 * (CONSECUTIVE_ERRORS - 2))
@@ -2258,10 +2262,10 @@ async def main_loop():
             else:
                 await asyncio.sleep(5)
 
-async def periodic_sma200_update():
+async def periodic_sma200_update(exchange):
     while True:
         await asyncio.sleep(900)
-        await fetch_all_sma200()
+        await fetch_all_sma200(exchange)
         print("🔄 [SMA200] 已更新所有幣種15m SMA200")
 
 async def periodic_status_log():
@@ -2275,12 +2279,11 @@ async def periodic_status_log():
         print(f"📊 [狀態] ACTIVE={active} COOLDOWN={cooldown} BANNED={banned} | 持倉({len(open_syms)}): {open_str}")
 
 async def main():
-    await asyncio.gather(
-        main_loop(),
-        periodic_sma200_update(),
-        periodic_status_log(),
-        watch_all_trades(),
-    )
+    try:
+        await main_loop(exchange_futures)
+    finally:
+        await exchange_futures.close()
+        await exchange_spot.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
