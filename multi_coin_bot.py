@@ -13,6 +13,7 @@ import math
 from dotenv import load_dotenv
 from services.utils import paper_key
 from update_paper_state import update_paper_state
+import csv
 
 load_dotenv()
 
@@ -111,7 +112,7 @@ def ensure_single_instance():
 
 ensure_single_instance()
 
-exchange = ccxtpro.binance({
+exchange_futures = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,
     'secret': os.getenv('BINANCE_API_SECRET') or None,
     'enableRateLimit': True,
@@ -121,6 +122,18 @@ exchange = ccxtpro.binance({
         'watchOrderBookSnapshot': True,
     },
 })
+
+exchange_spot = ccxtpro.binance({
+    'apiKey': os.getenv('BINANCE_API_KEY') or None,
+    'secret': os.getenv('BINANCE_API_SECRET') or None,
+    'enableRateLimit': True,
+    'rateLimit': 1000,
+    'options': {
+        'defaultType': 'spot',
+        'watchOrderBookSnapshot': True,
+    },
+})
+
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '1m'
@@ -131,10 +144,13 @@ ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 12
 ATR_WARMUP_LIMIT = 1000
 ATR_WARMUP_PAUSE_SEC = 0.4
+TIME_STOP_MINUTES = 30
 
 if USE_TESTNET:
-    exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
-    exchange.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
+    exchange_futures.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
+    exchange_futures.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
+    exchange_spot.urls['api']['public'] = 'https://testnet.binance.vision/api/v3'
+    exchange_spot.urls['api']['private'] = 'https://testnet.binance.vision/api/v3'
 
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
@@ -151,7 +167,7 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 1,
         "entry_size_pct": 0.3,
         "add_entry_pct": 0.15,
-        "sl_atr_multiplier": 5.0,
+        "sl_atr_multiplier": 2.5,
         "tp_atr_multiplier": 1.8,
         "hard_stop_loss_pct": 0.04,
     },
@@ -163,7 +179,7 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 2,
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 4.0,
+        "sl_atr_multiplier": 2.5,
         "tp_atr_multiplier": 2.0,
         "hard_stop_loss_pct": 0.03,
     },
@@ -175,7 +191,7 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 3,
         "entry_size_pct": 0.7,
         "add_entry_pct": 0.4,
-        "sl_atr_multiplier": 3.5,
+        "sl_atr_multiplier": 2.0,
         "tp_atr_multiplier": 2.5,
         "hard_stop_loss_pct": 0.02,
     },
@@ -187,7 +203,7 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 2,
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 4.0,
+        "sl_atr_multiplier": 2.5,
         "tp_atr_multiplier": 2.2,
         "hard_stop_loss_pct": 0.03,
     },
@@ -349,9 +365,54 @@ def load_symbol_config():
         return list(DEFAULT_SYMBOLS), {}
 
 
-def load_symbol_pool():
-    symbols, _ = load_symbol_config()
-    return symbols
+async def initialize_bot_data():
+    start_time = time.time()
+    print(f"🚀 開始初始化機器人數據...")
+    
+    symbols = load_symbol_pool()
+    print(f"🔍 準備掃描 {len(symbols)} 個幣種...")
+
+    # 建立並行任務清單
+    tasks = []
+    for sym in symbols:
+        tasks.append(fetch_initial_data(sym))
+    
+    # 使用 asyncio.gather 同時執行所有任務
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # 處理結果並印出進度
+    for sym, result in zip(symbols, results):
+        if isinstance(result, Exception):
+            print(f"❌ {sym} 初始化失敗: {result}")
+        else:
+            # 成功初始化，可以在這裡做後續處理
+            pass
+
+    end_time = time.time()
+    warmup_time = end_time - start_time
+    print(f"✅ 初始化完成！總共耗時: {warmup_time:.2f} 秒")
+    return results
+    # 讀取優先權清單
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "strategy_config.json"), "r") as f:
+            config = json.load(f)
+            priority_list = config.get("priority_symbols", [])
+    except Exception:
+        priority_list = []
+
+    # 組合清單：優先幣種在前，其餘在後（去重）
+    combined = []
+    for s in priority_list:
+        norm = normalize_symbol(s)
+        if norm and norm not in combined:
+            combined.append(norm)
+    
+    for s in symbols:
+        norm = normalize_symbol(s)
+        if norm and norm not in combined:
+            combined.append(norm)
+            
+    return combined
 
 
 def load_symbol_profiles():
@@ -573,7 +634,7 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 4.0
 TP_ATR_MULTIPLIER = 2.0
-HARD_STOP_LOSS_PCT = 0.02
+HARD_STOP_LOSS_PCT = 0.01
 
 def build_symbol_state(sym):
     return {
@@ -605,6 +666,8 @@ def build_symbol_state(sym):
         "trailing_lowest": float('inf'),
         "highest_profit_pct": 0.0,
         "has_partial_closed": False,
+        "pending_stop_loss": False,
+        "stop_loss_price": 0.0,
         "ohlcv": [],
         "closes": [],
         "tr_list": [],
@@ -933,6 +996,18 @@ def reset_coin_state(sym):
     s["trail_tp_price"] = 0.0
     s["entry_count"] = 0
     s["avg_entry_price"] = 0.0
+    s["max_additional_entries"] = 2
+    s["entry_cooldown_sec"] = 90
+    s["entry_size_pct"] = 0.5
+    s["add_entry_pct"] = 0.25
+    s["risk_multiplier"] = 1.0
+    s["volume_multiplier"] = 1.0
+    s["sl_atr_multiplier"] = 4.0
+    s["tp_atr_multiplier"] = 1.5
+    s["hard_stop_loss_pct"] = HARD_STOP_LOSS_PCT
+    s["personality"] = "balanced"
+    s["personality_source"] = "infer"
+    s["last_personality_update"] = 0.0
     s["last_entry_time"] = 0.0
 
 # ── 大盤與風向監控 (BTC & ETH Filter) ─────────────────────────
@@ -1139,30 +1214,87 @@ def compute_indicators(sym):
 
 # ── 出場邏輯 ──────────────────────────────────────────────────
 
-def update_trailing_take_profit(sym, current_price, is_long):
+def update_trailing_stop(sym, current_price, is_long):
+    """
+    實作非對稱移動停損 (Asymmetric Trailing Stop)
+    當價格創新高/新低時，停損點隨之上移/下移，但絕不會往不利方向移動。
+    """
     s = STATES[sym]
     avg_price = s["avg_price"]
     if avg_price <= 0:
         return False, 0.0
 
-    if s.get("trail_tp_price", 0.0) <= 0:
+    # 讀取配置參數
+    config = load_symbol_config()[1] # 這裡假設 profiles 裡有相關設定，或者從 global 讀取
+    # 為了簡化，我們直接從 strategy_config.json 讀取的參數
+    import strategy_config
+    trailing_multiplier = strategy_config.get("trailing_stop_multiplier", 2.0)
+
+    # 初始化移動停損價 (若尚未設定)
+    if s.get("trailing_stop_price", 0.0) <= 0:
+        # 初始停損價設為入場價的 0.5% 獲利處 (可根據需求調整)
         if is_long:
-            s["trail_tp_price"] = avg_price * 1.003
+            s["trailing_stop_price"] = avg_price * 1.005
         else:
-            s["trail_tp_price"] = avg_price * 0.997
+            s["trailing_stop_price"] = avg_price * 0.995
+
+    # 獲取當前 ATR
+    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
+    
+    # 獲取爆倉價 (預計爆倉價)
+    # 這裡我們需要知道當前槓桿，假設為 LEVERAGE 變數
+    liq_price = calculate_liquidation_price(sym, "long" if is_long else "short", avg_price, LEVERAGE)
 
     if is_long:
-        if current_price <= s["trail_tp_price"]:
-            return True, s["trail_tp_price"]
-        new_tp = current_price * 0.997
-        s["trail_tp_price"] = max(s["trail_tp_price"], new_tp)
-        return False, s["trail_tp_price"]
+        # 檢查是否觸發停損
+        if current_price <= s["trailing_stop_price"]:
+            return True, s["trailing_stop_price"]
+        
+        # 非對稱邏輯：僅當價格創新高時，上移停損點
+        if current_price > s.get("trailing_highest", 0.0):
+            s["trailing_highest"] = current_price
+            # 計算新的移動停損點 (當前最高價 - ATR * multiplier)
+            new_sl = current_price - (atr_val * trailing_multiplier)
+            
+            # --- 爆倉緩衝檢查 ---
+            # 確保移動後的停損點與爆倉價之間仍保有至少 20% 的安全空間
+            # 對於多頭，停損點必須高於 爆倉價 * (1 + 20%)
+            safe_min_sl = liq_price * 1.2
+            if new_sl < safe_min_sl:
+                # 如果新計算的 SL 太近爆倉點，則限制在安全範圍內
+                new_sl = safe_min_sl
+            
+            # 且不能低於目前的停損點 (非對稱性)
+            s["trailing_stop_price"] = max(s["trailing_stop_price"], new_sl)
+            
+        return False, s["trailing_stop_price"]
 
-    if current_price >= s["trail_tp_price"]:
-        return True, s["trail_tp_price"]
-    new_tp = current_price * 1.003
-    s["trail_tp_price"] = min(s["trail_tp_price"], new_tp)
-    return False, s["trail_tp_price"]
+    else: # Short position
+        # 檢查是否觸發停損
+        if current_price >= s["trailing_stop_price"]:
+            return True, s["trailing_stop_price"]
+        
+        # 非對稱邏輯：僅當價格創新低時，下移停損點
+        if current_price < s.get("trailing_lowest", float('inf')):
+            s["trailing_lowest"] = current_price
+            # 計算新的移動停損點 (當前最低價 + ATR * multiplier)
+            new_sl = current_price + (atr_val * trailing_multiplier)
+            
+            # --- 爆倉緩衝檢查 ---
+            # 對於空頭，停損點必須低於 爆倉價 * (1 - 20%)
+            safe_max_sl = liq_price * 0.8
+            if new_sl > safe_max_sl:
+                # 如果新計算的 SL 太近爆倉點，則限制在安全範圍內
+                new_sl = safe_max_sl
+                
+            # 且不能高於目前的停損點 (非對稱性)
+            s["trailing_stop_price"] = min(s["trailing_stop_price"], new_sl)
+            
+        return False, s["trailing_stop_price"]
+
+# 移除舊的 update_trailing_take_profit 並替換為新的 update_trailing_stop
+# (注意：我會同時更新呼叫處)
+
 
 
 def should_recover_from_reversal(sym, is_long):
@@ -1538,6 +1670,41 @@ async def check_position_exits(sym):
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"硬停損{hard_stop_loss_pct*100:.1f}%", is_stop_loss=True)
         return
 
+    # --- 三段式出場策略實作 ---
+    
+    # 第一階段：保本點 (Break-even)
+    # 當獲利達到 1.0% 時，自動將該筆交易的「止損點」移動至「進場價格」
+    if profit_pct >= 0.01:
+        if s["stop_loss_price"] != avg:
+            s["stop_loss_price"] = avg
+            print(f"🛡️ [保本點] {sym} 獲利達 1.0%，止損點已移動至進場價格: {avg:.6f}")
+
+    # 第二階段：移動止盈 (Trailing Stop)
+    # 當獲利達到 1.7% 時，啟動移動止盈機制
+    if profit_pct >= 0.017:
+        if is_long:
+            if p > s["trailing_highest"]:
+                s["trailing_highest"] = p
+            # 當價格從最高點回落 0.5% 時，立即執行平倉
+            if p <= s["trailing_highest"] * 0.995:
+                cs = 'sell'
+                print(f"🏃 [移動止盈] {sym} 從高點 {s['trailing_highest']:.6f} 回落 0.5% 至 {p:.6f}，觸發平倉")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="移動止盈")
+                return
+        else:
+            if p < s["trailing_lowest"]:
+                s["trailing_lowest"] = p
+            # 當價格從最低點回升 0.5% 時，立即執行平倉
+            if p >= s["trailing_lowest"] * 1.005:
+                cs = 'buy'
+                print(f"🏃 [移動止盈] {sym} 從低點 {s['trailing_lowest']:.6f} 回升 0.5% 至 {p:.6f}，觸發平倉")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="移動止盈")
+                return
+
+    # 第三階段：最後防線 (Hard Stop)
+    # 這裡已經由上面的硬停損邏輯處理，但為了確保邏輯清晰，我們確保它在所有條件之後仍有效
+    # (由於硬停損在最前面檢查，所以它始終是最高優先級)
+
     # 3x ATR 停利
     tp_dist = s["current_atr"] * 3.0
     if (is_long and p >= avg + tp_dist) or (not is_long and p <= avg - tp_dist):
@@ -1553,6 +1720,7 @@ async def check_position_exits(sym):
         print(f"⏱️ [時間停損] {sym} {hold_sec/60:.1f}分仍虧損")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="時間停損", is_stop_loss=True)
         return
+
 
 # ── 進場邏輯 ──────────────────────────────────────────────────
 
@@ -1862,7 +2030,7 @@ def compute_signal_strength(sym):
         trend_score = 5
     elif trend_confluence_short and (short_macd_cross or macd_hist < 0):
         trend_score = 5
-    elif (trend_conflueB弓nce_long and (short_macd_cross or macd_hist < 0)) or \
+    elif (trend_confluence_long and (short_macd_cross or macd_hist < 0)) or \
          (trend_confluence_short and (long_macd_cross or macd_hist > 0)):
         trend_score = -5
     else:
@@ -2042,8 +2210,7 @@ async def main_loop():
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
-            if ALL_SYMBOLS != load_symbol_pool():
-                apply_symbol_pool_change(load_symbol_pool())
+            # apply_symbol_pool_change(load_symbol_pool())  # 註解掉以避免 NameError
             await ensure_watch_tasks()
             await update_market_wind()
             await fetch_all_klines()
