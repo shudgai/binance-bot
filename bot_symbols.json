@@ -1,16 +1,1 @@
-{
-  "symbols": [
-    "PORTALUSDT",
-    "SENTUSDT",
-    "STGUSDT",
-    "BRUSDT",
-    "XRPUSDT",
-    "SIRENUSDT",
-    "DOGEUSDT",
-    "ESPORTSUSDT",
-    "FXSUSDT",
-    "HUSDT",
-    "FIOUSDT",
-    "BSBUSDT"
-  ]
-}
+{"symbols": ["BSBUSDT", "PORTALUSDT", "XRPUSDT", "SIRENUSDT", "DOGEUSDT", "ESPORTSUSDT", "FXSUSDT", "FIOUSDT", "SYNUSDT", "HUSDT", "VELVETUSDT", "FISUSDT"]}

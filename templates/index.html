@@ -73,29 +73,27 @@
                 statusMeta.text(metaItems.join(' | '));
 
                 const symbols = Object.keys(positions || {});
-                if (symbols.length === 0) {
-                    positionDiv.append('<div class="position-row">目前沒有持倉資料</div>');
-                    return;
-                }
-
                 symbols.forEach(function(symbol) {
                     let position = positions[symbol] || {};
                     let quantity = Number(position.quantity || position.qty || 0);
-                    let row = $('<div class="position-row"></div>');
+                    
+                    if (quantity <= 0) return; // 隱藏已經平倉的項目
 
-                    if (quantity > 0) {
-                        row.append(`<span>${symbol}: ${quantity} (${position.position_side || '持倉中'})</span>`);
-                        let closeButton = $('<button type="button">平倉</button>');
-                        closeButton.click(function() {
-                            alert(`${symbol} 平倉操作已觸發！`);
-                        });
-                        row.append(closeButton);
-                    } else {
-                        row.append(`<span>${symbol}: 已完成交易</span>`);
-                    }
+                    let row = $('<div class="position-row"></div>');
+                    row.append(`<span>${symbol}: ${quantity} (${position.position_side || '持倉中'})</span>`);
+                    let closeButton = $('<button type="button">平倉</button>');
+                    closeButton.click(function() {
+                        alert(`${symbol} 平倉操作已觸發！`);
+                        // 若這裡有實際的平倉 API 呼叫，可以加在這裡
+                    });
+                    row.append(closeButton);
 
                     positionDiv.append(row);
                 });
+
+                if (positionDiv.children().length === 0) {
+                    positionDiv.append('<div class="position-row">目前沒有持倉資料</div>');
+                }
             }
 
             function updateStatus() {
