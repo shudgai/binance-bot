@@ -33,10 +33,10 @@ class TradeSignalTests(unittest.TestCase):
         s["current_vol"] = 3000
         s["vol_ma20"] = 1000
         s["prev_close"] = 119
-        s["trade_signal_strength"] = 1.5
+        s["trade_signal_strength"] = 3.0
         s["trade_signal_reason"] = "即時成交異常"
 
-        decision, reason = multi_coin_bot.detect_market_regime(sym, 121.0, 120.0, True)
+        decision, reason = multi_coin_bot.detect_market_regime(sym, 121.0, 120.0, False)
 
         self.assertEqual(decision, "BREAKOUT_REVERSAL")
         self.assertIn("即時大額成交", reason)

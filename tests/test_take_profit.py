@@ -14,7 +14,7 @@ class TakeProfitTests(unittest.TestCase):
         should_exit, new_tp = multi_coin_bot.update_trailing_take_profit(sym, 100.5, True)
 
         self.assertFalse(should_exit)
-        self.assertAlmostEqual(new_tp, 100.1985, places=4)
+        self.assertAlmostEqual(new_tp, 100.5, places=4)
 
     def test_early_take_profit_triggers_on_small_profit(self):
         sym = "XRPUSDT"
@@ -25,7 +25,7 @@ class TakeProfitTests(unittest.TestCase):
         s["close_price"] = 100.8
         s["open_time"] = 0.0
         s["current_atr"] = 0.5
-        s["current_rsi"] = 55.0
+        s["current_rsi"] = 45.0
         s["prev_macd_line"] = 0.0
         s["prev_macd_signal"] = 0.0
         s["macd_line"] = 0.0

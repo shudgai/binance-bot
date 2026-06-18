@@ -18,7 +18,10 @@ class ReversalRecoveryTests(unittest.TestCase):
         s["macd_signal"] = 0.1
         s["trade_signal_strength"] = 1.8
         s["trade_signal_reason"] = "即時大額成交"
-        s["ohlcv"] = [[0, 100, 100, 99, 100, 1000]]
+        s["ohlcv"] = [
+            [0, 100, 100.5, 99.5, 100.0, 1000],
+            [1, 100, 100.0, 99.0, 99.0, 1000]
+        ]
         s["prev_close"] = 100.0
         s["current_vol"] = 5000
         s["vol_ma20"] = 1000

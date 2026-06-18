@@ -110,7 +110,8 @@ def ensure_single_instance():
         print("💡 提示: 若是意外關閉舊程式，請先刪除過期的鎖定檔 /tmp/binance_bot_single_instance.lock，再重新啟動。")
         sys.exit(1)
 
-ensure_single_instance()
+if __name__ == "__main__":
+    ensure_single_instance()
 
 exchange_futures = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,
@@ -168,7 +169,7 @@ PERSONALITY_TEMPLATES = {
         "entry_size_pct": 0.3,
         "add_entry_pct": 0.15,
         "sl_atr_multiplier": 1.5,
-        "tp_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 3.0,
         "hard_stop_loss_pct": 0.03,
     },
     "balanced": {
@@ -180,7 +181,7 @@ PERSONALITY_TEMPLATES = {
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
         "sl_atr_multiplier": 1.2,
-        "tp_atr_multiplier": 2.0,
+        "tp_atr_multiplier": 2.4,
         "hard_stop_loss_pct": 0.02,
     },
     "aggressive": {
@@ -192,7 +193,7 @@ PERSONALITY_TEMPLATES = {
         "entry_size_pct": 0.7,
         "add_entry_pct": 0.4,
         "sl_atr_multiplier": 1.0,
-        "tp_atr_multiplier": 1.8,
+        "tp_atr_multiplier": 2.0,
         "hard_stop_loss_pct": 0.015,
     },
     "adaptive": {
@@ -204,22 +205,22 @@ PERSONALITY_TEMPLATES = {
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
         "sl_atr_multiplier": 1.2,
-        "tp_atr_multiplier": 2.0,
+        "tp_atr_multiplier": 2.4,
         "hard_stop_loss_pct": 0.02,
     },
 }
 
 SYMBOL_EXIT_OVERRIDES = {
     "HUSDT": {
-        "tp_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 3.0,
         "sl_atr_multiplier": 1.5,
     },
     "XRPUSDT": {
-        "tp_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 3.0,
         "sl_atr_multiplier": 1.5,
     },
     "LINKUSDT": {
-        "tp_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 3.0,
         "sl_atr_multiplier": 1.5,
     },
 }
@@ -290,7 +291,7 @@ def round_step(qty, step_size):
     if qty <= 0 or step_size <= 0:
         return 0.0
     precision = int(round(-math.log10(step_size)))
-    rounded = math.floor(qty / step_size) * step_size
+    rounded = round(qty / step_size) * step_size
     return round(rounded, precision)
 
 
@@ -633,7 +634,7 @@ BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 1.5
-TP_ATR_MULTIPLIER = 2.5
+TP_ATR_MULTIPLIER = 3.0
 HARD_STOP_LOSS_PCT = 0.02
 
 def build_symbol_state(sym):
@@ -801,11 +802,13 @@ def get_open_position_count():
     return sum(1 for s in STATES.values() if abs(s["qty"]) > 0.000001)
 
 def get_open_symbols():
-    return [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) > 0.000001]
+    return [sym for sym in ALL_SYMBOLS if sym in STATES and abs(STATES[sym]["qty"]) > 0.000001]
 
 
 def is_symbol_locked(sym):
-    s = STATES[sym]
+    s = STATES.get(sym)
+    if not s:
+        return False
     return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED")
 
 
@@ -828,7 +831,7 @@ def filter_valid_symbols(exchange, symbols):
 
 def apply_symbol_pool_change(requested_symbols):
     global ALL_SYMBOLS
-    desired = filter_valid_symbols(normalize_symbol_list(requested_symbols))
+    desired = filter_valid_symbols(exchange_futures, normalize_symbol_list(requested_symbols))
     locked_symbols = [sym for sym in ALL_SYMBOLS if is_symbol_locked(sym)]
 
     new_symbols = []
@@ -1127,9 +1130,11 @@ async def fetch_all_sma200(exchange):
 async def fetch_ema50_1h(exchange, sym):
     try:
         ohlcv = await exchange.fetch_ohlcv(sym, '1h', limit=100)
+        if not ohlcv or len(ohlcv) == 0:
+            return 0.0
         closes = np.array([x[4] for x in ohlcv])
         ema50 = calculate_ema(closes, 50)
-        return ema50[-1] if len(ema50) > 0 else 0.0
+        return float(ema50)
     except Exception as e:
         print(f"⚠️ [1H EMA50獲取失敗] {sym}: {e}")
         return 0.0
@@ -1414,7 +1419,7 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     is_ranging = range_width_pct < 0.025 and atr_pct < 0.015
     if is_ranging:
         profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
-        if profit_pct >= 0.003:
+        if profit_pct >= 0.005:
             return "RANGE_PROFIT_TAKE", f"盤整區間內已獲利 {profit_pct * 100:.2f}%"
 
     return "HOLD", "未達出場條件"
@@ -1444,7 +1449,8 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if sanitized_qty <= 0.0:
         print(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
         return
-    qty = min(qty, sanitized_qty)
+    # 直接使用處理過交易所精度的數量，避免因為 min() 帶回浮點數微小誤差
+    qty = sanitized_qty
 
     if PAPER_TRADING:
         if s["qty"] > 0:
@@ -1467,7 +1473,9 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         mark_exit(sym, is_stop_loss=is_stop_loss)
         reset_coin_state(sym)
     else:
-        s["qty"] = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
+        prec = await get_contract_precision(sym)
+        raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
+        s["qty"] = round_step(raw_qty, prec['step_size'])
         print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {reason}")
 
 async def check_exits(sym):
@@ -1495,6 +1503,15 @@ async def check_exits(sym):
     sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
+    tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
+    tp = avg + tp_base * atr_val if is_long else avg - tp_base * atr_val
+
+    # ── 盈虧比 1:1 時移動停損至保本點 ──
+    initial_risk_pct = sl_base * (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.0
+    if profit_pct >= initial_risk_pct:
+        sl = avg
+    else:
+        sl = avg - sl_mult * atr_val if is_long else avg + sl_mult * atr_val
 
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
@@ -1543,7 +1560,7 @@ async def check_exits(sym):
     # 1. 趨勢反轉：MACD 反向交叉 → 立即認賠出場 (無視盈虧)
     m_death = s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]
     m_golden = s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"]
-    if ((is_long and m_death) or (not is_long and m_golden)) and (s["has_been_negative"] or abs(profit_pct) > 0.005):
+    if ((is_long and m_death) or (not is_long and m_golden)) and (profit_pct < -0.0025 or profit_pct > 0.008):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
         print(f"📉 [反轉出場] {sym} MACD反向交叉，立即平倉 (損益: {profit_pct*100:.2f}%)")
@@ -1559,26 +1576,26 @@ async def check_exits(sym):
     # 趨勢確認：如果 MACD 仍在趨勢方向，則放寬鎖利條件
     is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
     
-    # 鎖利門檻放寬：如果趨勢還在，回撤門檻提高到 85% (原本是 70%)
-    if s["highest_profit_pct"] >= 0.01 and profit_pct < s["highest_profit_pct"] * (0.85 if is_trend_ok else 0.6):
+    # 鎖利門檻放寬：如果趨勢還在，回撤門檻提高到 75% (原本是 85%)
+    if s["highest_profit_pct"] >= 0.01 and profit_pct < s["highest_profit_pct"] * (0.75 if is_trend_ok else 0.5):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達{((1 - profit_pct / s['highest_profit_pct'])*100):.1f}% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="回撤鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.008 and profit_pct < (0.0045 if is_trend_ok else 0.0035):
+    elif s["highest_profit_pct"] >= 0.008 and profit_pct < (0.0040 if is_trend_ok else 0.0030):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [高利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發高利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="高利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0030 if is_trend_ok else 0.0020):
+    elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0025 if is_trend_ok else 0.0015):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發中利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="中利鎖利防護")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.004 and profit_pct < (0.0025 if is_trend_ok else 0.0015):
+    elif s["highest_profit_pct"] >= 0.004 and profit_pct < (0.0020 if is_trend_ok else 0.0010):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="微利鎖利防護")
@@ -1663,8 +1680,9 @@ async def check_exits(sym):
         if (is_long and p <= sl) or (not is_long and p >= sl):
             cs = 'sell' if is_long else 'buy'
             sl_pct = abs(sl - avg) / avg * 100
-            print(f"🛑 [ATR停損] {sym} -{sl_pct:.1f}%")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停損", is_stop_loss=True)
+            reason_str = "保本停損" if sl == avg else "ATR停損"
+            print(f"🛑 [{reason_str}] {sym} -{sl_pct:.1f}%")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
             return
 
 async def check_position_exits(exchange, sym):
@@ -1687,9 +1705,9 @@ async def check_position_exits(exchange, sym):
     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
 
-    # 初始的距離
-    sl_dist = atr_val * sl_multiplier
-    tp_dist = atr_val * tp_multiplier
+    # 初始的距離 (加入最小停損與停利距離保護)
+    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
+    tp_dist = max(atr_val * tp_multiplier, p * 0.010)
 
     # 定義初始 TP/SL 價格
     initial_tp = avg + tp_dist if is_long else avg - tp_dist
@@ -1811,6 +1829,13 @@ async def execute_order(sym, side, price):
     base_amt = margin / price
     allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
     base_amt *= allocation_pct
+    
+    # 確保下單總預算不超過當前可用餘額
+    balance = get_balance()
+    budget = base_amt * price
+    budget = min(budget, balance)
+    base_amt = budget / price
+
     max_notional = 500.0  # 最大名義價值 500 USDT
     if base_amt * price > max_notional:
         base_amt = max_notional / price
@@ -1833,6 +1858,7 @@ async def execute_order(sym, side, price):
                 s["qty"] -= base_amt
             if s["avg_price"] <= 0:
                 s["avg_price"] = price
+                s["entry_atr"] = s.get("current_atr", 0.0)
             else:
                 s["avg_price"] = ((s["avg_price"] * abs(s["qty"] - base_amt)) + (price * base_amt)) / abs(s["qty"])
             s["open_time"] = now
@@ -1859,6 +1885,7 @@ async def execute_order(sym, side, price):
                 
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
+                s["entry_atr"] = s.get("current_atr", 0.0)
             else:
                 s["avg_price"] = ((s["avg_price"] * abs(old_qty)) + (fill_price * base_amt)) / abs(s["qty"])
                 
@@ -1943,7 +1970,7 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * s.get("current_atr", 0.0)
     
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    if rr_ratio < 2.0:
+    if rr_ratio < 1.99:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.0 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
 
@@ -2170,13 +2197,100 @@ async def check_entries():
             continue
         if abs(s["qty"]) > 0.000001:
             continue
+        current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
+
+        # --- 新增：等待收盤確認機制 ---
+        if s.get("pending_side"):
+            if current_candle_time <= s.get("pending_time", 0):
+                continue
+            
+            # 換線了，檢查前一根(訊號K線)是否反轉
+            if len(s["ohlcv"]) >= 2:
+                prev_candle = s["ohlcv"][-2]
+                prev_open = prev_candle[1]
+                prev_close = prev_candle[4]
+                
+                is_valid = False
+                if s["pending_side"] == "buy":
+                    if prev_close >= prev_open - (s["current_atr"] * 0.5):
+                        is_valid = True
+                elif s["pending_side"] == "sell":
+                    if prev_close <= prev_open + (s["current_atr"] * 0.5):
+                        is_valid = True
+                        
+                if is_valid:
+                    print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉)")
+                    side = s["pending_side"]
+                    strength = s.get("pending_strength", 5.0)
+                    route = s.get("pending_route", "confirmed")
+                    s["pending_side"] = None
+                    
+                    # 再測一次大環境 (MTF & RR)，因為換線了可能改變
+                    p = s["close_price"]
+                    ema50_1h = s.get("ema50_1h", 0.0)
+                    if ema50_1h > 0:
+                        if side == "buy" and p < ema50_1h:
+                            continue
+                        if side == "sell" and p > ema50_1h:
+                            continue
+
+                    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+                    sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
+                    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+                    
+                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
+                    tp_dist = max(atr_val * tp_multiplier, p * 0.010)
+                    
+                    if (tp_dist / sl_dist if sl_dist > 0 else 0) < 2.0:
+                        continue
+                        
+                    candidates.append((sym, side, strength, route))
+                    continue
+                else:
+                    print(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
+                    s["pending_side"] = None
+            else:
+                s["pending_side"] = None
+            continue
+
+        # 原本的計算邏輯
         side_strength = compute_signal_strength(sym)
         if side_strength[0] is None:
             continue
         side, strength, route = side_strength
         if not is_entry_allowed(sym, side, route):
             continue
-        candidates.append((sym, side, strength, route))
+
+        # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
+        ema50_1h = s.get("ema50_1h", 0.0)
+        p = s["close_price"]
+        if ema50_1h > 0:
+            if side == "buy" and p < ema50_1h:
+                print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
+                continue
+            if side == "sell" and p > ema50_1h:
+                print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
+                continue
+
+        # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
+        atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+        sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
+        tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+        
+        sl_dist = max(atr_val * sl_multiplier, p * 0.005)
+        tp_dist = max(atr_val * tp_multiplier, p * 0.010)
+        
+        expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+        if expected_rr < 2.0:
+            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
+            continue
+
+        # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
+        s["pending_side"] = side
+        s["pending_time"] = current_candle_time
+        s["pending_strength"] = strength
+        s["pending_route"] = route
+        print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
 
     if not candidates:
         return
@@ -2187,40 +2301,11 @@ async def check_entries():
     for i in range(min(remaining_slots, len(candidates))):
         sym, side, _, route = candidates[i]
         s = STATES[sym]
-        now = time.time()
-        
-        # Route C 反轉搶短直接開倉，不進行二次確認與突破等待
-        if route == "c":
-            print(f"⚡ [即時開倉] {sym} 觸發反轉搶短，繞過二次確認即刻下單！")
-            await execute_order(sym, side, s["close_price"])
-            s["pending_side"] = None
-            s["pending_confirm_high"] = 0
-            s["pending_confirm_low"] = 0
-            continue
-
-        if s["pending_side"] != side:
-            s["pending_side"] = side
-            s["pending_time"] = now
-            m_line, m_sig, _, _, _ = calculate_macd(s["closes"])
-            macd_triggered = (s["prev_macd_line"] <= s["prev_macd_signal"] and m_line > m_sig) or \
-                             (s["prev_macd_line"] >= s["prev_macd_signal"] and m_line < m_sig)
-            if macd_triggered and len(s["ohlcv"]) >= 2:
-                s["pending_confirm_high"] = s["ohlcv"][-2][2]
-                s["pending_confirm_low"] = s["ohlcv"][-2][3]
-            continue
-        candle_range = max(1e-8, s["pending_confirm_high"] - s["pending_confirm_low"])
-        required_breakout = candle_range * 0.07
-        confirm_delay = 5.0 if s.get("current_atr", 0.0) > s.get("atr_ma20", 0.0) else PENDING_CONFIRM_SEC
-
-        if now - s["pending_time"] >= confirm_delay:
-            if side == 'buy' and s["pending_confirm_high"] > 0 and s["close_price"] <= (s["pending_confirm_high"] + required_breakout):
-                continue
-            if side == 'sell' and s["pending_confirm_low"] > 0 and s["close_price"] >= (s["pending_confirm_low"] - required_breakout):
-                continue
-            await execute_order(sym, side, s["close_price"])
-            s["pending_side"] = None
-            s["pending_confirm_high"] = 0
-            s["pending_confirm_low"] = 0
+        print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻下單！")
+        await execute_order(sym, side, s["close_price"])
+        s["pending_side"] = None
+        s["pending_confirm_high"] = 0
+        s["pending_confirm_low"] = 0
 
 # ── 主循環 ──────────────────────────────────────────────────
 

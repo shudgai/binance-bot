@@ -489,7 +489,8 @@ def api_history_download(date: str):
         with open("paper_state.json", "r") as f:
             state = json.load(f)
         trades = state.get("trades", [])
-        filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000).strftime("%Y-%m-%d") == date]
+        tz = pytz.timezone('Asia/Taipei')
+        filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
         if not filtered:
             raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
         
@@ -497,7 +498,7 @@ def api_history_download(date: str):
         writer = csv.writer(output)
         writer.writerow(["時間", "幣種", "方向", "價格", "數量", "手續費", "已實現損益", "平倉"])
         for t in filtered:
-            ts = datetime.datetime.fromtimestamp(t["time"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
             side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
                    "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
                    "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
