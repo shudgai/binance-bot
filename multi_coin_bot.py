@@ -661,6 +661,7 @@ def build_symbol_state(sym):
         "bb_up": 0.0,
         "bb_mid": 0.0,
         "bb_low": 0.0,
+        "vol_ma10": 0.0,
         "vol_ma20": 0.0,
         "current_vol": 0.0,
         "trailing_highest": 0.0,
@@ -1215,6 +1216,7 @@ def compute_indicators(sym):
         losses = -deltas[deltas < 0].mean() if np.any(deltas < 0) else 1e-10
         rs = gains / losses
         s["current_rsi"] = 100.0 - (100.0 / (1.0 + rs))
+    s["vol_ma10"] = float(np.mean(volumes[-10:])) if len(volumes) >= 10 else float(np.mean(volumes))
     s["vol_ma20"] = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
     s["current_vol"] = float(volumes[-1])
     if len(closes) >= 20:
@@ -2054,6 +2056,13 @@ def is_entry_allowed(sym, side, route="a"):
 def compute_signal_strength(sym):
     s = STATES[sym]
     if len(s["closes"]) < 20:
+        return (None, 0)
+
+    # --- 新增 C：動能/成交量過濾 ---
+    # 確保當前 K 線成交量至少是過去 10 根平均的 1.5 倍，過濾掉沒人交易的橫盤
+    vol_ma10 = s.get("vol_ma10", 0.0)
+    current_vol = s.get("current_vol", 0.0)
+    if vol_ma10 > 0 and current_vol < vol_ma10 * 1.5:
         return (None, 0)
 
     rsi = s["current_rsi"]
