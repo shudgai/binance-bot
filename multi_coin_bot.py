@@ -2387,9 +2387,9 @@ async def check_entries():
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
+        p = s["close_price"]
         if s.get("mtf_filter", True):
             ema50_1h = s.get("ema50_1h", 0.0)
-            p = s["close_price"]
             if ema50_1h > 0:
                 if side == "buy" and p < ema50_1h:
                     print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
