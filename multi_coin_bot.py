@@ -1546,6 +1546,28 @@ async def check_exits(sym):
     else:
         sl = avg - sl_dist if is_long else avg + sl_dist
 
+    # --- 放量破位強制止損 (Volume-Driven Exit) ---
+    if len(s["ohlcv"]) >= 2:
+        prev_k = s["ohlcv"][-2]
+        current_vol = s.get("current_vol", 0.0)
+        vol_ma20 = s.get("vol_ma20", 0.0)
+        
+        if vol_ma20 > 0:
+            vol_ratio = current_vol / vol_ma20
+            if vol_ratio > 2.0:
+                # 多單防禦：跌破前一根低點
+                if is_long and p < prev_k[3]:
+                    print(f"🚨 [放量破位] {sym} 多單遭遇恐慌拋售 (量能 {vol_ratio:.1f}x，跌破前低 {prev_k[3]:.4f})，緊急強制止損！")
+                    await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Volume_Breakout_Stop]", is_stop_loss=True)
+                    s["highest_profit_pct"] = 0.0
+                    return
+                # 空單防禦：突破前一根高點
+                if not is_long and p > prev_k[2]:
+                    print(f"🚨 [放量破位] {sym} 空單遭遇暴力拉升 (量能 {vol_ratio:.1f}x，突破前高 {prev_k[2]:.4f})，緊急強制止損！")
+                    await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Volume_Breakout_Stop]", is_stop_loss=True)
+                    s["highest_profit_pct"] = 0.0
+                    return
+
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
     if profit_pct < 0:
