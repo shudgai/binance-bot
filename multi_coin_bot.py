@@ -160,14 +160,14 @@ MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
-    "AVAXUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "DOGEUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "INJUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "LINKUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "NEARUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "RENDERUSDT":{"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "SOLUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
-    "SUIUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "AVAXUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "DOGEUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "INJUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "LINKUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "NEARUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "RENDERUSDT":{"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "SOLUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "SUIUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -734,9 +734,11 @@ def build_symbol_state(sym):
         "avg_entry_price": 0.0,
         "max_additional_entries": 2,
         "entry_cooldown_sec": conf.get("entry_cooldown_sec", 90),
+        "min_flip_time": conf.get("min_flip_time", 300),
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
         "risk_multiplier": 1.0,
+        "volume_threshold_factor": conf.get("volume_threshold_factor", 0.8),
         "volume_multiplier": conf.get("volume_multiplier", 1.0),
         "sl_atr_multiplier": conf.get("sl_atr_multiplier", 1.5),
         "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
@@ -1967,10 +1969,11 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # 動態量能門檻：要求當前成交量必須顯著高於過去 20 根 K 線的平均成交量
-    min_volume = vol_ma20 * 1.5
+    # 動態量能門檻：讀取設定檔中的 volume_threshold_factor (預設 0.8)
+    vol_factor = s.get("volume_threshold_factor", 0.8)
+    min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [動態量能不足] 當前量 {current_vol:.2f} < 動態門檻 {min_volume:.2f} (均量:{vol_ma20:.2f})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [動態量能不足] 當前量 {current_vol:.2f} < 動態門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
         return False
 
     # --- R:R (盈虧比) 過濾 ---
@@ -2279,6 +2282,15 @@ async def check_entries():
         side, strength, route = side_strength
         if not is_entry_allowed(sym, side, route):
             continue
+
+        # --- 反手冷卻時間 (min_flip_time) 過濾 ---
+        last_trade_side = s.get("last_trade_side", "")
+        if last_trade_side != "" and side != last_trade_side:
+            flip_elapsed = time.time() - s.get("last_trade_time", 0)
+            min_flip = s.get("min_flip_time", 300)
+            if flip_elapsed < min_flip:
+                print(f"⏳ [反手冷卻] {sym} 欲 {side}，但距離上次 {last_trade_side} 僅 {flip_elapsed:.0f}s (未達 {min_flip}s)，禁止反向進場。")
+                continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         ema50_1h = s.get("ema50_1h", 0.0)
