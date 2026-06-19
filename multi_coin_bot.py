@@ -10,12 +10,30 @@ import sys
 import uuid
 import fcntl
 import math
+import requests
+import traceback
 from dotenv import load_dotenv
 from services.utils import paper_key
 from update_paper_state import update_paper_state
 import csv
 
 load_dotenv()
+
+# --- 通知設定 ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+def send_alert(message):
+    """發送緊急告警到 Telegram"""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print(f"⚠️ [通知失敗] 未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID，僅輸出到 Log: {message}")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"🚨 [機器人警報]\n{message}"}
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"⚠️ [通知失敗] 無法發送 Telegram 訊息: {e}")
 
 LOCK_FILE = "/tmp/binance_bot_single_instance.lock"
 lock_file_handle = None
@@ -142,36 +160,11 @@ LEVERAGE = 5
 
 LEVERAGE_TIERS = {
     "high_risk": {
-        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT"},
+        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT", "HUSDT"},
         "leverage": 2
     },
     "medium_risk": {
-        "coins": {"SYNUSDT", "FXSUSDT", "FISUSDT", "HUSDT", "PORTALUSDT", "BRUSDT", "RDNTUSDT"},
-        "leverage": 3
-    },
-    "low_risk": {
-        "coins": {"XRPUSDT", "DOGEUSDT", "ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT"},
-        "leverage": 5
-    }
-}
-
-def get_symbol_leverage(sym):
-    profiles = load_symbol_profiles()
-    profile = profiles.get(sym, {})
-    if isinstance(profile, dict) and "leverage" in profile:
-        return int(profile["leverage"])
-    for tier in LEVERAGE_TIERS.values():
-        if sym in tier["coins"]:
-            return tier["leverage"]
-    return 3
-
-LEVERAGE_TIERS = {
-    "high_risk": {
-        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT"},
-        "leverage": 2
-    },
-    "medium_risk": {
-        "coins": {"SYNUSDT", "FXSUSDT", "FISUSDT", "HUSDT", "PORTALUSDT", "BRUSDT", "RDNTUSDT"},
+        "coins": {"SYNUSDT", "FXSUSDT", "FISUSDT", "PORTALUSDT", "BRUSDT", "RDNTUSDT"},
         "leverage": 3
     },
     "low_risk": {
@@ -263,7 +256,8 @@ PERSONALITY_TEMPLATES = {
 SYMBOL_EXIT_OVERRIDES = {
     "HUSDT": {
         "tp_atr_multiplier": 3.0,
-        "sl_atr_multiplier": 1.5,
+        "sl_atr_multiplier": 2.0,
+        "hard_stop_loss_pct": 0.04,
     },
     "XRPUSDT": {
         "tp_atr_multiplier": 3.0,
@@ -288,6 +282,12 @@ SYMBOL_REVERSAL_SETTINGS = {
         "volume_multiplier": 3.5,
         "price_jump_pct": 0.012,
         "min_reverse_pct": 0.01,
+    },
+    "HUSDT": {
+        "trade_signal_threshold": 2.8,
+        "volume_multiplier": 4.0,
+        "price_jump_pct": 0.015,
+        "min_reverse_pct": 0.015,
     },
 }
 
@@ -1286,104 +1286,42 @@ def update_trailing_stop(sym, current_price, is_long):
     當價格創新高/新低時，上移停損點，且加入保本緩衝區防止被雜訊洗出場。
     """
     s = STATES[sym]
-    avg_price = s["avg_price"]
-    if avg_price <= 0:
-        return False, 0.0
-
-    # 獲取當前 ATR
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
-    
-    # 獲取配置參數
-    try:
-        with open(os.path.join(os.path.dirname(__file__), "strategy_config.json"), "r") as _f:
-            _cfg = json.load(_f)
-        trailing_multiplier = float(_cfg.get("trailing_stop_multiplier", 2.0))
-    except Exception:
-        trailing_multiplier = 2.0
-
-    # 初始化移動停損價
-    if s.get("trailing_stop_price", 0.0) <= 0:
-        if is_long:
-            s["trailing_stop_price"] = avg_price * 1.005
-        else:
-            s["trailing_stop_price"] = avg_price * 0.995
-
-    # 爆倉價格計算
-    liq_price = avg_price * (1 - 1.0 / LEVERAGE) if is_long else avg_price * (1 + 1.0 / LEVERAGE)
-
-    # 計算當前獲利距離
-    profit_dist = (current_price - avg_price) if is_long else (avg_price - current_price)
-    initial_sl_dist = max(atr_val * get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long), avg_price * 0.005)
-
-    # --- 邏輯處理 ---
-    if profit_dist >= initial_sl_dist:
-        # 1. 當獲利達到 1:1 盈虧比時，觸發保本機制
-        buffer_pct = 0.003 
-        if is_long:
-            breakeven_sl = avg_price * (1 + buffer_pct)
-            if current_price > s.get("trailing_highest", 0.0):
-                s["trailing_highest"] = current_price
-                trail_sl = current_price - (atr_val * trailing_multiplier)
-                # 確保新停損點不低於保本點，且與爆倉點保持距離
-                new_sl = max(breakeven_sl, trail_sl)
-                safe_min_sl = liq_price * 1.15
-                if new_sl < safe_min_sl:
-                    new_sl = safe_min_sl
-                
-                if new_sl > s["trailing_stop_price"]:
-                    s["trailing_stop_price"] = new_sl
-        else:
-            breakeven_sl = avg_price * (1 - buffer_pct)
-            if current_price < s.get("trailing_lowest", float('inf')):
-                s["trailing_lowest"] = current_price
-                trail_sl = current_price + (atr_val * trailing_multiplier)
-                new_sl = min(breakeven_sl, trail_sl)
-                safe_max_sl = liq_price * 0.85
-                if new_sl > safe_max_sl:
-                    new_sl = safe_max_sl
-                
-                if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
-                    s["trailing_stop_price"] = new_sl
-        
+    atr_val = s.get("current_atr", 0.0)
+    if atr_val <= 0:
         return False, s["trailing_stop_price"]
+
+    trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
+    liq_price = s["avg_price"] * (1 - s["sl_atr_multiplier"] * (s.get("current_atr", 0.0) / max(s["close_price"], 1e-8)))
     
+    if is_long:
+        if current_price > s.get("trailing_highest", 0.0):
+            s["trailing_highest"] = current_price
+            # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
+            trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
+            
+            safe_min_sl = liq_price * 1.2
+            new_sl = max(s["trailing_stop_price"], trail_sl) # 確保只往有利方向移動
+            if new_sl < safe_min_sl:
+                new_sl = safe_min_sl
+            
+            if new_sl > s["trailing_stop_price"]:
+                s["trailing_stop_price"] = new_sl
     else:
-        # 2. 尚未達到 1:1 盈虧比時，僅更新移動停損點 (非對稱上移/下移)
-        if is_long:
-            if current_price > s.get("trailing_highest", 0.0):
-                s["trailing_highest"] = current_price
-                trail_sl = current_price - (atr_val * trailing_multiplier)
-                safe_min_sl = liq_price * 1.2
-                new_sl = max(s["trailing_stop_price"], trail_sl)
-                if new_sl < safe_min_sl:
-                    new_sl = safe_min_sl
-                if new_sl > s["trailing_stop_price"]:
-                    s["trailing_stop_price"] = new_sl
-        else:
-            if current_price < s.get("trailing_lowest", float('inf')):
-                s["trailing_lowest"] = current_price
-                trail_sl = current_price + (atr_val * trailing_multiplier)
-                safe_max_sl = liq_price * 0.8
-                new_sl = min(s["trailing_stop_price"], trail_sl)
-                if new_sl > safe_max_sl:
-                    new_sl = safe_max_sl
-                if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
-                    s["trailing_stop_price"] = new_sl
-                breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
-
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
-
-    volume_confirmed = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
-    trade_signal = s.get("trade_signal_strength", 0.0)
-    trade_confirmed = trade_signal >= reversal_settings["trade_signal_threshold"]
-
-    if macd_reversal and breakout_confirmed and volume_confirmed and trade_confirmed:
-        return True
-
-    return False
-
-
+        if current_price < s.get("trailing_lowest", float('inf')):
+            s["trailing_lowest"] = current_price
+            # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
+            trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
+            
+            safe_max_sl = liq_price * 0.8
+            new_sl = min(s["trailing_stop_price"], trail_sl)
+            if new_sl > safe_max_sl:
+                new_sl = safe_max_sl
+            
+            if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
+                s["trailing_stop_price"] = new_sl
+                    
+    return False, s["trailing_stop_price"]
+    
 def detect_market_regime(sym, current_price, avg_price, is_long):
     s = STATES[sym]
     if len(s["ohlcv"]) < 20 or avg_price <= 0:
@@ -1512,7 +1450,7 @@ async def check_exits(sym):
     # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
     sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
+    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     tp = avg + tp_base * atr_val if is_long else avg - tp_base * atr_val
 
@@ -1715,7 +1653,7 @@ async def check_position_exits(exchange, sym):
     # 1. 取得 ATR 停利停損倍數
     sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
+    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
 
     # 初始的距離 (加入最小停損與停利距離保護)
     sl_dist = max(atr_val * sl_multiplier, p * 0.005)
@@ -2379,6 +2317,7 @@ async def ensure_watch_tasks(exchange):
 
 async def main_loop(exchange):
     """初始化後進入主交易循環"""
+
     try:
         await asyncio.wait_for(exchange_futures.load_markets(), timeout=15)
     except Exception as e:
@@ -2412,12 +2351,31 @@ async def main_loop(exchange):
             await update_market_wind(exchange)
             await fetch_all_klines(exchange)
             for sym in ALL_SYMBOLS:
-                compute_indicators(sym)
-            update_states()
+                try:
+                    compute_indicators(sym)
+                except Exception as e:
+                    print(f"⚠️ [指標計算異常] {sym} 處理失敗，跳過此幣種本次更新: {e}")
+            
+            # --- 狀態更新區塊 ---
+            try:
+                update_states()
+                update_all_dynamic_personalities()
+            except Exception as e:
+                print(f"⚠️ [狀態更新異常]: {e}")
+
+            # --- 出場檢查區塊 (最關鍵的防禦) ---
             for sym in ALL_SYMBOLS:
-                await check_exits(sym)
-            update_all_dynamic_personalities()
-            await check_entries()
+                try:
+                    await check_exits(sym)
+                except Exception as e:
+                    # 如果某個幣種的 check_exits 崩潰，只會報錯並跳過，不會影響到其他幣種
+                    print(f"⚠️ [出場檢查異常] {sym} 出場邏輯報錯，跳過此幣種檢查: {e}")
+
+            # --- 進場檢查區塊 ---
+            try:
+                await check_entries()
+            except Exception as e:
+                print(f"⚠️ [進場檢查異常]: {e}")
 
             # 成功執行，重置連續錯誤計數器
             global CONSECUTIVE_ERRORS
@@ -2441,12 +2399,21 @@ async def main_loop(exchange):
                 await asyncio.sleep(10)
                 continue
             import traceback
+            error_msg = f"發生未預期的錯誤：\n{str(e)}\n{traceback.format_exc()}"
+            print(f"❌ [系統錯誤] {error_msg}")
+            
+            # 觸發通知 (如果有定義 send_alert 的話)
+            try:
+                send_alert(error_msg)
+            except NameError:
+                pass
+            
             CONSECUTIVE_ERRORS += 1
-            print(f"❌ [主循環錯誤] 當前連續錯誤數: {CONSECUTIVE_ERRORS} | 錯誤: {e}")
-            traceback.print_exc()
-
-            # 連續錯誤防爆防封禁冷卻機制
             if CONSECUTIVE_ERRORS >= 3:
+                try:
+                    send_alert("⚠️ [嚴重警告] 機器人連續報錯 3 次以上，請立即檢查系統狀態！")
+                except NameError:
+                    pass
                 cooldown = min(120, 15 * (CONSECUTIVE_ERRORS - 2))
                 print(f"🚨 [連續API錯誤風控] 已連續錯誤 {CONSECUTIVE_ERRORS} 次，觸發風控冷卻，暫停 {cooldown} 秒...")
                 await asyncio.sleep(cooldown)
@@ -2471,13 +2438,30 @@ async def periodic_status_log():
         print(f"📊 [狀態] ACTIVE={active} COOLDOWN={cooldown} BANNED={banned} | 持倉({len(open_syms)}): {open_str}")
 
 async def main():
-    try:
-        asyncio.create_task(periodic_htf_update(exchange_futures))
-        asyncio.create_task(periodic_status_log())
-        await main_loop(exchange_futures)
-    finally:
-        await exchange_futures.close()
-        await exchange_spot.close()
+    asyncio.create_task(periodic_htf_update(exchange_futures))
+    asyncio.create_task(periodic_status_log())
+    
+    while True:
+        try:
+            await main_loop(exchange_futures)
+        except Exception as e:
+            import traceback
+            print(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
+            traceback.print_exc()
+            print("⏳ 將在 10 秒後由內部自動重啟主程序...")
+            await asyncio.sleep(10)
+        finally:
+            # 如果因為某種原因跳出，確保資源有被釋放或嘗試重新連接
+            pass
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("🛑 程式已被手動終止")
+    finally:
+        # 在退出前關閉交易所連接
+        async def cleanup():
+            await exchange_futures.close()
+            await exchange_spot.close()
+        asyncio.run(cleanup())
