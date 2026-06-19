@@ -159,55 +159,20 @@ DEFAULT_SYMBOLS = [
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 
-PERSONALITY_TEMPLATES = {
-    "calm": {
-        "personality": "calm",
-        "risk_multiplier": 0.7,
-        "volume_multiplier": 0.8,
-        "entry_cooldown_sec": 180,
-        "max_additional_entries": 1,
-        "entry_size_pct": 0.3,
-        "add_entry_pct": 0.15,
-        "sl_atr_multiplier": 1.5,
-        "tp_atr_multiplier": 3.0,
-        "hard_stop_loss_pct": 0.03,
-    },
-    "balanced": {
-        "personality": "balanced",
-        "risk_multiplier": 1.0,
-        "volume_multiplier": 1.0,
-        "entry_cooldown_sec": 90,
-        "max_additional_entries": 2,
-        "entry_size_pct": 0.5,
-        "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 1.2,
-        "tp_atr_multiplier": 2.4,
-        "hard_stop_loss_pct": 0.02,
-    },
-    "aggressive": {
-        "personality": "aggressive",
-        "risk_multiplier": 1.2,
-        "volume_multiplier": 1.2,
-        "entry_cooldown_sec": 60,
-        "max_additional_entries": 3,
-        "entry_size_pct": 0.7,
-        "add_entry_pct": 0.4,
-        "sl_atr_multiplier": 1.0,
-        "tp_atr_multiplier": 2.0,
-        "hard_stop_loss_pct": 0.015,
-    },
-    "adaptive": {
-        "personality": "adaptive",
-        "risk_multiplier": 1.0,
-        "volume_multiplier": 1.0,
-        "entry_cooldown_sec": 90,
-        "max_additional_entries": 2,
-        "entry_size_pct": 0.5,
-        "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 1.2,
-        "tp_atr_multiplier": 2.4,
-        "hard_stop_loss_pct": 0.02,
-    },
+# 幣種個性配置地圖
+COIN_PROFILES = {
+    "DOGE":    {"volatility": "mid",    "trend": "choppy",   "sl_mult": 2.2, "tp_mult": 3.0},
+    "ESPORTS": {"volatility": "high",   "trend": "volatile", "sl_mult": 2.8, "tp_mult": 4.5},
+    "FIO":     {"volatility": "low",    "trend": "choppy",   "sl_mult": 1.8, "tp_mult": 2.5},
+    "FIS":     {"volatility": "mid",    "trend": "choppy",   "sl_mult": 2.0, "tp_mult": 3.0},
+    "FXS":     {"volatility": "mid",    "trend": "trendy",   "sl_mult": 2.2, "tp_mult": 3.5},
+    "H":       {"volatility": "mid",    "trend": "choppy",   "sl_mult": 2.0, "tp_mult": 3.0},
+    "PORT3":   {"volatility": "low",    "trend": "choppy",   "sl_mult": 1.8, "tp_mult": 2.5},
+    "PORTAL":  {"volatility": "high",   "trend": "volatile", "sl_mult": 3.0, "tp_mult": 5.0},
+    "SIREN":   {"volatility": "high",   "trend": "volatile", "sl_mult": 2.8, "tp_mult": 4.0},
+    "SYN":     {"volatility": "mid",    "trend": "trendy",   "sl_mult": 2.2, "tp_mult": 3.5},
+    "VELVET":  {"volatility": "high",   "trend": "strong",  "sl_mult": 3.0, "tp_mult": 6.0},
+    "XRP":     {"volatility": "mid",    "trend": "strong",  "sl_mult": 2.5, "tp_mult": 4.0},
 }
 
 SYMBOL_EXIT_OVERRIDES = {
@@ -2244,57 +2209,21 @@ async def check_entries():
                             continue
 
                     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-                    sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-                    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-                    
-                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-                    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-                    
-                    if (tp_dist / sl_dist if sl_dist > 0 else 0) < 2.0:
-                        continue
-                        
-                    candidates.append((sym, side, strength, route))
-                    continue
-                else:
-                    print(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
-                    s["pending_side"] = None
-            else:
-                s["pending_side"] = None
-            continue
-
-        # 原本的計算邏輯
-        side_strength = compute_signal_strength(sym)
-        if side_strength[0] is None:
-            continue
-        side, strength, route = side_strength
-        if not is_entry_allowed(sym, side, route):
-            continue
-
-        # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        ema50_1h = s.get("ema50_1h", 0.0)
-        p = s["close_price"]
-        if ema50_1h > 0:
-            if side == "buy" and p < ema50_1h:
-                print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
-                continue
-            if side == "sell" and p > ema50_1h:
-                print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
-                continue
-
-        # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
-        atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-        sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-        tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+    
+    # 計算止損與止盈距離
+    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
+    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
+    
+    # 計算預期盈虧比 (Risk:Reward Ratio)
+    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+    
+    # 門檻值：預期盈虧比必須 >= 1.5 (可從 config.json 讀取)
+    min_rr = 1.5
+    if expected_rr < min_rr:
+        print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {min_rr}，放棄暫存")
+        continue
         
-        sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-        tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-        
-        expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        if expected_rr < 2.0:
-            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
-            continue
-
-        # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
+    print(f"✅ [盈虧比通過] {sym} 預期盈虧比 {expected_rr:.2f} >= {min_rr}")
         s["pending_side"] = side
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
