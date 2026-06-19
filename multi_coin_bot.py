@@ -2127,13 +2127,15 @@ def is_entry_allowed(sym, side, route="a"):
     s = STATES[sym]
     cp = s["close_price"]
     
-    # 均線過濾器已移除 - 寬鬆進場模式允許價格在SMA200上下開單
-    # if s.get("sma200_15m", 0) > 0:
-    #     ma200 = s["sma200_15m"]
-    #     if side == 'buy' and cp <= ma200:
-    #         return False
-    #     if side == 'sell' and cp >= ma200:
-    #         return False
+    # 恢復 15m SMA200 均線過濾器：嚴格限制開倉方向必須與 15 分鐘大趨勢一致
+    if s.get("sma200_15m", 0) > 0:
+        ma200 = s["sma200_15m"]
+        if side == 'buy' and cp <= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [均線過濾] 價格低於 15m SMA200，禁止做多")
+            return False
+        if side == 'sell' and cp >= ma200:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [均線過濾] 價格高於 15m SMA200，禁止做空")
+            return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
@@ -2167,10 +2169,10 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.6: # 恢復為 0.6，過濾掉超過 40% 的盤整時間
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.5: # 調整為 0.5 (適中)
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.005: # 恢復為 0.5%，要求布林帶有明顯開口才做
+    if bb_width_pct > 0 and bb_width_pct < 0.004: # 調整為 0.4% (適中)
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
     if route != "Exhaustion_Entry" and not is_entry_pin_safe(sym, side):
@@ -2187,14 +2189,14 @@ def is_entry_allowed(sym, side, route="a"):
         lows = np.array([x[3] for x in s["ohlcv"]])
         closes = np.array([x[4] for x in s["ohlcv"]])
         adx_val = calculate_adx(highs, lows, closes)
-        if adx_val < 15: # 從 8 提高到 15，嚴格要求必須有明確趨勢才進場
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 15")
+        if adx_val < 10: # 調整為 10 (適中)
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 10")
             return False
 
-    # 實盤最小量限制 (提高至均量的 50%)
-    min_volume = s["vol_ma20"] * 0.5
+    # 實盤最小量限制 (調整為 20%)
+    min_volume = s["vol_ma20"] * 0.2
     if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 50% ({min_volume:.2f})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 20% ({min_volume:.2f})")
         return False
     return True
 
