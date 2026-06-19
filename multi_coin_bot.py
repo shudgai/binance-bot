@@ -161,14 +161,24 @@ MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
-    "AVAXUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "DOGEUSDT": {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "INJUSDT":  {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "LINKUSDT": {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "NEARUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "RENDERUSDT":{"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "SOLUSDT":  {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "SUIUSDT":  {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
+    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
+    "LINKUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 180, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
+    "INTCUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
+    "TRXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
+
+    # --- 第二類：高彈性動能層 (High-Beta Momentum) - 快速爆發，中等槓桿 ---
+    "RENDERUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "SUIUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 3.6, "volume_threshold_factor": 1.8, "breakeven_trigger": 0.7, "min_flip_time": 90, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "INJUSDT": {"sl_atr_multiplier": 2.2, "tp_atr_multiplier": 4.4, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "NEARUSDT": {"sl_atr_multiplier": 2.3, "tp_atr_multiplier": 4.6, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 180, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "VELVETUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "LABUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "DRAMUSDT": {"sl_atr_multiplier": 2.1, "tp_atr_multiplier": 4.2, "volume_threshold_factor": 1.7, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+
+    # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
+    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2},
+    "DOGEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2}
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -181,14 +191,10 @@ LEVERAGE_TIERS = {
 }
 
 def get_symbol_leverage(sym):
-    profiles = load_symbol_profiles()
-    profile = profiles.get(sym, {})
-    if isinstance(profile, dict) and "leverage" in profile:
-        return int(profile["leverage"])
-    for tier in LEVERAGE_TIERS.values():
-        if sym in tier["coins"]:
-            return tier["leverage"]
-    return LEVERAGE  # 預設使用全域的 5 倍
+    conf = COIN_PROFILE_CONFIG.get(sym, {})
+    if "leverage" in conf:
+        return int(conf["leverage"])
+    return DEFAULT_LEVERAGE
 RSI_PERIOD = 9
 VOLUME_RATIO_THRESHOLD = 0.7
 ATR_WARMUP_BATCH_SIZE = 2
@@ -664,7 +670,7 @@ def update_all_dynamic_personalities():
 
 _, SYMBOL_PROFILES = load_symbol_config()
 
-MAX_POSITIONS = 8
+MAX_POSITIONS = 12
 COOLDOWN_SEC = 1800
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
@@ -986,20 +992,23 @@ def compute_per_coin_margin(sym=None):
         return 0
 
     weights = {
-        "Core_Trend": 0.3,
-        "High_Beta_Momentum": 0.2,
-        "Speculative_Risk": 0.1
+        "Core_Trend": 1.5,
+        "High_Beta_Momentum": 1.0,
+        "Speculative_Risk": 0.7
     }
 
     total_weight = 0.0
     for s in ALL_SYMBOLS:
         p_type = STATES[s].get("profile_type", "Core_Trend") if s in STATES else "Core_Trend"
-        total_weight += weights.get(p_type, 0.1)
+        total_weight += weights.get(p_type, 1.0)
 
     scale_factor = 1.0 / max(1.0, total_weight)
 
     my_type = STATES[sym].get("profile_type", "Core_Trend") if sym in STATES else "Core_Trend"
-    my_weight = weights.get(my_type, 0.1) * scale_factor
+    my_weight = weights.get(my_type, 1.0) * scale_factor
+
+    if my_weight > 0.2:
+        my_weight = 0.2
 
     usable = balance * my_weight * 0.95
     return usable
@@ -1479,6 +1488,33 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
         s["qty"] = round_step(raw_qty, prec['step_size'])
         print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
+
+
+def should_recover_from_reversal(sym, is_long):
+    s = STATES[sym]
+    if abs(s["qty"]) < 0.000001:
+        return False
+    macd_reversal = (is_long and s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]) or \
+                    (not is_long and s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"])
+    if not macd_reversal or not s.get("prev_close") or len(s["ohlcv"]) < 2:
+        return False
+    current_price = s["close_price"]
+    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
+    prev_bar_high = s["ohlcv"][-2][2]
+    prev_bar_low = s["ohlcv"][-2][3]
+    breakout_confirmed = False
+    if is_long:
+        breakout_confirmed = current_price < prev_bar_low and prev_bar_low - current_price > max(atr_val * 0.25, 0.001)
+    else:
+        breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
+    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
+    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
+    volume_confirmed = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
+    trade_signal = s.get("trade_signal_strength", 0.0)
+    trade_confirmed = trade_signal >= reversal_settings["trade_signal_threshold"]
+    if macd_reversal and breakout_confirmed and volume_confirmed and trade_confirmed:
+        return True
+    return False
 
 async def check_exits(sym):
     s = STATES[sym]
