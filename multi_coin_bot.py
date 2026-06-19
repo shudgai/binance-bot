@@ -1615,8 +1615,8 @@ async def check_exits(sym):
     tier1_target = max(atr_pct * 1.5, 0.0035)
 
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 ──
-    # 如果利潤已經達到基本鎖利門檻 (Tier 1)，啟動量價背離偵測
-    if s["highest_profit_pct"] >= tier1_target and len(s["ohlcv"]) >= 3:
+    # 只要出現價格創新高/低但量能急縮，即視為動能竭盡，無條件平倉 (移除%限制)
+    if len(s["ohlcv"]) >= 3:
         # 只看已經收盤的 K 線，避免被當前正在跳動的未收盤 K 線誤導
         c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
         c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
@@ -2526,7 +2526,8 @@ async def main_loop(exchange):
 
             open_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) > 0.000001]
             closed_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) <= 0.000001]
-            ALL_SYMBOLS = open_syms + closed_syms
+            # 將有持倉的幣種排在最後面，確保日誌輸出時位於最底端（最容易看到）
+            ALL_SYMBOLS = closed_syms + open_syms
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
