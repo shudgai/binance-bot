@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 130.2994731734214,
+    "balance_usdt": 130.1521488614214,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -33,9 +33,9 @@
             "realized_pnl": -1.1331600000000002
         },
         "PORTAL:USDT": {
-            "qty": -2573.8,
-            "avg_price": 0.01443,
-            "realized_pnl": -0.2582650000000058
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": -0.38695500000000504
         },
         "STG:USDT": {
             "qty": 0.0,
@@ -79,20 +79,6 @@
         }
     },
     "trades": [
-        {
-            "id": "4a863136",
-            "order_id": "7f367fcf",
-            "symbol": "XRP:USDT",
-            "price": 1.146,
-            "qty": 77.0,
-            "quote_qty": 88.24199999999999,
-            "time": 1781802113930,
-            "isBuyer": false,
-            "isMaker": false,
-            "realized_pnl": -0.10010000000000607,
-            "fee": 0.044120999999999994,
-            "is_close": true
-        },
         {
             "id": "b471fd66",
             "order_id": "c7f01b84",
@@ -1478,6 +1464,20 @@
             "realized_pnl": 0.0,
             "fee": 0.018569967000000003,
             "is_close": false
+        },
+        {
+            "id": "78ccee6a",
+            "order_id": "ddf41370",
+            "symbol": "PORTAL:USDT",
+            "price": 0.01448,
+            "qty": 2573.8,
+            "quote_qty": 37.268624,
+            "time": 1781839761991,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": -0.12868999999999922,
+            "fee": 0.018634312,
+            "is_close": true
         }
     ],
     "realized_profit": 0.9129427468446366
