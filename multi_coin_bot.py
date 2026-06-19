@@ -366,33 +366,6 @@ def load_symbol_config():
         return list(DEFAULT_SYMBOLS), {}
 
 
-async def initialize_bot_data():
-    start_time = time.time()
-    print(f"🚀 開始初始化機器人數據...")
-    
-    symbols = load_symbol_pool()
-    print(f"🔍 準備掃描 {len(symbols)} 個幣種...")
-
-    # 建立並行任務清單
-    tasks = []
-    for sym in symbols:
-        tasks.append(fetch_initial_data(sym))
-    
-    # 使用 asyncio.gather 同時執行所有任務
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # 處理結果並印出進度
-    for sym, result in zip(symbols, results):
-        if isinstance(result, Exception):
-            print(f"❌ {sym} 初始化失敗: {result}")
-        else:
-            # 成功初始化，可以在這裡做後續處理
-            pass
-
-    end_time = time.time()
-    warmup_time = end_time - start_time
-    print(f"✅ 初始化完成！總共耗時: {warmup_time:.2f} 秒")
-    return results
     # 讀取優先權清單
     try:
         with open(os.path.join(os.path.dirname(__file__), "strategy_config.json"), "r") as f:
@@ -420,6 +393,19 @@ def load_symbol_profiles():
     _, profiles = load_symbol_config()
     return profiles
 
+
+def load_symbol_pool():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return normalize_symbol_list(data.get("symbols", []))
+        return normalize_symbol_list(data)
+    except FileNotFoundError:
+        return list(DEFAULT_SYMBOLS)
+    except Exception as e:
+        print(f"⚠️ 讀取幣種清單失敗: {e}")
+        return list(DEFAULT_SYMBOLS)
 
 def save_symbol_pool(symbols):
     normalized = normalize_symbol_list(symbols)

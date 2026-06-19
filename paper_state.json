@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 130.06987720042142,
+    "balance_usdt": 130.2994731734214,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -15,7 +15,7 @@
         "XRP:USDT": {
             "qty": 0.0,
             "avg_price": 0.0,
-            "realized_pnl": -0.5746799999999894
+            "realized_pnl": -0.44831999999999617
         },
         "FXS:USDT": {
             "qty": 0.0,
@@ -25,7 +25,7 @@
         "DOGE:USDT": {
             "qty": 0.0,
             "avg_price": 0.0,
-            "realized_pnl": -0.5523100000000023
+            "realized_pnl": -0.3565100000000041
         },
         "BEAT:USDT": {
             "qty": 0.0,
@@ -33,8 +33,8 @@
             "realized_pnl": -1.1331600000000002
         },
         "PORTAL:USDT": {
-            "qty": 0.0,
-            "avg_price": 0.0,
+            "qty": -2573.8,
+            "avg_price": 0.01443,
             "realized_pnl": -0.2582650000000058
         },
         "STG:USDT": {
@@ -79,76 +79,6 @@
         }
     },
     "trades": [
-        {
-            "id": "46c28fc0",
-            "order_id": "dcc9630a",
-            "symbol": "H:USDT",
-            "price": 0.23037,
-            "qty": 274.0,
-            "quote_qty": 63.121379999999995,
-            "time": 1781801577035,
-            "isBuyer": false,
-            "isMaker": false,
-            "realized_pnl": 0.0,
-            "fee": 0.031560689999999995,
-            "is_close": false
-        },
-        {
-            "id": "34c471f5",
-            "order_id": "6cce0e1d",
-            "symbol": "H:USDT",
-            "price": 0.23295,
-            "qty": 274.0,
-            "quote_qty": 63.8283,
-            "time": 1781801724850,
-            "isBuyer": true,
-            "isMaker": false,
-            "realized_pnl": -0.7069199999999998,
-            "fee": 0.03191415,
-            "is_close": true
-        },
-        {
-            "id": "1e2eb7b5",
-            "order_id": "b133b889",
-            "symbol": "BSB:USDT",
-            "price": 0.56718,
-            "qty": 155.0,
-            "quote_qty": 87.91290000000001,
-            "time": 1781801786459,
-            "isBuyer": false,
-            "isMaker": false,
-            "realized_pnl": 0.0,
-            "fee": 0.04395645000000001,
-            "is_close": false
-        },
-        {
-            "id": "dc0da82b",
-            "order_id": "2ec6f36c",
-            "symbol": "BSB:USDT",
-            "price": 0.56333,
-            "qty": 155.0,
-            "quote_qty": 87.31615,
-            "time": 1781801874754,
-            "isBuyer": true,
-            "isMaker": false,
-            "realized_pnl": 0.5967500000000031,
-            "fee": 0.043658075,
-            "is_close": true
-        },
-        {
-            "id": "ae0c4603",
-            "order_id": "02c5115e",
-            "symbol": "XRP:USDT",
-            "price": 1.1473,
-            "qty": 77.0,
-            "quote_qty": 88.3421,
-            "time": 1781801936357,
-            "isBuyer": true,
-            "isMaker": false,
-            "realized_pnl": 0.0,
-            "fee": 0.04417105,
-            "is_close": false
-        },
         {
             "id": "4a863136",
             "order_id": "7f367fcf",
@@ -1478,6 +1408,76 @@
             "realized_pnl": 0.923579999999998,
             "fee": 0.04340826,
             "is_close": true
+        },
+        {
+            "id": "c34ea634",
+            "order_id": "9a425620",
+            "symbol": "DOGE:USDT",
+            "price": 0.08334,
+            "qty": 445.0,
+            "quote_qty": 37.0863,
+            "time": 1781838892198,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.01854315,
+            "is_close": false
+        },
+        {
+            "id": "3b234fc9",
+            "order_id": "98d1c03b",
+            "symbol": "XRP:USDT",
+            "price": 1.1441,
+            "qty": 32.4,
+            "quote_qty": 37.068839999999994,
+            "time": 1781838893261,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.018534419999999996,
+            "is_close": false
+        },
+        {
+            "id": "4ac4f3b0",
+            "order_id": "bbd1957b",
+            "symbol": "XRP:USDT",
+            "price": 1.1402,
+            "qty": 32.4,
+            "quote_qty": 36.94248,
+            "time": 1781838951777,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.12635999999999328,
+            "fee": 0.018471240000000003,
+            "is_close": true
+        },
+        {
+            "id": "2eb3449f",
+            "order_id": "383babac",
+            "symbol": "DOGE:USDT",
+            "price": 0.0829,
+            "qty": 445.0,
+            "quote_qty": 36.8905,
+            "time": 1781838981605,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.1957999999999982,
+            "fee": 0.018445250000000003,
+            "is_close": true
+        },
+        {
+            "id": "f9a4b02f",
+            "order_id": "d5001983",
+            "symbol": "PORTAL:USDT",
+            "price": 0.01443,
+            "qty": 2573.8,
+            "quote_qty": 37.139934000000004,
+            "time": 1781839013435,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.018569967000000003,
+            "is_close": false
         }
     ],
     "realized_profit": 0.9129427468446366
