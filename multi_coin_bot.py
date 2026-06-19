@@ -671,7 +671,7 @@ def update_all_dynamic_personalities():
 
 _, SYMBOL_PROFILES = load_symbol_config()
 
-MAX_POSITIONS = 2
+MAX_POSITIONS = 3
 COOLDOWN_SEC = 1800
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
@@ -992,8 +992,8 @@ def compute_per_coin_margin(sym=None):
     if balance <= 0 or not sym:
         return 0
 
-    # 用戶要求：每次持倉2個幣種，金額各一半
-    return balance * 0.5 * 0.95
+    # 用戶要求：每次持倉3個幣種，資金均分 (各拿 33%)
+    return balance * 0.33 * 0.95
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
