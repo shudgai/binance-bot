@@ -714,6 +714,7 @@ def build_symbol_state(sym):
         "trailing_lowest": float('inf'),
         "highest_profit_pct": 0.0,
         "has_partial_closed": False,
+        "trade_status": "NORMAL",
         "pending_stop_loss": False,
         "stop_loss_price": 0.0,
         "ohlcv": [],
@@ -1041,6 +1042,7 @@ def reset_coin_state(sym):
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
     s["has_partial_closed"] = False
+    s["trade_status"] = "NORMAL"
     s["pending_side"] = None
     s["pending_time"] = 0
     s["pending_confirm_high"] = 0
@@ -1510,11 +1512,11 @@ async def check_exits(sym):
         return
     if abs(s["qty"]) < 0.000001 or s["avg_price"] <= 0:
         return
+        
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
     atr_history = s.get("atr_history", [])
-    atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
+    atr_24h_avg = float(sum(atr_history)/len(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
-    # 高波動期縮短保護盲區到 20 秒，低波動維持 60 秒
     cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
     if hold_sec < cooldown_limit:
         return
@@ -1523,22 +1525,32 @@ async def check_exits(sym):
     avg = s["avg_price"]
     is_long = s["qty"] > 0
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    cs = 'sell' if is_long else 'buy'
 
+    if profit_pct > s["highest_profit_pct"]:
+        s["highest_profit_pct"] = profit_pct
+    if profit_pct < 0:
+        s["has_been_negative"] = True
+    if p > s["trailing_highest"]:
+        s["trailing_highest"] = p
+    if p < s["trailing_lowest"]:
+        s["trailing_lowest"] = p
 
-    # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
+    # --- State Machine Transitions ---
+    if s.get("trade_status", "NORMAL") == "NORMAL" and s["highest_profit_pct"] >= 0.01:
+        s["trade_status"] = "TRAILING"
+        print(f"🔄 [狀態切換] {sym} 獲利達 1.0%，進入 TRAILING 極限追蹤模式！")
+
+    # ==========================================
+    # Waterfall Logic (5-Layer Defense System)
+    # ==========================================
+
+    # ── 底層防護：硬停損 (Hard Stop Loss) & 動態保本 ──
     sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-    tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
-    
-    # ── 加入最低距離保護 (Minimum Distance Floor) ──
     sl_dist = max(sl_mult * atr_val, avg * 0.005)
-    tp_dist = max(tp_base * atr_val, avg * 0.015)
     
-    tp = avg + tp_dist if is_long else avg - tp_dist
-
-    # ── 動態保本防護 (Dynamic Breakeven) ──
-    # 只要利潤達到 1 倍 ATR (或至少 0.2%)，就將停損永久上移至保本點 (+0.15% 確保夠付手續費)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     breakeven_threshold = max(entry_atr_pct * 1.0, 0.002)
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
@@ -1546,211 +1558,122 @@ async def check_exits(sym):
     else:
         sl = avg - sl_dist if is_long else avg + sl_dist
 
-    # --- 放量破位強制止損 (Volume-Driven Exit) ---
-    if len(s["ohlcv"]) >= 2:
-        prev_k = s["ohlcv"][-2]
-        current_vol = s.get("current_vol", 0.0)
-        vol_ma20 = s.get("vol_ma20", 0.0)
-        
-        if vol_ma20 > 0:
-            vol_ratio = current_vol / vol_ma20
-            if vol_ratio > 2.0:
-                # 多單防禦：跌破前一根低點
-                if is_long and p < prev_k[3]:
-                    print(f"🚨 [放量破位] {sym} 多單遭遇恐慌拋售 (量能 {vol_ratio:.1f}x，跌破前低 {prev_k[3]:.4f})，緊急強制止損！")
-                    await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Volume_Breakout_Stop]", is_stop_loss=True)
-                    s["highest_profit_pct"] = 0.0
-                    return
-                # 空單防禦：突破前一根高點
-                if not is_long and p > prev_k[2]:
-                    print(f"🚨 [放量破位] {sym} 空單遭遇暴力拉升 (量能 {vol_ratio:.1f}x，突破前高 {prev_k[2]:.4f})，緊急強制止損！")
-                    await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Volume_Breakout_Stop]", is_stop_loss=True)
-                    s["highest_profit_pct"] = 0.0
-                    return
-
-    if profit_pct > s["highest_profit_pct"]:
-        s["highest_profit_pct"] = profit_pct
-    if profit_pct < 0:
-        s["has_been_negative"] = True
-
-    regime_decision, regime_reason = detect_market_regime(sym, p, avg, is_long)
-    if regime_decision == "BREAKOUT_REVERSAL":
-        cs = 'sell' if is_long else 'buy'
-        print(f"🚨 [市場 regime] {sym} {regime_reason}，立即平倉並反手")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Breakout_Fail]_Fail]", is_stop_loss=True)
-        s["highest_profit_pct"] = 0.0
+    if (is_long and p <= sl) or (not is_long and p >= sl):
+        reason_str = "Layer_0_Breakeven_Stop" if abs(sl - (avg * 1.0015 if is_long else avg * 0.9985)) < 1e-6 else "Layer_0_Hard_Stop"
+        print(f"🛑 [硬防護] {sym} 觸發底層停損 ({reason_str})")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
         return
 
-
-    if regime_decision == "RANGE_PROFIT_TAKE":
-        cs = 'sell' if is_long else 'buy'
-        print(f"📈 [盤整獲利] {sym} {regime_reason}，提前獲利了結")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-        s["highest_profit_pct"] = 0.0
-        return
-
-    # 動能衰減檢查：從最高點回落
-    s["pnl_history"].append(profit_pct * 100)
-    if len(s["pnl_history"]) > 8:
-        s["pnl_history"].pop(0)
-        
-    if profit_pct > 0.015 and s["highest_profit_pct"] > 0.015:
-        drawdown = (s["highest_profit_pct"] - profit_pct) / s["highest_profit_pct"]
-        if drawdown >= 0.25:
-            cs = 'sell' if is_long else 'buy'
-            print(f"📉 [動能衰減] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回落 25% (現為 {profit_pct*100:.2f}%)，提早獲利了結")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]top]")
-            s["highest_profit_pct"] = 0.0
-            return
-    if p > s["trailing_highest"]:
-        s["trailing_highest"] = p
-    if p < s["trailing_lowest"]:
-        s["trailing_lowest"] = p
-
-    # 1. 趨勢反轉：MACD 狀態反向 → 立即認賠出場 (修正盲區，不只看交叉瞬間)
-    macd_is_down = s["macd_line"] < s["macd_signal"]
-    macd_is_up = s["macd_line"] > s["macd_signal"]
-    sl_pct = s.get("hard_stop_loss_pct", 0.02)
-    early_exit_limit = -(sl_pct * 0.5)
-    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
-        cs = 'sell' if is_long else 'buy'
-        is_sl = profit_pct < 0.0
-        print(f"📉 [反轉出場] {sym} MACD狀態反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=is_sl)
-        return
-
-    # 2. 判斷市場狀態：強勢 / 弱勢
-    is_strong = (is_long and s["current_rsi"] > 50) or (not is_long and s["current_rsi"] <= 50)
-
-    # ── 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock) ──
-    # 實施分級保本與回撤防護，防止「有利潤不平倉，最後被打到停損」
-    
-    # 趨勢確認：如果 MACD 仍在趨勢方向，則放寬鎖利條件
-    is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
-    
-    # ── 動態 ATR 鎖利門檻 (Dynamic ATR Lock) ──
-    # 取代固定 %，改用 ATR 倍數，讓低波動幣種也能被及時保護
-    atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    
-    tier3_target = max(atr_pct * 4.0, 0.012)
-    tier2_target = max(atr_pct * 2.5, 0.006)
-    tier1_target = max(atr_pct * 1.5, 0.0035)
-
-    # ── 50% 分批停利 (Partial Take Profit) ──
-    # 當利潤首次觸及 tier2_target (約 2.5倍 ATR) 時，直接市價平倉 50% 落袋為安，剩下的 50% 繼續跑
-    if profit_pct >= tier2_target and not s.get("has_partial_closed", False):
-        half_qty = abs(s["qty"]) * 0.5
-        cs = 'sell' if is_long else 'buy'
-        print(f"💰 [分批停利] {sym} 獲利衝達 {profit_pct*100:.3f}% (>=2.5ATR)，市價平倉 50% 落袋為安！")
-        await close_position(sym, cs, half_qty, p, avg, reason="[Partial_TP]")
-        s["has_partial_closed"] = True
-        return
-
-    # ── 動能竭盡 (量價背離) 頂部逃頂機制 ──
-    # 只要出現價格創新高/低但量能急縮，即視為動能竭盡，無條件平倉 (移除%限制)
+    # ── Layer 1: 量價背離與破位強制止損 (Nuclear Option) ──
     if len(s["ohlcv"]) >= 3:
-        # 只看已經收盤的 K 線，避免被當前正在跳動的未收盤 K 線誤導
-        c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
-        c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
-        
+        # 1.1 放量破位
+        prev_k = s["ohlcv"][-2]
+        vol_ma20 = s.get("vol_ma20", 0.0)
+        current_vol = s.get("current_vol", 0.0)
+        if vol_ma20 > 0 and (current_vol / vol_ma20) > 2.0:
+            if is_long and p < prev_k[3]:
+                print(f"🚨 [Layer_1] {sym} 多單放量跌破前低，緊急強制止損！")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_1_Volume_Breakout", is_stop_loss=True)
+                s["highest_profit_pct"] = 0.0
+                return
+            if not is_long and p > prev_k[2]:
+                print(f"🚨 [Layer_1] {sym} 空單放量突破前高，緊急強制止損！")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_1_Volume_Breakout", is_stop_loss=True)
+                s["highest_profit_pct"] = 0.0
+                return
+                
+        # 1.2 量價背離 (逃頂)
+        c1 = s["ohlcv"][-2]
+        c2 = s["ohlcv"][-3]
         divergence_exit = False
         if is_long and c1[4] > c2[4] and c1[5] < c2[5] * 0.65:
-            # 多單：價格創高，但量能急縮 (< 65%)
             divergence_exit = True
         elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * 0.65:
-            # 空單：價格創低，但量能急縮 (< 65%)
             divergence_exit = True
             
         if divergence_exit:
-            cs = 'sell' if is_long else 'buy'
-            print(f"📉 [量價背離] {sym} 價格創高/低但量能急縮 (V:{c1[5]:.0f} < V_prev:{c2[5]:.0f}*0.65)，動能竭盡提前平倉！")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
+            print(f"📉 [Layer_1] {sym} 價格創高/低但量能萎縮 (<65%)，量價背離收網！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_1_Volume_Divergence")
             s["highest_profit_pct"] = 0.0
             return
 
+    # ── Layer 2: 極限追蹤 (Extreme Trailing) ──
+    if s.get("trade_status", "NORMAL") == "TRAILING":
+        # 獲利突破 1% 後，回撤 0.5% 則全平
+        if (is_long and p <= s["trailing_highest"] * 0.995) or (not is_long and p >= s["trailing_lowest"] * 1.005):
+            print(f"🏃 [Layer_2] {sym} 極限追蹤觸發，從最高點回撤 0.5%，獲利了結")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_2_Max_Trailing_Stop")
+            s["highest_profit_pct"] = 0.0
+            return
+
+    # ── Layer 3: 技術反轉 (Technical Reversal) ──
+    macd_is_down = s.get("macd_line", 0) < s.get("macd_signal", 0)
+    macd_is_up = s.get("macd_line", 0) > s.get("macd_signal", 0)
+    sl_pct = s.get("hard_stop_loss_pct", 0.02)
+    early_exit_limit = -(sl_pct * 0.5)
+    
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
+        is_sl = profit_pct < 0.0
+        print(f"📉 [Layer_3] {sym} MACD狀態反向，趨勢終結立即平倉 (損益: {profit_pct*100:.2f}%)")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_3_MACD_Reversal", is_stop_loss=is_sl)
+        return
+
+    # ── Layer 4: 階梯式動態鎖利 (Dynamic Profit Lock) ──
+    atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
+    tier3_target = max(atr_pct * 4.0, 0.012)
+    tier2_target = max(atr_pct * 2.5, 0.006)
+    tier1_target = max(atr_pct * 1.5, 0.0035)
+    
+    is_trend_ok = (is_long and s.get("macd_line", 0) > s.get("macd_signal", 0)) or (not is_long and s.get("macd_line", 0) < s.get("macd_signal", 0))
+    
     if s["highest_profit_pct"] >= tier3_target and profit_pct < s["highest_profit_pct"] * (0.6 if is_trend_ok else 0.4):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [大行情鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>4ATR)，觸發大行情回撤平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]")
+        print(f"🛡️ [Layer_4] {sym} 觸發大行情鎖利 (回吐 40%)")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier3_Trailing")
         s["highest_profit_pct"] = 0.0
         return
     elif s["highest_profit_pct"] >= tier2_target and profit_pct < s["highest_profit_pct"] * (0.5 if is_trend_ok else 0.3):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [中利鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>2.5ATR)，回落至 {profit_pct*100:.3f}% 平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
+        print(f"🛡️ [Layer_4] {sym} 觸發中波段鎖利 (回吐 50%)")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier2_Trailing")
         s["highest_profit_pct"] = 0.0
         return
     elif s["highest_profit_pct"] >= tier1_target and profit_pct < (max(atr_pct * 0.5, 0.0015)):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [基本鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>1.5ATR)，回落至 {profit_pct*100:.3f}% 保護平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
+        print(f"🛡️ [Layer_4] {sym} 觸發基本保本鎖利")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier1_Trailing")
         s["highest_profit_pct"] = 0.0
         return
 
-    # 取消固定百分比停利，改由移動停損 (Trailing Stop) 統一接管，以利捕捉最大波段
-
-    if not is_strong:
-        # ── 盤整／弱勢路線 ────────────────────────────────
-        # 僵局一階：時間到 → 有任何正利潤就全平，利潤微薄(0.2%~0.5%)平50%
-        stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
+    # ── Layer 5: 時間防禦與分批平倉 (Time Defense & Partial Exit) ──
+    trade_status = s.get("trade_status", "NORMAL")
+    if trade_status == "NORMAL":
+        # 5.1 50% 分批停利 (Partial Take Profit)
+        if profit_pct >= tier2_target:
+            half_qty = abs(s["qty"]) * 0.5
+            print(f"💰 [Layer_5] {sym} 獲利達標 (>=2.5ATR)，市價平倉 50% 落袋為安！")
+            await close_position(sym, cs, half_qty, p, avg, reason="Layer_5_Partial_TP")
+            s["trade_status"] = "PARTIAL_EXIT"
+            return
+            
+        # 5.2 盤整時間防禦 (Stagnation)
+        stagnation_limit = get_dynamic_stagnation_limit(s.get("current_atr", atr_val), s.get("atr_ma20", current_atr))
         if hold_sec > stagnation_limit and profit_pct > 0.003:
-            if not s["has_partial_closed"] and 0.003 <= profit_pct < 0.008:
-                half = abs(s["qty"]) * 0.5
-                cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局一階] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，平50%")
-                await close_position(sym, cs, half, p, avg, reason="[Stagnation_1]")
-                s["has_partial_closed"] = True
+            if 0.003 <= profit_pct < 0.008:
+                half_qty = abs(s["qty"]) * 0.5
+                print(f"⏳ [Layer_5] {sym} 僵局盤整過久，平倉 50% 保本")
+                await close_position(sym, cs, half_qty, p, avg, reason="Layer_5_Stagnation_Partial")
+                s["trade_status"] = "PARTIAL_EXIT"
                 return
             elif profit_pct >= 0.008:
-                cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局平倉] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，全平")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Exit]")
+                print(f"⏳ [Layer_5] {sym} 僵局盤整過久，全平")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Full")
                 s["highest_profit_pct"] = 0.0
                 return
-        # 僵局二階：平過50% + 8分仍未突破1% → 全平
-        if s["has_partial_closed"] and hold_sec > 480 and profit_pct < 0.01:
-            cs = 'sell' if is_long else 'buy'
-            print(f"⏳ [僵局二階] {sym} 剩餘50%持倉8分仍未突破1%，全平")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_2]")
-            s["highest_profit_pct"] = 0.0
-            s["has_partial_closed"] = False
-            return
-        # 弱勢快速停利：穩健型幣種可以等更久，再決定是否落袋
-        weak_tp = 0.008
-        if s.get("personality") == "calm":
-            weak_tp = 0.012
-        if s["highest_profit_pct"] >= weak_tp:
-            if not has_strong_momentum(sym, is_long):
-                cs = 'sell' if is_long else 'buy'
-                print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%，動能不足則落袋")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-                s["highest_profit_pct"] = 0.0
-                return
-            print(f"⚡ [保留動能] {sym} 弱勢已達{weak_tp*100:.1f}%但動能仍強，暫不停利")
-    else:
-        # ── 強勢路徑完全交給 ATR 移動停損 (Trailing Stop) 接管，讓利潤盡情奔跑
 
-        # 強勢動態停利：高點回撤 0.5%
-        if s["highest_profit_pct"] >= 0.01:
-            if (is_long and p <= s["trailing_highest"] * 0.990) or (not is_long and p >= s["trailing_lowest"] * 1.010):
-                cs = 'sell' if is_long else 'buy'
-                print(f"🏃 [動態停利] {sym} 強勢回撤0.5%")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]")
-                s["highest_profit_pct"] = 0.0
-                return
-        # 強勢 ATR TP/SL
-        if (is_long and p >= tp) or (not is_long and p <= tp):
-            cs = 'sell' if is_long else 'buy'
-            tp_pct = abs(tp - avg) / avg * 100
-            print(f"🎯 [ATR停利] {sym} {tp_pct:.1f}%")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-            return
-        if (is_long and p <= sl) or (not is_long and p >= sl):
-            cs = 'sell' if is_long else 'buy'
-            sl_pct = abs(sl - avg) / avg * 100
-            reason_str = "[Breakeven_Stop]" if sl == avg else "[Trend_Follow]"
-            print(f"🛑 [{reason_str}] {sym} -{sl_pct:.1f}%")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
+    elif trade_status == "PARTIAL_EXIT":
+        # 已經平過 50%，如果卡了超過 8 分鐘且獲利不佳，全跑
+        if hold_sec > 480 and profit_pct < 0.01:
+            print(f"⏳ [Layer_5] {sym} 剩餘倉位盤整過久，全數平倉")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Remaining")
+            s["highest_profit_pct"] = 0.0
             return
 
 async def check_position_exits(exchange, sym):
@@ -1919,25 +1842,20 @@ async def execute_order(sym, side, price):
             print(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
             return
         if s["avg_price"] > 0 and s["close_price"] > 0:
-            # 用戶要求：越跌越買 (逢低攤平 DCA)。
-            # 計算目前的「未實現虧損比例」(如果是多單，價格要低於均價才算虧損)
-            loss_pct = (s["avg_price"] - s["close_price"]) / s["avg_price"] if side == 'buy' else (s["close_price"] - s["avg_price"]) / s["avg_price"]
-            
-            # 要求至少跌了 0.8% 才能進行下一次攤平加倉
-            if loss_pct < 0.008:
-                print(f"🛑 [攤平風控] {sym} 價格尚未跌破均價 0.8%，不執行攤平加倉 (目前虧/盈: {-loss_pct*100:.2f}%)")
+            profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - s["close_price"]) / s["avg_price"]
+            if profit_pct < 0.001:
+                print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
                 return
 
     # 1. 計算目標名義價值 (保證金 * 槓桿倍數)
     target_notional = margin * lev
     
-    # 2. 套用分配比例 (首倉 vs 加倉)
-    # 用戶要求增加金額並分批：首倉用 60%，後續加倉用 40%，以確保有一定的初始倉位
-    allocation_pct = 0.6 if s["entry_count"] == 0 else 0.4
+    # 2. 套用性格分配比例 (首倉 vs 加倉)
+    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
     base_notional = target_notional * allocation_pct
     
     # 3. 最大名義價值限制 (防極端爆倉)
-    max_notional = 3000.0  # 從 1000 提高至 3000 USDT
+    max_notional = 1000.0  # 絕對最大名義價值 1000 USDT
     if base_notional > max_notional:
         base_notional = max_notional
         
@@ -2132,15 +2050,13 @@ def is_entry_allowed(sym, side, route="a"):
     s = STATES[sym]
     cp = s["close_price"]
     
-    # 恢復 15m SMA200 均線過濾器：嚴格限制開倉方向必須與 15 分鐘大趨勢一致
-    if s.get("sma200_15m", 0) > 0:
-        ma200 = s["sma200_15m"]
-        if side == 'buy' and cp <= ma200:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [均線過濾] 價格低於 15m SMA200，禁止做多")
-            return False
-        if side == 'sell' and cp >= ma200:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [均線過濾] 價格高於 15m SMA200，禁止做空")
-            return False
+    # 均線過濾器已移除 - 寬鬆進場模式允許價格在SMA200上下開單
+    # if s.get("sma200_15m", 0) > 0:
+    #     ma200 = s["sma200_15m"]
+    #     if side == 'buy' and cp <= ma200:
+    #         return False
+    #     if side == 'sell' and cp >= ma200:
+    #         return False
             
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
@@ -2174,11 +2090,11 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.5: # 調整為 0.5 (適中)
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.4: # 原 0.6，放寬至允許 40% 的極低波動
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.004: # 調整為 0.4% (適中)
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
+    if bb_width_pct > 0 and bb_width_pct < 0.003: # 原 0.005，放寬至布林帶寬度 0.3%
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
     if route != "Exhaustion_Entry" and not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
@@ -2194,14 +2110,14 @@ def is_entry_allowed(sym, side, route="a"):
         lows = np.array([x[3] for x in s["ohlcv"]])
         closes = np.array([x[4] for x in s["ohlcv"]])
         adx_val = calculate_adx(highs, lows, closes)
-        if adx_val < 10: # 調整為 10 (適中)
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 10")
+        if adx_val < 8: # 原 10，放寬 ADX 趨勢強度門檻
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
             return False
 
-    # 實盤最小量限制 (調整為 20%)
-    min_volume = s["vol_ma20"] * 0.2
+    # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
+    min_volume = s["vol_ma20"] * 0.1
     if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 20% ({min_volume:.2f})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
         return False
     return True
 
