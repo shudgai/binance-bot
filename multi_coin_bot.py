@@ -671,7 +671,7 @@ def update_all_dynamic_personalities():
 
 _, SYMBOL_PROFILES = load_symbol_config()
 
-MAX_POSITIONS = 12
+MAX_POSITIONS = 2
 COOLDOWN_SEC = 1800
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
@@ -992,27 +992,8 @@ def compute_per_coin_margin(sym=None):
     if balance <= 0 or not sym:
         return 0
 
-    weights = {
-        "Core_Trend": 1.5,
-        "High_Beta_Momentum": 1.0,
-        "Speculative_Risk": 0.7
-    }
-
-    total_weight = 0.0
-    for s in ALL_SYMBOLS:
-        p_type = STATES[s].get("profile_type", "Core_Trend") if s in STATES else "Core_Trend"
-        total_weight += weights.get(p_type, 1.0)
-
-    scale_factor = 1.0 / max(1.0, total_weight)
-
-    my_type = STATES[sym].get("profile_type", "Core_Trend") if sym in STATES else "Core_Trend"
-    my_weight = weights.get(my_type, 1.0) * scale_factor
-
-    if my_weight > 0.2:
-        my_weight = 0.2
-
-    usable = balance * my_weight * 0.95
-    return usable
+    # 用戶要求：每次持倉2個幣種，金額各一半
+    return balance * 0.5 * 0.95
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
