@@ -139,6 +139,56 @@ USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '1m'
 LEVERAGE = 5
+
+LEVERAGE_TIERS = {
+    "high_risk": {
+        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT"},
+        "leverage": 2
+    },
+    "medium_risk": {
+        "coins": {"SYNUSDT", "FXSUSDT", "FISUSDT", "HUSDT", "PORTALUSDT", "BRUSDT", "RDNTUSDT"},
+        "leverage": 3
+    },
+    "low_risk": {
+        "coins": {"XRPUSDT", "DOGEUSDT", "ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT"},
+        "leverage": 5
+    }
+}
+
+def get_symbol_leverage(sym):
+    profiles = load_symbol_profiles()
+    profile = profiles.get(sym, {})
+    if isinstance(profile, dict) and "leverage" in profile:
+        return int(profile["leverage"])
+    for tier in LEVERAGE_TIERS.values():
+        if sym in tier["coins"]:
+            return tier["leverage"]
+    return 3
+
+LEVERAGE_TIERS = {
+    "high_risk": {
+        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT"},
+        "leverage": 2
+    },
+    "medium_risk": {
+        "coins": {"SYNUSDT", "FXSUSDT", "FISUSDT", "HUSDT", "PORTALUSDT", "BRUSDT", "RDNTUSDT"},
+        "leverage": 3
+    },
+    "low_risk": {
+        "coins": {"XRPUSDT", "DOGEUSDT", "ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT"},
+        "leverage": 5
+    }
+}
+
+def get_symbol_leverage(sym):
+    profiles = load_symbol_profiles()
+    profile = profiles.get(sym, {})
+    if isinstance(profile, dict) and "leverage" in profile:
+        return int(profile["leverage"])
+    for tier in LEVERAGE_TIERS.values():
+        if sym in tier["coins"]:
+            return tier["leverage"]
+    return 3
 RSI_PERIOD = 9
 VOLUME_RATIO_THRESHOLD = 0.7
 ATR_WARMUP_BATCH_SIZE = 2
@@ -484,6 +534,12 @@ def is_strong_exit_condition(sym, is_long):
 
 
 def get_effective_exit_setting(sym, key, base_value, is_long):
+    # 1. 優先從 COIN_PROFILES 地圖中讀取個性化設定
+    profile = COIN_PROFILES.get(sym)
+    if profile and key in profile:
+        return profile[key]
+    
+    # 2. 如果地圖沒寫，再從策略配置檔讀取
     overrides = get_symbol_exit_override(sym)
     if not overrides:
         return base_value
@@ -1227,15 +1283,17 @@ def compute_indicators(sym):
 def update_trailing_stop(sym, current_price, is_long):
     """
     實作非對稱移動停損 (Asymmetric Trailing Stop)
-    當價格創新高/新低時，停損點隨之上移/下移，但絕不會往不利方向移動。
+    當價格創新高/新低時，上移停損點，且加入保本緩衝區防止被雜訊洗出場。
     """
     s = STATES[sym]
     avg_price = s["avg_price"]
     if avg_price <= 0:
         return False, 0.0
 
-    # 讀取配置參數
-    # 從 strategy_config.json 讀取 trailing_stop_multiplier
+    # 獲取當前 ATR
+    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
+    
+    # 獲取配置參數
     try:
         with open(os.path.join(os.path.dirname(__file__), "strategy_config.json"), "r") as _f:
             _cfg = json.load(_f)
@@ -1243,112 +1301,75 @@ def update_trailing_stop(sym, current_price, is_long):
     except Exception:
         trailing_multiplier = 2.0
 
-    # 初始化移動停損價 (若尚未設定)
+    # 初始化移動停損價
     if s.get("trailing_stop_price", 0.0) <= 0:
-        # 初始停損價設為入場價的 0.5% 獲利處 (可根據需求調整)
         if is_long:
             s["trailing_stop_price"] = avg_price * 1.005
         else:
             s["trailing_stop_price"] = avg_price * 0.995
 
-    # 獲取當前 ATR
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
-    
-    # 獲取爆倉價 (預計爆倉價)
-    # 這裡我們需要知道當前槓桿，假設為 LEVERAGE 變數
+    # 爆倉價格計算
     liq_price = avg_price * (1 - 1.0 / LEVERAGE) if is_long else avg_price * (1 + 1.0 / LEVERAGE)
 
-    if is_long:
-        # 檢查是否觸發停損
-        if current_price <= s["trailing_stop_price"]:
-            return True, s["trailing_stop_price"]
-        
-        # 非對稱邏輯：僅當價格創新高時，上移停損點
-        if current_price > s.get("trailing_highest", 0.0):
-            s["trailing_highest"] = current_price
-            # 計算新的移動停損點 (當前最高價 - ATR * multiplier)
-            new_sl = current_price - (atr_val * trailing_multiplier)
-            
-            # --- 爆倉緩衝檢查 ---
-            # 確保移動後的停損點與爆倉價之間仍保有至少 20% 的安全空間
-            # 對於多頭，停損點必須高於 爆倉價 * (1 + 20%)
-            safe_min_sl = liq_price * 1.2
-            if new_sl < safe_min_sl:
-                # 如果新計算的 SL 太近爆倉點，則限制在安全範圍內
-                new_sl = safe_min_sl
-            
-            # 且不能低於目前的停損點 (非對稱性)
-            s["trailing_stop_price"] = max(s["trailing_stop_price"], new_sl)
-            
-        return False, s["trailing_stop_price"]
+    # 計算當前獲利距離
+    profit_dist = (current_price - avg_price) if is_long else (avg_price - current_price)
+    initial_sl_dist = max(atr_val * get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long), avg_price * 0.005)
 
-    else: # Short position
-        # 檢查是否觸發停損
-        if current_price >= s["trailing_stop_price"]:
-            return True, s["trailing_stop_price"]
-        
-        # 非對稱邏輯：僅當價格創新低時，下移停損點
-        if current_price < s.get("trailing_lowest", float('inf')):
-            s["trailing_lowest"] = current_price
-            # 計算新的移動停損點 (當前最低價 + ATR * multiplier)
-            new_sl = current_price + (atr_val * trailing_multiplier)
-            
-            # --- 爆倉緩衝檢查 ---
-            # 對於空頭，停損點必須低於 爆倉價 * (1 - 20%)
-            safe_max_sl = liq_price * 0.8
-            if new_sl > safe_max_sl:
-                # 如果新計算的 SL 太近爆倉點，則限制在安全範圍內
-                new_sl = safe_max_sl
+    # --- 邏輯處理 ---
+    if profit_dist >= initial_sl_dist:
+        # 1. 當獲利達到 1:1 盈虧比時，觸發保本機制
+        buffer_pct = 0.003 
+        if is_long:
+            breakeven_sl = avg_price * (1 + buffer_pct)
+            if current_price > s.get("trailing_highest", 0.0):
+                s["trailing_highest"] = current_price
+                trail_sl = current_price - (atr_val * trailing_multiplier)
+                # 確保新停損點不低於保本點，且與爆倉點保持距離
+                new_sl = max(breakeven_sl, trail_sl)
+                safe_min_sl = liq_price * 1.15
+                if new_sl < safe_min_sl:
+                    new_sl = safe_min_sl
                 
-            # 且不能高於目前的停損點 (非對稱性)
-            s["trailing_stop_price"] = min(s["trailing_stop_price"], new_sl)
-            
+                if new_sl > s["trailing_stop_price"]:
+                    s["trailing_stop_price"] = new_sl
+        else:
+            breakeven_sl = avg_price * (1 - buffer_pct)
+            if current_price < s.get("trailing_lowest", float('inf')):
+                s["trailing_lowest"] = current_price
+                trail_sl = current_price + (atr_val * trailing_multiplier)
+                new_sl = min(breakeven_sl, trail_sl)
+                safe_max_sl = liq_price * 0.85
+                if new_sl > safe_max_sl:
+                    new_sl = safe_max_sl
+                
+                if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
+                    s["trailing_stop_price"] = new_sl
+        
         return False, s["trailing_stop_price"]
-
-def update_trailing_take_profit(sym, current_price, is_long):
-    """移動停利：價格創新高/新低時上移停利線，回撤超過門檻則觸發平倉。"""
-    s = STATES[sym]
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.005)
-    trail_pct = 0.005  # 回撤 0.5% 觸發
-
-    if is_long:
-        if current_price > s.get("trail_tp_price", 0.0):
-            s["trail_tp_price"] = current_price
-        trigger = s["trail_tp_price"] * (1.0 - trail_pct)
-        if current_price <= trigger:
-            return True, trigger
-        return False, s["trail_tp_price"]
+    
     else:
-        if s.get("trail_tp_price", float('inf')) == float('inf') or current_price < s["trail_tp_price"]:
-            s["trail_tp_price"] = current_price
-        trigger = s["trail_tp_price"] * (1.0 + trail_pct)
-        if current_price >= trigger:
-            return True, trigger
-        return False, s["trail_tp_price"]
-
-
-
-def should_recover_from_reversal(sym, is_long):
-    s = STATES[sym]
-    if abs(s["qty"]) < 0.000001:
-        return False
-
-    macd_reversal = (is_long and s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]) or \
-                    (not is_long and s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"])
-
-    if not macd_reversal or not s.get("prev_close") or len(s["ohlcv"]) < 2:
-        return False
-
-    current_price = s["close_price"]
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
-    prev_bar_idx = -2
-    prev_bar_high = s["ohlcv"][prev_bar_idx][2]
-    prev_bar_low = s["ohlcv"][prev_bar_idx][3]
-    breakout_confirmed = False
-    if is_long:
-        breakout_confirmed = current_price < prev_bar_low and prev_bar_low - current_price > max(atr_val * 0.25, 0.001)
-    else:
-        breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
+        # 2. 尚未達到 1:1 盈虧比時，僅更新移動停損點 (非對稱上移/下移)
+        if is_long:
+            if current_price > s.get("trailing_highest", 0.0):
+                s["trailing_highest"] = current_price
+                trail_sl = current_price - (atr_val * trailing_multiplier)
+                safe_min_sl = liq_price * 1.2
+                new_sl = max(s["trailing_stop_price"], trail_sl)
+                if new_sl < safe_min_sl:
+                    new_sl = safe_min_sl
+                if new_sl > s["trailing_stop_price"]:
+                    s["trailing_stop_price"] = new_sl
+        else:
+            if current_price < s.get("trailing_lowest", float('inf')):
+                s["trailing_lowest"] = current_price
+                trail_sl = current_price + (atr_val * trailing_multiplier)
+                safe_max_sl = liq_price * 0.8
+                new_sl = min(s["trailing_stop_price"], trail_sl)
+                if new_sl > safe_max_sl:
+                    new_sl = safe_max_sl
+                if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
+                    s["trailing_stop_price"] = new_sl
+                breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
 
     reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
     reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
@@ -1441,10 +1462,11 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     qty = sanitized_qty
 
     if PAPER_TRADING:
+        real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
         if s["qty"] > 0:
-            pnl = (price - avg_price) * qty
+            pnl = (price - real_avg) * qty
         else:
-            pnl = (avg_price - price) * qty
+            pnl = (real_avg - price) * qty
         update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
     else:
         try:
@@ -1517,7 +1539,7 @@ async def check_exits(sym):
     if should_recover_from_reversal(sym, is_long):
         recovery_side = 'sell' if is_long else 'buy'
         print(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手 | current={p:.4f} | prev_close={s.get('prev_close', 0):.4f} | trade_signal={s.get('trade_signal_strength', 0.0):.2f} | vol={s.get('current_vol', 0):.0f}/{s.get('vol_ma20', 0):.0f} | MACD反向交叉")
-        await close_position(sym, recovery_side, abs(s["qty"]), p, avg, reason="反轉補救", is_stop_loss=True)
+        await close_position(sym, recovery_side, abs(s["qty"]), p, avg, reason="反向補救", is_stop_loss=True)
         s["highest_profit_pct"] = 0.0
         return
     if regime_decision == "RANGE_PROFIT_TAKE":
@@ -1548,7 +1570,9 @@ async def check_exits(sym):
     # 1. 趨勢反轉：MACD 反向交叉 → 立即認賠出場 (無視盈虧)
     m_death = s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]
     m_golden = s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"]
-    if ((is_long and m_death) or (not is_long and m_golden)) and (profit_pct < -0.0025 or profit_pct > 0.008):
+    sl_pct = s.get("hard_stop_loss_pct", 0.02)
+    early_exit_limit = -(sl_pct * 0.5)
+    if ((is_long and m_death) or (not is_long and m_golden)) and (profit_pct < early_exit_limit or profit_pct > 0.008):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
         print(f"📉 [反轉出場] {sym} MACD反向交叉，立即平倉 (損益: {profit_pct*100:.2f}%)")
@@ -1673,6 +1697,7 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
             return
 
+async def check_position_exits(exchange, sym):
     s = STATES[sym]
     if s.get("adjusted_this_tick", False):
         return
@@ -1781,6 +1806,14 @@ async def check_exits(sym):
 async def execute_order(sym, side, price):
     s = STATES[sym]
     pk = paper_key(sym)
+    lev = get_symbol_leverage(sym)
+    s["leverage"] = lev
+    print(f"@@LEVERAGE@@{lev}")
+    if not PAPER_TRADING:
+        try:
+            await exchange_futures.set_leverage(lev, convert_to_ccxt_symbol(sym))
+        except Exception as e:
+            print(f"⚠️ [槓桿設定失敗] {sym}: {e}")
     margin = compute_per_coin_margin(sym)
     if margin <= 0:
         print(f"⚠️ [風控] {sym} 無可用保證金")
@@ -1943,9 +1976,20 @@ def is_entry_volume_confirmed(sym, side):
     vol_ma20 = s["vol_ma20"]
     if vol_ma20 <= 0:
         return False
-    min_volume = max(1000.0, s["vol_ma20"] * 0.1)
-    if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {s['current_vol']:.2f} < 均量門檻 {min_volume:.2f}")
+    
+    # 動態倍數：根據目前的 ATR 波動來決定成交量門檻
+    # 如果目前波動很大，我們要求更強的成交量爆發（例如 1.5 倍）
+    # 如果目前波動很小，我們放寬一點（例如 1.2 倍）
+    atr_pct = s.get("current_atr", 0.0) / max(s["close_price"], 1e-8)
+    
+    if atr_pct > 0.01: # 高波動環境
+        volume_multiplier = 1.5
+    else: # 低波動環境
+        volume_multiplier = 1.2
+        
+    min_volume = max(1000.0, vol_ma20 * volume_multiplier)
+    if current_vol < min_volume:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 動態門檻 {min_volume:.2f} (ATR_pct:{atr_pct:.4f})")
         return False
 
     # --- R:R (盈虧比) 過濾 ---
@@ -2027,7 +2071,7 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 15:
+    if adx_val < 10:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 15")
         return False
 
@@ -2047,7 +2091,7 @@ def compute_signal_strength(sym):
     # 確保當前 K 線成交量至少是過去 10 根平均的 1.5 倍，過濾掉沒人交易的橫盤
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
-    if vol_ma10 > 0 and current_vol < vol_ma10 * 1.5:
+    if vol_ma10 > 0 and current_vol < vol_ma10 * 0.8:
         return (None, 0)
 
     rsi = s["current_rsi"]
@@ -2123,8 +2167,8 @@ def compute_signal_strength(sym):
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # 寬鬆的RSI條件：>50時正常，或在45-55中立區但MACD確認時也允許
-    rsi_ok_long = rsi > 50.0 or (rsi >= 45.0 and (long_macd_cross or macd_hist > 0))
-    rsi_ok_short = rsi < 50.0 or (rsi <= 55.0 and (short_macd_cross or macd_hist < 0))
+    rsi_ok_long = rsi > 45.0 or (rsi >= 40.0 and (long_macd_cross or macd_hist > 0))
+    rsi_ok_short = rsi < 55.0 or (rsi <= 60.0 and (short_macd_cross or macd_hist < 0))
 
     # Route A (Trend Following): 簡化版 - 只需4個核心條件
     # 1. MACD確認 2. K線方向 3. RSI動能(寬鬆) 4. EMA20合理範圍
@@ -2372,7 +2416,6 @@ async def main_loop(exchange):
             update_states()
             for sym in ALL_SYMBOLS:
                 await check_exits(sym)
-            for sym in ALL_SYMBOLS:
             update_all_dynamic_personalities()
             await check_entries()
 
