@@ -1919,20 +1919,25 @@ async def execute_order(sym, side, price):
             print(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
             return
         if s["avg_price"] > 0 and s["close_price"] > 0:
-            profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - s["close_price"]) / s["avg_price"]
-            if profit_pct < 0.001:
-                print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
+            # 用戶要求：越跌越買 (逢低攤平 DCA)。
+            # 計算目前的「未實現虧損比例」(如果是多單，價格要低於均價才算虧損)
+            loss_pct = (s["avg_price"] - s["close_price"]) / s["avg_price"] if side == 'buy' else (s["close_price"] - s["avg_price"]) / s["avg_price"]
+            
+            # 要求至少跌了 0.8% 才能進行下一次攤平加倉
+            if loss_pct < 0.008:
+                print(f"🛑 [攤平風控] {sym} 價格尚未跌破均價 0.8%，不執行攤平加倉 (目前虧/盈: {-loss_pct*100:.2f}%)")
                 return
 
     # 1. 計算目標名義價值 (保證金 * 槓桿倍數)
     target_notional = margin * lev
     
-    # 2. 套用性格分配比例 (首倉 vs 加倉)
-    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
+    # 2. 套用分配比例 (首倉 vs 加倉)
+    # 用戶要求增加金額並分批：首倉用 60%，後續加倉用 40%，以確保有一定的初始倉位
+    allocation_pct = 0.6 if s["entry_count"] == 0 else 0.4
     base_notional = target_notional * allocation_pct
     
     # 3. 最大名義價值限制 (防極端爆倉)
-    max_notional = 1000.0  # 絕對最大名義價值 1000 USDT
+    max_notional = 3000.0  # 從 1000 提高至 3000 USDT
     if base_notional > max_notional:
         base_notional = max_notional
         
