@@ -2047,11 +2047,14 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # 動態量能門檻：讀取設定檔中的 volume_threshold_factor (預設 0.8)
+    # 動態量能門檻：空單要求「放量下跌」，多單維持原本 0.8
     vol_factor = s.get("volume_threshold_factor", 0.8)
+    if side == 'sell':
+        vol_factor = 1.2  # 嚴格要求空單必須大於 20MA 的 1.2 倍
+        
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [動態量能不足] 當前量 {current_vol:.2f} < 動態門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能過濾] 當前量 {current_vol:.2f} < 門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
         return False
 
     # --- R:R (盈虧比) 過濾 ---
@@ -2094,16 +2097,23 @@ def is_entry_allowed(sym, side, route="a"):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
         return False
         
-    # --- MTF 1H 趨勢過濾 ---
+    # --- MTF 1H & 15m 趨勢過濾 (強化防護) ---
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
+        sma200_15m = s.get("sma200_15m", 0)
+        
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏空 (cp={cp:.4f} <= ema50_1h={ema50_1h:.4f})，禁止做多")
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大趨勢向下 (現價 {cp:.4f} <= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做多")
                 return False
-            if side == 'sell' and cp >= ema50_1h:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏多 (cp={cp:.4f} >= ema50_1h={ema50_1h:.4f})，禁止做空")
-                return False
+            # 空單強化過濾：必須同時低於 1H EMA50 與 15m SMA200，確保上方有重重反壓才准空
+            if side == 'sell':
+                if cp >= ema50_1h:
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大趨勢向上 (現價 {cp:.4f} >= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做空")
+                    return False
+                if sma200_15m > 0 and cp >= sma200_15m:
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 15m趨勢向上 (現價 {cp:.4f} >= 15m_SMA200 {sma200_15m:.4f})，禁止逆勢做空")
+                    return False
             
     # --- 盤整/低波動過濾 (Choppiness) ---
     atr_history = s.get("atr_history", [])
@@ -2424,9 +2434,9 @@ async def check_entries():
         last_trade_side = s.get("last_trade_side", "")
         if last_trade_side != "" and side != last_trade_side:
             flip_elapsed = time.time() - s.get("last_trade_time", 0)
-            min_flip = s.get("min_flip_time", 300)
+            min_flip = s.get("min_flip_time", 900)  # 嚴格方向鎖定：由 300 秒延長至 15 分鐘 (900秒)
             if flip_elapsed < min_flip:
-                print(f"⏳ [反手冷卻] {sym} 欲 {side}，但距離上次 {last_trade_side} 僅 {flip_elapsed:.0f}s (未達 {min_flip}s)，禁止反向進場。")
+                print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s)，禁止頻繁反手。")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
