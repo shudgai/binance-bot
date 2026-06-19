@@ -534,8 +534,8 @@ def is_strong_exit_condition(sym, is_long):
 
 
 def get_effective_exit_setting(sym, key, base_value, is_long):
-    # 1. 優先從 COIN_PROFILES 地圖中讀取個性化設定
-    profile = COIN_PROFILES.get(sym)
+    # 1. 優先從 SYMBOL_PROFILES 地圖中讀取個性化設定
+    profile = SYMBOL_PROFILES.get(sym)
     if profile and key in profile:
         return profile[key]
     
