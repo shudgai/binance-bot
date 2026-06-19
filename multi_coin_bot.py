@@ -2167,11 +2167,11 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.4: # 原 0.6，放寬至允許 40% 的極低波動
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.6: # 恢復為 0.6，過濾掉超過 40% 的盤整時間
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.003: # 原 0.005，放寬至布林帶寬度 0.3%
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
+    if bb_width_pct > 0 and bb_width_pct < 0.005: # 恢復為 0.5%，要求布林帶有明顯開口才做
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
     if route != "Exhaustion_Entry" and not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
@@ -2187,14 +2187,14 @@ def is_entry_allowed(sym, side, route="a"):
         lows = np.array([x[3] for x in s["ohlcv"]])
         closes = np.array([x[4] for x in s["ohlcv"]])
         adx_val = calculate_adx(highs, lows, closes)
-        if adx_val < 8: # 原 10，放寬 ADX 趨勢強度門檻
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
+        if adx_val < 15: # 從 8 提高到 15，嚴格要求必須有明確趨勢才進場
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 15")
             return False
 
-    # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
-    min_volume = s["vol_ma20"] * 0.1
+    # 實盤最小量限制 (提高至均量的 50%)
+    min_volume = s["vol_ma20"] * 0.5
     if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 50% ({min_volume:.2f})")
         return False
     return True
 
