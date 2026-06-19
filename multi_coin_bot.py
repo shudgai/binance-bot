@@ -1454,12 +1454,7 @@ async def check_exits(sym):
         s["highest_profit_pct"] = 0.0
         return
 
-    if should_recover_from_reversal(sym, is_long):
-        recovery_side = 'sell' if is_long else 'buy'
-        print(f"🔄 [反向補救] {sym} 方向錯誤且出現反轉訊號，直接反手 | current={p:.4f} | prev_close={s.get('prev_close', 0):.4f} | trade_signal={s.get('trade_signal_strength', 0.0):.2f} | vol={s.get('current_vol', 0):.0f}/{s.get('vol_ma20', 0):.0f} | MACD反向交叉")
-        await close_position(sym, recovery_side, abs(s["qty"]), p, avg, reason="反向補救", is_stop_loss=True)
-        s["highest_profit_pct"] = 0.0
-        return
+
     if regime_decision == "RANGE_PROFIT_TAKE":
         cs = 'sell' if is_long else 'buy'
         print(f"📈 [盤整獲利] {sym} {regime_reason}，提前獲利了結")
