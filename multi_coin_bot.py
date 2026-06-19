@@ -2460,6 +2460,7 @@ async def ensure_watch_tasks(exchange):
 
 
 async def main_loop(exchange):
+    global ALL_SYMBOLS
     """初始化後進入主交易循環"""
 
 
@@ -2492,8 +2493,6 @@ async def main_loop(exchange):
                 await fetch_real_balance()
                 last_balance_update = loop_start
 
-            # 將有持倉的幣種排在最前面，確保日誌輸出時位於上方
-            global ALL_SYMBOLS
             open_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) > 0.000001]
             closed_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) <= 0.000001]
             ALL_SYMBOLS = open_syms + closed_syms
