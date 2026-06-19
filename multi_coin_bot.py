@@ -159,17 +159,9 @@ TIMEFRAME = '1m'
 LEVERAGE = 5
 
 LEVERAGE_TIERS = {
-    "high_risk": {
-        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT"},
-        "leverage": 2
-    },
-    "medium_risk": {
-        "coins": {"SYNUSDT", "FXSUSDT", "FISUSDT", "PORTALUSDT", "BRUSDT", "RDNTUSDT"},
+    "custom_leverage": {
+        "coins": {},  # 預留：若未來想針對某些幣種調低槓桿可填入，例如 {"DOGEUSDT"}
         "leverage": 3
-    },
-    "low_risk": {
-        "coins": {"XRPUSDT", "DOGEUSDT", "ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT"},
-        "leverage": 5
     }
 }
 
@@ -181,7 +173,7 @@ def get_symbol_leverage(sym):
     for tier in LEVERAGE_TIERS.values():
         if sym in tier["coins"]:
             return tier["leverage"]
-    return 3
+    return LEVERAGE  # 預設使用全域的 5 倍
 RSI_PERIOD = 9
 VOLUME_RATIO_THRESHOLD = 0.7
 ATR_WARMUP_BATCH_SIZE = 2
@@ -473,8 +465,8 @@ def save_symbol_profiles(profiles):
 def infer_symbol_personality(sym):
     if sym in ("BTCUSDT", "ETHUSDT"):
         return "calm"
-    aggressive_coins = {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT", "XRPUSDT", "SANDUSDT", "MANAUSDT", "FIOUSDT", "BEATUSDT", "STGUSDT", "BLESSUSDT", "SIRENUSDT", "ESPORTSUSDT", "FXSUSDT", "FISUSDT", "PORT3USDT", "BSBUSDT", "VELVETUSDT", "BRUSDT", "SYSUSDT", "RDNTUSDT", "SKYAIUSDT", "PORTALUSDT", "SENTUSDT", "BEATUSDT", "STGUSDT", "BLESSUSDT", "SIRENUSDT", "ESPORTSUSDT", "FXSUSDT", "FISUSDT", "PORT3USDT", "BSBUSDT", "VELVETUSDT", "BRUSDT", "SYSUSDT", "RDNTUSDT", "SKYAIUSDT", "PORTALUSDT", "SENTUSDT"}
-    balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "UNIUSDT", "NEARUSDT", "SUIUSDT"}
+    aggressive_coins = {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT"}
+    balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "INJUSDT", "RENDERUSDT"}
     if sym in aggressive_coins:
         return "aggressive"
     if sym in balanced_coins:

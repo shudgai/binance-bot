@@ -1,15 +1,12 @@
 {
   "symbols": [
-    "PORTALUSDT",
-    "SIRENUSDT",
-    "XRPUSDT",
-    "DOGEUSDT",
-    "FXSUSDT",
-    "ESPORTSUSDT",
-    "SYNUSDT",
-    "VELVETUSDT",
     "SOLUSDT",
-    "ADAUSDT",
-    "LINKUSDT"
+    "SUIUSDT",
+    "AVAXUSDT",
+    "NEARUSDT",
+    "LINKUSDT",
+    "INJUSDT",
+    "RENDERUSDT",
+    "DOGEUSDT"
   ]
 }
