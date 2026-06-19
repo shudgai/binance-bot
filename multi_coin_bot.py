@@ -1406,6 +1406,22 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if qty < 0.000001:
         return
 
+    # 動態產生損益標籤 (Reason_Tag)
+    real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
+    profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
+    if profit_pct > 0.01:
+        pnl_tag = "[大賺]"
+    elif profit_pct > 0.002:
+        pnl_tag = "[微利]"
+    elif profit_pct > -0.002:
+        pnl_tag = "[打平]"
+    elif profit_pct > -0.01:
+        pnl_tag = "[小虧]"
+    else:
+        pnl_tag = "[大虧]"
+        
+    full_reason = f"{pnl_tag} {reason}".strip()
+
     sanitized_qty = await sanitize_order_qty(sym, qty)
     if sanitized_qty <= 0.0:
         print(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
@@ -1432,13 +1448,13 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if remaining < 0.01:
         if remaining > 0.000001:
             print(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
-        mark_exit(sym, is_stop_loss=is_stop_loss, reason=reason)
+        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
         reset_coin_state(sym)
     else:
         prec = await get_contract_precision(sym)
         raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
         s["qty"] = round_step(raw_qty, prec['step_size'])
-        print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {reason}")
+        print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
 
 async def check_exits(sym):
     s = STATES[sym]
@@ -1884,9 +1900,15 @@ async def execute_order(sym, side, price):
         try:
             order = await exchange_futures.create_order(sym, type='market', side=side, amount=base_amt,
                                                 params={'marginMode': 'isolated'})
-            fill_price = float(order.get('price', 0) or price)
+            fill_price = float(order.get('average') or order.get('price') or price)
             if fill_price <= 0:
                 fill_price = price
+                
+            slippage = (fill_price - price) / price if price > 0 else 0
+            if side == 'sell':
+                slippage = (price - fill_price) / price if price > 0 else 0
+                
+            print(f"✅ [實盤開倉成功] {sym} {side} | 預期: {price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
             
             old_qty = s["qty"]
             if side == 'buy':
