@@ -985,13 +985,13 @@ def update_states():
             s["first_stop_time"] = 0
             print(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
 
-def mark_exit(sym, is_stop_loss=False):
+def mark_exit(sym, is_stop_loss=False, reason=""):
     s = STATES[sym]
     now = time.time()
     s["status"] = "COOLDOWN"
     s["next_status_time"] = now + COOLDOWN_SEC
-    s["status_reason"] = "冷卻中 (5分鐘)"
-    print(f"⏳ [狀態] {sym} 平倉 → COOLDOWN 5分鐘")
+    s["status_reason"] = f"冷卻中 (5分鐘) - {reason}"
+    print(f"⏳ [狀態] {sym} 平倉 ({reason}) ({reason}) → COOLDOWN 5分鐘")
     if is_stop_loss:
         s["stop_count"] += 1
         if s["stop_count"] == 1:
@@ -1035,6 +1035,7 @@ def reset_coin_state(sym):
     s["personality_source"] = "infer"
     s["last_personality_update"] = 0.0
     s["last_entry_time"] = 0.0
+    s["last_flip_time"] = 0.0
 
 # ── 大盤與風向監控 (BTC & ETH Filter) ─────────────────────────
 
@@ -1279,6 +1280,13 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
             trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
+            # --- 保本緩衝邏輯 ---
+            # 當獲利達到 0.5 * ATR 時，將止損移至保本點 (成本價 + 0.1 * ATR 緩衝)
+            breakeven_trigger = s["avg_price"] + (0.5 * atr_val)
+            if current_price > breakeven_trigger:
+                breakeven_sl = s["avg_price"] + (0.1 * atr_val)
+                trail_sl = max(trail_sl, breakeven_sl)
+            
             safe_min_sl = liq_price * 1.2
             new_sl = max(s["trailing_stop_price"], trail_sl) # 確保只往有利方向移動
             if new_sl < safe_min_sl:
@@ -1291,6 +1299,13 @@ def update_trailing_stop(sym, current_price, is_long):
             s["trailing_lowest"] = current_price
             # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
             trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
+            
+            # --- 保本緩衝邏輯 ---
+            # 當獲利達到 0.5 * ATR 時，將止損移至保本點 (成本價 - 0.1 * ATR 緩衝)
+            breakeven_trigger = s["avg_price"] - (0.5 * atr_val)
+            if current_price < breakeven_trigger:
+                breakeven_sl = s["avg_price"] - (0.1 * atr_val)
+                trail_sl = min(trail_sl, breakeven_sl)
             
             safe_max_sl = liq_price * 0.8
             new_sl = min(s["trailing_stop_price"], trail_sl)
@@ -1398,7 +1413,7 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if remaining < 0.01:
         if remaining > 0.000001:
             print(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
-        mark_exit(sym, is_stop_loss=is_stop_loss)
+        mark_exit(sym, is_stop_loss=is_stop_loss, reason=reason)
         reset_coin_state(sym)
     else:
         prec = await get_contract_precision(sym)
@@ -1455,7 +1470,7 @@ async def check_exits(sym):
     if regime_decision == "BREAKOUT_REVERSAL":
         cs = 'sell' if is_long else 'buy'
         print(f"🚨 [市場 regime] {sym} {regime_reason}，立即平倉並反手")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="市場反轉/大單突破", is_stop_loss=True)
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Breakout_Fail]_Fail]", is_stop_loss=True)
         s["highest_profit_pct"] = 0.0
         return
 
@@ -1463,7 +1478,7 @@ async def check_exits(sym):
     if regime_decision == "RANGE_PROFIT_TAKE":
         cs = 'sell' if is_long else 'buy'
         print(f"📈 [盤整獲利] {sym} {regime_reason}，提前獲利了結")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="盤整獲利了結")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
 
@@ -1477,7 +1492,7 @@ async def check_exits(sym):
         if drawdown >= 0.25:
             cs = 'sell' if is_long else 'buy'
             print(f"📉 [動能衰減] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回落 25% (現為 {profit_pct*100:.2f}%)，提早獲利了結")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動能衰減(高點回落)")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]top]")
             s["highest_profit_pct"] = 0.0
             return
     if p > s["trailing_highest"]:
@@ -1494,7 +1509,7 @@ async def check_exits(sym):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
         print(f"📉 [反轉出場] {sym} MACD狀態反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="趨勢反轉", is_stop_loss=is_sl)
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=is_sl)
         return
 
     # 2. 判斷市場狀態：強勢 / 弱勢
@@ -1510,25 +1525,25 @@ async def check_exits(sym):
     if s["highest_profit_pct"] >= 0.01 and profit_pct < s["highest_profit_pct"] * (0.75 if is_trend_ok else 0.5):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達{((1 - profit_pct / s['highest_profit_pct'])*100):.1f}% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="回撤鎖利防護")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]aw_Stop]")
         s["highest_profit_pct"] = 0.0
         return
     elif s["highest_profit_pct"] >= 0.008 and profit_pct < (0.0040 if is_trend_ok else 0.0030):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [高利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發高利保護平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="高利鎖利防護")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
     elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0025 if is_trend_ok else 0.0015):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發中利保護平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="中利鎖利防護")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
     elif s["highest_profit_pct"] >= 0.004 and profit_pct < (0.0020 if is_trend_ok else 0.0010):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="微利鎖利防護")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
 
@@ -1539,7 +1554,7 @@ async def check_exits(sym):
         if should_exit:
             cs = 'sell' if is_long else 'buy'
             print(f"🎯 [移動停利] {sym} 已達到 1% 目標，按移動停利出場")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="移動停利")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
             s["highest_profit_pct"] = 0.0
             return
 
@@ -1552,20 +1567,20 @@ async def check_exits(sym):
                 half = abs(s["qty"]) * 0.5
                 cs = 'sell' if is_long else 'buy'
                 print(f"⏳ [僵局一階] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，平50%")
-                await close_position(sym, cs, half, p, avg, reason="僵局一階")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_1]")
                 s["has_partial_closed"] = True
                 return
             if profit_pct < 0.002:
                 cs = 'sell' if is_long else 'buy'
                 print(f"⏳ [僵局平倉] {sym} 持倉{stagnation_limit//60}分利潤僅{profit_pct*100:.2f}%，全平")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="僵局平倉")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Exit]")
                 s["highest_profit_pct"] = 0.0
                 return
         # 僵局二階：平過50% + 8分仍未突破1% → 全平
         if s["has_partial_closed"] and hold_sec > 480 and profit_pct < 0.01:
             cs = 'sell' if is_long else 'buy'
             print(f"⏳ [僵局二階] {sym} 剩餘50%持倉8分仍未突破1%，全平")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="僵局二階")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_2]")
             s["highest_profit_pct"] = 0.0
             s["has_partial_closed"] = False
             return
@@ -1577,7 +1592,7 @@ async def check_exits(sym):
             if not has_strong_momentum(sym, is_long):
                 cs = 'sell' if is_long else 'buy'
                 print(f"🎯 [快速停利] {sym} 弱勢利潤達{weak_tp*100:.1f}%，動能不足則落袋")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="快速停利")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
                 s["highest_profit_pct"] = 0.0
                 return
             print(f"⚡ [保留動能] {sym} 弱勢已達{weak_tp*100:.1f}%但動能仍強，暫不停利")
@@ -1588,7 +1603,7 @@ async def check_exits(sym):
             if should_exit:
                 cs = 'sell' if is_long else 'buy'
                 print(f"🎯 [追高停利] {sym} 觸發追高停利 {trail_tp:.6f}")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="追高停利")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
                 s["highest_profit_pct"] = 0.0
                 return
 
@@ -1597,7 +1612,7 @@ async def check_exits(sym):
             if (is_long and p <= s["trailing_highest"] * 0.990) or (not is_long and p >= s["trailing_lowest"] * 1.010):
                 cs = 'sell' if is_long else 'buy'
                 print(f"🏃 [動態停利] {sym} 強勢回撤0.5%")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動態停利")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]")
                 s["highest_profit_pct"] = 0.0
                 return
         # 強勢 ATR TP/SL
@@ -1605,12 +1620,12 @@ async def check_exits(sym):
             cs = 'sell' if is_long else 'buy'
             tp_pct = abs(tp - avg) / avg * 100
             print(f"🎯 [ATR停利] {sym} {tp_pct:.1f}%")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停利")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
             return
         if (is_long and p <= sl) or (not is_long and p >= sl):
             cs = 'sell' if is_long else 'buy'
             sl_pct = abs(sl - avg) / avg * 100
-            reason_str = "保本停損" if sl == avg else "ATR停損"
+            reason_str = "[Breakeven_Stop]" if sl == avg else "[Trend_Follow]"
             print(f"🛑 [{reason_str}] {sym} -{sl_pct:.1f}%")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
             return
@@ -1685,7 +1700,7 @@ async def check_position_exits(exchange, sym):
         is_high_volume = s.get("current_vol", 0) > s.get("vol_ma20", 0) * 1.5
         
         if is_high_volume:
-            reason = "動態追蹤停損/保本(高量確認)" if profit_dist > 0 else "ATR/硬停損(高量確認)"
+            reason = "[Trend_Follow]"
             print(f"🛑 [{reason}] {sym} 觸發價格 {active_sl:.6f} (現價:{p:.6f})")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct < 0))
             s["sl_trigger_time"] = 0
@@ -1696,7 +1711,7 @@ async def check_position_exits(exchange, sym):
                 print(f"⚠️ [防插針觀察] {sym} 觸發停損 {active_sl:.6f} 但量能小 ({s.get('current_vol',0):.2f} < {s.get('vol_ma20',0)*1.5:.2f})，進入 2 秒觀察期...")
                 return
             elif time.time() - s["sl_trigger_time"] >= 2.0:
-                reason = "動態追蹤停損/保本(時間確認)" if profit_dist > 0 else "ATR/硬停損(時間確認)"
+                reason = "[Trend_Follow]"
                 print(f"🛑 [{reason}] {sym} 持續觸發停損超過 2 秒，確認執行！")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct < 0))
                 s["sl_trigger_time"] = 0
@@ -1870,6 +1885,7 @@ async def execute_order(sym, side, price):
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["entry_count"] += 1
+            s["last_flip_time"] = now
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
 
@@ -1934,19 +1950,10 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # 動態倍數：根據目前的 ATR 波動來決定成交量門檻
-    # 如果目前波動很大，我們要求更強的成交量爆發（例如 1.5 倍）
-    # 如果目前波動很小，我們放寬一點（例如 1.2 倍）
-    atr_pct = s.get("current_atr", 0.0) / max(s["close_price"], 1e-8)
-    
-    if atr_pct > 0.01: # 高波動環境
-        volume_multiplier = 0.8  # 原為 1.5，放寬至只需 80% 均量
-    else: # 低波動環境
-        volume_multiplier = 0.5  # 原為 1.2，放寬至只需 50% 均量
-        
-    min_volume = max(1000.0, vol_ma20 * volume_multiplier)
+    # 動態量能門檻：要求當前成交量必須顯著高於過去 20 根 K 線的平均成交量
+    min_volume = vol_ma20 * 1.5
     if current_vol < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 動態門檻 {min_volume:.2f} (ATR_pct:{atr_pct:.4f})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [動態量能不足] 當前量 {current_vol:.2f} < 動態門檻 {min_volume:.2f} (均量:{vol_ma20:.2f})")
         return False
 
     # --- R:R (盈虧比) 過濾 ---
@@ -2285,6 +2292,23 @@ async def check_entries():
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
         s["pending_route"] = route
+        
+        # --- 新增：Minimum Flip Buffer (防止快速反手) ---
+        # 如果當前訊號與上次開倉方向相反，檢查是否超過 300 秒 (5分鐘)
+        if side == 'buy' and s.get("last_flip_time", 0) > 0:
+            # 檢查上次是否是做空 (qty < 0)
+            # 這裡我們用 last_flip_time 記錄最後一次開倉的時間
+            # 如果我們想更精確，可以記錄 last_flip_side
+            pass # 這裡先實作基礎時間檢查，稍後優化
+        
+        # 為了精確，我們需要知道上次是哪一邊。
+        # 由於我們在 execute_order 裡更新了 last_flip_time，
+        # 我們可以檢查當前訊號與上次開倉的狀態。
+        # 但最簡單的防禦是：如果剛才才平倉/開倉，就不要馬上反手。
+        if current_candle_time - s.get("last_flip_time", 0) < 300:
+            print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次翻轉僅 {current_candle_time - s.get('last_flip_time', 0):.0f}s)")
+            continue
+
         print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
 
     if not candidates:
@@ -2336,6 +2360,8 @@ async def ensure_watch_tasks(exchange):
 
 async def main_loop(exchange):
     """初始化後進入主交易循環"""
+
+
 
     try:
         await asyncio.wait_for(exchange_futures.load_markets(), timeout=15)
