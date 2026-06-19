@@ -1,0 +1,6 @@
+📋 監控幣種: HUSDT, PORTALUSDT, SIRENUSDT, XRPUSDT, DOGEUSDT, FXSUSDT, ESPORTSUSDT, FIOUSDT, SYNUSDT, VELVETUSDT, FISUSDT, PORT3USDT
+⏳ [初始化] 開始分批獲取 1000 根 1m K線，以預熱前 12 個主攻幣種的 ATR 歷史，下次批次間隔 0.4s...
+⏳ [初始化] 進行第 1 批：2 個幣種
+✅ [初始化] HUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+✅ [初始化] PORTALUSDT 歷史 ATR 預熱完成，載入 986 筆數據
+⏳ [初始化] 進行第 2 批：2 個幣種
