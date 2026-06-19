@@ -2481,6 +2481,7 @@ async def check_entries():
                 continue
 
         # --- 訊號強度門檻 (強勢趨勢中的逆勢反彈過濾) ---
+        p = s["close_price"]
         ema50_1m = s.get("ema50", 0.0)
         if ema50_1m > 0:
             is_counter_trend = (side == "buy" and p < ema50_1m) or (side == "sell" and p > ema50_1m)
@@ -2489,7 +2490,6 @@ async def check_entries():
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        p = s["close_price"]
         if s.get("mtf_filter", True):
             ema50_1h = s.get("ema50_1h", 0.0)
             if ema50_1h > 0:
