@@ -1487,16 +1487,17 @@ async def check_exits(sym):
         s["highest_profit_pct"] = 0.0
         return
 
-    # 動能衰減檢查：利潤溜滑梯
+    # 動能衰減檢查：從最高點回落
     s["pnl_history"].append(profit_pct * 100)
     if len(s["pnl_history"]) > 8:
         s["pnl_history"].pop(0)
-    if len(s["pnl_history"]) == 8:
-        is_decaying = all(s["pnl_history"][i] > s["pnl_history"][i+1] for i in range(7))
-        if is_decaying and profit_pct * 100 > 1.0:
+        
+    if profit_pct > 0.015 and s["highest_profit_pct"] > 0.015:
+        drawdown = (s["highest_profit_pct"] - profit_pct) / s["highest_profit_pct"]
+        if drawdown >= 0.25:
             cs = 'sell' if is_long else 'buy'
-            print(f"📉 [動能衰減] {sym} 利潤連8次下滑 ({profit_pct*100:.2f}%)，即時出場")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動能衰減")
+            print(f"📉 [動能衰減] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回落 25% (現為 {profit_pct*100:.2f}%)，提早獲利了結")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="動能衰減(高點回落)")
             s["highest_profit_pct"] = 0.0
             return
     if p > s["trailing_highest"]:
@@ -1725,11 +1726,29 @@ async def check_position_exits(exchange, sym):
     else:
         s["sl_trigger_time"] = 0
 
-    # 檢查是否觸發停利 (TP)
+    # 檢查是否觸發分批停利 (Partial Close at 1.5 ATR or 0.8%)
+    partial_tp_dist = max(atr_val * 1.5, p * 0.008)
+    partial_tp_price = avg + partial_tp_dist if is_long else avg - partial_tp_dist
+    if not s.get("has_partial_closed", False) and ((is_long and p >= partial_tp_price) or (not is_long and p <= partial_tp_price)):
+        half_qty = abs(s["qty"]) * 0.5
+        if half_qty >= (s.get("min_qty", 0.001) if "min_qty" in s else 0.0):
+            print(f"🎯 [分批停利] {sym} 觸發 1.5 ATR 或 0.8% 利潤，先平倉 50% 落袋為安")
+            await close_position(sym, cs, half_qty, p, avg, reason="分批停利 50%")
+            s["has_partial_closed"] = True
+            # 不 return，讓剩餘倉位繼續走下面的追蹤邏輯
+
+    # 檢查是否觸發最終停利 (TP)
     if (is_long and p >= initial_tp) or (not is_long and p <= initial_tp):
-        print(f"🎯 [ATR停利] {sym} 觸發價格 {initial_tp:.6f} (現價:{p:.6f})")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停利")
-        return
+        # 強勢行情不摸頂 (Let Profits Run)
+        rsi = s.get("current_rsi", 50.0)
+        if (is_long and rsi > 75) or (not is_long and rsi < 25):
+            print(f"🚀 [強勢行情] {sym} 觸發停利點，但 RSI 極度強勢 ({rsi:.1f})，不全平倉，改為極限追蹤停損！")
+            trail_extreme = p - atr_val * 0.5 if is_long else p + atr_val * 0.5
+            s["dynamic_sl"] = trail_extreme
+        else:
+            print(f"🎯 [ATR停利] {sym} 觸發價格 {initial_tp:.6f} (現價:{p:.6f})")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停利")
+            return
 
     # 多層次時間停損
     if hold_sec > 3600 and profit_pct < 0.0:
