@@ -1537,10 +1537,11 @@ async def check_exits(sym):
     
     tp = avg + tp_dist if is_long else avg - tp_dist
 
-    # ── 保本防護 (Breakeven) ──
-    # 如果最高利潤曾經達到初始風險距離，或者達到了絕對值 0.5% 的真實漲幅，就將停損永久上移至保本點 (+0.15% 確保夠付手續費)
-    initial_risk_pct = sl_base * (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.0
-    if s.get("highest_profit_pct", 0.0) >= min(initial_risk_pct, 0.005):
+    # ── 動態保本防護 (Dynamic Breakeven) ──
+    # 只要利潤達到 1 倍 ATR (或至少 0.2%)，就將停損永久上移至保本點 (+0.15% 確保夠付手續費)
+    entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
+    breakeven_threshold = max(entry_atr_pct * 1.0, 0.002)
+    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         sl = avg * 1.0015 if is_long else avg * 0.9985
     else:
         sl = avg - sl_dist if is_long else avg + sl_dist
@@ -1605,22 +1606,29 @@ async def check_exits(sym):
     # 趨勢確認：如果 MACD 仍在趨勢方向，則放寬鎖利條件
     is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
     
-    # 鎖利門檻放寬：如果趨勢還在，回撤門檻提高
-    if s["highest_profit_pct"] >= 0.015 and profit_pct < s["highest_profit_pct"] * (0.6 if is_trend_ok else 0.4):
+    # ── 動態 ATR 鎖利門檻 (Dynamic ATR Lock) ──
+    # 取代固定 %，改用 ATR 倍數，讓低波動幣種也能被及時保護
+    atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
+    
+    tier3_target = max(atr_pct * 4.0, 0.012)
+    tier2_target = max(atr_pct * 2.5, 0.006)
+    tier1_target = max(atr_pct * 1.5, 0.0035)
+
+    if s["highest_profit_pct"] >= tier3_target and profit_pct < s["highest_profit_pct"] * (0.6 if is_trend_ok else 0.4):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [大行情鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，觸發大行情回撤平倉")
+        print(f"🛡️ [大行情鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>4ATR)，觸發大行情回撤平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.010 and profit_pct < (0.005 if is_trend_ok else 0.003):
+    elif s["highest_profit_pct"] >= tier2_target and profit_pct < s["highest_profit_pct"] * (0.5 if is_trend_ok else 0.3):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發保護平倉")
+        print(f"🛡️ [中利鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>2.5ATR)，回落至 {profit_pct*100:.3f}% 平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0025 if is_trend_ok else 0.0015):
+    elif s["highest_profit_pct"] >= tier1_target and profit_pct < (max(atr_pct * 0.5, 0.0015)):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [基本鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發保護平倉")
+        print(f"🛡️ [基本鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>1.5ATR)，回落至 {profit_pct*100:.3f}% 保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
