@@ -1975,7 +1975,9 @@ async def execute_order(sym, side, price):
                 s["avg_price"] = price
                 s["entry_atr"] = s.get("current_atr", 0.0)
             else:
-                s["avg_price"] = ((s["avg_price"] * abs(s["qty"] - base_amt)) + (price * base_amt)) / abs(s["qty"])
+                old_abs_qty = abs(s["qty"]) - base_amt
+                if old_abs_qty > 0:
+                    s["avg_price"] = ((s["avg_price"] * old_abs_qty) + (price * base_amt)) / abs(s["qty"])
             s["open_time"] = now
             s["last_buy_time"] = now
             s["last_entry_time"] = now
