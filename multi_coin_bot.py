@@ -2617,7 +2617,7 @@ async def periodic_status_log():
         banned = sum(1 for s in STATES.values() if s["status"] == "BANNED")
         open_syms = get_open_symbols()
         open_str = ', '.join(f"{sym}({'多' if STATES[sym]['qty']>0 else '空'})" for sym in open_syms) if open_syms else "無"
-        print(f"📊 [狀態] ACTIVE={active} COOLDOWN={cooldown} BANNED={banned} | 持倉({len(open_syms)}): {open_str}")
+        print(f"📊 [狀態] 監控池={active} 冷卻={cooldown} 禁賽={banned} | 當前持倉({len(open_syms)}/{MAX_POSITIONS}): {open_str}")
 
 async def main():
     asyncio.create_task(periodic_htf_update(exchange_futures))
