@@ -155,6 +155,7 @@ exchange_spot = ccxtpro.binance({
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
+TIMEFRAME = '1m'
 TRADE_HISTORY_FILE = "trade_history.json"
 MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
