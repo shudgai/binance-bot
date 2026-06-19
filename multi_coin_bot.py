@@ -570,8 +570,10 @@ def apply_symbol_profile(sym, profile):
         "risk_multiplier", "volume_multiplier", "entry_cooldown_sec",
         "max_additional_entries", "entry_size_pct", "add_entry_pct",
         "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
+        "volume_threshold_factor", "min_flip_time", "breakeven_trigger",
+        "profile_type", "leverage", "mtf_filter"
     ]:
-        if key in profile and isinstance(profile[key], (int, float)):
+        if key in profile:
             state[key] = profile[key]
     state["personality"] = personality
     state["personality_source"] = personality_source
@@ -1325,8 +1327,11 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
             trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
-            # --- 1:1 保本邏輯 ---
-            sl_dist_atr = s.get("sl_atr_multiplier", 1.5) * atr_val
+            # --- 保本邏輯 ---
+            trigger_mult = s.get("breakeven_trigger")
+            if trigger_mult is None:
+                trigger_mult = s.get("sl_atr_multiplier", 1.5)
+            sl_dist_atr = trigger_mult * atr_val
             breakeven_trigger = s["avg_price"] + sl_dist_atr
             if current_price >= breakeven_trigger:
                 breakeven_sl = s["avg_price"]
@@ -1345,8 +1350,11 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
             trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
-            # --- 1:1 保本邏輯 ---
-            sl_dist_atr = s.get("sl_atr_multiplier", 1.5) * atr_val
+            # --- 保本邏輯 ---
+            trigger_mult = s.get("breakeven_trigger")
+            if trigger_mult is None:
+                trigger_mult = s.get("sl_atr_multiplier", 1.5)
+            sl_dist_atr = trigger_mult * atr_val
             breakeven_trigger = s["avg_price"] - sl_dist_atr
             if current_price <= breakeven_trigger:
                 breakeven_sl = s["avg_price"]
@@ -2141,10 +2149,10 @@ def is_entry_allowed(sym, side, route="a"):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
         return False
 
-    # 實盤最小量限制
-    min_volume = max(1000.0, s["vol_ma20"] * 0.1)
+    # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
+    min_volume = s["vol_ma20"] * 0.1
     if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾]")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
         return False
     return True
 
