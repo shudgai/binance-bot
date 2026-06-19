@@ -984,8 +984,9 @@ def compute_per_coin_margin(sym=None):
     balance = get_balance()
     if balance <= 0:
         return 0
-    # 交易金額直接與帳戶餘額掛鉤，使用約 95% 的可用資金
-    usable = balance * 0.95
+    # 將資金平分給最大允許持倉數量，每個倉位最多使用 95% 的分配額度作保證金
+    per_slot_balance = balance / max(1, MAX_POSITIONS)
+    usable = per_slot_balance * 0.95
     return usable
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
@@ -1806,27 +1807,44 @@ async def execute_order(sym, side, price):
                 print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉")
                 return
 
-    base_amt = margin / price
-    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
-    base_amt *= allocation_pct
+    # 1. 計算目標名義價值 (保證金 * 槓桿倍數)
+    target_notional = margin * lev
     
-    # 確保下單總預算不超過當前可用餘額
+    # 2. 套用性格分配比例 (首倉 vs 加倉)
+    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
+    base_notional = target_notional * allocation_pct
+    
+    # 3. 最大名義價值限制 (防極端爆倉)
+    max_notional = 1000.0  # 絕對最大名義價值 1000 USDT
+    if base_notional > max_notional:
+        base_notional = max_notional
+        
+    # 4. 真實可用餘額二次檢查
+    # 如果要求的保證金 (名義價值 / 槓桿) 大於當前真實可用餘額，則向下修正
     balance = get_balance()
-    budget = base_amt * price
-    budget = min(budget, balance)
-    base_amt = budget / price
+    required_margin = base_notional / lev
+    if required_margin > balance * 0.98:
+        base_notional = (balance * 0.98) * lev
 
-    max_notional = 500.0  # 最大名義價值 500 USDT
-    if base_amt * price > max_notional:
-        base_amt = max_notional / price
-
+    # 5. 轉換為幣種數量並進行精度修剪
+    base_amt = base_notional / price
     base_amt = await sanitize_order_qty(sym, base_amt)
-    if base_amt <= 0.0:
-        print(f"⚠️ [風控] {sym} 無有效開倉數量 ({margin:.6f}/{price:.6f})")
-        return
+    
+    # 6. 幣安最小下單額限制 (Min Notional Check)
+    actual_notional = base_amt * price
+    if actual_notional < 6.0 and actual_notional > 0:  # 幣安合約最小下單通常為 5 USDT，抓 6 比較保險
+        # 嘗試補足到 6 USDT
+        min_qty = 6.0 / price
+        min_qty = await sanitize_order_qty(sym, min_qty)
+        # 如果補足後保證金不夠，就放棄
+        if (min_qty * price) / lev > balance * 0.98:
+            print(f"⚠️ [風控] {sym} 資金不足以達到最小開倉額度 6 USDT (餘額: {balance:.2f})")
+            return
+        base_amt = min_qty
+        actual_notional = base_amt * price
 
-    if base_amt < 0.001:
-        print(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
+    if base_amt <= 0.0:
+        print(f"⚠️ [風控] {sym} 計算後開倉數量為 0")
         return
 
     if PAPER_TRADING:
