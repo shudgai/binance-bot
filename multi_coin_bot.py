@@ -1624,16 +1624,7 @@ async def check_exits(sym):
         s["highest_profit_pct"] = 0.0
         return
 
-    # 見好就收：先以 1% 進行停利，若後續價格再創新高，就把停利線往上移動
-    early_take_profit_pct = 0.01
-    if s["highest_profit_pct"] >= early_take_profit_pct and profit_pct >= 0.002:
-        should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
-        if should_exit:
-            cs = 'sell' if is_long else 'buy'
-            print(f"🎯 [移動停利] {sym} 已達到 1% 目標，按移動停利出場")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-            s["highest_profit_pct"] = 0.0
-            return
+    # 取消固定百分比停利，改由移動停損 (Trailing Stop) 統一接管，以利捕捉最大波段
 
     if not is_strong:
         # ── 盤整／弱勢路線 ────────────────────────────────
@@ -1674,15 +1665,7 @@ async def check_exits(sym):
                 return
             print(f"⚡ [保留動能] {sym} 弱勢已達{weak_tp*100:.1f}%但動能仍強，暫不停利")
     else:
-        # ── 強勢路徑也啟動追高停利，避免高點回撤時提早離場
-        if s["highest_profit_pct"] >= 0.005 and profit_pct >= 0.001:
-            should_exit, trail_tp = update_trailing_take_profit(sym, p, is_long)
-            if should_exit:
-                cs = 'sell' if is_long else 'buy'
-                print(f"🎯 [追高停利] {sym} 觸發追高停利 {trail_tp:.6f}")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-                s["highest_profit_pct"] = 0.0
-                return
+        # ── 強勢路徑完全交給 ATR 移動停損 (Trailing Stop) 接管，讓利潤盡情奔跑
 
         # 強勢動態停利：高點回撤 0.5%
         if s["highest_profit_pct"] >= 0.01:
