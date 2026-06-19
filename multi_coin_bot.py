@@ -1614,6 +1614,28 @@ async def check_exits(sym):
     tier2_target = max(atr_pct * 2.5, 0.006)
     tier1_target = max(atr_pct * 1.5, 0.0035)
 
+    # ── 動能竭盡 (量價背離) 頂部逃頂機制 ──
+    # 如果利潤已經達到基本鎖利門檻 (Tier 1)，啟動量價背離偵測
+    if s["highest_profit_pct"] >= tier1_target and len(s["ohlcv"]) >= 3:
+        # 只看已經收盤的 K 線，避免被當前正在跳動的未收盤 K 線誤導
+        c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
+        c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
+        
+        divergence_exit = False
+        if is_long and c1[4] > c2[4] and c1[5] < c2[5] * 0.65:
+            # 多單：價格創高，但量能急縮 (< 65%)
+            divergence_exit = True
+        elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * 0.65:
+            # 空單：價格創低，但量能急縮 (< 65%)
+            divergence_exit = True
+            
+        if divergence_exit:
+            cs = 'sell' if is_long else 'buy'
+            print(f"📉 [量價背離] {sym} 價格創高/低但量能急縮 (V:{c1[5]:.0f} < V_prev:{c2[5]:.0f}*0.65)，動能竭盡提前平倉！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
+            s["highest_profit_pct"] = 0.0
+            return
+
     if s["highest_profit_pct"] >= tier3_target and profit_pct < s["highest_profit_pct"] * (0.6 if is_trend_ok else 0.4):
         cs = 'sell' if is_long else 'buy'
         print(f"🛡️ [大行情鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>4ATR)，觸發大行情回撤平倉")
