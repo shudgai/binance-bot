@@ -2288,10 +2288,16 @@ async def check_entries():
                 
                 is_valid = False
                 if s["pending_side"] == "buy":
-                    if prev_close >= prev_open - (s["current_atr"] * 0.5):
+                    # 嚴格要求：確認K線必須是實體綠K(收盤>開盤)，且不能留太長的上影線(上影線 < 實體長度 * 1.5)
+                    body = prev_close - prev_open
+                    upper_shadow = prev_candle[2] - prev_close
+                    if body > 0 and upper_shadow < body * 1.5:
                         is_valid = True
                 elif s["pending_side"] == "sell":
-                    if prev_close <= prev_open + (s["current_atr"] * 0.5):
+                    # 嚴格要求：確認K線必須是實體紅K(開盤>收盤)，且不能留太長的下影線(下影線 < 實體長度 * 1.5)
+                    body = prev_open - prev_close
+                    lower_shadow = prev_close - prev_candle[3]
+                    if body > 0 and lower_shadow < body * 1.5:
                         is_valid = True
                         
                 if is_valid:
