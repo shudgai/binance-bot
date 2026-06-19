@@ -1636,6 +1636,16 @@ async def check_exits(sym):
     tier2_target = max(atr_pct * 2.5, 0.006)
     tier1_target = max(atr_pct * 1.5, 0.0035)
 
+    # ── 50% 分批停利 (Partial Take Profit) ──
+    # 當利潤首次觸及 tier2_target (約 2.5倍 ATR) 時，直接市價平倉 50% 落袋為安，剩下的 50% 繼續跑
+    if profit_pct >= tier2_target and not s.get("has_partial_closed", False):
+        half_qty = abs(s["qty"]) * 0.5
+        cs = 'sell' if is_long else 'buy'
+        print(f"💰 [分批停利] {sym} 獲利衝達 {profit_pct*100:.3f}% (>=2.5ATR)，市價平倉 50% 落袋為安！")
+        await close_position(sym, cs, half_qty, p, avg, reason="[Partial_TP]")
+        s["has_partial_closed"] = True
+        return
+
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 ──
     # 只要出現價格創新高/低但量能急縮，即視為動能竭盡，無條件平倉 (移除%限制)
     if len(s["ohlcv"]) >= 3:
