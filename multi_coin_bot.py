@@ -672,7 +672,7 @@ def update_all_dynamic_personalities():
 
 _, SYMBOL_PROFILES = load_symbol_config()
 
-MAX_POSITIONS = 12
+MAX_POSITIONS = 3
 COOLDOWN_SEC = 1800
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
@@ -993,24 +993,15 @@ def compute_per_coin_margin(sym=None):
     if balance <= 0 or not sym:
         return 0
 
+    # 流派一：重兵出擊流，每個幣種可以動用極大比例的總資金
     weights = {
-        "Core_Trend": 1.5,
-        "High_Beta_Momentum": 1.0,
-        "Speculative_Risk": 0.7
+        "Core_Trend": 0.45,         # 核心趨勢拿 45% 總資金
+        "High_Beta_Momentum": 0.35, # 高彈性拿 35% 總資金
+        "Speculative_Risk": 0.25    # 投機拿 25% 總資金
     }
 
-    total_weight = 0.0
-    for s in ALL_SYMBOLS:
-        p_type = STATES[s].get("profile_type", "Core_Trend") if s in STATES else "Core_Trend"
-        total_weight += weights.get(p_type, 1.0)
-
-    scale_factor = 1.0 / max(1.0, total_weight)
-
     my_type = STATES[sym].get("profile_type", "Core_Trend") if sym in STATES else "Core_Trend"
-    my_weight = weights.get(my_type, 1.0) * scale_factor
-
-    if my_weight > 0.2:
-        my_weight = 0.2
+    my_weight = weights.get(my_type, 0.35)
 
     usable = balance * my_weight * 0.95
     return usable
