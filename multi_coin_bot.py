@@ -1588,7 +1588,7 @@ async def check_exits(sym):
     macd_is_up = s["macd_line"] > s["macd_signal"]
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
-    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.008):
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
         print(f"📉 [反轉出場] {sym} MACD狀態反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
@@ -1605,27 +1605,21 @@ async def check_exits(sym):
     is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
     
     # 鎖利門檻放寬：如果趨勢還在，回撤門檻提高到 75% (原本是 85%)
-    if s["highest_profit_pct"] >= 0.01 and profit_pct < s["highest_profit_pct"] * (0.75 if is_trend_ok else 0.5):
+    if s["highest_profit_pct"] >= 0.02 and profit_pct < s["highest_profit_pct"] * (0.6 if is_trend_ok else 0.4):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [回撤鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，回撤已達{((1 - profit_pct / s['highest_profit_pct'])*100):.1f}% (目前 {profit_pct*100:.3f}%)，觸發回撤平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]aw_Stop]")
+        print(f"🛡️ [大行情鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，觸發大行情回撤平倉")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.008 and profit_pct < (0.0040 if is_trend_ok else 0.0030):
+    elif s["highest_profit_pct"] >= 0.012 and profit_pct < (0.006 if is_trend_ok else 0.004):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [高利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發高利保護平倉")
+        print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= 0.006 and profit_pct < (0.0025 if is_trend_ok else 0.0015):
+    elif s["highest_profit_pct"] >= 0.008 and profit_pct < (0.003 if is_trend_ok else 0.002):
         cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [中利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發中利保護平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-        s["highest_profit_pct"] = 0.0
-        return
-    elif s["highest_profit_pct"] >= 0.004 and profit_pct < (0.0020 if is_trend_ok else 0.0010):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [微利鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發微利保護平倉")
+        print(f"🛡️ [基本鎖利] {sym} 獲利最高曾達 {s['highest_profit_pct']*100:.3f}%，目前回落至 {profit_pct*100:.3f}%，觸發保護平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
         s["highest_profit_pct"] = 0.0
         return
@@ -1645,17 +1639,17 @@ async def check_exits(sym):
         # ── 盤整／弱勢路線 ────────────────────────────────
         # 僵局一階：時間到 → 有任何正利潤就全平，利潤微薄(0.2%~0.5%)平50%
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
-        if hold_sec > stagnation_limit and profit_pct > 0:
-            if not s["has_partial_closed"] and 0.002 <= profit_pct < 0.005:
+        if hold_sec > stagnation_limit and profit_pct > 0.003:
+            if not s["has_partial_closed"] and 0.003 <= profit_pct < 0.008:
                 half = abs(s["qty"]) * 0.5
                 cs = 'sell' if is_long else 'buy'
                 print(f"⏳ [僵局一階] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，平50%")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_1]")
+                await close_position(sym, cs, half, p, avg, reason="[Stagnation_1]")
                 s["has_partial_closed"] = True
                 return
-            if profit_pct < 0.002:
+            elif profit_pct >= 0.008:
                 cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局平倉] {sym} 持倉{stagnation_limit//60}分利潤僅{profit_pct*100:.2f}%，全平")
+                print(f"⏳ [僵局平倉] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，全平")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Exit]")
                 s["highest_profit_pct"] = 0.0
                 return
@@ -1668,9 +1662,9 @@ async def check_exits(sym):
             s["has_partial_closed"] = False
             return
         # 弱勢快速停利：穩健型幣種可以等更久，再決定是否落袋
-        weak_tp = 0.005
+        weak_tp = 0.008
         if s.get("personality") == "calm":
-            weak_tp = 0.007
+            weak_tp = 0.012
         if s["highest_profit_pct"] >= weak_tp:
             if not has_strong_momentum(sym, is_long):
                 cs = 'sell' if is_long else 'buy'
