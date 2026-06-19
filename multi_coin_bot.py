@@ -2047,14 +2047,22 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # 動態量能門檻：空單要求「放量下跌」，多單維持原本 0.8
-    vol_factor = s.get("volume_threshold_factor", 0.8)
-    if side == 'sell':
-        vol_factor = 1.2  # 嚴格要求空單必須大於 20MA 的 1.2 倍
+    # 1. 提高門檻：基礎要求 1.5 倍均量
+    vol_factor = 1.5
+    
+    # 2. 動態調整：如果目前 ATR 小於 24 小時平均的 50% (極度盤整區)，將量能門檻提高至 2.0 倍
+    atr_history = s.get("atr_history", [])
+    atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
+    current_atr = s.get("current_atr", 0.0)
+    
+    is_choppy = atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.5
+    if is_choppy:
+        vol_factor = 2.0
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能過濾] 當前量 {current_vol:.2f} < 門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
+        choppy_str = "[盤整高標準 2.0x]" if is_choppy else "[基礎高標準 1.5x]"
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 {choppy_str} 當前量 {current_vol:.2f} < 門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
         return False
 
     # --- R:R (盈虧比) 過濾 ---
