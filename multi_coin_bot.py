@@ -1940,9 +1940,9 @@ def is_entry_volume_confirmed(sym, side):
     atr_pct = s.get("current_atr", 0.0) / max(s["close_price"], 1e-8)
     
     if atr_pct > 0.01: # 高波動環境
-        volume_multiplier = 1.5
+        volume_multiplier = 0.8  # 原為 1.5，放寬至只需 80% 均量
     else: # 低波動環境
-        volume_multiplier = 1.2
+        volume_multiplier = 0.5  # 原為 1.2，放寬至只需 50% 均量
         
     min_volume = max(1000.0, vol_ma20 * volume_multiplier)
     if current_vol < min_volume:
@@ -1958,8 +1958,8 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * s.get("current_atr", 0.0)
     
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    if rr_ratio < 1.99:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.0 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
+    if rr_ratio < 1.49: # 原為 1.99，放寬至盈虧比 1.5 即可進場
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 1.5 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
 
     return True
@@ -2009,10 +2009,10 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.6:
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.4: # 原 0.6，放寬至允許 40% 的極低波動
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.005: # 布林帶寬度 < 0.5% 代表極度收斂
+    if bb_width_pct > 0 and bb_width_pct < 0.003: # 原 0.005，放寬至布林帶寬度 0.3%
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
     if not is_entry_pin_safe(sym, side):
@@ -2028,8 +2028,8 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 10:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 15")
+    if adx_val < 8: # 原 10，放寬 ADX 趨勢強度門檻
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
         return False
 
     # 實盤最小量限制
