@@ -2098,14 +2098,15 @@ def is_entry_allowed(sym, side, route="a"):
         return False
         
     # --- MTF 1H 趨勢過濾 ---
-    ema50_1h = s.get("ema50_1h", 0)
-    if ema50_1h > 0:
-        if side == 'buy' and cp <= ema50_1h:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏空 (cp={cp:.4f} <= ema50_1h={ema50_1h:.4f})，禁止做多")
-            return False
-        if side == 'sell' and cp >= ema50_1h:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏多 (cp={cp:.4f} >= ema50_1h={ema50_1h:.4f})，禁止做空")
-            return False
+    if s.get("mtf_filter", True):
+        ema50_1h = s.get("ema50_1h", 0)
+        if ema50_1h > 0:
+            if side == 'buy' and cp <= ema50_1h:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏空 (cp={cp:.4f} <= ema50_1h={ema50_1h:.4f})，禁止做多")
+                return False
+            if side == 'sell' and cp >= ema50_1h:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏多 (cp={cp:.4f} >= ema50_1h={ema50_1h:.4f})，禁止做空")
+                return False
             
     # --- 盤整/低波動過濾 (Choppiness) ---
     atr_history = s.get("atr_history", [])
@@ -2210,11 +2211,13 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    # --- 只需要最後 2 根 K 線方向一致 (放寬：不再要求連續 3 根) ---
-    last_two_candles_long = len(s["ohlcv"]) >= 2 and \
-                              s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
-    last_two_candles_short = len(s["ohlcv"]) >= 2 and \
-                               s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
+    # --- 強化防看錯方向：嚴格要求最後 2 根 K 線方向一致 (連續2根綠K/紅K) ---
+    last_two_candles_long = len(s["ohlcv"]) >= 3 and \
+                              s["ohlcv"][-1][4] > s["ohlcv"][-2][4] and \
+                              s["ohlcv"][-2][4] > s["ohlcv"][-3][4]
+    last_two_candles_short = len(s["ohlcv"]) >= 3 and \
+                               s["ohlcv"][-1][4] < s["ohlcv"][-2][4] and \
+                               s["ohlcv"][-2][4] < s["ohlcv"][-3][4]
 
     ema50 = s.get("ema50", 0.0)
     trend_confluence_long = ema50 == 0.0 or close > ema50
@@ -2384,15 +2387,16 @@ async def check_entries():
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        ema50_1h = s.get("ema50_1h", 0.0)
-        p = s["close_price"]
-        if ema50_1h > 0:
-            if side == "buy" and p < ema50_1h:
-                print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
-                continue
-            if side == "sell" and p > ema50_1h:
-                print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
-                continue
+        if s.get("mtf_filter", True):
+            ema50_1h = s.get("ema50_1h", 0.0)
+            p = s["close_price"]
+            if ema50_1h > 0:
+                if side == "buy" and p < ema50_1h:
+                    print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
+                    continue
+                if side == "sell" and p > ema50_1h:
+                    print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
+                    continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
         atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
