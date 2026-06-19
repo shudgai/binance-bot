@@ -161,14 +161,14 @@ MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
-    "AVAXUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "DOGEUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "INJUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "LINKUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "NEARUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "RENDERUSDT":{"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "SOLUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "SUIUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "AVAXUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "DOGEUSDT": {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "INJUSDT":  {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "LINKUSDT": {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "NEARUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "RENDERUSDT":{"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "SOLUSDT":  {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "SUIUSDT":  {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -664,7 +664,7 @@ def update_all_dynamic_personalities():
 
 _, SYMBOL_PROFILES = load_symbol_config()
 
-MAX_POSITIONS = 2
+MAX_POSITIONS = 8
 COOLDOWN_SEC = 1800
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
@@ -736,6 +736,7 @@ def build_symbol_state(sym):
         "max_additional_entries": 2,
         "entry_cooldown_sec": conf.get("entry_cooldown_sec", 90),
         "min_flip_time": conf.get("min_flip_time", 300),
+        "profile_type": conf.get("profile_type", "Core_Trend"),
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
         "risk_multiplier": 1.0,
@@ -981,11 +982,26 @@ def get_balance():
 
 def compute_per_coin_margin(sym=None):
     balance = get_balance()
-    if balance <= 0:
+    if balance <= 0 or not sym:
         return 0
-    # 將資金平分給最大允許持倉數量，每個倉位最多使用 95% 的分配額度作保證金
-    per_slot_balance = balance / max(1, MAX_POSITIONS)
-    usable = per_slot_balance * 0.95
+
+    weights = {
+        "Core_Trend": 0.3,
+        "High_Beta_Momentum": 0.2,
+        "Speculative_Risk": 0.1
+    }
+
+    total_weight = 0.0
+    for s in ALL_SYMBOLS:
+        p_type = STATES[s].get("profile_type", "Core_Trend") if s in STATES else "Core_Trend"
+        total_weight += weights.get(p_type, 0.1)
+
+    scale_factor = 1.0 / max(1.0, total_weight)
+
+    my_type = STATES[sym].get("profile_type", "Core_Trend") if sym in STATES else "Core_Trend"
+    my_weight = weights.get(my_type, 0.1) * scale_factor
+
+    usable = balance * my_weight * 0.95
     return usable
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
