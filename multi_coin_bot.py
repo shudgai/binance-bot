@@ -1840,7 +1840,7 @@ async def execute_order(sym, side, price):
     # --------------------
 
     now = time.time()
-    if side == 'buy' and s["entry_count"] > 0:
+    if s["entry_count"] > 0:
         if now - s["last_entry_time"] < s["entry_cooldown_sec"]:
             print(f"⏳ [加倉冷卻] {sym} 距離上次加倉不足 {s['entry_cooldown_sec']} 秒")
             return
@@ -1848,9 +1848,9 @@ async def execute_order(sym, side, price):
             print(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
             return
         if s["avg_price"] > 0 and s["close_price"] > 0:
-            profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"]
+            profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - s["close_price"]) / s["avg_price"]
             if profit_pct < 0.001:
-                print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉")
+                print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
                 return
 
     # 1. 計算目標名義價值 (保證金 * 槓桿倍數)
@@ -2247,8 +2247,6 @@ def compute_signal_strength(sym):
 
 async def check_entries():
     open_count = get_open_position_count()
-    if open_count >= MAX_POSITIONS:
-        return
     remaining_slots = MAX_POSITIONS - open_count
 
     candidates = []
@@ -2256,8 +2254,14 @@ async def check_entries():
         s = STATES[sym]
         if s["status"] != "ACTIVE":
             continue
-        if abs(s["qty"]) > 0.000001:
+            
+        has_position = abs(s["qty"]) > 0.000001
+        current_direction = "buy" if s["qty"] > 0 else "sell" if s["qty"] < 0 else None
+        
+        # 開倉數限制 (針對新開倉)
+        if not has_position and open_count >= MAX_POSITIONS:
             continue
+
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
         # --- 新增：等待收盤確認機制 ---
@@ -2319,6 +2323,12 @@ async def check_entries():
         if side_strength[0] is None:
             continue
         side, strength, route = side_strength
+        
+        # --- 方向鎖定 (Direction Lock) ---
+        if has_position and side != current_direction:
+            # 已經有持倉，不允許反向訊號加倉
+            continue
+
         if not is_entry_allowed(sym, side, route):
             continue
 
