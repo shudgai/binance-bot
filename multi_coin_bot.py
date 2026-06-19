@@ -2125,8 +2125,8 @@ def is_entry_allowed(sym, side, route="a"):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
         return False
         
-    # 量能確認過濾器
-    if not is_entry_volume_confirmed(sym, side):
+    # 量能確認過濾器 (衰竭進場策略 Exhaustion_Entry 允許低量能)
+    if route != "Exhaustion_Entry" and not is_entry_volume_confirmed(sym, side):
         return False
         
     # ADX 趨勢強度限制
@@ -2284,6 +2284,41 @@ def compute_signal_strength(sym):
             strength += 5.0
         strength += trend_score
         return ("sell", strength if strength >= 6.0 else 0.0, route)
+
+    # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
+    # 專門抓大趨勢回檔時的「價跌量縮」潛在底部
+    if len(s["ohlcv"]) >= 50:
+        c1 = s["ohlcv"][-2]  # 最新已收盤 (驗證K線)
+        c2 = s["ohlcv"][-3]  # 前一根已收盤 (縮量衰竭K線)
+        c2_vol_low = c2[5] < s.get("vol_ma20", 1) * 0.8
+        
+        # 多單：抓回檔底部
+        if c2[4] < c2[1] and c2_vol_low:  # c2 價跌且量縮
+            recent_low_50 = min([x[3] for x in s["ohlcv"][-50:]])
+            support_ok = (c1[3] <= s.get("bb_low", 0) * 1.005) or (c1[3] <= recent_low_50 * 1.005)
+            reversal_ok = (c1[4] > c1[1]) and ((min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 0.5)
+            bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2)
+            
+            ema50_1h = s.get("ema50_1h", 0)
+            trend_ok = (ema50_1h == 0) or (close > ema50_1h * 0.99)
+            
+            if trend_ok and (support_ok or reversal_ok or bounce_ok):
+                print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
+                return ("buy", 15.0, "Exhaustion_Entry")
+                
+        # 空單：抓反彈頂部
+        if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
+            recent_high_50 = max([x[2] for x in s["ohlcv"][-50:]])
+            support_ok = (c1[2] >= s.get("bb_up", 0) * 0.995) or (c1[2] >= recent_high_50 * 0.995)
+            reversal_ok = (c1[4] < c1[1]) and ((c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 0.5)
+            bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2)
+            
+            ema50_1h = s.get("ema50_1h", 0)
+            trend_ok = (ema50_1h == 0) or (close < ema50_1h * 1.01)
+            
+            if trend_ok and (support_ok or reversal_ok or bounce_ok):
+                print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
+                return ("sell", 15.0, "Exhaustion_Entry")
 
     return (None, 0, None)
 
