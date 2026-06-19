@@ -155,8 +155,22 @@ exchange_spot = ccxtpro.binance({
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
-TIMEFRAME = '1m'
-LEVERAGE = 5
+TRADE_HISTORY_FILE = "trade_history.json"
+MAX_GLOBAL_CONCURRENT_TRADES = 3
+DEFAULT_LEVERAGE = 5
+
+COIN_PROFILE_CONFIG = {
+    "AVAXUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "DOGEUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "INJUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "LINKUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "NEARUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "RENDERUSDT":{"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "SOLUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+    "SUIUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_multiplier": 1.0, "entry_cooldown_sec": 90},
+}
+
+ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
 
 LEVERAGE_TIERS = {
     "custom_leverage": {
@@ -560,8 +574,10 @@ def apply_symbol_profile(sym, profile):
 
 def apply_all_symbol_profiles():
     for sym in ALL_SYMBOLS:
-        profile = SYMBOL_PROFILES.get(sym, {})
-        apply_symbol_profile(sym, profile)
+        json_profile = SYMBOL_PROFILES.get(sym, {})
+        py_profile = COIN_PROFILE_CONFIG.get(sym, {})
+        merged_profile = {**json_profile, **py_profile}
+        apply_symbol_profile(sym, merged_profile)
 
 
 def has_manual_personality(sym):
@@ -645,7 +661,7 @@ def update_all_dynamic_personalities():
         update_dynamic_personality(sym)
 
 
-ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
+_, SYMBOL_PROFILES = load_symbol_config()
 
 MAX_POSITIONS = 2
 COOLDOWN_SEC = 1800
@@ -659,6 +675,7 @@ TP_ATR_MULTIPLIER = 3.0
 HARD_STOP_LOSS_PCT = 0.02
 
 def build_symbol_state(sym):
+    conf = COIN_PROFILE_CONFIG.get(sym, {})
     return {
         "status": "ACTIVE",
         "status_reason": "",
@@ -716,13 +733,13 @@ def build_symbol_state(sym):
         "entry_count": 0,
         "avg_entry_price": 0.0,
         "max_additional_entries": 2,
-        "entry_cooldown_sec": 90,
+        "entry_cooldown_sec": conf.get("entry_cooldown_sec", 90),
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
         "risk_multiplier": 1.0,
-        "volume_multiplier": 1.0,
-        "sl_atr_multiplier": 1.5,
-        "tp_atr_multiplier": 2.5,
+        "volume_multiplier": conf.get("volume_multiplier", 1.0),
+        "sl_atr_multiplier": conf.get("sl_atr_multiplier", 1.5),
+        "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
         "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
         "personality": "balanced",
         "personality_source": "infer",
