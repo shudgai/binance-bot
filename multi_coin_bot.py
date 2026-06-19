@@ -1504,16 +1504,15 @@ async def check_exits(sym):
     if p < s["trailing_lowest"]:
         s["trailing_lowest"] = p
 
-    # ── 三叉決策樹出場邏輯 ─────────────────────────────────────
-    # 1. 趨勢反轉：MACD 反向交叉 → 立即認賠出場 (無視盈虧)
-    m_death = s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]
-    m_golden = s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"]
+    # 1. 趨勢反轉：MACD 狀態反向 → 立即認賠出場 (修正盲區，不只看交叉瞬間)
+    macd_is_down = s["macd_line"] < s["macd_signal"]
+    macd_is_up = s["macd_line"] > s["macd_signal"]
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
-    if ((is_long and m_death) or (not is_long and m_golden)) and (profit_pct < early_exit_limit or profit_pct > 0.008):
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.008):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
-        print(f"📉 [反轉出場] {sym} MACD反向交叉，立即平倉 (損益: {profit_pct*100:.2f}%)")
+        print(f"📉 [反轉出場] {sym} MACD狀態反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="趨勢反轉", is_stop_loss=is_sl)
         return
 
@@ -1732,9 +1731,13 @@ async def check_position_exits(exchange, sym):
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="ATR停利")
         return
 
-    # 15分鐘時間停損
-    if hold_sec > 900 and profit_pct < -0.005:
-        print(f"⏱️ [時間停損] {sym} {hold_sec/60:.1f}分仍虧損")
+    # 多層次時間停損
+    if hold_sec > 3600 and profit_pct < 0.0:
+        print(f"⏱️ [超時停損] {sym} 持倉過久 ({hold_sec/60:.1f}分) 且未獲利，釋放資金")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="超時無利潤出場", is_stop_loss=True)
+        return
+    elif hold_sec > 900 and profit_pct < -0.005:
+        print(f"⏱️ [時間停損] {sym} {hold_sec/60:.1f}分仍顯著虧損")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="時間停損", is_stop_loss=True)
         return
 
