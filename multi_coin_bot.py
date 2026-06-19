@@ -161,14 +161,14 @@ MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
-    "AVAXUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "DOGEUSDT": {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "INJUSDT":  {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "LINKUSDT": {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "NEARUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "RENDERUSDT":{"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "SOLUSDT":  {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
-    "SUIUSDT":  {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 2.5, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "AVAXUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "DOGEUSDT": {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "INJUSDT":  {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "LINKUSDT": {"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "NEARUSDT": {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "RENDERUSDT":{"profile_type": "High_Beta_Momentum", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "SOLUSDT":  {"profile_type": "Core_Trend", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
+    "SUIUSDT":  {"profile_type": "Speculative_Risk", "sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 0.8, "min_flip_time": 300, "entry_cooldown_sec": 90},
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -1316,11 +1316,11 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
             trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
-            # --- 保本緩衝邏輯 ---
-            # 當獲利達到 0.5 * ATR 時，將止損移至保本點 (成本價 + 0.1 * ATR 緩衝)
-            breakeven_trigger = s["avg_price"] + (0.5 * atr_val)
-            if current_price > breakeven_trigger:
-                breakeven_sl = s["avg_price"] + (0.1 * atr_val)
+            # --- 1:1 保本邏輯 ---
+            sl_dist_atr = s.get("sl_atr_multiplier", 1.5) * atr_val
+            breakeven_trigger = s["avg_price"] + sl_dist_atr
+            if current_price >= breakeven_trigger:
+                breakeven_sl = s["avg_price"]
                 trail_sl = max(trail_sl, breakeven_sl)
             
             safe_min_sl = liq_price * 1.2
@@ -1336,11 +1336,11 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
             trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
-            # --- 保本緩衝邏輯 ---
-            # 當獲利達到 0.5 * ATR 時，將止損移至保本點 (成本價 - 0.1 * ATR 緩衝)
-            breakeven_trigger = s["avg_price"] - (0.5 * atr_val)
-            if current_price < breakeven_trigger:
-                breakeven_sl = s["avg_price"] - (0.1 * atr_val)
+            # --- 1:1 保本邏輯 ---
+            sl_dist_atr = s.get("sl_atr_multiplier", 1.5) * atr_val
+            breakeven_trigger = s["avg_price"] - sl_dist_atr
+            if current_price <= breakeven_trigger:
+                breakeven_sl = s["avg_price"]
                 trail_sl = min(trail_sl, breakeven_sl)
             
             safe_max_sl = liq_price * 0.8
@@ -1426,7 +1426,14 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     # 動態產生損益標籤 (Reason_Tag)
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
-    if profit_pct > 0.01:
+    
+    atr_val = s.get("entry_atr", s.get("current_atr", price * 0.01))
+    sl_mult = s.get("sl_atr_multiplier", 1.5)
+    initial_risk_pct = (sl_mult * atr_val) / real_avg if real_avg > 0 else 0.01
+    
+    if profit_pct > 0 and initial_risk_pct > 0 and (profit_pct / initial_risk_pct) >= 2.0:
+        pnl_tag = "[Big_Win]"
+    elif profit_pct > 0.01:
         pnl_tag = "[大賺]"
     elif profit_pct > 0.002:
         pnl_tag = "[微利]"
