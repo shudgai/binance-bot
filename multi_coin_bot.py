@@ -1432,14 +1432,19 @@ async def check_exits(sym):
     sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
-    tp = avg + tp_base * atr_val if is_long else avg - tp_base * atr_val
+    
+    # ── 加入最低距離保護 (Minimum Distance Floor) ──
+    sl_dist = max(sl_mult * atr_val, avg * 0.005)
+    tp_dist = max(tp_base * atr_val, avg * 0.015)
+    
+    tp = avg + tp_dist if is_long else avg - tp_dist
 
     # ── 盈虧比 1:1 時移動停損至保本點 ──
     initial_risk_pct = sl_base * (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.0
     if profit_pct >= initial_risk_pct:
         sl = avg
     else:
-        sl = avg - sl_mult * atr_val if is_long else avg + sl_mult * atr_val
+        sl = avg - sl_dist if is_long else avg + sl_dist
 
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
