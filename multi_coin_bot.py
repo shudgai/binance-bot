@@ -1673,7 +1673,6 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
             return
 
-async def check_position_exits(exchange, sym):
     s = STATES[sym]
     if s.get("adjusted_this_tick", False):
         return
@@ -2374,7 +2373,6 @@ async def main_loop(exchange):
             for sym in ALL_SYMBOLS:
                 await check_exits(sym)
             for sym in ALL_SYMBOLS:
-                await check_position_exits(exchange, sym)
             update_all_dynamic_personalities()
             await check_entries()
 

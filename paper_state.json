@@ -1,10 +1,10 @@
 {
-    "balance_usdt": 130.1521488614214,
+    "balance_usdt": 130.1088623814214,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
-            "qty": 0.0,
-            "avg_price": 0.0,
+            "qty": -398.0,
+            "avg_price": 0.21752,
             "realized_pnl": -0.7571282952855164
         },
         "BLESS:USDT": {
@@ -79,20 +79,6 @@
         }
     },
     "trades": [
-        {
-            "id": "b471fd66",
-            "order_id": "c7f01b84",
-            "symbol": "ESPORTS:USDT",
-            "price": 0.06557,
-            "qty": 1346.0,
-            "quote_qty": 88.25722,
-            "time": 1781802264798,
-            "isBuyer": true,
-            "isMaker": false,
-            "realized_pnl": 0.0,
-            "fee": 0.044128610000000006,
-            "is_close": false
-        },
         {
             "id": "2c890c3d",
             "order_id": "cfe77b43",
@@ -1478,6 +1464,20 @@
             "realized_pnl": -0.12868999999999922,
             "fee": 0.018634312,
             "is_close": true
+        },
+        {
+            "id": "604526c5",
+            "order_id": "98fba160",
+            "symbol": "H:USDT",
+            "price": 0.21752,
+            "qty": 398.0,
+            "quote_qty": 86.57296,
+            "time": 1781839793824,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.043286479999999995,
+            "is_close": false
         }
     ],
     "realized_profit": 0.9129427468446366
