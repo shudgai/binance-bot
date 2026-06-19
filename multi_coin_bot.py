@@ -2439,6 +2439,14 @@ async def check_entries():
                 print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s)，禁止頻繁反手。")
                 continue
 
+        # --- 訊號強度門檻 (強勢趨勢中的逆勢反彈過濾) ---
+        ema50_1m = s.get("ema50", 0.0)
+        if ema50_1m > 0:
+            is_counter_trend = (side == "buy" and p < ema50_1m) or (side == "sell" and p > ema50_1m)
+            if is_counter_trend and strength < 15.0:
+                print(f"⚠️ [逆勢強度過濾] {sym} 處於短線逆勢，且訊號強度 {strength:.1f} < 15.0，嚴格過濾。")
+                continue
+
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         p = s["close_price"]
         if s.get("mtf_filter", True):
