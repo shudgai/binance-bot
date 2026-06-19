@@ -2345,12 +2345,15 @@ async def check_entries():
                     
                     # 再測一次大環境 (MTF & RR)，因為換線了可能改變
                     p = s["close_price"]
-                    ema50_1h = s.get("ema50_1h", 0.0)
-                    if ema50_1h > 0:
-                        if side == "buy" and p < ema50_1h:
-                            continue
-                        if side == "sell" and p > ema50_1h:
-                            continue
+                    if s.get("mtf_filter", True):
+                        ema50_1h = s.get("ema50_1h", 0.0)
+                        if ema50_1h > 0:
+                            if side == "buy" and p < ema50_1h:
+                                print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
+                                continue
+                            if side == "sell" and p > ema50_1h:
+                                print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
+                                continue
 
                     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
                     sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
@@ -2359,7 +2362,9 @@ async def check_entries():
                     sl_dist = max(atr_val * sl_multiplier, p * 0.005)
                     tp_dist = max(atr_val * tp_multiplier, p * 0.015)
                     
-                    if (tp_dist / sl_dist if sl_dist > 0 else 0) < 2.0:
+                    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+                    if expected_rr < 1.49:
+                        print(f"⚠️ [盈虧比過濾] {sym} 確認階段預期盈虧比 {expected_rr:.2f} < 1.5，放棄")
                         continue
                         
                     candidates.append((sym, side, strength, route))
