@@ -2579,8 +2579,8 @@ async def main_loop(exchange):
 
             open_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) > 0.000001]
             closed_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) <= 0.000001]
-            # 將有持倉的幣種排在最後面，確保日誌輸出時位於最底端（最容易看到）
-            ALL_SYMBOLS = closed_syms + open_syms
+            # 將有持倉的幣種排在最前面 (最上面)
+            ALL_SYMBOLS = open_syms + closed_syms
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
