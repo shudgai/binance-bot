@@ -627,7 +627,7 @@ def update_all_dynamic_personalities():
 ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
 
 MAX_POSITIONS = 2
-COOLDOWN_SEC = 300
+COOLDOWN_SEC = 1800
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
@@ -1707,7 +1707,7 @@ async def check_position_exits(exchange, sym):
 
     # 初始的距離 (加入最小停損與停利距離保護)
     sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-    tp_dist = max(atr_val * tp_multiplier, p * 0.010)
+    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
 
     # 定義初始 TP/SL 價格
     initial_tp = avg + tp_dist if is_long else avg - tp_dist
@@ -1722,8 +1722,8 @@ async def check_position_exits(exchange, sym):
     profit_dist = (p - avg) if is_long else (avg - p)
     
     if profit_dist >= sl_dist:
-        # 達到 1:1，首先確保停損位移到保本點 (含 0.1% 手續費緩衝)
-        breakeven_sl = avg * 1.001 if is_long else avg * 0.999
+        # 達到 1:1，首先確保停損位移到保本點 (含 0.25% 手續費與滑價緩衝)
+        breakeven_sl = avg * 1.0025 if is_long else avg * 0.9975
         
         # 接著，如果利潤繼續拉開，使用 1.5 * ATR 進行追蹤止損
         trail_dist = atr_val * 1.5
@@ -2239,7 +2239,7 @@ async def check_entries():
                     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
                     
                     sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-                    tp_dist = max(atr_val * tp_multiplier, p * 0.010)
+                    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
                     
                     if (tp_dist / sl_dist if sl_dist > 0 else 0) < 2.0:
                         continue
@@ -2278,7 +2278,7 @@ async def check_entries():
         tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
         
         sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-        tp_dist = max(atr_val * tp_multiplier, p * 0.010)
+        tp_dist = max(atr_val * tp_multiplier, p * 0.015)
         
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
         if expected_rr < 2.0:
