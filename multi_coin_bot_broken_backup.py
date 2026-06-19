@@ -153,12 +153,6 @@ if USE_TESTNET:
     exchange_spot.urls['api']['public'] = 'https://testnet.binance.vision/api/v3'
     exchange_spot.urls['api']['private'] = 'https://testnet.binance.vision/api/v3'
 
-DEFAULT_SYMBOLS = [
-    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSUSDT", "SUIUSDT"
-]
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
-
 PERSONALITY_TEMPLATES = {
     "calm": {
         "personality": "calm",
@@ -168,9 +162,9 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 1,
         "entry_size_pct": 0.3,
         "add_entry_pct": 0.15,
-        "sl_atr_multiplier": 1.5,
-        "tp_atr_multiplier": 3.0,
-        "hard_stop_loss_pct": 0.03,
+        "sl_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 1.8,
+        "hard_stop_loss_pct": 0.04,
     },
     "balanced": {
         "personality": "balanced",
@@ -180,9 +174,9 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 2,
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 1.2,
-        "tp_atr_multiplier": 2.4,
-        "hard_stop_loss_pct": 0.02,
+        "sl_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 2.0,
+        "hard_stop_loss_pct": 0.03,
     },
     "aggressive": {
         "personality": "aggressive",
@@ -192,9 +186,9 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 3,
         "entry_size_pct": 0.7,
         "add_entry_pct": 0.4,
-        "sl_atr_multiplier": 1.0,
-        "tp_atr_multiplier": 2.0,
-        "hard_stop_loss_pct": 0.015,
+        "sl_atr_multiplier": 2.0,
+        "tp_atr_multiplier": 2.5,
+        "hard_stop_loss_pct": 0.02,
     },
     "adaptive": {
         "personality": "adaptive",
@@ -204,10 +198,32 @@ PERSONALITY_TEMPLATES = {
         "max_additional_entries": 2,
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
-        "sl_atr_multiplier": 1.2,
-        "tp_atr_multiplier": 2.4,
-        "hard_stop_loss_pct": 0.02,
+        "sl_atr_multiplier": 2.5,
+        "tp_atr_multiplier": 2.2,
+        "hard_stop_loss_pct": 0.03,
     },
+}
+
+DEFAULT_SYMBOLS = [
+    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
+    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSUSDT", "SUIUSDT"
+]
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
+
+# 幣種個性配置地圖
+COIN_PROFILES = {
+    "DOGE":    {"volatility": "mid",    "trend": "choppy",   "sl_mult": 2.2, "tp_mult": 3.0},
+    "ESPORTS": {"volatility": "high",   "trend": "volatile", "sl_mult": 2.8, "tp_mult": 4.5},
+    "FIO":     {"volatility": "low",    "trend": "choppy",   "sl_mult": 1.8, "tp_mult": 2.5},
+    "FIS":     {"volatility": "mid",    "trend": "choppy",   "sl_mult": 2.0, "tp_mult": 3.0},
+    "FXS":     {"volatility": "mid",    "trend": "trendy",   "sl_mult": 2.2, "tp_mult": 3.5},
+    "H":       {"volatility": "mid",    "trend": "choppy",   "sl_mult": 2.0, "tp_mult": 3.0},
+    "PORT3":   {"volatility": "low",    "trend": "choppy",   "sl_mult": 1.8, "tp_mult": 2.5},
+    "PORTAL":  {"volatility": "high",   "trend": "volatile", "sl_mult": 3.0, "tp_mult": 5.0},
+    "SIREN":   {"volatility": "high",   "trend": "volatile", "sl_mult": 2.8, "tp_mult": 4.0},
+    "SYN":     {"volatility": "mid",    "trend": "trendy",   "sl_mult": 2.2, "tp_mult": 3.5},
+    "VELVET":  {"volatility": "high",   "trend": "strong",  "sl_mult": 3.0, "tp_mult": 6.0},
+    "XRP":     {"volatility": "mid",    "trend": "strong",  "sl_mult": 2.5, "tp_mult": 4.0},
 }
 
 SYMBOL_EXIT_OVERRIDES = {
@@ -457,6 +473,54 @@ def infer_symbol_personality(sym):
     if sym in balanced_coins:
         return "balanced"
     return "adaptive"
+
+
+PERSONALITY_TEMPLATES = {
+    "aggressive": {
+        "risk_multiplier": 1.4,
+        "volume_multiplier": 1.2,
+        "entry_cooldown_sec": 30,
+        "max_additional_entries": 3,
+        "entry_size_pct": 0.12,
+        "add_entry_pct": 0.06,
+        "sl_atr_multiplier": 1.2,
+        "tp_atr_multiplier": 2.5,
+        "hard_stop_loss_pct": 0.04,
+    },
+    "balanced": {
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "entry_cooldown_sec": 60,
+        "max_additional_entries": 2,
+        "entry_size_pct": 0.08,
+        "add_entry_pct": 0.04,
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 2.0,
+        "hard_stop_loss_pct": 0.03,
+    },
+    "calm": {
+        "risk_multiplier": 0.7,
+        "volume_multiplier": 0.8,
+        "entry_cooldown_sec": 120,
+        "max_additional_entries": 1,
+        "entry_size_pct": 0.05,
+        "add_entry_pct": 0.03,
+        "sl_atr_multiplier": 2.0,
+        "tp_atr_multiplier": 1.8,
+        "hard_stop_loss_pct": 0.025,
+    },
+    "adaptive": {
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "entry_cooldown_sec": 60,
+        "max_additional_entries": 2,
+        "entry_size_pct": 0.08,
+        "add_entry_pct": 0.04,
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 2.0,
+        "hard_stop_loss_pct": 0.03,
+    },
+}
 
 
 def get_personality_template(personality):
@@ -1950,371 +2014,48 @@ def is_entry_pin_safe(sym, side):
     return True
 
 
-def is_entry_volume_confirmed(sym, side):
-    s = STATES[sym]
-    if len(s["ohlcv"]) < 2:
-        return False
-    current_vol = s["current_vol"]
-    vol_ma20 = s["vol_ma20"]
-    if vol_ma20 <= 0:
-        return False
-    min_volume = max(1000.0, s["vol_ma20"] * 0.1)
-    if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {s['current_vol']:.2f} < 均量門檻 {min_volume:.2f}")
-        return False
-
-    # --- R:R (盈虧比) 過濾 ---
-    is_long = (side == 'buy')
-    sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
-    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
-    
-    expected_profit = tp_multiplier * s.get("current_atr", 0.0)
-    expected_risk = sl_multiplier * s.get("current_atr", 0.0)
-    
-    rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    if rr_ratio < 1.99:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.0 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
-        return False
-
-    return True
-
-
-def is_entry_allowed(sym, side, route="a"):
-    is_trend = route == "a"
-    if side == 'buy' and not MARKET_WIND.get("allow_long", True) and is_trend:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止開多")
-        return False
-    if side == 'sell' and not MARKET_WIND.get("allow_short", True) and is_trend:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤上漲風控] 大盤異常漲勢，禁止開空")
-        return False
-
-    s = STATES[sym]
-    cp = s["close_price"]
-    
-    # 均線過濾器已移除 - 寬鬆進場模式允許價格在SMA200上下開單
-    # if s.get("sma200_15m", 0) > 0:
-    #     ma200 = s["sma200_15m"]
-    #     if side == 'buy' and cp <= ma200:
-    #         return False
-    #     if side == 'sell' and cp >= ma200:
-    #         return False
-            
-    if len(s["ohlcv"]) < 20:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
-        return False
-        
-    # --- MTF 1H 趨勢過濾 ---
-    ema50_1h = s.get("ema50_1h", 0)
-    if ema50_1h > 0:
-        if side == 'buy' and cp <= ema50_1h:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏空 (cp={cp:.4f} <= ema50_1h={ema50_1h:.4f})，禁止做多")
-            return False
-        if side == 'sell' and cp >= ema50_1h:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏多 (cp={cp:.4f} >= ema50_1h={ema50_1h:.4f})，禁止做空")
-            return False
-            
-    # --- 盤整/低波動過濾 (Choppiness) ---
-    atr_history = s.get("atr_history", [])
-    atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
-    current_atr = s.get("current_atr", 0.0)
-    
-    # 判斷波動太小的條件：當前 ATR 小於 24H 平均 ATR 的 60%，或 BB 區間太窄
-    bb_up = s.get("bb_up", 0.0)
-    bb_down = s.get("bb_down", 0.0)
-    bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
-    
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.6:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
-        return False
-    if bb_width_pct > 0 and bb_width_pct < 0.005: # 布林帶寬度 < 0.5% 代表極度收斂
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
-        return False
-    if not is_entry_pin_safe(sym, side):
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
-        return False
-        
-    # 量能確認過濾器
-    if not is_entry_volume_confirmed(sym, side):
-        return False
-        
-    # ADX 趨勢強度限制
-    highs = np.array([x[2] for x in s["ohlcv"]])
-    lows = np.array([x[3] for x in s["ohlcv"]])
-    closes = np.array([x[4] for x in s["ohlcv"]])
-    adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 15:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 15")
-        return False
-
-    # 實盤最小量限制
-    min_volume = max(1000.0, s["vol_ma20"] * 0.1)
-    if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾]")
-        return False
-    return True
-
-def compute_signal_strength(sym):
-    s = STATES[sym]
-    if len(s["closes"]) < 20:
-        return (None, 0)
-
-    # --- 新增 C：動能/成交量過濾 ---
-    # 確保當前 K 線成交量至少是過去 10 根平均的 1.5 倍，過濾掉沒人交易的橫盤
-    vol_ma10 = s.get("vol_ma10", 0.0)
-    current_vol = s.get("current_vol", 0.0)
-    if vol_ma10 > 0 and current_vol < vol_ma10 * 1.5:
-        return (None, 0)
-
-    rsi = s["current_rsi"]
-    close = s["close_price"]
-    prev_close = s["prev_close"] if s["prev_close"] is not None else close
-    ema20 = s.get("ema20", 0.0)
-    ema50 = s.get("ema50", 0.0)
-
-    trend_long = ema20 > 0 and close > ema20
-    trend_short = ema20 > 0 and close < ema20
-
-    # Define parameters for dynamic RSI thresholds
-    LONG_RSI_NORMAL = 45.0
-    SHORT_RSI_NORMAL = 55.0
-    LONG_RSI_HIGH_VOL = 30.0
-    SHORT_RSI_HIGH_VOL = 70.0
-
-    atr_history = s.get("atr_history", [])
-    atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
-    current_atr = s.get("current_atr", 0.0)
-
-    if current_atr > atr_24h_avg and atr_24h_avg > 0:
-        long_rsi_threshold = LONG_RSI_HIGH_VOL
-        short_rsi_threshold = SHORT_RSI_HIGH_VOL
-        vol_mode = "高波動模式 (High Vol)"
-    else:
-        long_rsi_threshold = LONG_RSI_NORMAL
-        short_rsi_threshold = SHORT_RSI_NORMAL
-        vol_mode = "低波動模式 (Low Vol)"
-
-    # 每個循環輸出當前指標數值，方便追蹤與除錯
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} | RSI: {rsi:.1f} | Price: {close:.4f} (BB: {s.get('bb_low', 0):.4f} - {s.get('bb_up', 0):.4f}) | MACD: {s.get('macd_line', 0):.4f}/{s.get('macd_signal', 0):.4f} | Trend (L/S): {trend_long}/{trend_short} | VolMode: {vol_mode} (ATR: {current_atr:.5f} / 24h Avg: {atr_24h_avg:.5f})")
-    
-    is_in_bb_zone_long = close <= s.get("bb_low", 0) * 1.005
-    is_in_bb_zone_short = close >= s.get("bb_up", 0) * 0.995
-    
-    macd_line = s.get("macd_line", 0.0)
-    macd_signal = s.get("macd_signal", 0.0)
-    prev_macd_line = s.get("prev_macd_line", 0.0)
-    prev_macd_signal = s.get("prev_macd_signal", 0.0)
-    
-    macd_hist = macd_line - macd_signal
-    prev_macd_hist = prev_macd_line - prev_macd_signal
-    
-    long_macd_cross = prev_macd_line <= prev_macd_signal and macd_line > macd_signal
-    short_macd_cross = prev_macd_line >= prev_macd_signal and macd_line < macd_signal
-    
-    long_macd_hist_aligned = macd_hist > prev_macd_hist
-    short_macd_hist_aligned = macd_hist < prev_macd_hist
-    
-    long_macd_ok = long_macd_cross or long_macd_hist_aligned
-    short_macd_ok = short_macd_cross or short_macd_hist_aligned
-
-    # --- 只需要最後 2 根 K 線方向一致 (放寬：不再要求連續 3 根) ---
-    last_two_candles_long = len(s["ohlcv"]) >= 2 and \
-                              s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
-    last_two_candles_short = len(s["ohlcv"]) >= 2 and \
-                               s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
-
-    ema50 = s.get("ema50", 0.0)
-    trend_confluence_long = ema50 == 0.0 or close > ema50
-    trend_confluence_short = ema50 == 0.0 or close < ema50
-
-    is_above_sma200 = s.get("sma200_15m", 0) > 0 and close > s.get("sma200_15m", 0) * 0.999
-    is_below_sma200 = s.get("sma200_15m", 0) > 0 and close < s.get("sma200_15m", 0) * 1.001
-
-    # 限制開倉不要太偏離短期趨勢線，避免追價開倉
-    close_near_ema20_long = ema20 <= 0 or close <= ema20 * 1.05
-    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.95
-    is_in_bb_zone_long = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
-    is_in_bb_zone_short = s.get("bb_up", 0) > 0 and close >= s["bb_up"] * 0.99
-
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
-
-    # 寬鬆的RSI條件：>50時正常，或在45-55中立區但MACD確認時也允許
-    rsi_ok_long = rsi > 50.0 or (rsi >= 45.0 and (long_macd_cross or macd_hist > 0))
-    rsi_ok_short = rsi < 50.0 or (rsi <= 55.0 and (short_macd_cross or macd_hist < 0))
-
-    # Route A (Trend Following): 簡化版 - 只需4個核心條件
-    # 1. MACD確認 2. K線方向 3. RSI動能(寬鬆) 4. EMA20合理範圍
-    # 移除SMA200要求，允許更多進場機會
-    
-    # --- 優化：加入趨勢加分機制 ---
-    # 如果方向與 EMA50 趨勢一致，加 5 分，否則扣 5 分
-    trend_score = 0
-    if trend_confluence_long and (long_macd_cross or macd_hist > 0):
-        trend_score = 5
-    elif trend_confluence_short and (short_macd_cross or macd_hist < 0):
-        trend_score = 5
-    elif (trend_confluence_long and (short_macd_cross or macd_hist < 0)) or \
-         (trend_confluence_short and (long_macd_cross or macd_hist > 0)):
-        trend_score = -5
-    else:
-        trend_score = 0
-
-    route_a_long = (
-        (long_macd_cross or macd_hist > 0) and 
-        last_two_candles_long and 
-        rsi_ok_long and 
-        close_near_ema20_long
-    )
-    
-    route_a_short = (
-        (short_macd_cross or macd_hist < 0) and 
-        last_two_candles_short and 
-        rsi_ok_short and 
-        close_near_ema20_short
-    )
-
-    long_base_ok = route_a_long
-    short_base_ok = route_a_short
-
-    if long_base_ok:
-        route = "a"
-        strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
-        if long_macd_cross:
-            strength += 5.0
-        strength += trend_score
-        return ("buy", strength if strength >= 6.0 else 0.0, route)
-
-    if short_base_ok:
-        route = "a"
-        strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-        if short_macd_cross:
-            strength += 5.0
-        strength += trend_score
-        return ("sell", strength if strength >= 6.0 else 0.0, route)
-
-    return (None, 0, None)
-
-async def check_entries():
-    open_count = get_open_position_count()
-    if open_count >= MAX_POSITIONS:
-        return
-    remaining_slots = MAX_POSITIONS - open_count
-
+async def check_entries(exchange):
     candidates = []
+
     for sym in ALL_SYMBOLS:
         s = STATES[sym]
+
         if s["status"] != "ACTIVE":
             continue
-        if abs(s["qty"]) > 0.000001:
-            continue
-        current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
-        # --- 新增：等待收盤確認機制 ---
-        if s.get("pending_side"):
-            if current_candle_time <= s.get("pending_time", 0):
-                continue
-            
-            # 換線了，檢查前一根(訊號K線)是否反轉
-            if len(s["ohlcv"]) >= 2:
-                prev_candle = s["ohlcv"][-2]
-                prev_open = prev_candle[1]
-                prev_close = prev_candle[4]
-                
-                is_valid = False
-                if s["pending_side"] == "buy":
-                    if prev_close >= prev_open - (s["current_atr"] * 0.5):
-                        is_valid = True
-                elif s["pending_side"] == "sell":
-                    if prev_close <= prev_open + (s["current_atr"] * 0.5):
-                        is_valid = True
-                        
-                if is_valid:
-                    print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉)")
-                    side = s["pending_side"]
-                    strength = s.get("pending_strength", 5.0)
-                    route = s.get("pending_route", "confirmed")
-                    s["pending_side"] = None
-                    
-                    # 再測一次大環境 (MTF & RR)，因為換線了可能改變
-                    p = s["close_price"]
-                    ema50_1h = s.get("ema50_1h", 0.0)
-                    if ema50_1h > 0:
-                        if side == "buy" and p < ema50_1h:
-                            continue
-                        if side == "sell" and p > ema50_1h:
-                            continue
-
-                    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-                    sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-                    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-                    
-                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-                    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-                    
-                    if (tp_dist / sl_dist if sl_dist > 0 else 0) < 2.0:
-                        continue
-                        
-                    candidates.append((sym, side, strength, route))
-                    continue
-                else:
-                    print(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
-                    s["pending_side"] = None
-            else:
-                s["pending_side"] = None
+        if is_symbol_locked(sym):
             continue
 
-        # 原本的計算邏輯
-        side_strength = compute_signal_strength(sym)
-        if side_strength[0] is None:
-            continue
-        side, strength, route = side_strength
-        if not is_entry_allowed(sym, side, route):
+        route = "spot" if should_use_spot(sym) else "futures"
+        side, strength = evaluate_entry_signal(sym)
+
+        if not side:
             continue
 
-        # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        ema50_1h = s.get("ema50_1h", 0.0)
-        p = s["close_price"]
-        if ema50_1h > 0:
-            if side == "buy" and p < ema50_1h:
-                print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
-                continue
-            if side == "sell" and p > ema50_1h:
-                print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
-                continue
-
-        # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
-        atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-        sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-        tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-        
-        sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-        tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-        
-        expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        if expected_rr < 2.0:
-            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
+        if not is_entry_allowed(sym, exchange):
+            print(f"@@DEBUG_CHECK@@ {sym} | 狀態: 拒絕進場 (is_entry_allowed 為 False)")
             continue
 
-        # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
-        s["pending_side"] = side
-        s["pending_time"] = current_candle_time
-        s["pending_strength"] = strength
-        s["pending_route"] = route
-        print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
+        candidates.append((sym, side, strength, route))
 
     if not candidates:
         return
 
-    candidates.sort(key=lambda x: -x[2])
-    print(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
+    candidates.sort(key=lambda x: x[2], reverse=True)
 
-    for i in range(min(remaining_slots, len(candidates))):
-        sym, side, _, route = candidates[i]
+    for sym, side, strength, route in candidates:
         s = STATES[sym]
-        print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻下單！")
-        await execute_order(sym, side, s["close_price"])
-        s["pending_side"] = None
-        s["pending_confirm_high"] = 0
-        s["pending_confirm_low"] = 0
+
+        if s["status"] != "ACTIVE":
+            continue
+
+        if is_symbol_locked(sym):
+            continue
+
+        if route == "spot":
+            await place_spot_entry(exchange, sym, side, strength)
+        else:
+            await place_futures_entry(exchange, sym, side, strength)
 
 # ── 主循環 ──────────────────────────────────────────────────
 
@@ -2390,7 +2131,7 @@ async def main_loop(exchange):
             for sym in ALL_SYMBOLS:
                 await check_position_exits(exchange, sym)
             update_all_dynamic_personalities()
-            await check_entries()
+            await check_entries(exchange)
 
             # 成功執行，重置連續錯誤計數器
             global CONSECUTIVE_ERRORS
