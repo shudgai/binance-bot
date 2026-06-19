@@ -2045,10 +2045,10 @@ def compute_signal_strength(sym):
         return (None, 0)
 
     # --- 新增 C：動能/成交量過濾 ---
-    # 確保當前 K 線成交量至少是過去 10 根平均的 1.5 倍，過濾掉沒人交易的橫盤
+    # 確保當前 K 線成交量不要低得離譜 (放寬至 0.3 倍均量即可通過)
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
-    if vol_ma10 > 0 and current_vol < vol_ma10 * 0.8:
+    if vol_ma10 > 0 and current_vol < vol_ma10 * 0.3:
         return (None, 0)
 
     rsi = s["current_rsi"]
@@ -2276,8 +2276,8 @@ async def check_entries():
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
         
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        if expected_rr < 2.0:
-            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
+        if expected_rr < 1.5:
+            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 1.5，放棄暫存")
             continue
 
         # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
