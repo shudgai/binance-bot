@@ -160,7 +160,7 @@ LEVERAGE = 5
 
 LEVERAGE_TIERS = {
     "high_risk": {
-        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT", "HUSDT"},
+        "coins": {"ESPORTSUSDT", "FIOUSDT", "PORT3USDT", "SIRENUSDT", "BLESSUSDT", "BEATUSDT", "BSBUSDT", "VELVETUSDT"},
         "leverage": 2
     },
     "medium_risk": {
@@ -254,11 +254,6 @@ PERSONALITY_TEMPLATES = {
 }
 
 SYMBOL_EXIT_OVERRIDES = {
-    "HUSDT": {
-        "tp_atr_multiplier": 3.0,
-        "sl_atr_multiplier": 2.0,
-        "hard_stop_loss_pct": 0.04,
-    },
     "XRPUSDT": {
         "tp_atr_multiplier": 3.0,
         "sl_atr_multiplier": 1.5,
@@ -282,12 +277,6 @@ SYMBOL_REVERSAL_SETTINGS = {
         "volume_multiplier": 3.5,
         "price_jump_pct": 0.012,
         "min_reverse_pct": 0.01,
-    },
-    "HUSDT": {
-        "trade_signal_threshold": 2.8,
-        "volume_multiplier": 4.0,
-        "price_jump_pct": 0.015,
-        "min_reverse_pct": 0.015,
     },
 }
 
@@ -483,8 +472,6 @@ def save_symbol_profiles(profiles):
 
 def infer_symbol_personality(sym):
     if sym in ("BTCUSDT", "ETHUSDT"):
-        return "calm"
-    if sym == "HUSDT":
         return "calm"
     aggressive_coins = {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT", "XRPUSDT", "SANDUSDT", "MANAUSDT", "FIOUSDT", "BEATUSDT", "STGUSDT", "BLESSUSDT", "SIRENUSDT", "ESPORTSUSDT", "FXSUSDT", "FISUSDT", "PORT3USDT", "BSBUSDT", "VELVETUSDT", "BRUSDT", "SYSUSDT", "RDNTUSDT", "SKYAIUSDT", "PORTALUSDT", "SENTUSDT", "BEATUSDT", "STGUSDT", "BLESSUSDT", "SIRENUSDT", "ESPORTSUSDT", "FXSUSDT", "FISUSDT", "PORT3USDT", "BSBUSDT", "VELVETUSDT", "BRUSDT", "SYSUSDT", "RDNTUSDT", "SKYAIUSDT", "PORTALUSDT", "SENTUSDT"}
     balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "UNIUSDT", "NEARUSDT", "SUIUSDT"}
