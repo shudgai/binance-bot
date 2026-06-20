@@ -50,6 +50,16 @@ app.add_middleware(
 def is_paper_trading():
     return not api_key or api_key == "your_api_key_here"
 
+def get_environment_mode():
+    if not is_paper_trading():
+        return "live"
+    cwd = os.getcwd()
+    if "binance-bot-live" in cwd or "-live" in cwd:
+        return "live"
+    if os.getenv("BOT_ENV") == "live":
+        return "live"
+    return "sandbox"
+
 def daily_market_clean_and_reset(is_manual=False):
     """大掃除與即時同步前五名 (模組化)"""
     try:
@@ -117,7 +127,7 @@ def api_get_bot_status():
     else:
         # 實盤餘額的取得可放在 binance_service，為簡化先保留原本邏輯(這部分會用到 binance_service，為快速先這樣)
         pass 
-    status["environment"] = "sandbox" if is_paper_trading() else "live"
+    status["environment"] = get_environment_mode()
     return status
 
 @app.post("/api/bot-status/toggle")
