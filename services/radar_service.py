@@ -109,13 +109,12 @@ def auto_radar_switch(force_start=False):
             add_system_log("⚠️ [雷達掃描] 無法獲取熱門小幣榜單，維持原狀", "warning")
             return current_syms
 
-        # 保留仍有持倉的幣種以及 24 小時內有交易紀錄的幣種，避免介面換幣時找不到
+        # 保留仍有持倉的幣種，避免介面換幣時找不到
         open_syms = _get_open_position_symbols()
-        recent_syms = _get_recently_traded_symbols(hours=24)
-        all_preserved = [s for s in list(dict.fromkeys(open_syms + recent_syms)) if s not in top_symbols]
+        all_preserved = [s for s in list(dict.fromkeys(open_syms)) if s not in top_symbols]
 
         if all_preserved:
-            add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(all_preserved)}", "warning")
+            add_system_log(f"🔒 [持倉保護] 以下幣種仍有持倉，強制保留: {', '.join(all_preserved)}", "warning")
 
         final_symbols = all_preserved + top_symbols
         if len(final_symbols) > 12:

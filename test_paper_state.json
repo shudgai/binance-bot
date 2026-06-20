@@ -1,10 +1,10 @@
 {
-    "balance_usdt": 153.4554249999999,
+    "balance_usdt": 149.30592499999992,
     "positions": {
         "XRP:USDT": {
-            "qty": 39.2,
+            "qty": 54.400000000000006,
             "avg_price": 109.99999999999999,
-            "realized_pnl": 6.399999999999977
+            "realized_pnl": 3.3999999999999773
         }
     },
     "trades": [
@@ -284,6 +284,76 @@
             "isMaker": false,
             "realized_pnl": 0.7999999999999972,
             "fee": 0.0504,
+            "is_close": true
+        },
+        {
+            "id": "97b325fa",
+            "order_id": "98ea7385",
+            "symbol": "XRP:USDT",
+            "price": 110.0,
+            "qty": 9.1,
+            "quote_qty": 1001.0,
+            "time": 1781935210336,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.5005000000000001,
+            "is_close": false
+        },
+        {
+            "id": "eab50d95",
+            "order_id": "e8969dc6",
+            "symbol": "XRP:USDT",
+            "price": 98.0,
+            "qty": 1.0,
+            "quote_qty": 98.0,
+            "time": 1781935210341,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": -2.0,
+            "fee": 0.049,
+            "is_close": true
+        },
+        {
+            "id": "fb69e28d",
+            "order_id": "6ca2f25c",
+            "symbol": "XRP:USDT",
+            "price": 110.0,
+            "qty": 9.1,
+            "quote_qty": 1001.0,
+            "time": 1781935449611,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.5005000000000001,
+            "is_close": false
+        },
+        {
+            "id": "ece0a54b",
+            "order_id": "690cf5a3",
+            "symbol": "XRP:USDT",
+            "price": 98.0,
+            "qty": 1.0,
+            "quote_qty": 98.0,
+            "time": 1781935449616,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": -2.0,
+            "fee": 0.049,
+            "is_close": true
+        },
+        {
+            "id": "811bd706",
+            "order_id": "3bbb19d0",
+            "symbol": "XRP:USDT",
+            "price": 101.0,
+            "qty": 1.0,
+            "quote_qty": 101.0,
+            "time": 1781935449617,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 1.0,
+            "fee": 0.0505,
             "is_close": true
         }
     ]

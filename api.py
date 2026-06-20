@@ -83,8 +83,11 @@ def daily_reset_daemon():
 
 @app.on_event("startup")
 async def startup_event():
-    # 啟動 6:00 AM 定時器
+
+
     threading.Thread(target=daily_reset_daemon, daemon=True).start()
+    pass
+    # 啟動 6:00 AM 定時器
 
 @app.get("/")
 def read_root():

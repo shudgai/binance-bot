@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 from services.utils import paper_key
 from update_paper_state import update_paper_state
 import csv
+from services.exit_manager import ExitManager
+from src.execution_engine import ExecutionEngine
 
 load_dotenv()
 
@@ -156,11 +158,54 @@ exchange_spot = ccxtpro.binance({
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '1m'
-TRADE_HISTORY_FILE = "trade_history.json"
+TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_history.json")
+
+def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr):
+    """
+    將每筆交易的結果記錄到 trade_history.json 中，供 AI 後續分析。
+    """
+    history_file = TRADE_HISTORY_FILE
+    
+    # 準備要記錄的數據
+    trade_data = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": symbol,
+        "entry_reason": entry_reason or "UNKNOWN",      # 例如: "Route_A", "Exhaustion_Entry"
+        "exit_reason": exit_reason,        # 例如: "MMP_Blocked", "ATR_Stop", "Layer_1_Divergence"
+        "profit_pct": round(profit_pct, 4), # 實質獲利百分比
+        "atr_at_exit": round(current_atr, 6),
+        "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol" # 自動標記市場環境
+    }
+
+    # 讀取現有紀錄
+    if os.path.exists(history_file):
+        with open(history_file, 'r', encoding='utf-8') as f:
+            try:
+                history = json.load(f)
+                if not isinstance(history, list):
+                    history = []
+            except Exception:
+                history = []
+    else:
+        history = []
+
+    # 加入新紀錄
+    history.append(trade_data)
+
+    # 寫回檔案
+    try:
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=4, ensure_ascii=False)
+        print(f"📝 [Memory] 已記錄 {symbol} 的交易結果。")
+    except Exception as e:
+        print(f"⚠️ [Memory] 紀錄 {symbol} 失敗: {e}")
+
 MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
 
-COIN_PROFILE_CONFIG = {
+import json
+
+DEFAULT_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
     "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "k_factor": 2.5},
     "LINKUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 180, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "k_factor": 2.5},
@@ -177,8 +222,46 @@ COIN_PROFILE_CONFIG = {
     # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0},
     "DOGEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0},
-    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0}
+    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0},
+    
+    # --- 新增分析調校幣種 ---
+    "ESPORTSUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.8, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0, "mmp": 0.005},
+    "HEIUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.8, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0, "mmp": 0.005},
+    "BSBUSDT": {"sl_atr_multiplier": 4.5, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0},
+    "BELUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 300, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
+    "LABUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.8, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0, "stalemate_time_sec": 1800, "stalemate_threshold": 0.01},
+    "HUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.5, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Wild", "leverage": 2, "k_factor": 6.0, "mmp": 0.01, "volatility_circuit_breaker": True}
 }
+
+def load_coin_profiles():
+    # 取得目前腳本所在的絕對路徑
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    # 這裡請根據您剛才 ls 指令查到的位置來調整
+    # 如果檔案在 config 資料夾裡，就用：
+    config_path = os.path.join(base_path, "config", "coin_profiles.json")
+    
+    # 如果檔案就在根目錄，就改用：
+    # config_path = os.path.join(base_path, "coin_profiles.json")
+
+    print(f"🔍 [系統診斷] 正在嘗試讀取配置路徑: {config_path}")
+
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                print(f"✅ [系統診斷] 配置讀取成功！已載入 {len(config)} 個幣種的個性化參數。")
+                return config
+        except Exception as e:
+            print(f"❌ [系統診斷] 讀取檔案時發生錯誤: {e}")
+            return DEFAULT_CONFIG
+    else:
+        print(f"❌ [系統診斷] 警告：在 {config_path} 找不到檔案！請確認檔案名稱與路徑。")
+        return DEFAULT_CONFIG
+
+COIN_PROFILE_CONFIG = load_coin_profiles()
+
+exit_mgr = ExitManager(COIN_PROFILE_CONFIG)
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
 
@@ -687,6 +770,7 @@ def build_symbol_state(sym):
     return {
         "status": "ACTIVE",
         "status_reason": "",
+        "entry_reason": "UNKNOWN",
         "next_status_time": 0,
         "stop_count": 0,
         "first_stop_time": 0,
@@ -1040,6 +1124,7 @@ def reset_coin_state(sym):
     s = STATES[sym]
     s["qty"] = 0.0
     s["avg_price"] = 0.0
+    s["entry_reason"] = "UNKNOWN"
     s["open_time"] = 0.0
     s["trailing_highest"] = 0.0
     s["trailing_lowest"] = float('inf')
@@ -1474,8 +1559,34 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
     else:
         try:
-            await exchange_futures.create_order(sym, type='market', side=close_side, amount=qty,
-                                        params={'reduceOnly': True, 'marginMode': 'isolated'})
+            engine = ExecutionEngine(exchange_futures)
+            config = {
+                "is_simulated": False,
+                "split_threshold": 100.0,
+                "coin_type": s.get("profile_type", "Normal"),
+                "num_splits": COIN_PROFILE_CONFIG.get(sym, {}).get("num_splits", 5),
+                "step_percent": COIN_PROFILE_CONFIG.get(sym, {}).get("step_percent", 0.001),
+                "fee_rate": 0.001,
+                "slippage_model": 0.0005
+            }
+            # Execute closing splits
+            await engine.execute_order(sym, close_side, qty, price, config)
+            
+            # Re-fill until filled or max attempts reached
+            max_attempts = 3
+            while engine.remaining_quantity > 0.0001 and engine.refill_attempts < max_attempts:
+                try:
+                    ticker = await exchange_futures.fetch_ticker(sym)
+                    current_price = ticker.get('last') or price
+                except Exception:
+                    current_price = price
+                await engine.re_fill_orders(sym, close_side, current_price, config)
+
+            if engine.total_units_filled <= 0:
+                print(f"🛑 [平倉失敗] {sym} {close_side} | 所有分批限價平倉單均未成交。")
+                return
+
+            qty = engine.total_units_filled  # Update qty with actually closed amount
         except Exception as e:
             print(f"🚨 [平倉錯誤] {sym}: {e}")
             return
@@ -1484,6 +1595,13 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if remaining < 0.01:
         if remaining > 0.000001:
             print(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
+        record_trade_result(
+            symbol=sym,
+            entry_reason=s.get("entry_reason", "UNKNOWN"),
+            exit_reason=full_reason,
+            profit_pct=profit_pct,
+            current_atr=s.get("current_atr", 0.0)
+        )
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
         reset_coin_state(sym)
     else:
@@ -1566,27 +1684,43 @@ async def check_exits(sym):
         print(f"🔄 [狀態切換] {sym} 獲利達 0.6%，進入 TRAILING 極限追蹤模式！")
 
     # ==========================================
-    # Waterfall Logic (5-Layer Defense System)
+    # ── ExitManager 底層防線 (MMP與硬停損) ──
     # ==========================================
-
-    # ── 底層防護：硬停損 (Hard Stop Loss) & 動態保本 ──
-    sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
-    sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
-    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-    sl_dist = min(max(sl_mult * atr_val, avg * 0.005), avg * 0.012)
+    macd_is_down = s.get("macd_line", 0) < s.get("macd_signal", 0)
+    macd_is_up = s.get("macd_line", 0) > s.get("macd_signal", 0)
+    trend_reversed = (is_long and macd_is_down) or (not is_long and macd_is_up)
     
-    entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * 1.0, 0.004) # 保本門檻提高到 0.4%
-    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
-        sl = avg * 1.0015 if is_long else avg * 0.9985
-    else:
-        sl = avg - sl_dist if is_long else avg + sl_dist
-
-    if (is_long and p <= sl) or (not is_long and p >= sl):
-        reason_str = "Layer_0_Breakeven_Stop" if abs(sl - (avg * 1.0015 if is_long else avg * 0.9985)) < 1e-6 else "Layer_0_Hard_Stop"
-        print(f"🛑 [硬防護] {sym} 觸發底層停損 ({reason_str})")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
+    position_data = {
+        "qty": s["qty"],
+        "avg_price": s["avg_price"],
+        "open_time": s["open_time"]
+    }
+    market_data = {
+        "current_price": p,
+        "current_atr": s.get("current_atr", 0.0),
+        "trend_reversed": trend_reversed
+    }
+    
+    decision = exit_mgr.check_exit_conditions(sym, position_data, market_data)
+    
+    if decision["should_exit"]:
+        is_stop_loss = "STOP_LOSS" in decision["reason"]
+        qty_to_close = abs(s["qty"])
+        if decision["exit_type"] == "PARTIAL_50":
+            qty_to_close *= 0.5
+            s["trade_status"] = "PARTIAL_EXIT"
+            
+        print(f"🛑 [ExitManager] {sym} 觸發平倉: {decision['reason']} ({decision['exit_type']})")
+        await close_position(sym, cs, qty_to_close, p, avg, reason=decision['reason'], is_stop_loss=is_stop_loss)
         return
+        
+    if "BELOW_MMP" in decision["reason"]:
+        # 未達最小意義獲利門檻，且未觸發硬停損或僵局，攔截後續進階邏輯
+        return
+
+    # ==========================================
+    # Waterfall Logic (Layer 1-4 Defense System)
+    # ==========================================
 
     # ── Layer 1: 量價背離與破位強制止損 (Nuclear Option) ──
     if len(s["ohlcv"]) >= 3:
@@ -1867,8 +2001,12 @@ async def check_position_exits(exchange, sym):
 
 # ── 進場邏輯 ──────────────────────────────────────────────────
 
-async def execute_order(sym, side, price):
+async def execute_order(sym, side, price, route="UNKNOWN"):
     s = STATES[sym]
+    if s.get("entry_count", 0) == 0:
+        s["entry_reason"] = route
+    else:
+        s["entry_reason"] = f"{s.get('entry_reason', 'UNKNOWN')}+{route}"
     pk = paper_key(sym)
     lev = get_symbol_leverage(sym)
     s["leverage"] = lev
@@ -1974,29 +2112,53 @@ async def execute_order(sym, side, price):
             print(f"🛑 [模擬開倉失敗] {sym}: {e}")
     else:
         try:
-            order = await exchange_futures.create_order(sym, type='market', side=side, amount=base_amt,
-                                                params={'marginMode': 'isolated'})
-            fill_price = float(order.get('average') or order.get('price') or price)
-            if fill_price <= 0:
-                fill_price = price
-                
+            engine = ExecutionEngine(exchange_futures)
+            config = {
+                "is_simulated": False,
+                "split_threshold": 100.0,
+                "coin_type": s.get("profile_type", "Normal"),
+                "num_splits": COIN_PROFILE_CONFIG.get(sym, {}).get("num_splits", 5),
+                "step_percent": COIN_PROFILE_CONFIG.get(sym, {}).get("step_percent", 0.001),
+                "fee_rate": 0.001,
+                "slippage_model": 0.0005
+            }
+            # Execute entry splits
+            await engine.execute_order(sym, side, base_amt, price, config)
+            
+            # Re-fill until filled or max attempts reached
+            max_attempts = 3
+            while engine.remaining_quantity > 0.0001 and engine.refill_attempts < max_attempts:
+                try:
+                    ticker = await exchange_futures.fetch_ticker(sym)
+                    current_price = ticker.get('last') or price
+                except Exception:
+                    current_price = price
+                await engine.re_fill_orders(sym, side, current_price, config)
+
+            if engine.total_units_filled <= 0:
+                print(f"🛑 [實盤開倉失敗] {sym} {side} | 所有分批限價開倉單均未成交。")
+                return
+
+            fill_price = engine.final_avg_fill_price
+            actual_filled_qty = engine.total_units_filled
+
             slippage = (fill_price - price) / price if price > 0 else 0
             if side == 'sell':
                 slippage = (price - fill_price) / price if price > 0 else 0
                 
-            print(f"✅ [實盤開倉成功] {sym} {side} | 預期: {price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
+            print(f"✅ [實盤開倉成功] {sym} {side} | 預期: {price:.6f} | 實際: {fill_price:.6f} | 實質成交: {actual_filled_qty:.4f} | 滑價: {slippage*100:.3f}%")
             
             old_qty = s["qty"]
             if side == 'buy':
-                s["qty"] += base_amt
+                s["qty"] += actual_filled_qty
             else:
-                s["qty"] -= base_amt
+                s["qty"] -= actual_filled_qty
                 
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
                 s["entry_atr"] = s.get("current_atr", 0.0)
             else:
-                s["avg_price"] = ((s["avg_price"] * abs(old_qty)) + (fill_price * base_amt)) / abs(s["qty"])
+                s["avg_price"] = ((s["avg_price"] * abs(old_qty)) + (fill_price * actual_filled_qty)) / abs(s["qty"])
                 
             s["open_time"] = now
             s["last_buy_time"] = now
@@ -2573,7 +2735,7 @@ async def check_entries():
         sym, side, _, route = candidates[i]
         s = STATES[sym]
         print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻下單！")
-        await execute_order(sym, side, s["close_price"])
+        await execute_order(sym, side, s["close_price"], route)
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
         s["pending_confirm_low"] = 0
@@ -2741,6 +2903,31 @@ async def periodic_status_log():
         print(f"📊 [狀態] 監控池={active} 冷卻={cooldown} 禁賽={banned} | 當前持倉({len(open_syms)}/{MAX_POSITIONS}): {open_str}")
 
 async def main():
+    global ALL_SYMBOLS
+    try:
+        print("🔍 [系統初始化] 正在向交易所加載市場資訊以驗證交易對上架狀態...")
+        await exchange_futures.load_markets()
+        
+        valid_symbols = []
+        for sym in ALL_SYMBOLS:
+            ccxt_symbol = convert_to_ccxt_symbol(sym)
+            if ccxt_symbol in exchange_futures.markets:
+                market_info = exchange_futures.market(ccxt_symbol)
+                if market_info.get('active', True):
+                    valid_symbols.append(sym)
+                else:
+                    print(f"⚠️ [上架檢查] {sym} 已暫停交易或下架，自動剔除。")
+            else:
+                print(f"🚨 [上架檢查] {sym} 在幣安合約市場中不存在，自動剔除。")
+                
+        if len(valid_symbols) != len(ALL_SYMBOLS):
+            print(f"✅ [上架檢查] 已完成過濾。有效幣種數量: {len(valid_symbols)} / {len(ALL_SYMBOLS)}")
+            ALL_SYMBOLS = valid_symbols
+        else:
+            print(f"✅ [上架檢查] 所有監控幣種皆正常上架且可交易！")
+    except Exception as e:
+        print(f"⚠️ [上架檢查] 無法與交易所連線進行幣種核對: {e}，將使用預設清單。")
+
     asyncio.create_task(periodic_htf_update(exchange_futures))
     asyncio.create_task(periodic_status_log())
     

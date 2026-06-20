@@ -102,6 +102,9 @@ def get_bot_status():
     if os.getenv("TRADING_MODE", "paper") == "paper":
         bot_status["balance_quote"] = get_paper_balance()
         
+    if not bot_status.get("active_symbols"):
+        bot_status["active_symbols"] = load_symbol_config()
+        
     return bot_status
 
 def set_bot_balance_quote(balance: float):

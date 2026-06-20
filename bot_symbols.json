@@ -1,1 +1,16 @@
-{"symbols": ["SOLUSDT", "LINKUSDT", "INTCUSDT", "TRXUSDT", "RENDERUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT", "VELVETUSDT", "LABUSDT", "AVAXUSDT", "DOGEUSDT"]}
+{
+  "symbols": [
+    "BEATUSDT",
+    "BELUSDT",
+    "BICOUSDT",
+    "BSBUSDT",
+    "EPICUSDT",
+    "ESPORTSUSDT",
+    "GUAUSDT",
+    "HEIUSDT",
+    "HUSDT",
+    "LABUSDT",
+    "SIRENUSDT",
+    "SYNUSDT"
+  ]
+}

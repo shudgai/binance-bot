@@ -155,9 +155,11 @@ def get_1h_volatility(symbol: str):
 def get_top_volume_altcoins(limit=12, ignore_list=None):
     try:
         tickers = client.futures_ticker()
-        exclude_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT"]
+        # 排除市值過大、波動較小的老幣與穩定幣
+        exclude_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "USDCUSDT"]
         if ignore_list:
             exclude_list.extend(ignore_list)
+            
         candidates = []
         for t in tickers:
             sym = t['symbol']
@@ -165,31 +167,40 @@ def get_top_volume_altcoins(limit=12, ignore_list=None):
                 continue
             if sym in exclude_list:
                 continue
+                
             try:
                 price = float(t.get('lastPrice', 0))
                 q_vol = float(t.get('quoteVolume', 0))
+                high = float(t.get('highPrice', 0))
+                low = float(t.get('lowPrice', 0))
             except (ValueError, TypeError):
                 continue
 
-            # Filter for "small coins": price under $5.0
-            if price > 5.0 or price == 0:
+            # 確保價格有效
+            if price == 0 or low == 0:
+                continue
+                
+            # 計算 24 小時真實震幅
+            volatility_24h = ((high - low) / low) * 100
+            
+            # 用戶需求：要找目前市場上震幅 > 10% 的熱門小幣 (例如 WIF, FLOKI, ORDI)
+            if volatility_24h < 10.0:
                 continue
 
-            if q_vol > 0:
-                candidates.append((sym, q_vol))
+            if q_vol > 10_000_000: # 確保 24h 成交額大於一千萬美金，避免流動性枯竭
+                candidates.append((sym, q_vol, volatility_24h))
 
-        # Sort by quoteVolume descending and compute volatility-based score for the top candidates
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        top_candidates = candidates[: max(limit * 4, 20)]
+        # 綜合排名評分：成交量 (人氣) 乘上 震幅係數 (活躍度)
         scored = []
-        for sym, q_vol in top_candidates:
-            _, volatility = get_1h_volatility(sym)
-            # Combine volume and short-term volatility into a single ranking score
-            vol_factor = 1.0 + min(max(volatility, 0.0), 50.0) / 20.0
+        for sym, q_vol, vol_24h in candidates:
+            # 震幅越高，權重越高 (10% = 1.0, 50% = 1.4)
+            vol_factor = 1.0 + (min(vol_24h, 50.0) / 100.0)
             score = q_vol * vol_factor
-            scored.append((sym, score, q_vol, volatility))
+            scored.append((sym, score, q_vol, vol_24h))
 
+        # 依據綜合分數降冪排序
         scored.sort(key=lambda x: x[1], reverse=True)
+        
         return [sym for sym, *_ in scored[:limit]]
     except Exception as e:
         print(f"Error fetching top volume altcoins: {e}")

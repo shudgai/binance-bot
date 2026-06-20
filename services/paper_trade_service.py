@@ -260,9 +260,18 @@ def get_paper_positions():
             pass
     positions = {}
     for coin, data in state.get('positions', {}).items():
-        positions[coin] = {
-            "qty": data.get("qty", 0),
-            "avg_price": data.get("avg_price", 0),
-            "realized_pnl": data.get("realized_pnl", 0)
-        }
+        qty = float(data.get("qty", 0))
+        if abs(qty) > 0:
+            current_price = 0.0
+            try:
+                clean_sym = coin.replace(':', '')
+                current_price = get_price(clean_sym)["price"]
+            except:
+                pass
+            positions[coin] = {
+                "qty": qty,
+                "avg_price": float(data.get("avg_price", 0)),
+                "realized_pnl": float(data.get("realized_pnl", 0)),
+                "current_price": current_price
+            }
     return positions
