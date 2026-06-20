@@ -358,6 +358,7 @@ def optimize_strategy(analysis_results, current_config, sector_report):
         current_mmp = symbol_config.get("mmp") or defaults.get("mmp", 0.005)
         current_sl_atr = symbol_config.get("sl_atr_multiplier") or defaults.get("sl_atr_multiplier", 2.0)
         current_tp_atr = symbol_config.get("tp_atr_multiplier") or defaults.get("tp_atr_multiplier", 4.0)
+        current_vol_thresh = symbol_config.get("volume_threshold_factor") or defaults.get("volume_threshold_factor", 1.5)
 
         suggestions = []
         symbol_sector = symbol_config.get("sector", "Unknown")
@@ -380,8 +381,22 @@ def optimize_strategy(analysis_results, current_config, sector_report):
 
         # --- 新增：基於「摩擦力佔比 (Friction Rate)」的動態 MMP 調整公式 (第一階段) ---
         friction_rate = metrics.get("friction_rate", 0.0)
-        # 若摩擦力大於 0.8% (高摩擦警報)：自動將 MMP 提高 15%，以過濾掉可能被磨損的手續費微利單
-        if friction_rate >= 0.8:
+        # 若摩擦力超過 2% (高摩擦警報)：自動將 MMP 提高 0.5% (對應小數為 0.005)
+        if friction_rate >= 2.0:
+            suggested_mmp = current_mmp + 0.005
+            applied_mmp = clamp_parameter_change(current_mmp, suggested_mmp, is_int=False)
+            confidence = calculate_confidence(total_trades, min(1.0, friction_rate / 3.0))
+            suggestions.append({
+                "parameter": "mmp",
+                "issue": "Severe Friction Cost Warning",
+                "current": current_mmp,
+                "suggested": suggested_mmp,
+                "applied": applied_mmp,
+                "confidence": confidence,
+                "reasoning": f"Increasing mmp for {symbol} by 0.50% (to {applied_mmp:.4f}) because average friction rate is very high ({friction_rate:.2f}%) over the last {total_trades} trades."
+            })
+        # 若摩擦力介於 0.8% ~ 2.0%：自動將 MMP 提高 15%
+        elif friction_rate >= 0.8:
             suggested_mmp = current_mmp * 1.15
             applied_mmp = clamp_parameter_change(current_mmp, suggested_mmp, is_int=False)
             confidence = calculate_confidence(total_trades, min(1.0, friction_rate / 2.0))
@@ -424,20 +439,63 @@ def optimize_strategy(analysis_results, current_config, sector_report):
                 "reasoning": f"Decreasing mmp for {symbol} because MMP_Block_Rate reached {mmp_block_rate:.1%} over the last {total_trades} trades (Sector: {symbol_sector})"
             })
 
-        # 3. Low Win Rate & Low Slippage -> Increase sl_atr_multiplier by 10%
-        if win_rate < 0.40 and slippage_erosion <= 0.10:
-            suggested_sl_atr = current_sl_atr * 1.10
-            applied_sl_atr = clamp_parameter_change(current_sl_atr, suggested_sl_atr, is_int=False)
+        # 3. 勝率驅動 (基礎進化)
+        if win_rate < 0.40:
+            # 勝率太低 -> 變嚴格 (調高進場 volume_threshold_factor 與止損寬度 sl_atr_multiplier)
+            suggested_vol_thresh = min(2.0, current_vol_thresh + 0.1)
+            suggested_sl_atr = min(4.0, current_sl_atr + 0.2)
             confidence = calculate_confidence(total_trades, 1.0 - win_rate)
-            suggestions.append({
-                "parameter": "sl_atr_multiplier",
-                "issue": "Low Win Rate",
-                "current": current_sl_atr,
-                "suggested": suggested_sl_atr,
-                "applied": applied_sl_atr,
-                "confidence": confidence,
-                "reasoning": f"Increasing sl_atr_multiplier for {symbol} because Win_Rate was {win_rate:.1%} and Slippage_Erosion was low ({slippage_erosion:.1%}) over the last {total_trades} trades (Sector: {symbol_sector})"
-            })
+            
+            if suggested_vol_thresh != current_vol_thresh:
+                applied_vol_thresh = clamp_parameter_change(current_vol_thresh, suggested_vol_thresh, is_int=False)
+                suggestions.append({
+                    "parameter": "volume_threshold_factor",
+                    "issue": "Low Win Rate (Tighten Vol Threshold)",
+                    "current": current_vol_thresh,
+                    "suggested": suggested_vol_thresh,
+                    "applied": applied_vol_thresh,
+                    "confidence": confidence,
+                    "reasoning": f"Increasing volume_threshold_factor for {symbol} to tighten entry requirement due to low win rate ({win_rate:.1%})"
+                })
+            if suggested_sl_atr != current_sl_atr:
+                applied_sl_atr = clamp_parameter_change(current_sl_atr, suggested_sl_atr, is_int=False)
+                suggestions.append({
+                    "parameter": "sl_atr_multiplier",
+                    "issue": "Low Win Rate (Tighten SL Distance)",
+                    "current": current_sl_atr,
+                    "suggested": suggested_sl_atr,
+                    "applied": applied_sl_atr,
+                    "confidence": confidence,
+                    "reasoning": f"Increasing sl_atr_multiplier for {symbol} to allow wider breathing space due to low win rate ({win_rate:.1%})"
+                })
+        elif win_rate > 0.60:
+            # 勝率極高 -> 稍微放寬以增加獲利機會
+            suggested_vol_thresh = max(1.0, current_vol_thresh - 0.05)
+            suggested_sl_atr = max(1.5, current_sl_atr - 0.1)
+            confidence = calculate_confidence(total_trades, win_rate)
+            
+            if suggested_vol_thresh != current_vol_thresh:
+                applied_vol_thresh = clamp_parameter_change(current_vol_thresh, suggested_vol_thresh, is_int=False)
+                suggestions.append({
+                    "parameter": "volume_threshold_factor",
+                    "issue": "Excellent Win Rate (Relax Vol Threshold)",
+                    "current": current_vol_thresh,
+                    "suggested": suggested_vol_thresh,
+                    "applied": applied_vol_thresh,
+                    "confidence": confidence,
+                    "reasoning": f"Slightly reducing volume_threshold_factor for {symbol} to capture more trades due to high win rate ({win_rate:.1%})"
+                })
+            if suggested_sl_atr != current_sl_atr:
+                applied_sl_atr = clamp_parameter_change(current_sl_atr, suggested_sl_atr, is_int=False)
+                suggestions.append({
+                    "parameter": "sl_atr_multiplier",
+                    "issue": "Excellent Win Rate (Tighten SL Distance)",
+                    "current": current_sl_atr,
+                    "suggested": suggested_sl_atr,
+                    "applied": applied_sl_atr,
+                    "confidence": confidence,
+                    "reasoning": f"Slightly decreasing sl_atr_multiplier for {symbol} to secure risk tighter due to high win rate ({win_rate:.1%})"
+                })
 
         # 4. Over-held trades -> Decrease profit target (tp_atr_multiplier) by 10%
         # Additionally adjust trailing stop parameters (tighten them to lock profit quicker)

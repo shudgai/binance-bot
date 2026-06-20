@@ -3042,14 +3042,32 @@ async def main():
             # 如果因為某種原因跳出，確保資源有被釋放或嘗試重新連接
             pass
 
+def wait_for_network(timeout=60):
+    """確保網路連線正常才開始啟動機器人"""
+    import time
+    import requests
+    print("⏳ 正在等待網路連線...")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            # 嘗試連線到 Google 或 幣安 API
+            requests.get("https://google.com", timeout=3)
+            print("✅ 網路已就緒，開始初始化機器人...")
+            return True
+        except Exception:
+            time.sleep(5)
+    print("❌ 網路連線超時，請檢查網路設定。")
+    return False
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("🛑 程式已被手動終止")
-    finally:
-        # 在退出前關閉交易所連接
-        async def cleanup():
-            await exchange_futures.close()
-            await exchange_spot.close()
-        asyncio.run(cleanup())
+    if wait_for_network():
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            print("🛑 程式已被手動終止")
+        finally:
+            # 在退出前關閉交易所連接
+            async def cleanup():
+                await exchange_futures.close()
+                await exchange_spot.close()
+            asyncio.run(cleanup())

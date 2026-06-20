@@ -218,7 +218,10 @@
         "trailing_distance_atr": 1.5
     },
     "EPICUSDT": {
-        "sector": "Speculative"
+        "sector": "Speculative",
+        "mmp": 0.004,
+        "volume_threshold_factor": 1.4,
+        "sl_atr_multiplier": 1.8
     },
     "GUAUSDT": {
         "sector": "Speculative"
@@ -227,7 +230,8 @@
         "sector": "Speculative"
     },
     "SYNUSDT": {
-        "sector": "Speculative"
+        "sector": "Speculative",
+        "mmp": 0.004
     },
     "TAOUSDT": {
         "sector": "AI",
