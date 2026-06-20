@@ -92,13 +92,15 @@ def populate_default_sectors_to_config(profiles_path, current_config):
             
         if "sector" not in config_copy[symbol]:
             base_symbol = symbol.replace("USDT", "")
-            if base_symbol in ["SOL", "LINK", "TRX", "SUI", "INJ", "AVAX", "XRP", "ADA", "DOT", "UNI", "BTC", "ETH", "OP", "ARB"]:
+            if base_symbol in ["SOL", "LINK", "TRX", "SUI", "INJ", "AVAX", "XRP", "ADA", "DOT", "UNI", "BTC", "ETH"]:
                 config_copy[symbol]["sector"] = "Layer1_Layer2"
+            elif base_symbol in ["ARB", "OP", "STRK"]:
+                config_copy[symbol]["sector"] = "Layer2"
             elif base_symbol in ["RENDER", "NEAR", "FET", "TAO", "WLD"]:
                 config_copy[symbol]["sector"] = "AI"
             elif base_symbol in ["DOGE", "PEPE", "1000PEPE", "SHIB", "1000BONK", "1000FLOKI", "MEME"]:
                 config_copy[symbol]["sector"] = "Meme"
-            elif base_symbol in ["BEAM", "ESPORTS"]:
+            elif base_symbol in ["BEAM", "ESPORTS", "IMVU"]:
                 config_copy[symbol]["sector"] = "Gaming"
             else:
                 config_copy[symbol]["sector"] = "Speculative"
@@ -113,13 +115,15 @@ def populate_default_sectors_to_config(profiles_path, current_config):
             updated = True
         if "sector" not in config_copy[norm_sym]:
             base_symbol = norm_sym.replace("USDT", "")
-            if base_symbol in ["SOL", "LINK", "TRX", "SUI", "INJ", "AVAX", "XRP", "ADA", "DOT", "UNI", "BTC", "ETH", "OP", "ARB"]:
+            if base_symbol in ["SOL", "LINK", "TRX", "SUI", "INJ", "AVAX", "XRP", "ADA", "DOT", "UNI", "BTC", "ETH"]:
                 config_copy[norm_sym]["sector"] = "Layer1_Layer2"
+            elif base_symbol in ["ARB", "OP", "STRK"]:
+                config_copy[norm_sym]["sector"] = "Layer2"
             elif base_symbol in ["RENDER", "NEAR", "FET", "TAO", "WLD"]:
                 config_copy[norm_sym]["sector"] = "AI"
             elif base_symbol in ["DOGE", "PEPE", "1000PEPE", "SHIB", "1000BONK", "1000FLOKI", "MEME"]:
                 config_copy[norm_sym]["sector"] = "Meme"
-            elif base_symbol in ["BEAM", "ESPORTS"]:
+            elif base_symbol in ["BEAM", "ESPORTS", "IMVU"]:
                 config_copy[norm_sym]["sector"] = "Gaming"
             else:
                 config_copy[norm_sym]["sector"] = "Speculative"
@@ -242,13 +246,15 @@ def generate_sector_report(analysis_results, current_config):
         # Get sector from config, otherwise fallback to default classification rules
         sector = symbol_config.get("sector")
         if not sector:
-            if base_symbol in ["SOL", "LINK", "TRX", "SUI", "INJ", "AVAX", "XRP", "ADA", "DOT", "UNI", "BTC", "ETH", "OP", "ARB"]:
+            if base_symbol in ["SOL", "LINK", "TRX", "SUI", "INJ", "AVAX", "XRP", "ADA", "DOT", "UNI", "BTC", "ETH"]:
                 sector = "Layer1_Layer2"
+            elif base_symbol in ["ARB", "OP", "STRK"]:
+                sector = "Layer2"
             elif base_symbol in ["RENDER", "NEAR", "FET", "TAO", "WLD"]:
                 sector = "AI"
             elif base_symbol in ["DOGE", "PEPE", "1000PEPE", "SHIB", "1000BONK", "1000FLOKI", "MEME"]:
                 sector = "Meme"
-            elif base_symbol in ["BEAM", "ESPORTS"]:
+            elif base_symbol in ["BEAM", "ESPORTS", "IMVU"]:
                 sector = "Gaming"
             else:
                 sector = "Speculative"

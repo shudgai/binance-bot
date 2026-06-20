@@ -226,5 +226,17 @@
     },
     "SYNUSDT": {
         "sector": "Speculative"
+    },
+    "TAOUSDT": {
+        "sector": "AI"
+    },
+    "ARBUSDT": {
+        "sector": "Layer2"
+    },
+    "BEAMUSDT": {
+        "sector": "Gaming"
+    },
+    "IMVUUSDT": {
+        "sector": "Gaming"
     }
 }
