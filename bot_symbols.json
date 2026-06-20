@@ -1,1 +1,21 @@
-{"symbols": ["BEATUSDT", "BELUSDT", "BICOUSDT", "BSBUSDT", "EPICUSDT", "ESPORTSUSDT", "GUAUSDT", "HEIUSDT", "HUSDT", "LABUSDT", "SIRENUSDT", "SYNUSDT", "TAOUSDT", "ARBUSDT", "BEAMXUSDT"]}
+{
+  "symbols": [
+    "BEATUSDT",
+    "BELUSDT",
+    "BICOUSDT",
+    "BSBUSDT",
+    "EPICUSDT",
+    "ESPORTSUSDT",
+    "GUAUSDT",
+    "HEIUSDT",
+    "HUSDT",
+    "LABUSDT",
+    "SIRENUSDT",
+    "SYNUSDT",
+    "TAOUSDT",
+    "ARBUSDT",
+    "BEAMXUSDT",
+    "FETUSDT",
+    "OPUSDT"
+  ]
+}

@@ -235,5 +235,11 @@
     },
     "BEAMXUSDT": {
         "sector": "Gaming"
+    },
+    "FETUSDT": {
+        "sector": "AI"
+    },
+    "OPUSDT": {
+        "sector": "Layer2"
     }
 }
