@@ -160,7 +160,7 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_history.json")
 
-def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr):
+def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0):
     """
     將每筆交易的結果記錄到 trade_history.json 中，供 AI 後續分析。
     """
@@ -173,6 +173,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "entry_reason": entry_reason or "UNKNOWN",      # 例如: "Route_A", "Exhaustion_Entry"
         "exit_reason": exit_reason,        # 例如: "MMP_Blocked", "ATR_Stop", "Layer_1_Divergence"
         "profit_pct": round(profit_pct, 4), # 實質獲利百分比
+        "max_profit_reached": round(max_profit_reached, 4), # 最高觸及獲利
         "atr_at_exit": round(current_atr, 6),
         "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol" # 自動標記市場環境
     }
@@ -1611,7 +1612,8 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
             entry_reason=s.get("entry_reason", "UNKNOWN"),
             exit_reason=full_reason,
             profit_pct=profit_pct,
-            current_atr=s.get("current_atr", 0.0)
+            current_atr=s.get("current_atr", 0.0),
+            max_profit_reached=s.get("highest_profit_pct", 0.0)
         )
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
         reset_coin_state(sym)
@@ -2580,6 +2582,10 @@ async def check_entries():
             continue
             
         has_position = abs(s["qty"]) > 0.000001
+        if has_position:
+            # 單一幣種持倉限制：防止同一個幣種重複開倉或加碼
+            continue
+            
         current_direction = "buy" if s["qty"] > 0 else "sell" if s["qty"] < 0 else None
         
         # 開倉數限制 (針對新開倉)

@@ -67,7 +67,8 @@ def get_default_parameters(symbol):
     standard_defaults = {
         "num_splits": 5,
         "mmp": 0.005,
-        "sl_atr_multiplier": 2.0
+        "sl_atr_multiplier": 2.0,
+        "tp_atr_multiplier": 4.0
     }
     return {**standard_defaults, **default_params}
 
@@ -100,7 +101,7 @@ def populate_default_sectors_to_config(profiles_path, current_config):
                 config_copy[symbol]["sector"] = "AI"
             elif base_symbol in ["DOGE", "PEPE", "1000PEPE", "SHIB", "1000BONK", "1000FLOKI", "MEME"]:
                 config_copy[symbol]["sector"] = "Meme"
-            elif base_symbol in ["BEAM", "ESPORTS", "IMVU"]:
+            elif base_symbol in ["BEAM", "BEAMX", "ESPORTS", "IMVU"]:
                 config_copy[symbol]["sector"] = "Gaming"
             else:
                 config_copy[symbol]["sector"] = "Speculative"
@@ -123,7 +124,7 @@ def populate_default_sectors_to_config(profiles_path, current_config):
                 config_copy[norm_sym]["sector"] = "AI"
             elif base_symbol in ["DOGE", "PEPE", "1000PEPE", "SHIB", "1000BONK", "1000FLOKI", "MEME"]:
                 config_copy[norm_sym]["sector"] = "Meme"
-            elif base_symbol in ["BEAM", "ESPORTS", "IMVU"]:
+            elif base_symbol in ["BEAM", "BEAMX", "ESPORTS", "IMVU"]:
                 config_copy[norm_sym]["sector"] = "Gaming"
             else:
                 config_copy[norm_sym]["sector"] = "Speculative"
@@ -196,11 +197,15 @@ def analyze_trades(history_path):
         
         # Calculate Wins
         wins = 0
+        
+        # Calculate Over-held trades
+        over_held_count = 0
 
         for trade in trades:
             # Theoretical vs Real profits
             theoretical = trade.get("Theoretical_Profit") or trade.get("theoretical_profit")
             real = trade.get("Real_Profit") or trade.get("real_profit") or trade.get("profit_pct", 0.0)
+            max_profit = trade.get("max_profit_reached") or real
             
             if theoretical is not None and theoretical != 0:
                 erosion = (theoretical - real) / theoretical
@@ -217,10 +222,15 @@ def analyze_trades(history_path):
             # Win check
             if real > 0:
                 wins += 1
+                
+            # Over-held Check: if peak profit is higher than final profit by 5% or more
+            if max_profit - real >= 0.05:
+                over_held_count += 1
 
         avg_slippage_erosion = slippage_erosion_sum / slippage_valid_count if slippage_valid_count > 0 else 0.0
         mmp_block_rate = mmp_blocks / total_trades if total_trades > 0 else 0.0
         win_rate = wins / total_trades if total_trades > 0 else 0.0
+        over_held_rate = over_held_count / total_trades if total_trades > 0 else 0.0
 
         analysis_results[symbol] = {
             "total_trades": total_trades,
@@ -228,6 +238,7 @@ def analyze_trades(history_path):
             "slippage_high_ratio": slippage_high_count / slippage_valid_count if slippage_valid_count > 0 else 0.0,
             "mmp_block_rate": mmp_block_rate,
             "win_rate": win_rate,
+            "over_held_rate": over_held_rate,
             "raw_trades": trades
         }
 
@@ -254,7 +265,7 @@ def generate_sector_report(analysis_results, current_config):
                 sector = "AI"
             elif base_symbol in ["DOGE", "PEPE", "1000PEPE", "SHIB", "1000BONK", "1000FLOKI", "MEME"]:
                 sector = "Meme"
-            elif base_symbol in ["BEAM", "ESPORTS", "IMVU"]:
+            elif base_symbol in ["BEAM", "BEAMX", "ESPORTS", "IMVU"]:
                 sector = "Gaming"
             else:
                 sector = "Speculative"
@@ -264,18 +275,21 @@ def generate_sector_report(analysis_results, current_config):
                 "total_trades": 0,
                 "win_rate_sum": 0.0,
                 "slippage_erosion_sum": 0.0,
+                "over_held_sum": 0.0,
                 "symbols_count": 0
             }
             
         sector_stats[sector]["total_trades"] += metrics["total_trades"]
         sector_stats[sector]["win_rate_sum"] += metrics["win_rate"]
         sector_stats[sector]["slippage_erosion_sum"] += metrics["slippage_erosion"]
+        sector_stats[sector]["over_held_sum"] += metrics["over_held_rate"]
         sector_stats[sector]["symbols_count"] += 1
 
     report = {}
     for sector, stats in sector_stats.items():
         avg_win_rate = stats["win_rate_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
         avg_slippage = stats["slippage_erosion_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
+        avg_over_held = stats["over_held_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
         
         # Sector Health Recommendation Rules
         if avg_win_rate >= 0.60 and avg_slippage <= 0.05:
@@ -284,6 +298,8 @@ def generate_sector_report(analysis_results, current_config):
             rec = "繼續擴張 (表現良好，維持常規交易)"
         elif avg_slippage > 0.08:
             rec = "提高 MMP 門檻 (滑價損耗過高，減少無意義的交易)"
+        elif avg_over_held > 0.30:
+            rec = "調低獲利目標 (過度持倉高，防守線拉緊)"
         else:
             rec = "微調觀察 (勝率偏低或滑價普通，建議保守交易)"
             
@@ -291,6 +307,7 @@ def generate_sector_report(analysis_results, current_config):
             "total_trades": stats["total_trades"],
             "win_rate": avg_win_rate,
             "slippage_erosion": avg_slippage,
+            "over_held_rate": avg_over_held,
             "recommendation": rec
         }
     return report
@@ -310,6 +327,7 @@ def optimize_strategy(analysis_results, current_config, sector_report):
         slippage_erosion = metrics["slippage_erosion"]
         mmp_block_rate = metrics["mmp_block_rate"]
         win_rate = metrics["win_rate"]
+        over_held_rate = metrics["over_held_rate"]
 
         # Fetch current parameter values (with default fallbacks)
         symbol_config = current_config.get(symbol, {})
@@ -318,6 +336,7 @@ def optimize_strategy(analysis_results, current_config, sector_report):
         current_num_splits = symbol_config.get("num_splits") or defaults.get("num_splits", 5)
         current_mmp = symbol_config.get("mmp") or defaults.get("mmp", 0.005)
         current_sl_atr = symbol_config.get("sl_atr_multiplier") or defaults.get("sl_atr_multiplier", 2.0)
+        current_tp_atr = symbol_config.get("tp_atr_multiplier") or defaults.get("tp_atr_multiplier", 4.0)
 
         suggestions = []
         symbol_sector = symbol_config.get("sector", "Unknown")
@@ -368,6 +387,21 @@ def optimize_strategy(analysis_results, current_config, sector_report):
                 "reasoning": f"Increasing sl_atr_multiplier for {symbol} because Win_Rate was {win_rate:.1%} and Slippage_Erosion was low ({slippage_erosion:.1%}) over the last {total_trades} trades (Sector: {symbol_sector})"
             })
 
+        # 4. Over-held trades -> Decrease profit target (tp_atr_multiplier) by 10%
+        if over_held_rate > 0.30:
+            suggested_tp_atr = current_tp_atr * 0.90
+            applied_tp_atr = clamp_parameter_change(current_tp_atr, suggested_tp_atr, is_int=False)
+            confidence = calculate_confidence(total_trades, over_held_rate)
+            suggestions.append({
+                "parameter": "tp_atr_multiplier",
+                "issue": "Over-held Position",
+                "current": current_tp_atr,
+                "suggested": suggested_tp_atr,
+                "applied": applied_tp_atr,
+                "confidence": confidence,
+                "reasoning": f"Decreasing tp_atr_multiplier for {symbol} because Over_Held_Rate reached {over_held_rate:.1%} due to profit retracements exceeding 5% (Sector: {symbol_sector})"
+            })
+
         # Sector level safety override: if the sector has high slippage, automatically advise adjusting MMP threshold
         sector_metrics = sector_report.get(symbol_sector, {})
         if sector_metrics.get("slippage_erosion", 0.0) > 0.08 and mmp_block_rate <= 0.70:
@@ -375,7 +409,6 @@ def optimize_strategy(analysis_results, current_config, sector_report):
             suggested_mmp = current_mmp * 1.10
             applied_mmp = clamp_parameter_change(current_mmp, suggested_mmp, is_int=False)
             confidence = calculate_confidence(total_trades, sector_metrics["slippage_erosion"])
-            # Ensure we don't duplicate suggestions for the same parameter
             if not any(s["parameter"] == "mmp" for s in suggestions):
                 suggestions.append({
                     "parameter": "mmp",
@@ -424,12 +457,12 @@ def main():
     # 2. Sector Health Diagnostics (賽道戰報)
     sector_report = generate_sector_report(analysis_results, current_config)
     print("\n📊 Sector Health Report (賽道戰報):")
-    print("-" * 80)
-    print(f"{'Sector (賽道)':<15} | {'Trades':<6} | {'Avg Win Rate':<12} | {'Avg Slippage':<12} | {'Action Recommendation':<30}")
-    print("-" * 80)
+    print("-" * 105)
+    print(f"{'Sector (賽道)':<15} | {'Trades':<6} | {'Avg Win Rate':<12} | {'Avg Slippage':<12} | {'Avg Over-held':<13} | {'Action Recommendation':<30}")
+    print("-" * 105)
     for sector, metrics in sector_report.items():
-        print(f"{sector:<15} | {metrics['total_trades']:<6} | {metrics['win_rate']:<12.2%} | {metrics['slippage_erosion']:<12.2%} | {metrics['recommendation']}")
-    print("-" * 80)
+        print(f"{sector:<15} | {metrics['total_trades']:<6} | {metrics['win_rate']:<12.2%} | {metrics['slippage_erosion']:<12.2%} | {metrics['over_held_rate']:<13.2%} | {metrics['recommendation']}")
+    print("-" * 105)
 
     # 3. Run optimization logic
     optimizations = optimize_strategy(analysis_results, current_config, sector_report)
