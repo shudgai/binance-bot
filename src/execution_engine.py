@@ -1,4 +1,4 @@
-import time
+import asyncio
 import random
 import uuid
 import logging
@@ -59,7 +59,7 @@ class ExecutionEngine:
             orders_spec.append({"price": price, "qty": qty_per_split, "index": i})
         return orders_spec
 
-    def execute_order(
+    async def execute_order(
         self,
         symbol: str,
         side: str,
@@ -104,11 +104,11 @@ class ExecutionEngine:
                 fill_probability = max(0.1, 0.95 - idx * 0.15)
 
                 if is_simulated:
-                    order = self._place_simulated_order(
+                    order = await self._place_simulated_order(
                         order_id, symbol, side, qty, price, fee_rate, slippage_model, fill_probability
                     )
                 else:
-                    order = self._place_real_order(order_id, symbol, side, qty, price)
+                    order = await self._place_real_order(order_id, symbol, side, qty, price)
 
                 executed_orders.append(order)
                 if order.status != OrderStatus.FILLED:
@@ -117,11 +117,11 @@ class ExecutionEngine:
             # Single order execution
             order_id = str(uuid.uuid4())
             if is_simulated:
-                order = self._place_simulated_order(
+                order = await self._place_simulated_order(
                     order_id, symbol, side, self.remaining_quantity, target_price, fee_rate, slippage_model, 0.95
                 )
             else:
-                order = self._place_real_order(order_id, symbol, side, self.remaining_quantity, target_price)
+                order = await self._place_real_order(order_id, symbol, side, self.remaining_quantity, target_price)
             executed_orders.append(order)
             if order.status != OrderStatus.FILLED:
                 self.pending_orders.append(order)
@@ -144,7 +144,7 @@ class ExecutionEngine:
 
         return executed_orders
 
-    def re_fill_orders(
+    async def re_fill_orders(
         self,
         symbol: str,
         side: str,
@@ -179,7 +179,7 @@ class ExecutionEngine:
             config = config.copy()
             config["step_percent"] = new_step_percent
 
-        return self.execute_order(symbol, side, self.remaining_quantity, current_market_price, config)
+        return await self.execute_order(symbol, side, self.remaining_quantity, current_market_price, config)
 
     def save_state(self, filepath: str) -> None:
         """
@@ -251,7 +251,7 @@ class ExecutionEngine:
         logger.info(f"   - Re-fill Attempts       : {self.refill_attempts}")
         logger.info("==============================================")
 
-    def _place_simulated_order(
+    async def _place_simulated_order(
         self,
         order_id: str,
         symbol: str,
@@ -263,7 +263,7 @@ class ExecutionEngine:
         fill_probability: float
     ) -> Order:
         delay = random.uniform(0.1, 0.5)
-        time.sleep(delay)
+        await asyncio.sleep(delay)
 
         roll = random.random()
 
@@ -300,7 +300,10 @@ class ExecutionEngine:
             net_cost_or_proceeds=net
         )
 
-    def _place_real_order(self, order_id: str, symbol: str, side: str, qty: float, price: float) -> Order:
+    async def _place_real_order(self, order_id: str, symbol: str, side: str, qty: float, price: float) -> Order:
+        """
+        Placeholder method for the actual exchange API logic.
+        """
         logger.warning("Real exchange execution is not implemented. Returning placeholder filled order.")
         return Order(
             order_id=order_id,

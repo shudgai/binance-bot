@@ -8,6 +8,7 @@ import time                 # 用於計時
 from update_paper_state import update_paper_state
 from dotenv import load_dotenv
 from line_notifier import send_line_alert
+from src.execution_engine import ExecutionEngine, OrderStatus
 
 # 載入 .env 環境變數
 load_dotenv()
@@ -240,6 +241,10 @@ trailing_lowest = float('inf')
 LEVERAGE = min(5.0, MAX_LEVERAGE)
 current_1h_deviation = 0.0
 
+# 初始化高保真執行引擎與高波動幣種列表
+execution_engine = ExecutionEngine()
+HIGH_VOL_LIST = ["PEPE/USDT:USDT", "SOL/USDT:USDT", "SYN/USDT:USDT", "ESPORTS/USDT:USDT", "LAB/USDT:USDT"]
+
 async def update_dynamic_leverage():
     global LEVERAGE, current_1h_deviation, macro_regime
     old = LEVERAGE
@@ -373,7 +378,7 @@ async def check_liquidation_safety_lock(side, entry_price, stop_loss_price=None)
     return True
 
 async def execute_order_and_risk(side, price):
-    global simulated_base_amt, simulated_avg_price, current_atr, position_open_time, ALLOW_LONG, ALLOW_SHORT
+    global simulated_base_amt, simulated_avg_price, current_atr, position_open_time, ALLOW_LONG, ALLOW_SHORT, execution_engine, HIGH_VOL_LIST
     
     # [DCA 設定 - 雙引擎策略]
     ENTRY_BATCH_RATIOS = [0.3, 0.3, 0.4]
@@ -497,74 +502,63 @@ async def execute_order_and_risk(side, price):
             else:
                 prec = await get_contract_precision()
                 qty_str = round_step(base_amt, prec['step_size'])
-                ob = await exchange.fetch_order_book(symbol, limit=5)
-                bid, ask = ob['bids'][0][0], ob['asks'][0][0]
-                spread = ask - bid
-                if spread <= 0 or bid <= 0:
-                    if not await check_market_slippage(side, is_market_order=True):
-                        print(f"🛑 [滑價防護] 盤口異常且滑價過大，放棄市價單保底！")
-                        raise Exception("滑價超標，市價單保底取消")
-                    print(f"⚠️ 盤口異常，市價單保底")
-                    open_order = await exchange.create_order(
-                        symbol=symbol, type='market', side=side,
-                        amount=qty_str, params={'marginMode': 'isolated'}
-                    )
-                else:
-                    # 實盤雙引擎分批建倉邏輯 (30%, 30%, 20%, 20%)
-                    tasks = []
-                    placed_qty = 0.0
-                    
-                    # 【引擎一：日常波段】
-                    # 第一批 (30%): 掛單 0.0% (純 Maker)
-                    # 第二批 (30%): 掛單 -0.5% 
-                    # 【引擎二：深海插針】
-                    # 第三批 (20%): 掛單 -3.0%
-                    # 第四批 (20%): 掛單 -6.0%
-                    offsets = [0.000, -0.010, -0.020] if side == 'buy' else [0.000, 0.010, 0.020]
-                    
-                    for i, ratio in enumerate(ENTRY_BATCH_RATIOS):
-                        q = round_step(base_amt * ratio, prec['step_size'])
-                        if i == len(ENTRY_BATCH_RATIOS) - 1:
-                            q = round_step(qty_str - placed_qty, prec['step_size'])
-                            
-                        if q < prec['min_qty']:
-                            continue
-                            
-                        # 計算每一批的限價
-                        target_price = bid if side == 'buy' else ask
-                        p = round_price(target_price * (1 + offsets[i]), prec['tick_size'])
-                        
-                        tasks.append(exchange.create_order(
-                            symbol=symbol, type='limit', side=side,
-                            amount=q, price=p,
-                            params={'marginMode': 'isolated'}
-                        ))
-                        placed_qty += q
-                        
-                    if not tasks:
-                        raise Exception("所有拆分訂單數量不足")
-                    print(f"📊 [雙引擎網格] {direction_str} 已送出 {len(tasks)} 筆限價建倉單 (30/30/40)。")
-                    
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    # 只要第一筆成功就當作有開倉
-                    open_order = None
-                    for r in results:
-                        if isinstance(r, Exception):
-                            print(f"⚠️ 拆分訂單失敗: {r}")
-                            continue
-                        if not open_order:
-                            open_order = r
-                            
-                    if not open_order:
-                        raise Exception("所有拆分訂單均失敗")
-                avg_price = open_order.get('average') or price
-                print(f"✅ [下單模組] {direction_str} 開倉成功！實際成交均價: {avg_price} | 單號: {open_order['id']}")
                 
-                # [新增] 掛載實體停損與停利單 (保命單)
+                # 獲取該幣種的配置 (包含 num_splits, step_percent, coin_type 等)
+                coin_config = {
+                    "is_simulated": False,
+                    "split_threshold": 100.0,
+                    "num_splits": 5,
+                    "step_percent": 0.001,
+                    "coin_type": "HighVolatility" if symbol in HIGH_VOL_LIST else "Normal",
+                    "fee_rate": 0.001,
+                    "slippage_model": 0.0005
+                }
+
+                print(f"🚀 [引擎驅動] 調用 ExecutionEngine 處理 {direction_str} {actual_quote_amount} USDT")
+                
+                # 調用新引擎執行 (這會處理分批、動態補單、自適應步長)
+                executed_orders = await execution_engine.execute_order(
+                    symbol=symbol,
+                    side=side,
+                    total_quantity=base_amt,
+                    target_price=price, 
+                    config=coin_config
+                )
+
+                # 彙整所有分批單的成交結果
+                total_filled_qty = 0.0
+                weighted_price_sum = 0.0
+                
+                for order in executed_orders:
+                    if order.status in [OrderStatus.FILLED, OrderStatus.PARTIAL]:
+                        total_filled_qty += order.filled_quantity
+                        weighted_price_sum += (order.avg_price * order.filled_quantity)
+                
+                if total_filled_qty > 0:
+                    final_avg_price = weighted_price_sum / total_filled_qty
+                    print(f"✅ [下單模組] 引擎執行完成！實際成交均價: {final_avg_price} | 總成交數量: {total_filled_qty}")
+                    
+                    # 更新全域狀態
+                    avg_price = final_avg_price
+                    
+                    if side == 'buy':
+                        simulated_base_amt += total_filled_qty
+                    else:
+                        simulated_base_amt -= total_filled_qty
+                    
+                    simulated_avg_price = avg_price
+                    
+                    # 記錄單號 (取第一筆成功成交的單號作為參考)
+                    open_order = next((o for o in executed_orders if o.status == OrderStatus.FILLED), None)
+                    order_id = open_order.order_id if open_order else "N/A"
+                    print(f"✅ [下單模組] 開倉成功！實際成交均價: {avg_price} | 單號: {order_id}")
+                else:
+                    raise Exception("ExecutionEngine 報告：所有分批訂單均未成交。")
+
+                # --- 掛載實體停損與停利單 (保命單) ---
                 try:
                     tp_price = round_price(avg_price * 1.002 if side == 'buy' else avg_price * 0.998, prec['tick_size'])
                     sl_price = round_price(avg_price * 0.970 if side == 'buy' else avg_price * 1.030, prec['tick_size'])
-                    
                     sl_side = 'sell' if side == 'buy' else 'buy'
                     
                     await asyncio.gather(
