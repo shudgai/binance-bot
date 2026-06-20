@@ -210,7 +210,7 @@ if USE_TESTNET:
 
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSUSDT", "SUIUSDT"
+    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 
@@ -669,10 +669,10 @@ def update_all_dynamic_personalities():
         update_dynamic_personality(sym)
 
 
-_, SYMBOL_PROFILES = load_symbol_config()
+ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
 
 MAX_POSITIONS = 3
-COOLDOWN_SEC = 1800
+COOLDOWN_SEC = 600
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
@@ -1018,8 +1018,8 @@ def mark_exit(sym, is_stop_loss=False, reason=""):
     now = time.time()
     s["status"] = "COOLDOWN"
     s["next_status_time"] = now + COOLDOWN_SEC
-    s["status_reason"] = f"冷卻中 (5分鐘) - {reason}"
-    print(f"⏳ [狀態] {sym} 平倉 ({reason}) ({reason}) → COOLDOWN 5分鐘")
+    s["status_reason"] = f"冷卻中 (10分鐘) - {reason}"
+    print(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN 10分鐘")
     if is_stop_loss:
         s["stop_count"] += 1
         if s["stop_count"] == 1:
@@ -1042,6 +1042,7 @@ def reset_coin_state(sym):
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
     s["has_partial_closed"] = False
+    s["trailing_stop_multiplier"] = 2.0
     s["trade_status"] = "NORMAL"
     s["pending_side"] = None
     s["pending_time"] = 0
@@ -1223,11 +1224,11 @@ async def load_open_positions():
                 sym = t.get("symbol", "").replace(":USDT", "USDT")
                 if sym in STATES:
                     trade_time_sec = t.get("time", 0) / 1000.0
-                    # 如果這筆平倉是在最近 5 分鐘內發生的，且當前沒有持倉
-                    if current_time - trade_time_sec < 300 and STATES[sym]["qty"] == 0:
+                    # 如果這筆平倉是在最近 10 分鐘內發生的，且當前沒有持倉
+                    if current_time - trade_time_sec < 600 and STATES[sym]["qty"] == 0:
                         if STATES[sym]["status"] != "COOLDOWN":
                             STATES[sym]["status"] = "COOLDOWN"
-                            STATES[sym]["next_status_time"] = trade_time_sec + 300
+                            STATES[sym]["next_status_time"] = trade_time_sec + 600
     except Exception as e:
         print(f"⚠️ [讀取持倉失敗] {e}")
 
@@ -1315,8 +1316,9 @@ def update_trailing_stop(sym, current_price, is_long):
                 trigger_mult = s.get("sl_atr_multiplier", 1.5)
             sl_dist_atr = trigger_mult * atr_val
             breakeven_trigger = s["avg_price"] + sl_dist_atr
-            if current_price >= breakeven_trigger:
-                breakeven_sl = s["avg_price"]
+            # 關鍵修正：使用最高價判斷是否已達保本，且保本價包含手續費
+            if s.get("trailing_highest", current_price) >= breakeven_trigger:
+                breakeven_sl = s["avg_price"] * 1.0025 # 加上 0.25% 確保至少不虧手續費
                 trail_sl = max(trail_sl, breakeven_sl)
             
             safe_min_sl = liq_price * 1.2
@@ -1338,8 +1340,9 @@ def update_trailing_stop(sym, current_price, is_long):
                 trigger_mult = s.get("sl_atr_multiplier", 1.5)
             sl_dist_atr = trigger_mult * atr_val
             breakeven_trigger = s["avg_price"] - sl_dist_atr
-            if current_price <= breakeven_trigger:
-                breakeven_sl = s["avg_price"]
+            # 關鍵修正：使用最低價判斷是否已達保本，且保本價包含手續費
+            if s.get("trailing_lowest", current_price) <= breakeven_trigger:
+                breakeven_sl = s["avg_price"] * 0.9975 # 減去 0.25% 確保至少不虧手續費
                 trail_sl = min(trail_sl, breakeven_sl)
             
             safe_max_sl = liq_price * 0.8
@@ -1530,6 +1533,13 @@ async def check_exits(sym):
     # --- Slippage Compensation (淨利潤扣除 0.15% 摩擦成本) ---
     net_profit_pct = profit_pct - 0.0015
 
+    # ── 初始化量化指標與階梯停利目標 ──
+    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+    atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
+    tier1_target = max(atr_pct * 1.5, 0.006)
+    tier2_target = max(atr_pct * 2.5, 0.008)
+    tier3_target = max(atr_pct * 4.0, 0.012)
+
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
     if profit_pct < 0:
@@ -1643,10 +1653,6 @@ async def check_exits(sym):
         return
 
     # ── Layer 4: 階梯式動態鎖利 (Dynamic Profit Lock) ──
-    atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    tier3_target = max(atr_pct * 4.0, 0.012)
-    tier2_target = max(atr_pct * 2.5, 0.008)
-    tier1_target = max(atr_pct * 1.5, 0.006) # 拉高 Tier 1 基本利潤為 0.6%
     
     is_trend_ok = (is_long and s.get("macd_line", 0) > s.get("macd_signal", 0)) or (not is_long and s.get("macd_line", 0) < s.get("macd_signal", 0))
     
@@ -1812,6 +1818,17 @@ async def check_position_exits(exchange, sym):
             print(f"🎯 [分批停利] {sym} 觸發 1.5 ATR 或 0.8% 利潤，先平倉 50% 落袋為安")
             await close_position(sym, cs, half_qty, p, avg, reason="分批停利 50%")
             s["has_partial_closed"] = True
+            
+            # 關鍵修正：平倉 50% 後，剩下的 50% 立刻切換到「極限追蹤模式」(緊密跟隨 0.8 ATR)
+            s["trailing_stop_multiplier"] = 0.8
+            # 同時上調保本點或更新動態停損
+            if is_long:
+                s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), p - atr_val * 0.8)
+            else:
+                if s.get("trailing_stop_price", 0.0) == 0.0:
+                    s["trailing_stop_price"] = p + atr_val * 0.8
+                else:
+                    s["trailing_stop_price"] = min(s.get("trailing_stop_price", 0.0), p + atr_val * 0.8)
             # 不 return，讓剩餘倉位繼續走下面的追蹤邏輯
 
     # 檢查是否觸發最終停利 (TP)
@@ -2033,29 +2050,33 @@ def is_entry_pin_safe(sym, side):
 
 def is_entry_volume_confirmed(sym, side):
     s = STATES[sym]
-    if len(s["ohlcv"]) < 2:
+    if len(s["ohlcv"]) < 5:
         return False
     current_vol = s["current_vol"]
-    vol_ma20 = s["vol_ma20"]
-    if vol_ma20 <= 0:
+    
+    # 1. 取得最近 5 根 K 線計算 MA5 均量
+    vols = [x[5] for x in s["ohlcv"][-5:]]
+    vol_ma5 = sum(vols) / len(vols)
+    if vol_ma5 <= 0:
         return False
-    
-    # 1. 提高門檻：基礎要求 1.5 倍均量
-    vol_factor = 1.5
-    
-    # 2. 動態調整：如果目前 ATR 小於 24 小時平均的 50% (極度盤整區)，將量能門檻提高至 2.0 倍
-    atr_history = s.get("atr_history", [])
-    atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
-    current_atr = s.get("current_atr", 0.0)
-    
-    is_choppy = atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.5
-    if is_choppy:
-        vol_factor = 2.0
         
-    min_volume = vol_ma20 * vol_factor
+    # 2. 判斷幣種所屬層級並給定門檻
+    layer = s.get("profile_type", "Core_Trend")
+    if layer == "Speculative_Risk":
+        volume_threshold = 1.4
+        layer_name = "投機與風險層"
+    elif layer == "High_Beta_Momentum":
+        volume_threshold = 1.3
+        layer_name = "高彈性動能層"
+    else:
+        volume_threshold = 1.1
+        layer_name = "核心趨勢層"
+
+    # 計算門檻
+    min_volume = vol_ma5 * volume_threshold * s.get("volume_multiplier", 1.0)
+    
     if current_vol < min_volume:
-        choppy_str = "[盤整高標準 2.0x]" if is_choppy else "[基礎高標準 1.5x]"
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 {choppy_str} 當前量 {current_vol:.2f} < 門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] ({layer_name}) 當前量 {current_vol:.2f} < MA5門檻 {min_volume:.2f} ({volume_threshold}x)")
         return False
 
     # --- R:R (盈虧比) 過濾 ---
@@ -2243,13 +2264,12 @@ def compute_signal_strength(sym):
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
-    # 寬鬆的RSI條件：>50時正常，或在45-55中立區但MACD確認時也允許
-    rsi_ok_long = rsi > 45.0 or (rsi >= 40.0 and (long_macd_cross or macd_hist > 0))
-    rsi_ok_short = rsi < 55.0 or (rsi <= 60.0 and (short_macd_cross or macd_hist < 0))
+    # 強化RSI動能：必須有明確的方向與動能
+    rsi_ok_long = rsi > 50.0
+    rsi_ok_short = rsi < 50.0
 
-    # Route A (Trend Following): 簡化版 - 只需4個核心條件
-    # 1. MACD確認 2. K線方向 3. RSI動能(寬鬆) 4. EMA20合理範圍
-    # 移除SMA200要求，允許更多進場機會
+    # Route A (Trend Following): 嚴格版 - 需滿足更多過濾條件
+    # 1. MACD柱線與方向一致 2. K線方向一致 3. RSI動能明確 4. EMA20合理範圍 5. EMA50趨勢共識
     
     # --- 優化：加入趨勢加分機制 ---
     # 如果方向與 EMA50 趨勢一致，加 5 分，否則扣 5 分
@@ -2265,17 +2285,19 @@ def compute_signal_strength(sym):
         trend_score = 0
 
     route_a_long = (
-        (long_macd_cross or macd_hist > 0) and 
+        macd_hist > 0 and 
         last_two_candles_long and 
         rsi_ok_long and 
-        close_near_ema20_long
+        close_near_ema20_long and
+        trend_confluence_long
     )
     
     route_a_short = (
-        (short_macd_cross or macd_hist < 0) and 
+        macd_hist < 0 and 
         last_two_candles_short and 
         rsi_ok_short and 
-        close_near_ema20_short
+        close_near_ema20_short and
+        trend_confluence_short
     )
 
     long_base_ok = route_a_long
@@ -2302,7 +2324,11 @@ def compute_signal_strength(sym):
     if len(s["ohlcv"]) >= 50:
         c1 = s["ohlcv"][-2]  # 最新已收盤 (驗證K線)
         c2 = s["ohlcv"][-3]  # 前一根已收盤 (縮量衰竭K線)
-        c2_vol_low = c2[5] < s.get("vol_ma20", 1) * 0.8
+        
+        # Dynamically adjust the 0.7 volume threshold based on 24h ATR ratio (更嚴格的縮量衰竭)
+        atr_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 1.0
+        vol_threshold_coef = min(0.9, max(0.4, 0.7 * (atr_ratio ** 0.5)))
+        c2_vol_low = c2[5] < s.get("vol_ma20", 1) * vol_threshold_coef
         
         # 多單：抓回檔底部
         if c2[4] < c2[1] and c2_vol_low:  # c2 價跌且量縮
@@ -2312,11 +2338,19 @@ def compute_signal_strength(sym):
             bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2)
             
             ema50_1h = s.get("ema50_1h", 0)
-            trend_ok = (ema50_1h == 0) or (close > ema50_1h * 0.99)
+            trend_ok = (ema50_1h == 0) or (close > ema50_1h)
             
             if trend_ok and (support_ok or reversal_ok or bounce_ok):
-                print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
-                return ("buy", 15.0, "Exhaustion_Entry")
+                is_extreme = False
+                vol_ma20 = s.get("vol_ma20", 1)
+                if bounce_ok and c1[5] > vol_ma20 * 2.0:
+                    is_extreme = True
+                if reversal_ok and ((min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 1.5):
+                    is_extreme = True
+                
+                route_name = "Exhaustion_Entry_Extreme" if is_extreme else "Exhaustion_Entry"
+                print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok}, Extreme:{is_extreme}, VolCoef:{vol_threshold_coef:.2f})")
+                return ("buy", 15.0, route_name)
                 
         # 空單：抓反彈頂部
         if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
@@ -2326,11 +2360,19 @@ def compute_signal_strength(sym):
             bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2)
             
             ema50_1h = s.get("ema50_1h", 0)
-            trend_ok = (ema50_1h == 0) or (close < ema50_1h * 1.01)
+            trend_ok = (ema50_1h == 0) or (close < ema50_1h)
             
             if trend_ok and (support_ok or reversal_ok or bounce_ok):
-                print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
-                return ("sell", 15.0, "Exhaustion_Entry")
+                is_extreme = False
+                vol_ma20 = s.get("vol_ma20", 1)
+                if bounce_ok and c1[5] > vol_ma20 * 2.0:
+                    is_extreme = True
+                if reversal_ok and ((c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 1.5):
+                    is_extreme = True
+                
+                route_name = "Exhaustion_Entry_Extreme" if is_extreme else "Exhaustion_Entry"
+                print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok}, Extreme:{is_extreme}, VolCoef:{vol_threshold_coef:.2f})")
+                return ("sell", 15.0, route_name)
 
     return (None, 0, None)
 
@@ -2437,6 +2479,9 @@ async def check_entries():
         if last_trade_side != "" and side != last_trade_side:
             flip_elapsed = time.time() - s.get("last_trade_time", 0)
             min_flip = s.get("min_flip_time", 900)  # 嚴格方向鎖定：由 300 秒延長至 15 分鐘 (900秒)
+            if route == "Exhaustion_Entry_Extreme":
+                min_flip = 180  # 縮短冷卻至 3 分鐘
+                print(f"⚡ [強反轉信號] {sym} 觸發極強量能衰竭反轉訊號，縮短反手冷卻時間至 180s")
             if flip_elapsed < min_flip:
                 print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s)，禁止頻繁反手。")
                 continue
