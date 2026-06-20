@@ -124,7 +124,22 @@
             backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
             position: sticky; top: 0; z-index: 100;
         }
-        .logo { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; letter-spacing: 0.5px; }
+        .logo { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 12px; letter-spacing: 0.5px; }
+        .env-badge {
+            font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; text-transform: uppercase; display: inline-flex; align-items: center;
+        }
+        .env-badge.sandbox {
+            background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .env-badge.live {
+            background: rgba(220, 38, 38, 0.1); color: #dc2626; border: 1px solid rgba(220, 38, 38, 0.3);
+            animation: pulse-border 2s infinite;
+        }
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+            70% { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
         .logo span { color: var(--primary-color); }
         .topbar-right { display: flex; align-items: center; gap: 10px; }
         .regime-badge {
@@ -444,7 +459,11 @@
 
     <!-- TOP BAR -->
     <div class="top-bar">
-        <div class="logo"><span>⚡</span> ANTI-BOT</div>
+        <div class="logo">
+            <span>⚡</span> ANTI-BOT
+            <span v-if="bot.environment === 'sandbox'" class="env-badge sandbox">SANDBOX 模擬交易</span>
+            <span v-else-if="bot.environment === 'live'" class="env-badge live">LIVE 實盤實金</span>
+        </div>
         <div class="topbar-right">
             <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;" @click="showHistoryNotebook = true; fetchHistorySummary()">
                 📂 <span class="text">歷史筆記本</span>
