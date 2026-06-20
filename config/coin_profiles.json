@@ -193,7 +193,8 @@
         "profile_type": "High_Beta_Momentum",
         "leverage": 4,
         "k_factor": 4.5,
-        "sector": "Speculative"
+        "sector": "Speculative",
+        "mmp": 0.006
     },
     "HUSDT": {
         "sl_atr_multiplier": 4.0,
@@ -215,13 +216,16 @@
     "BICOUSDT": {
         "sector": "Speculative",
         "trailing_activation": 0.05,
-        "trailing_distance_atr": 1.5
-    },
-    "EPICUSDT": {
-        "sector": "Speculative",
+        "trailing_distance_atr": 1.5,
         "mmp": 0.004,
         "volume_threshold_factor": 1.4,
         "sl_atr_multiplier": 1.8
+    },
+    "EPICUSDT": {
+        "sector": "Speculative",
+        "mmp": 0.0032,
+        "volume_threshold_factor": 1.3,
+        "sl_atr_multiplier": 1.6
     },
     "GUAUSDT": {
         "sector": "Speculative"
@@ -231,23 +235,64 @@
     },
     "SYNUSDT": {
         "sector": "Speculative",
-        "mmp": 0.004
+        "mmp": 0.0032,
+        "num_splits": 7,
+        "volume_threshold_factor": 1.4,
+        "sl_atr_multiplier": 1.8
     },
     "TAOUSDT": {
         "sector": "AI",
         "trailing_activation": 0.03,
-        "trailing_distance_atr": 1.0
+        "trailing_distance_atr": 1.0,
+        "mmp": 0.004
     },
     "ARBUSDT": {
         "sector": "Layer2"
     },
     "BEAMXUSDT": {
-        "sector": "Gaming"
+        "sector": "Gaming",
+        "volume_threshold_factor": 1.7,
+        "sl_atr_multiplier": 2.4
     },
     "FETUSDT": {
-        "sector": "AI"
+        "sector": "AI",
+        "volume_threshold_factor": 1.7,
+        "sl_atr_multiplier": 2.4
     },
     "OPUSDT": {
-        "sector": "Layer2"
+        "sector": "Layer2",
+        "mmp": 0.004,
+        "volume_threshold_factor": 1.4,
+        "sl_atr_multiplier": 1.8
+    },
+    "ALICEUSDT": {
+        "sector": "Speculative"
+    },
+    "EIGENUSDT": {
+        "sector": "Speculative"
+    },
+    "AXSUSDT": {
+        "sector": "Speculative"
+    },
+    "BTCUSDT": {
+        "mmp": 0.004,
+        "volume_threshold_factor": 1.5,
+        "sl_atr_multiplier": 2.0,
+        "sector": "BlueChip",
+        "description": "Bitcoin - Core Asset"
+    },
+    "ETHUSDT": {
+        "mmp": 0.004,
+        "volume_threshold_factor": 1.5,
+        "sl_atr_multiplier": 2.0,
+        "sector": "BlueChip",
+        "description": "Ethereum - Core Asset"
+    },
+    "BNBUSDT": {
+        "mmp": 0.004,
+        "volume_threshold_factor": 1.5,
+        "sl_atr_multiplier": 2.0,
+        "sector": "BlueChip",
+        "description": "Binance Coin - Core Asset"
     }
 }
