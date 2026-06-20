@@ -2837,6 +2837,15 @@ async def main_loop(exchange):
         print(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
     await fetch_real_balance()
     await load_open_positions()
+    
+    # --- 新增：啟動時從交易所同步未成交活躍訂單 (防斷電防遺忘對帳機制) ---
+    if not PAPER_TRADING and EXECUTION_ENGINE is not None:
+        print("🔍 [系統初始化] 正在同步交易所活躍訂單狀態...")
+        try:
+            EXECUTION_ENGINE.tracker.sync_orders_from_exchange(exchange_futures)
+        except Exception as e:
+            print(f"⚠️ [系統初始化] 活躍訂單同步異常: {e}")
+
     await fetch_all_sma200(exchange)
     await fetch_all_ema50_1h(exchange)
 

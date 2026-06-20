@@ -105,6 +105,51 @@ class OrderTracker:
                         logger.info(f"📉 [Trailing Stop] Order {order_id} new low price reached: {current_price:.6f}")
             return order.is_trailing_active
 
+    def sync_orders_from_exchange(self, exchange) -> None:
+        """
+        核心功能：從交易所抓取所有正在進行中的開倉訂單，同步到內部狀態 (防斷電對帳機制)
+        """
+        if not exchange:
+            logger.warning("⚠️ [OrderTracker] 未提供交易所實例，跳過同步。")
+            return
+        logger.info("🔄 [OrderTracker] 正在從交易所同步現有活躍訂單...")
+        try:
+            # 獲取活躍訂單 (CCXT 會自動適應 Spot 或 Futures 客戶端)
+            open_orders = asyncio.run_coroutine_threadsafe(exchange.fetch_open_orders(), asyncio.get_event_loop()).result()
+            
+            with self.lock:
+                self.orders.clear()
+                for o in open_orders:
+                    order_id = str(o.get('id', ''))
+                    symbol = o.get('symbol', '')
+                    side = str(o.get('side', '')).upper()
+                    status_str = str(o.get('status', '')).upper()
+                    
+                    if status_str == 'CLOSED':
+                        status = OrderStatus.FILLED
+                    elif status_str == 'CANCELED':
+                        status = OrderStatus.CANCELED
+                    elif float(o.get('filled', 0.0)) > 0.0:
+                        status = OrderStatus.PARTIAL
+                    else:
+                        status = OrderStatus.PENDING
+
+                    new_order = Order(
+                        order_id=order_id,
+                        symbol=symbol,
+                        side=side,
+                        status=status,
+                        original_quantity=float(o.get('amount', 0.0)),
+                        filled_quantity=float(o.get('filled', 0.0)),
+                        avg_price=float(o.get('price', 0.0) or o.get('average', 0.0) or 0.0),
+                        entry_price=float(o.get('average', 0.0) or o.get('price', 0.0) or 0.0)
+                    )
+                    self.orders[order_id] = new_order
+            
+            logger.info(f"✅ [OrderTracker] 同步完成！目前識別到 {len(self.orders)} 筆活躍訂單。")
+        except Exception as e:
+            logger.error(f"❌ [OrderTracker] 同步失敗: {e}")
+
     def get_remaining(self, order_id: str) -> float:
         with self.lock:
             if order_id in self.orders:
