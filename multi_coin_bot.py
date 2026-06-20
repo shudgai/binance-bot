@@ -2304,23 +2304,15 @@ def is_entry_allowed(sym, side, route="a"):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
         return False
         
-    # --- MTF 1H & 15m 趨勢過濾 (強化防護) ---
-    if s.get("mtf_filter", True):
-        ema50_1h = s.get("ema50_1h", 0)
-        sma200_15m = s.get("sma200_15m", 0)
-        
-        if ema50_1h > 0:
-            if side == 'buy' and cp <= ema50_1h:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大趨勢向下 (現價 {cp:.4f} <= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做多")
-                return False
-            # 空單強化過濾：必須同時低於 1H EMA50 與 15m SMA200，確保上方有重重反壓才准空
-            if side == 'sell':
-                if cp >= ema50_1h:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大趨勢向上 (現價 {cp:.4f} >= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做空")
-                    return False
-                if sma200_15m > 0 and cp >= sma200_15m:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 15m趨勢向上 (現價 {cp:.4f} >= 15m_SMA200 {sma200_15m:.4f})，禁止逆勢做空")
-                    return False
+    # --- MTF 1H 趨勢過濾 ---
+    ema50_1h = s.get("ema50_1h", 0)
+    if ema50_1h > 0:
+        if side == 'buy' and cp <= ema50_1h:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏空 (cp={cp:.4f} <= ema50_1h={ema50_1h:.4f})，禁止做多")
+            return False
+        if side == 'sell' and cp >= ema50_1h:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大級別趨勢偏多 (cp={cp:.4f} >= ema50_1h={ema50_1h:.4f})，禁止做空")
+            return False
             
     # --- 盤整/低波動過濾 (Choppiness) ---
     atr_history = s.get("atr_history", [])
@@ -2332,10 +2324,10 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.4: # 原 0.6，放寬至允許 40% 的極低波動
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.6:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.003: # 原 0.005，放寬至布林帶寬度 0.3%
+    if bb_width_pct > 0 and bb_width_pct < 0.005:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
     if route != "Exhaustion_Entry" and not is_entry_pin_safe(sym, side):
@@ -2573,6 +2565,8 @@ def compute_signal_strength(sym):
 
 async def check_entries():
     open_count = get_open_position_count()
+    if open_count >= MAX_POSITIONS:
+        return
     remaining_slots = MAX_POSITIONS - open_count
 
     candidates = []
@@ -2580,26 +2574,16 @@ async def check_entries():
         s = STATES[sym]
         if s["status"] != "ACTIVE":
             continue
-            
-        has_position = abs(s["qty"]) > 0.000001
-        if has_position:
-            # 單一幣種持倉限制：防止同一個幣種重複開倉或加碼
+        if abs(s["qty"]) > 0.000001:
             continue
-            
-        current_direction = "buy" if s["qty"] > 0 else "sell" if s["qty"] < 0 else None
-        
-        # 開倉數限制 (針對新開倉)
-        if not has_position and open_count >= MAX_POSITIONS:
-            continue
-
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
-        # --- 新增：等待收盤確認機制 ---
+        # --- 等待收盤確認機制 ---
         if s.get("pending_side"):
             if current_candle_time <= s.get("pending_time", 0):
                 continue
             
-            # 換線了，檢查前一根(訊號K線)是否反轉
+            # 換線了，檢查前一根(訊號K線)是否反轉 (寬鬆版：ATR 0.5x 容忍)
             if len(s["ohlcv"]) >= 2:
                 prev_candle = s["ohlcv"][-2]
                 prev_open = prev_candle[1]
@@ -2607,16 +2591,10 @@ async def check_entries():
                 
                 is_valid = False
                 if s["pending_side"] == "buy":
-                    # 嚴格要求：確認K線必須是實體綠K(收盤>開盤)，且不能留太長的上影線(上影線 < 實體長度 * 1.5)
-                    body = prev_close - prev_open
-                    upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 1.5:
+                    if prev_close >= prev_open - (s["current_atr"] * 0.5):
                         is_valid = True
                 elif s["pending_side"] == "sell":
-                    # 嚴格要求：確認K線必須是實體紅K(開盤>收盤)，且不能留太長的下影線(下影線 < 實體長度 * 1.5)
-                    body = prev_open - prev_close
-                    lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 1.5:
+                    if prev_close <= prev_open + (s["current_atr"] * 0.5):
                         is_valid = True
                         
                 if is_valid:
@@ -2626,17 +2604,14 @@ async def check_entries():
                     route = s.get("pending_route", "confirmed")
                     s["pending_side"] = None
                     
-                    # 再測一次大環境 (MTF & RR)，因為換線了可能改變
+                    # 再測一次大環境 (MTF & RR)
                     p = s["close_price"]
-                    if s.get("mtf_filter", True):
-                        ema50_1h = s.get("ema50_1h", 0.0)
-                        if ema50_1h > 0:
-                            if side == "buy" and p < ema50_1h:
-                                print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
-                                continue
-                            if side == "sell" and p > ema50_1h:
-                                print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
-                                continue
+                    ema50_1h = s.get("ema50_1h", 0.0)
+                    if ema50_1h > 0:
+                        if side == "buy" and p < ema50_1h:
+                            continue
+                        if side == "sell" and p > ema50_1h:
+                            continue
 
                     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
                     sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
@@ -2645,9 +2620,7 @@ async def check_entries():
                     sl_dist = max(atr_val * sl_multiplier, p * 0.005)
                     tp_dist = max(atr_val * tp_multiplier, p * 0.015)
                     
-                    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-                    if expected_rr < 1.49:
-                        print(f"⚠️ [盈虧比過濾] {sym} 確認階段預期盈虧比 {expected_rr:.2f} < 1.5，放棄")
+                    if (tp_dist / sl_dist if sl_dist > 0 else 0) < 2.0:
                         continue
                         
                     candidates.append((sym, side, strength, route))
@@ -2664,48 +2637,21 @@ async def check_entries():
         if side_strength[0] is None:
             continue
         side, strength, route = side_strength
-        
-        # --- 方向鎖定 (Direction Lock) ---
-        if has_position and side != current_direction:
-            # 已經有持倉，不允許反向訊號加倉
-            continue
-
         if not is_entry_allowed(sym, side, route):
             continue
 
-        # --- 反手冷卻時間 (min_flip_time) 過濾 ---
-        last_trade_side = s.get("last_trade_side", "")
-        if last_trade_side != "" and side != last_trade_side:
-            flip_elapsed = time.time() - s.get("last_trade_time", 0)
-            min_flip = s.get("min_flip_time", 900)  # 嚴格方向鎖定：由 300 秒延長至 15 分鐘 (900秒)
-            if route == "Exhaustion_Entry_Extreme":
-                min_flip = 180  # 縮短冷卻至 3 分鐘
-                print(f"⚡ [強反轉信號] {sym} 觸發極強量能衰竭反轉訊號，縮短反手冷卻時間至 180s")
-            if flip_elapsed < min_flip:
-                print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s)，禁止頻繁反手。")
-                continue
-
-        # --- 訊號強度門檻 (強勢趨勢中的逆勢反彈過濾) ---
-        p = s["close_price"]
-        ema50_1m = s.get("ema50", 0.0)
-        if ema50_1m > 0:
-            is_counter_trend = (side == "buy" and p < ema50_1m) or (side == "sell" and p > ema50_1m)
-            if is_counter_trend and strength < 15.0:
-                print(f"⚠️ [逆勢強度過濾] {sym} 處於短線逆勢，且訊號強度 {strength:.1f} < 15.0，嚴格過濾。")
-                continue
-
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        if s.get("mtf_filter", True):
-            ema50_1h = s.get("ema50_1h", 0.0)
-            if ema50_1h > 0:
-                if side == "buy" and p < ema50_1h:
-                    print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
-                    continue
-                if side == "sell" and p > ema50_1h:
-                    print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
-                    continue
+        ema50_1h = s.get("ema50_1h", 0.0)
+        p = s["close_price"]
+        if ema50_1h > 0:
+            if side == "buy" and p < ema50_1h:
+                print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
+                continue
+            if side == "sell" and p > ema50_1h:
+                print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
+                continue
 
-        # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
+        # --- R:R 盈虧比過濾 ---
         atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
         sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
         tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
@@ -2714,8 +2660,8 @@ async def check_entries():
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
         
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        if expected_rr < 1.5:
-            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 1.5，放棄暫存")
+        if expected_rr < 2.0:
+            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
             continue
 
         # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
@@ -2723,23 +2669,6 @@ async def check_entries():
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
         s["pending_route"] = route
-        
-        # --- 新增：Minimum Flip Buffer (防止快速反手) ---
-        # 如果當前訊號與上次開倉方向相反，檢查是否超過 300 秒 (5分鐘)
-        if side == 'buy' and s.get("last_flip_time", 0) > 0:
-            # 檢查上次是否是做空 (qty < 0)
-            # 這裡我們用 last_flip_time 記錄最後一次開倉的時間
-            # 如果我們想更精確，可以記錄 last_flip_side
-            pass # 這裡先實作基礎時間檢查，稍後優化
-        
-        # 為了精確，我們需要知道上次是哪一邊。
-        # 由於我們在 execute_order 裡更新了 last_flip_time，
-        # 我們可以檢查當前訊號與上次開倉的狀態。
-        # 但最簡單的防禦是：如果剛才才平倉/開倉，就不要馬上反手。
-        if current_candle_time - s.get("last_flip_time", 0) < 300:
-            print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次翻轉僅 {current_candle_time - s.get('last_flip_time', 0):.0f}s)")
-            continue
-
         print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
 
     if not candidates:
@@ -2849,6 +2778,7 @@ async def main_loop(exchange):
             for sym in ALL_SYMBOLS:
                 try:
                     await check_exits(sym)
+                    await check_position_exits(exchange, sym)
                 except Exception as e:
                     # 如果某個幣種的 check_exits 崩潰，只會報錯並跳過，不會影響到其他幣種
                     print(f"⚠️ [出場檢查異常] {sym} 出場邏輯報錯，跳過此幣種檢查: {e}")
