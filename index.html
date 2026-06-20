@@ -693,7 +693,7 @@
                                 </td>
                                 <td>{{ t.price }}</td>
                                 <td>{{ t.qty }}</td>
-                                <td style="color: black; font-size: 70%;">{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }}</td>
+                                <td>{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }} USDT</td>
                                 <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
                                     {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
                                     <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
@@ -845,7 +845,7 @@
                         <tr v-for="h in historySummaries" :key="h.date">
                             <td>{{ h.date }}</td>
                             <td>{{ h.trades }} 筆</td>
-                            <td style="color: black; font-size: 70%;">{{ h.fee !== undefined ? h.fee.toFixed(4) : '0.0000' }}</td>
+                            <td>{{ h.fee !== undefined ? h.fee.toFixed(4) : '0.0000' }}</td>
                             <td :style="{color: h.pnl > 0 ? 'var(--success)' : (h.pnl < 0 ? 'var(--danger)' : 'var(--text-main)')}">
                                 {{ h.pnl > 0 ? '+' : '' }}{{ h.pnl.toFixed(4) }}
                             </td>
@@ -1621,7 +1621,8 @@ createApp({
 
         const getTradeUnrealizedPnl = (trade) => {
             if (trade.is_close) return 0;
-            const pos = allPositions.value[trade.symbol];
+            const sym = trade.symbol.replace(':USDT', 'USDT');
+            const pos = allPositions.value[sym];
             if (!pos || Math.abs(pos.qty) < 0.001) return 0;
             const currentPrice = getTradeCurrentPrice(trade);
             if (currentPrice <= 0) return 0;
@@ -1648,7 +1649,7 @@ createApp({
         };
 
         const canCloseTrade = (trade) => {
-            const sym = trade.symbol;
+            const sym = trade.symbol.replace(':USDT', 'USDT');
             return allPositions.value[sym] && Math.abs(allPositions.value[sym].qty) > 0;
         };
 

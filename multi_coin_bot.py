@@ -167,17 +167,17 @@ COIN_PROFILE_CONFIG = {
     "TRXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) - 快速爆發，中等槓桿 ---
-    "RENDERUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "SUIUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 3.6, "volume_threshold_factor": 1.8, "breakeven_trigger": 0.7, "min_flip_time": 90, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "RENDERUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "SUIUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 3.6, "volume_threshold_factor": 1.8, "breakeven_trigger": 0.7, "min_flip_time": 90, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
     "INJUSDT": {"sl_atr_multiplier": 2.2, "tp_atr_multiplier": 4.4, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
     "NEARUSDT": {"sl_atr_multiplier": 2.3, "tp_atr_multiplier": 4.6, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 180, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "VELVETUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "LABUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "VELVETUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "LABUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2},
-    "DOGEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2},
-    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2}
+    "DOGEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2},
+    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2}
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -1527,6 +1527,9 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
     cs = 'sell' if is_long else 'buy'
 
+    # --- Slippage Compensation (淨利潤扣除 0.15% 摩擦成本) ---
+    net_profit_pct = profit_pct - 0.0015
+
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
     if profit_pct < 0:
@@ -1549,10 +1552,10 @@ async def check_exits(sym):
     sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-    sl_dist = max(sl_mult * atr_val, avg * 0.005)
+    sl_dist = min(max(sl_mult * atr_val, avg * 0.005), avg * 0.012)
     
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * 1.0, 0.002)
+    breakeven_threshold = max(entry_atr_pct * 1.0, 0.004) # 保本門檻提高到 0.4%
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         sl = avg * 1.0015 if is_long else avg * 0.9985
     else:
@@ -1584,24 +1587,35 @@ async def check_exits(sym):
                 
         # 1.2 量價背離 (逃頂)
         c1 = s["ohlcv"][-2]
-        c2 = s["ohlcv"][-3]
+        # 計算近5根收盤K線的平均量
+        recent_vols = [k[5] for k in s["ohlcv"][-7:-2]] if len(s["ohlcv"]) >= 7 else [c1[5]]
+        vol_ma_5 = sum(recent_vols) / len(recent_vols)
+        
+        # 動態利潤門檻：使用 0.4 倍 ATR 或保底 0.1% 來定義「創高/低逃頂」
+        atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
+        min_divergence_profit = max(atr_pct * 0.4, 0.001)
+        
+        is_new_high = (is_long and p >= s["trailing_highest"] and profit_pct >= min_divergence_profit)
+        is_new_low = (not is_long and p <= s["trailing_lowest"] and profit_pct >= min_divergence_profit)
+        
         divergence_exit = False
-        if is_long and c1[4] > c2[4] and c1[5] < c2[5] * 0.65:
-            divergence_exit = True
-        elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * 0.65:
+        if (is_new_high or is_new_low) and c1[5] < (vol_ma_5 * 0.70):
             divergence_exit = True
             
         if divergence_exit:
-            print(f"📉 [Layer_1] {sym} 價格創高/低但量能萎縮 (<65%)，量價背離收網！")
+            print(f"📉 [Layer_1] {sym} 價格創高/低且獲利 > {min_divergence_profit*100:.2f}% 但量能萎縮 (<70%)，量價背離收網！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_1_Volume_Divergence")
             s["highest_profit_pct"] = 0.0
             return
 
     # ── Layer 2: 極限追蹤 (Extreme Trailing) ──
     if s.get("trade_status", "NORMAL") == "TRAILING":
-        # 獲利突破 1% 後，回撤 0.5% 則全平
-        if (is_long and p <= s["trailing_highest"] * 0.995) or (not is_long and p >= s["trailing_lowest"] * 1.005):
-            print(f"🏃 [Layer_2] {sym} 極限追蹤觸發，從最高點回撤 0.5%，獲利了結")
+        # 獲利突破 1% 後，進入極限追蹤，動態回撤空間 = max(0.5%, ATR * 0.3)
+        atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
+        dynamic_trailing = max(0.005, atr_pct * 0.3)
+        
+        if (is_long and p <= s["trailing_highest"] * (1 - dynamic_trailing)) or (not is_long and p >= s["trailing_lowest"] * (1 + dynamic_trailing)):
+            print(f"🏃 [Layer_2] {sym} 極限追蹤觸發，從最高點回撤 {dynamic_trailing*100:.2f}%，獲利了結")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_2_Max_Trailing_Stop")
             s["highest_profit_pct"] = 0.0
             return
@@ -1612,31 +1626,31 @@ async def check_exits(sym):
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
     
-    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
-        is_sl = profit_pct < 0.0
-        print(f"📉 [Layer_3] {sym} MACD狀態反向，趨勢終結立即平倉 (損益: {profit_pct*100:.2f}%)")
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (net_profit_pct < early_exit_limit or net_profit_pct > 0.015):
+        is_sl = net_profit_pct < 0.0
+        print(f"📉 [Layer_3] {sym} MACD狀態反向，趨勢終結立即平倉 (淨利: {net_profit_pct*100:.2f}%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_3_MACD_Reversal", is_stop_loss=is_sl)
         return
 
     # ── Layer 4: 階梯式動態鎖利 (Dynamic Profit Lock) ──
     atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     tier3_target = max(atr_pct * 4.0, 0.012)
-    tier2_target = max(atr_pct * 2.5, 0.006)
-    tier1_target = max(atr_pct * 1.5, 0.0035)
+    tier2_target = max(atr_pct * 2.5, 0.008)
+    tier1_target = max(atr_pct * 1.5, 0.006) # 拉高 Tier 1 基本利潤為 0.6%
     
     is_trend_ok = (is_long and s.get("macd_line", 0) > s.get("macd_signal", 0)) or (not is_long and s.get("macd_line", 0) < s.get("macd_signal", 0))
     
-    if s["highest_profit_pct"] >= tier3_target and profit_pct < s["highest_profit_pct"] * (0.6 if is_trend_ok else 0.4):
+    if (s["highest_profit_pct"] - 0.0015) >= tier3_target and net_profit_pct < (s["highest_profit_pct"] - 0.0015) * (0.6 if is_trend_ok else 0.4):
         print(f"🛡️ [Layer_4] {sym} 觸發大行情鎖利 (回吐 40%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier3_Trailing")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= tier2_target and profit_pct < s["highest_profit_pct"] * (0.5 if is_trend_ok else 0.3):
+    elif (s["highest_profit_pct"] - 0.0015) >= tier2_target and net_profit_pct < (s["highest_profit_pct"] - 0.0015) * (0.5 if is_trend_ok else 0.3):
         print(f"🛡️ [Layer_4] {sym} 觸發中波段鎖利 (回吐 50%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier2_Trailing")
         s["highest_profit_pct"] = 0.0
         return
-    elif s["highest_profit_pct"] >= tier1_target and profit_pct < (max(atr_pct * 0.5, 0.0015)):
+    elif (s["highest_profit_pct"] - 0.0015) >= tier1_target and net_profit_pct < (max(atr_pct * 0.5, 0.0015)):
         print(f"🛡️ [Layer_4] {sym} 觸發基本保本鎖利")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier1_Trailing")
         s["highest_profit_pct"] = 0.0
@@ -1646,23 +1660,28 @@ async def check_exits(sym):
     trade_status = s.get("trade_status", "NORMAL")
     if trade_status == "NORMAL":
         # 5.1 50% 分批停利 (Partial Take Profit)
-        if profit_pct >= tier2_target:
+        if net_profit_pct >= tier2_target:
             half_qty = abs(s["qty"]) * 0.5
-            print(f"💰 [Layer_5] {sym} 獲利達標 (>=2.5ATR)，市價平倉 50% 落袋為安！")
+            print(f"�� [Layer_5] {sym} 淨利達標 (>=2.5ATR)，市價平倉 50% 落袋為安！")
             await close_position(sym, cs, half_qty, p, avg, reason="Layer_5_Partial_TP")
             s["trade_status"] = "PARTIAL_EXIT"
             return
             
         # 5.2 盤整時間防禦 (Stagnation)
         stagnation_limit = get_dynamic_stagnation_limit(s.get("current_atr", atr_val), s.get("atr_ma20", current_atr))
-        if hold_sec > stagnation_limit and profit_pct > 0.003:
-            if 0.003 <= profit_pct < 0.008:
+        if hold_sec > stagnation_limit:
+            if net_profit_pct < 0.002: # 淨利潤不到 0.2% 直接砍
+                print(f"⏳ [Layer_5] {sym} 僵局盤整過久且淨利 < 0.2%，無效波動直接斬倉")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Kill")
+                s["highest_profit_pct"] = 0.0
+                return
+            elif 0.002 <= net_profit_pct < 0.008:
                 half_qty = abs(s["qty"]) * 0.5
                 print(f"⏳ [Layer_5] {sym} 僵局盤整過久，平倉 50% 保本")
                 await close_position(sym, cs, half_qty, p, avg, reason="Layer_5_Stagnation_Partial")
                 s["trade_status"] = "PARTIAL_EXIT"
                 return
-            elif profit_pct >= 0.008:
+            elif net_profit_pct >= 0.008:
                 print(f"⏳ [Layer_5] {sym} 僵局盤整過久，全平")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Full")
                 s["highest_profit_pct"] = 0.0
@@ -1670,7 +1689,7 @@ async def check_exits(sym):
 
     elif trade_status == "PARTIAL_EXIT":
         # 已經平過 50%，如果卡了超過 8 分鐘且獲利不佳，全跑
-        if hold_sec > 480 and profit_pct < 0.01:
+        if hold_sec > 480 and net_profit_pct < 0.01:
             print(f"⏳ [Layer_5] {sym} 剩餘倉位盤整過久，全數平倉")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Remaining")
             s["highest_profit_pct"] = 0.0
