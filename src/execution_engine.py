@@ -29,7 +29,31 @@ class Order:
 
 class ExecutionEngine:
     def __init__(self) -> None:
-        pass
+        # Tracks pending/active orders
+        self.pending_orders: List[Order] = []
+
+    def generate_split_orders(
+        self,
+        total_quantity: float,
+        target_price: float,
+        side: str,
+        num_splits: int,
+        step_percent: float
+    ) -> List[Dict[str, float]]:
+        """
+        Generates N split orders with step-limit prices.
+        BUY: target_price * (1 - step_percent * i)
+        SELL: target_price * (1 + step_percent * i)
+        """
+        orders_spec = []
+        qty_per_split = total_quantity / num_splits
+        for i in range(num_splits):
+            if side.upper() == "BUY":
+                price = target_price * (1.0 - step_percent * i)
+            else:
+                price = target_price * (1.0 + step_percent * i)
+            orders_spec.append({"price": price, "qty": qty_per_split, "index": i})
+        return orders_spec
 
     def execute_order(
         self,
@@ -40,49 +64,93 @@ class ExecutionEngine:
         config: Dict[str, Any]
     ) -> List[Order]:
         """
-        Executes a trade order by splitting it into multiple step-limit orders.
-        Supports both high-fidelity simulation and real exchange execution.
+        Executes an order. Triggers step-limit splits if quantity > split_threshold
+        or if coin_type is "HighVolatility".
         """
         is_simulated = config.get("is_simulated", True)
+        split_threshold = config.get("split_threshold", 100.0)
+        coin_type = config.get("coin_type", "Normal")
         num_splits = config.get("num_splits", 5)
         step_percent = config.get("step_percent", 0.001)
         fee_rate = config.get("fee_rate", 0.001)
         slippage_model = config.get("slippage_model", 0.0005)
 
+        should_split = (total_quantity > split_threshold) or (coin_type == "HighVolatility")
+
         logger.info(
-            f"🔄 Starting execution for {symbol} | Side: {side} | Total Qty: {total_quantity} "
-            f"| Target Price: {target_price} | Splits: {num_splits} | Simulated: {is_simulated}"
+            f"🔄 execute_order: {symbol} | {side} | Qty: {total_quantity} | Target: {target_price} "
+            f"| Volatility: {coin_type} | Should Split: {should_split}"
         )
 
-        if num_splits <= 0:
-            raise ValueError("num_splits must be greater than 0")
+        executed_orders: List[Order] = []
 
-        qty_per_split = total_quantity / num_splits
-        orders: List[Order] = []
+        if should_split:
+            specs = self.generate_split_orders(total_quantity, target_price, side, num_splits, step_percent)
+            
+            for spec in specs:
+                order_id = str(uuid.uuid4())
+                price = spec["price"]
+                qty = spec["qty"]
+                idx = spec["index"]
 
-        for i in range(num_splits):
-            # Calculate step-limit price
-            if side.upper() == "BUY":
-                # For BUY, place orders at slightly lower prices
-                price = target_price * (1.0 - step_percent * i)
-            elif side.upper() == "SELL":
-                # For SELL, place orders at slightly higher prices
-                price = target_price * (1.0 + step_percent * i)
-            else:
-                raise ValueError("side must be 'BUY' or 'SELL'")
+                # Simulated probability calculation (fill probability decreases with step distance)
+                # 1st split (index 0) has 95% prob, 2nd has 80%, etc.
+                fill_probability = max(0.1, 0.95 - idx * 0.15)
 
+                if is_simulated:
+                    order = self._place_simulated_order(
+                        order_id, symbol, side, qty, price, fee_rate, slippage_model, fill_probability
+                    )
+                else:
+                    order = self._place_real_order(order_id, symbol, side, qty, price)
+
+                executed_orders.append(order)
+                
+                # State tracking
+                if order.status != OrderStatus.FILLED:
+                    self.pending_orders.append(order)
+                    logger.warning(f"⚠️ Order {order.order_id} not fully filled. Status: {order.status.value}")
+        else:
+            # Single order execution
             order_id = str(uuid.uuid4())
-            logger.info(f" Placing split order {i+1}/{num_splits} | Price: {price:.6f} | Qty: {qty_per_split:.6f}")
-
             if is_simulated:
-                order = self._place_simulated_order(order_id, symbol, side, qty_per_split, price, fee_rate, slippage_model)
+                order = self._place_simulated_order(
+                    order_id, symbol, side, total_quantity, target_price, fee_rate, slippage_model, 0.95
+                )
             else:
-                order = self._place_real_order(order_id, symbol, side, qty_per_split, price)
+                order = self._place_real_order(order_id, symbol, side, total_quantity, target_price)
+            executed_orders.append(order)
+            if order.status != OrderStatus.FILLED:
+                self.pending_orders.append(order)
 
-            orders.append(order)
-            logger.info(f" Order {order.order_id} status: {order.status.value} | Avg Price: {order.avg_price:.6f} | Filled Qty: {order.filled_quantity:.6f}")
+        # Logging execution summary
+        total_filled = sum(o.filled_quantity for o in executed_orders)
+        if total_filled > 0:
+            avg_fill_price = sum(o.avg_price * o.filled_quantity for o in executed_orders) / total_filled
+        else:
+            avg_fill_price = 0.0
 
-        return orders
+        logger.info(
+            f"📊 Execution Summary | Total Filled: {total_filled:.4f}/{total_quantity:.4f} "
+            f"| Avg Fill Price: {avg_fill_price:.6f} vs Original Target: {target_price:.6f}"
+        )
+
+        return executed_orders
+
+    def recalculate_remaining_splits(
+        self,
+        symbol: str,
+        side: str,
+        remaining_quantity: float,
+        current_market_price: float,
+        config: Dict[str, Any]
+    ) -> List[Order]:
+        """
+        Recalculates split orders for any remaining unfilled quantity based on current market price.
+        """
+        logger.info(f"🔄 Recalculating remaining splits for {symbol} | Side: {side} | Remaining Qty: {remaining_quantity:.4f}")
+        # Treat the remaining quantity as a new split order request
+        return self.execute_order(symbol, side, remaining_quantity, current_market_price, config)
 
     def _place_simulated_order(
         self,
@@ -92,50 +160,39 @@ class ExecutionEngine:
         qty: float,
         price: float,
         fee_rate: float,
-        slippage_model: float
+        slippage_model: float,
+        fill_probability: float
     ) -> Order:
-        # 1. Latency simulation: random delay between 0.1 and 0.5 seconds
+        # Simulate network latency (100ms - 500ms)
         delay = random.uniform(0.1, 0.5)
         time.sleep(delay)
 
-        # 2. Random outcome (high fidelity)
-        # 85% fully filled, 10% partially filled, 5% failed
         roll = random.random()
-        if roll < 0.05:
-            # Failed
+
+        if roll > fill_probability:
+            # FAILED order
             status = OrderStatus.FAILED
             filled_qty = 0.0
             avg_price = 0.0
             net = 0.0
-        elif roll < 0.15:
-            # Partial fill (between 10% and 90% of the qty)
+        elif roll > fill_probability - 0.1:
+            # PARTIAL fill
             status = OrderStatus.PARTIAL
-            filled_qty = qty * random.uniform(0.1, 0.9)
-            # Add dynamic slippage
+            filled_qty = qty * random.uniform(0.2, 0.8)
             slippage = random.normalvariate(0, slippage_model)
             avg_price = price * (1.0 + slippage)
-            
-            # Cost or proceeds calculations
             raw_val = filled_qty * avg_price
             fee = raw_val * fee_rate
-            if side.upper() == "BUY":
-                net = -(raw_val + fee)
-            else:
-                net = raw_val - fee
+            net = -(raw_val + fee) if side.upper() == "BUY" else (raw_val - fee)
         else:
-            # Fully filled
+            # FILLED order
             status = OrderStatus.FILLED
             filled_qty = qty
-            # Add dynamic slippage
             slippage = random.normalvariate(0, slippage_model)
             avg_price = price * (1.0 + slippage)
-            
             raw_val = filled_qty * avg_price
             fee = raw_val * fee_rate
-            if side.upper() == "BUY":
-                net = -(raw_val + fee)
-            else:
-                net = raw_val - fee
+            net = -(raw_val + fee) if side.upper() == "BUY" else (raw_val - fee)
 
         return Order(
             order_id=order_id,
@@ -149,9 +206,6 @@ class ExecutionEngine:
         )
 
     def _place_real_order(self, order_id: str, symbol: str, side: str, qty: float, price: float) -> Order:
-        """
-        Placeholder method for the actual exchange API logic.
-        """
         logger.warning("Real exchange execution is not implemented. Returning placeholder filled order.")
         return Order(
             order_id=order_id,
