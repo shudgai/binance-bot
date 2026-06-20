@@ -1540,9 +1540,10 @@ async def check_exits(sym):
         s["trailing_lowest"] = p
 
     # --- State Machine Transitions ---
-    if s.get("trade_status", "NORMAL") == "NORMAL" and s["highest_profit_pct"] >= 0.01:
+    # [優化1] 降低 TRAILING 啟動門檻 0.01 → 0.006，讓更多交易進入追蹤模式，抓住更多波段
+    if s.get("trade_status", "NORMAL") == "NORMAL" and s["highest_profit_pct"] >= 0.006:
         s["trade_status"] = "TRAILING"
-        print(f"🔄 [狀態切換] {sym} 獲利達 1.0%，進入 TRAILING 極限追蹤模式！")
+        print(f"🔄 [狀態切換] {sym} 獲利達 0.6%，進入 TRAILING 極限追蹤模式！")
 
     # ==========================================
     # Waterfall Logic (5-Layer Defense System)
@@ -1610,12 +1611,18 @@ async def check_exits(sym):
 
     # ── Layer 2: 極限追蹤 (Extreme Trailing) ──
     if s.get("trade_status", "NORMAL") == "TRAILING":
-        # 獲利突破 1% 後，進入極限追蹤，動態回撤空間 = max(0.5%, ATR * 0.3)
+        # [優化2] 動態收緊追蹤回撤：獲利越高，追蹤越緊，避免利潤大幅回吐
         atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-        dynamic_trailing = max(0.005, atr_pct * 0.3)
+        hp = s["highest_profit_pct"]
+        if hp >= 0.03:   # 獲利 >= 3%：收最緊，不讓大行情溜走
+            dynamic_trailing = max(0.003, atr_pct * 0.2)
+        elif hp >= 0.02: # 獲利 >= 2%：收緊
+            dynamic_trailing = max(0.004, atr_pct * 0.25)
+        else:            # 獲利 0.6%~2%：維持適度寬鬆，讓趨勢繼續跑
+            dynamic_trailing = max(0.005, atr_pct * 0.3)
         
         if (is_long and p <= s["trailing_highest"] * (1 - dynamic_trailing)) or (not is_long and p >= s["trailing_lowest"] * (1 + dynamic_trailing)):
-            print(f"🏃 [Layer_2] {sym} 極限追蹤觸發，從最高點回撤 {dynamic_trailing*100:.2f}%，獲利了結")
+            print(f"🏃 [Layer_2] {sym} 極限追蹤觸發，從最高點回撤 {dynamic_trailing*100:.2f}%（最高:{hp*100:.2f}%），獲利了結")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_2_Max_Trailing_Stop")
             s["highest_profit_pct"] = 0.0
             return
@@ -1626,9 +1633,12 @@ async def check_exits(sym):
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
     
-    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (net_profit_pct < early_exit_limit or net_profit_pct > 0.015):
+    # [優化3] Layer 3 MACD 出場門檻從 1.5% 降至 0.6%（與 tier1_target 對齊）
+    # 當獲利已超過 Tier1 且 MACD 反向，代表動能已終結，應立即出場而非繼續等待
+    macd_profit_trigger = max(tier1_target, 0.006)  # 與 tier1 掛鉤，動態響應 ATR
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (net_profit_pct < early_exit_limit or net_profit_pct > macd_profit_trigger):
         is_sl = net_profit_pct < 0.0
-        print(f"📉 [Layer_3] {sym} MACD狀態反向，趨勢終結立即平倉 (淨利: {net_profit_pct*100:.2f}%)")
+        print(f"📉 [Layer_3] {sym} MACD狀態反向，趨勢終結立即平倉 (淨利: {net_profit_pct*100:.2f}%, 觸發線:{macd_profit_trigger*100:.2f}%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_3_MACD_Reversal", is_stop_loss=is_sl)
         return
 
@@ -1653,8 +1663,9 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier2_Trailing")
             s["highest_profit_pct"] = 0.0
             return
-        elif (s["highest_profit_pct"] - 0.0015) >= tier1_target and net_profit_pct < (max(atr_pct * 0.5, 0.002)):
-            print(f"🛡️ [Layer_4] {sym} 觸發基本保本鎖利")
+        # [優化4] Tier1 保本線從 0.2% 拉高至 0.3%（atr_pct * 0.6），確保出場時實拿利潤有意義
+        elif (s["highest_profit_pct"] - 0.0015) >= tier1_target and net_profit_pct < (max(atr_pct * 0.6, 0.003)):
+            print(f"🛡️ [Layer_4] {sym} 觸發基本保本鎖利 (保本線:{max(atr_pct * 0.6, 0.003)*100:.2f}%)")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier1_Trailing")
             s["highest_profit_pct"] = 0.0
             return
