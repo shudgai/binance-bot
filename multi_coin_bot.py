@@ -1304,6 +1304,17 @@ async def load_open_positions():
             if abs(qty) > 0.000001:
                 STATES[sym]["qty"] = qty
                 STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+                
+                # Restore open_time by searching in trades history
+                open_time_val = 0.0
+                for t in reversed(state.get("trades", [])):
+                    if t.get("symbol") == pk and not t.get("is_close"):
+                        open_time_val = float(t.get("time", 0)) / 1000.0
+                        break
+                if open_time_val > 0.0:
+                    STATES[sym]["open_time"] = open_time_val
+                else:
+                    STATES[sym]["open_time"] = current_time
 
         # 檢查最近的平倉紀錄，加上冷卻時間，防止剛平倉完馬上又自動開倉
         trades = state.get("trades", [])
