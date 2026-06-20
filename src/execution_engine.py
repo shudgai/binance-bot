@@ -26,6 +26,20 @@ class OrderStatus(Enum):
     FAILED = "FAILED"
     CANCELED = "CANCELED"
 
+@dataclass
+class Order:
+    order_id: str
+    symbol: str
+    side: str
+    status: OrderStatus
+    original_quantity: float
+    filled_quantity: float
+    avg_price: float
+    net_cost_or_proceeds: float = 0.0  # Positive for proceeds (sell), negative for cost (buy)
+    highest_price_reached: float = 0.0
+    is_trailing_active: bool = False
+    entry_price: float = 0.0
+
 class OrderTracker:
     def __init__(self):
         self.orders: Dict[str, Order] = {}
@@ -103,20 +117,6 @@ class OrderTracker:
             if order_id in self.orders:
                 return self.orders[order_id].status
             return OrderStatus.FAILED
-
-@dataclass
-class Order:
-    order_id: str
-    symbol: str
-    side: str
-    status: OrderStatus
-    original_quantity: float
-    filled_quantity: float
-    avg_price: float
-    net_cost_or_proceeds: float = 0.0  # Positive for proceeds (sell), negative for cost (buy)
-    highest_price_reached: float = 0.0
-    is_trailing_active: bool = False
-    entry_price: float = 0.0
 
 class ExecutionEngine:
     def __init__(self, exchange=None) -> None:

@@ -351,5 +351,15 @@
         "max_profit_reached": 0.0055,
         "atr_at_exit": 0.481429,
         "market_mode": "High_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 13:26:38",
+        "symbol": "ARBUSDT",
+        "entry_reason": "Exhaustion_Entry",
+        "exit_reason": "[Big_Win] Layer_1_Volume_Divergence",
+        "profit_pct": 0.006,
+        "max_profit_reached": 0.006,
+        "atr_at_exit": 0.000121,
+        "market_mode": "Low_Vol"
     }
 ]
