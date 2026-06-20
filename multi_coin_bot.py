@@ -1640,21 +1640,24 @@ async def check_exits(sym):
     
     is_trend_ok = (is_long and s.get("macd_line", 0) > s.get("macd_signal", 0)) or (not is_long and s.get("macd_line", 0) < s.get("macd_signal", 0))
     
-    if (s["highest_profit_pct"] - 0.0015) >= tier3_target and net_profit_pct < (s["highest_profit_pct"] - 0.0015) * (0.6 if is_trend_ok else 0.4):
-        print(f"🛡️ [Layer_4] {sym} 觸發大行情鎖利 (回吐 40%)")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier3_Trailing")
-        s["highest_profit_pct"] = 0.0
-        return
-    elif (s["highest_profit_pct"] - 0.0015) >= tier2_target and net_profit_pct < (s["highest_profit_pct"] - 0.0015) * (0.5 if is_trend_ok else 0.3):
-        print(f"🛡️ [Layer_4] {sym} 觸發中波段鎖利 (回吐 50%)")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier2_Trailing")
-        s["highest_profit_pct"] = 0.0
-        return
-    elif (s["highest_profit_pct"] - 0.0015) >= tier1_target and net_profit_pct < (max(atr_pct * 0.5, 0.0015)):
-        print(f"🛡️ [Layer_4] {sym} 觸發基本保本鎖利")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier1_Trailing")
-        s["highest_profit_pct"] = 0.0
-        return
+    # 建立「最小意義獲利門檻 (MMP)」與「手續費緩衝區 (Fee Buffer)」
+    # 要求平倉時，實質拿到的淨利潤必須大於 0.15% (0.0015) 才有意義，否則死扛到底或讓底層防護接手
+    if net_profit_pct >= 0.0015:
+        if (s["highest_profit_pct"] - 0.0015) >= tier3_target and net_profit_pct < (s["highest_profit_pct"] - 0.0015) * (0.6 if is_trend_ok else 0.4):
+            print(f"🛡️ [Layer_4] {sym} 觸發大行情鎖利 (回吐 40%)")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier3_Trailing")
+            s["highest_profit_pct"] = 0.0
+            return
+        elif (s["highest_profit_pct"] - 0.0015) >= tier2_target and net_profit_pct < (s["highest_profit_pct"] - 0.0015) * (0.5 if is_trend_ok else 0.3):
+            print(f"🛡️ [Layer_4] {sym} 觸發中波段鎖利 (回吐 50%)")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier2_Trailing")
+            s["highest_profit_pct"] = 0.0
+            return
+        elif (s["highest_profit_pct"] - 0.0015) >= tier1_target and net_profit_pct < (max(atr_pct * 0.5, 0.002)):
+            print(f"🛡️ [Layer_4] {sym} 觸發基本保本鎖利")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_4_Tier1_Trailing")
+            s["highest_profit_pct"] = 0.0
+            return
 
     # ── Layer 5: 時間防禦與分批平倉 (Time Defense & Partial Exit) ──
     trade_status = s.get("trade_status", "NORMAL")
@@ -1669,20 +1672,23 @@ async def check_exits(sym):
             
         # 5.2 盤整時間防禦 (Stagnation)
         stagnation_limit = get_dynamic_stagnation_limit(s.get("current_atr", atr_val), s.get("atr_ma20", current_atr))
-        if hold_sec > stagnation_limit:
-            if net_profit_pct < 0.002: # 淨利潤不到 0.2% 直接砍
-                print(f"⏳ [Layer_5] {sym} 僵局盤整過久且淨利 < 0.2%，無效波動直接斬倉")
+        # 強化果斷性：如果持倉超過 5 分鐘 (300 秒) 或動態上限
+        actual_stagnation_limit = min(stagnation_limit, 300)
+        
+        if hold_sec > actual_stagnation_limit:
+            if net_profit_pct < 0.001: 
+                print(f"⏳ [Layer_5] {sym} 僵局盤整過久且無法獲利，無效波動直接斬倉")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Kill")
                 s["highest_profit_pct"] = 0.0
                 return
-            elif 0.002 <= net_profit_pct < 0.008:
-                half_qty = abs(s["qty"]) * 0.5
-                print(f"⏳ [Layer_5] {sym} 僵局盤整過久，平倉 50% 保本")
-                await close_position(sym, cs, half_qty, p, avg, reason="Layer_5_Stagnation_Partial")
-                s["trade_status"] = "PARTIAL_EXIT"
+            elif 0.001 <= net_profit_pct <= 0.005:
+                # 在 0.1% ~ 0.5% 之間直接全平，不分批了！
+                print(f"⏳ [Layer_5] {sym} 僵局盤整超過 5 分鐘，微利 ({net_profit_pct*100:.2f}%) 直接全平釋放資金")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Full_MicroProfit")
+                s["highest_profit_pct"] = 0.0
                 return
-            elif net_profit_pct >= 0.008:
-                print(f"⏳ [Layer_5] {sym} 僵局盤整過久，全平")
+            elif net_profit_pct > 0.005:
+                print(f"⏳ [Layer_5] {sym} 僵局盤整過久，獲利尚可，直接全平落袋")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Layer_5_Stagnation_Full")
                 s["highest_profit_pct"] = 0.0
                 return
