@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 158.14721585,
+    "balance_usdt": 158.06047065,
     "positions": {
         "BICO:USDT": {
             "qty": 0.0,
@@ -52,8 +52,8 @@
             "realized_pnl": -0.31979999999999736
         },
         "FET:USDT": {
-            "qty": 0.0,
-            "avg_price": 0.0,
+            "qty": -916.0,
+            "avg_price": 0.1894,
             "realized_pnl": -0.3932000000000113
         },
         "ARB:USDT": {
@@ -790,6 +790,20 @@
             "realized_pnl": 0.4490000000000004,
             "fee": 0.037401699999999996,
             "is_close": true
+        },
+        {
+            "id": "3f2fe039",
+            "order_id": "e7c93324",
+            "symbol": "FET:USDT",
+            "price": 0.1894,
+            "qty": 916.0,
+            "quote_qty": 173.49040000000002,
+            "time": 1781960548682,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.08674520000000001,
+            "is_close": false
         }
     ]
 }

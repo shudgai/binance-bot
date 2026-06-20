@@ -653,8 +653,8 @@ def apply_symbol_profile(sym, profile):
         "risk_multiplier", "volume_multiplier", "entry_cooldown_sec",
         "max_additional_entries", "entry_size_pct", "add_entry_pct",
         "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
-        "volume_threshold_factor", "min_flip_time", "breakeven_trigger",
-        "profile_type", "leverage", "mtf_filter"
+        "max_loss_usdt", "volume_threshold_factor", "min_flip_time", 
+        "breakeven_trigger", "profile_type", "leverage", "mtf_filter"
     ]:
         if key in profile:
             state[key] = profile[key]
@@ -839,6 +839,7 @@ def build_symbol_state(sym):
         "sl_atr_multiplier": conf.get("sl_atr_multiplier", 1.5),
         "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
         "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
+        "max_loss_usdt": conf.get("max_loss_usdt", 10.0), # 預設每單最大虧損金額上限 (對應150u資金)
         "personality": "balanced",
         "personality_source": "infer",
         "last_personality_update": 0.0,
@@ -1935,6 +1936,21 @@ async def check_position_exits(exchange, sym):
     # 3. 執行停利或停損
     cs = 'sell' if is_long else 'buy'
     
+    # --- 新增安全氣囊：硬性 USDT 虧損上限保護 (Max Loss per Trade) ---
+    max_loss_usdt = s.get("max_loss_usdt", 10.0)
+    current_loss_usdt = 0.0
+    if is_long and p < avg:
+        current_loss_usdt = (avg - p) * abs(s["qty"])
+    elif not is_long and p > avg:
+        current_loss_usdt = (p - avg) * abs(s["qty"])
+
+    if current_loss_usdt >= max_loss_usdt:
+        reason = "[Hard_Loss_USDT]"
+        print(f"🚨🚨🚨 [{reason}] {sym} 虧損額已達限制上限 {current_loss_usdt:.2f} USDT >= {max_loss_usdt:.2f} USDT，觸發最終保命平倉！")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=True)
+        s["sl_trigger_time"] = 0
+        return
+        
     # 檢查是否觸發停損 (Dynamic SL or Hard Stop)
     hard_stop_loss_pct = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
     hard_sl = avg * (1 - hard_stop_loss_pct) if is_long else avg * (1 + hard_stop_loss_pct)
