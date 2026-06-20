@@ -653,7 +653,8 @@ def apply_symbol_profile(sym, profile):
         "risk_multiplier", "volume_multiplier", "entry_cooldown_sec",
         "max_additional_entries", "entry_size_pct", "add_entry_pct",
         "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
-        "max_loss_usdt", "volume_threshold_factor", "min_flip_time", 
+        "max_loss_usdt", "trailing_activation", "trailing_distance_atr",
+        "volume_threshold_factor", "min_flip_time", 
         "breakeven_trigger", "profile_type", "leverage", "mtf_filter"
     ]:
         if key in profile:
@@ -840,6 +841,8 @@ def build_symbol_state(sym):
         "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
         "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
         "max_loss_usdt": conf.get("max_loss_usdt", 10.0), # 預設每單最大虧損金額上限 (對應150u資金)
+        "trailing_activation": conf.get("trailing_activation", 0.03), # 獲利達幾%啟動 (預設 3%)
+        "trailing_distance_atr": conf.get("trailing_distance_atr", 1.2), # 回撤多少ATR平倉 (預設 1.2倍)
         "personality": "balanced",
         "personality_source": "infer",
         "last_personality_update": 0.0,
@@ -851,6 +854,12 @@ if "XRPUSDT" not in STATES:
     STATES["XRPUSDT"] = build_symbol_state("XRPUSDT")
 apply_all_symbol_profiles()
 WATCH_TASKS = {}
+EXECUTION_ENGINE = None
+
+def init_global_engine(exchange):
+    global EXECUTION_ENGINE
+    if EXECUTION_ENGINE is None:
+        EXECUTION_ENGINE = ExecutionEngine(exchange)
 
 # ── 指標計算函數 ──────────────────────────────────────────────
 
@@ -1572,7 +1581,10 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
     else:
         try:
-            engine = ExecutionEngine(exchange_futures)
+            global EXECUTION_ENGINE
+            if EXECUTION_ENGINE is None:
+                EXECUTION_ENGINE = ExecutionEngine(exchange_futures)
+            engine = EXECUTION_ENGINE
             config = {
                 "is_simulated": False,
                 "split_threshold": 100.0,
@@ -1932,7 +1944,23 @@ async def check_position_exits(exchange, sym):
             if current_dyn_sl == 0.0 or new_sl < current_dyn_sl:
                 s["dynamic_sl"] = new_sl
                 print(f"🛡️ [動態停損] {sym} 移至 {new_sl:.6f} (保本/追蹤)")
-                 
+                
+    # --- 新增動態追蹤止盈平倉檢測 (ExecutionEngine Trailing Stop) ---
+    global EXECUTION_ENGINE
+    if not PAPER_TRADING and EXECUTION_ENGINE is not None:
+        trailing_act = s.get("trailing_activation", 0.03)
+        trailing_dist = s.get("trailing_distance_atr", 1.2)
+        triggered = await EXECUTION_ENGINE.check_and_apply_trailing_stops(
+            symbol=sym,
+            current_price=p,
+            atr_val=atr_val,
+            trailing_activation_pct=trailing_act,
+            trailing_distance_atr=trailing_dist,
+            close_position_func=close_position
+        )
+        if triggered:
+            return
+            
     # 3. 執行停利或停損
     cs = 'sell' if is_long else 'buy'
     
@@ -2141,7 +2169,13 @@ async def execute_order(sym, side, price, route="UNKNOWN"):
             print(f"🛑 [模擬開倉失敗] {sym}: {e}")
     else:
         try:
-            engine = ExecutionEngine(exchange_futures)
+            global EXECUTION_ENGINE
+            if EXECUTION_ENGINE is None:
+                EXECUTION_ENGINE = ExecutionEngine(exchange_futures)
+            engine = EXECUTION_ENGINE
+            # 每次重大開倉前強制從交易所讀取最新的可用餘額與當前持倉
+            await engine.sync_balance(fetch_real_balance)
+            
             config = {
                 "is_simulated": False,
                 "split_threshold": 100.0,
@@ -2774,6 +2808,8 @@ async def main_loop(exchange):
         await asyncio.wait_for(exchange_futures.load_markets(), timeout=15)
     except Exception as e:
         print(f"⚠️ load_markets 失敗 ({e})，使用預設市場清單")
+
+    init_global_engine(exchange)
 
     global ALL_SYMBOLS
     ALL_SYMBOLS = filter_valid_symbols(exchange, ALL_SYMBOLS)

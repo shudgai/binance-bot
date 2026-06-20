@@ -213,7 +213,9 @@
         "sector": "Speculative"
     },
     "BICOUSDT": {
-        "sector": "Speculative"
+        "sector": "Speculative",
+        "trailing_activation": 0.05,
+        "trailing_distance_atr": 1.5
     },
     "EPICUSDT": {
         "sector": "Speculative"
@@ -228,7 +230,9 @@
         "sector": "Speculative"
     },
     "TAOUSDT": {
-        "sector": "AI"
+        "sector": "AI",
+        "trailing_activation": 0.03,
+        "trailing_distance_atr": 1.0
     },
     "ARBUSDT": {
         "sector": "Layer2"

@@ -321,5 +321,25 @@
         "max_profit_reached": 0.006,
         "atr_at_exit": 0.00045,
         "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 13:09:49",
+        "symbol": "FETUSDT",
+        "entry_reason": "a",
+        "exit_reason": "[小虧] ATR_STOP_LOSS (2.0x)",
+        "profit_pct": -0.0021,
+        "max_profit_reached": 0.0011,
+        "atr_at_exit": 0.000164,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 13:13:18",
+        "symbol": "BELUSDT",
+        "entry_reason": "a",
+        "exit_reason": "[大虧] [Trend_Follow]",
+        "profit_pct": -0.0107,
+        "max_profit_reached": 0.0,
+        "atr_at_exit": 0.001014,
+        "market_mode": "Low_Vol"
     }
 ]

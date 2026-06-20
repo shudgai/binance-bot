@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 158.06047065,
+    "balance_usdt": 155.95459744999997,
     "positions": {
         "BICO:USDT": {
             "qty": 0.0,
@@ -24,7 +24,7 @@
         "BEL:USDT": {
             "qty": 0.0,
             "avg_price": 0.0,
-            "realized_pnl": 0.5450999999999993
+            "realized_pnl": -0.9331000000000107
         },
         "SYN:USDT": {
             "qty": 0.0,
@@ -52,13 +52,13 @@
             "realized_pnl": -0.31979999999999736
         },
         "FET:USDT": {
-            "qty": -916.0,
-            "avg_price": 0.1894,
-            "realized_pnl": -0.3932000000000113
-        },
-        "ARB:USDT": {
             "qty": 0.0,
             "avg_price": 0.0,
+            "realized_pnl": -0.7595999999999964
+        },
+        "ARB:USDT": {
+            "qty": -883.8,
+            "avg_price": 0.083,
             "realized_pnl": 0.4490000000000004
         }
     },
@@ -803,6 +803,62 @@
             "isMaker": false,
             "realized_pnl": 0.0,
             "fee": 0.08674520000000001,
+            "is_close": false
+        },
+        {
+            "id": "abafdfa0",
+            "order_id": "a91d4ee0",
+            "symbol": "FET:USDT",
+            "price": 0.1898,
+            "qty": 916.0,
+            "quote_qty": 173.8568,
+            "time": 1781960989718,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": -0.36639999999998507,
+            "fee": 0.0869284,
+            "is_close": true
+        },
+        {
+            "id": "1bd9fe82",
+            "order_id": "b22e05cb",
+            "symbol": "BEL:USDT",
+            "price": 0.1779,
+            "qty": 778.0,
+            "quote_qty": 138.4062,
+            "time": 1781961043602,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.0692031,
+            "is_close": false
+        },
+        {
+            "id": "04ff77b2",
+            "order_id": "e0aa1df9",
+            "symbol": "BEL:USDT",
+            "price": 0.176,
+            "qty": 778.0,
+            "quote_qty": 136.928,
+            "time": 1781961198459,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": -1.47820000000001,
+            "fee": 0.068464,
+            "is_close": true
+        },
+        {
+            "id": "b07a18ab",
+            "order_id": "74d079ce",
+            "symbol": "ARB:USDT",
+            "price": 0.083,
+            "qty": 883.8,
+            "quote_qty": 73.3554,
+            "time": 1781961688890,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.0366777,
             "is_close": false
         }
     ]

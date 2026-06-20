@@ -24,6 +24,85 @@ class OrderStatus(Enum):
     PARTIAL = "PARTIAL"
     FILLED = "FILLED"
     FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+class OrderTracker:
+    def __init__(self):
+        self.orders: Dict[str, Order] = {}
+        self.lock = threading.Lock()
+
+    def add_order(self, order: Order):
+        with self.lock:
+            if order.entry_price == 0.0:
+                order.entry_price = order.avg_price
+            self.orders[order.order_id] = order
+
+    def update_order(self, order_id: str, status: OrderStatus, filled_qty: float, avg_price: float = 0.0, net: float = 0.0):
+        with self.lock:
+            if order_id in self.orders:
+                order = self.orders[order_id]
+                order.status = status
+                order.filled_quantity = filled_qty
+                if avg_price > 0:
+                    order.avg_price = avg_price
+                    if order.entry_price == 0.0:
+                        order.entry_price = avg_price
+                if net != 0.0:
+                    order.net_cost_or_proceeds = net
+                logger.info(
+                    f"📝 [OrderTracker] Order {order_id} updated -> {status.value}. "
+                    f"Filled: {filled_qty:.4f}/{order.original_quantity:.4f} | Remaining: {self.get_remaining(order_id):.4f}"
+                )
+
+    def update_trailing(self, order_id: str, current_price: float, trailing_activation_pct: float) -> bool:
+        """
+        Updates highest price reached and trailing status based on current price.
+        Returns True if trailing state became active or is currently active.
+        """
+        with self.lock:
+            if order_id not in self.orders:
+                return False
+            order = self.orders[order_id]
+            if order.entry_price <= 0.0:
+                return False
+                
+            is_long = order.side.upper() == "BUY"
+            
+            # Calculate profit percent
+            if is_long:
+                profit_pct = (current_price - order.entry_price) / order.entry_price
+            else:
+                profit_pct = (order.entry_price - current_price) / order.entry_price
+                
+            if not order.is_trailing_active and profit_pct >= trailing_activation_pct:
+                order.is_trailing_active = True
+                order.highest_price_reached = current_price
+                logger.info(f"🔥 [Trailing Stop] Order {order_id} reached profit {profit_pct*100:.2f}% >= {trailing_activation_pct*100:.2f}%. Trailing is now ACTIVE!")
+                
+            if order.is_trailing_active:
+                if is_long:
+                    if current_price > order.highest_price_reached:
+                        order.highest_price_reached = current_price
+                        logger.info(f"📈 [Trailing Stop] Order {order_id} new high price: {current_price:.6f}")
+                else:
+                    # For short position, "highest_price_reached" tracks the lowest price reached
+                    if order.highest_price_reached == 0.0 or current_price < order.highest_price_reached:
+                        order.highest_price_reached = current_price
+                        logger.info(f"📉 [Trailing Stop] Order {order_id} new low price reached: {current_price:.6f}")
+            return order.is_trailing_active
+
+    def get_remaining(self, order_id: str) -> float:
+        with self.lock:
+            if order_id in self.orders:
+                order = self.orders[order_id]
+                return max(0.0, order.original_quantity - order.filled_quantity)
+            return 0.0
+
+    def get_status(self, order_id: str) -> OrderStatus:
+        with self.lock:
+            if order_id in self.orders:
+                return self.orders[order_id].status
+            return OrderStatus.FAILED
 
 @dataclass
 class Order:
@@ -35,10 +114,14 @@ class Order:
     filled_quantity: float
     avg_price: float
     net_cost_or_proceeds: float = 0.0  # Positive for proceeds (sell), negative for cost (buy)
+    highest_price_reached: float = 0.0
+    is_trailing_active: bool = False
+    entry_price: float = 0.0
 
 class ExecutionEngine:
     def __init__(self, exchange=None) -> None:
         self.exchange = exchange
+        self.tracker = OrderTracker()
         self.pending_orders: List[Order] = []
         self.remaining_quantity: float = 0.0
         self.refill_attempts: int = 0
@@ -49,6 +132,88 @@ class ExecutionEngine:
         # Concurrency Locks
         self.lock = asyncio.Lock()
         self.sync_lock = threading.Lock()
+
+    async def sync_balance(self, fetch_balance_func, update_state_func=None) -> float:
+        """
+        Synchronizes available balance and current position to prevent drift.
+        """
+        logger.info("🔄 [SyncBalance] Force-fetching latest account balance and positions...")
+        try:
+            balance = await fetch_balance_func()
+            logger.info(f"✅ [SyncBalance] Account balance successfully synchronized. Available: {balance:.2f} USDT")
+            return balance
+        except Exception as e:
+            logger.error(f"🚨 [SyncBalance] Failed to fetch latest balance: {e}")
+            return 0.0
+
+    async def check_and_apply_trailing_stops(
+        self,
+        symbol: str,
+        current_price: float,
+        atr_val: float,
+        trailing_activation_pct: float,
+        trailing_distance_atr: float,
+        close_position_func
+    ) -> bool:
+        """
+        Checks trailing stops for all pending orders matching symbol.
+        Triggers close_position_func if trailing stop criteria is met.
+        """
+        triggered_any = False
+        orders_to_check = []
+        with self.sync_lock:
+            # We check both tracked orders and pending orders
+            orders_to_check = list(self.tracker.orders.values())
+            
+        for order in orders_to_check:
+            if order.symbol != symbol or order.status not in (OrderStatus.FILLED, OrderStatus.PARTIAL):
+                continue
+                
+            is_active = self.tracker.update_trailing(order.order_id, current_price, trailing_activation_pct)
+            if not is_active:
+                continue
+                
+            is_long = order.side.upper() == "BUY"
+            highest_or_lowest = order.highest_price_reached
+            
+            # Trailing stop condition check
+            trigger_exit = False
+            if is_long:
+                stop_price = highest_or_lowest - (atr_val * trailing_distance_atr)
+                if current_price <= stop_price:
+                    trigger_exit = True
+                    logger.warning(
+                        f"🚨 [Trailing Stop Triggered] {symbol} (LONG) current: {current_price:.6f} <= stop: {stop_price:.6f} "
+                        f"(Highest reached: {highest_or_lowest:.6f}, Distance: {atr_val*trailing_distance_atr:.6f})"
+                    )
+            else:
+                stop_price = highest_or_lowest + (atr_val * trailing_distance_atr)
+                if current_price >= stop_price:
+                    trigger_exit = True
+                    logger.warning(
+                        f"🚨 [Trailing Stop Triggered] {symbol} (SHORT) current: {current_price:.6f} >= stop: {stop_price:.6f} "
+                        f"(Lowest reached: {highest_or_lowest:.6f}, Distance: {atr_val*trailing_distance_atr:.6f})"
+                    )
+                    
+            if trigger_exit:
+                cs_side = "SELL" if is_long else "BUY"
+                logger.info(f"⚡ [Trailing Exit] Executing immediate trailing stop exit for {symbol} | qty: {order.filled_quantity}")
+                try:
+                    await close_position_func(
+                        symbol=symbol,
+                        close_side=cs_side.lower(),
+                        qty=order.filled_quantity,
+                        price=current_price,
+                        avg_price=order.entry_price,
+                        reason="[Trailing_Stop_Exit]",
+                        is_stop_loss=False
+                    )
+                    order.status = OrderStatus.CANCELED
+                    triggered_any = True
+                except Exception as e:
+                    logger.error(f"🚨 [Trailing Exit Error] Failed to close trailing position: {e}")
+                    
+        return triggered_any
 
     def generate_split_orders(
         self,
@@ -137,6 +302,7 @@ class ExecutionEngine:
                     order = await self._place_real_order(order_id, symbol, side, qty, price)
 
                 executed_orders.append(order)
+                self.tracker.add_order(order)
                 with self.sync_lock:
                     if order.status != OrderStatus.FILLED:
                         self.pending_orders.append(order)
@@ -149,6 +315,7 @@ class ExecutionEngine:
             else:
                 order = await self._place_real_order(order_id, symbol, side, self.remaining_quantity, target_price)
             executed_orders.append(order)
+            self.tracker.add_order(order)
             with self.sync_lock:
                 if order.status != OrderStatus.FILLED:
                     self.pending_orders.append(order)
