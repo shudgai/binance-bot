@@ -341,5 +341,15 @@
         "max_profit_reached": 0.0,
         "atr_at_exit": 0.001014,
         "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 13:22:45",
+        "symbol": "TAOUSDT",
+        "entry_reason": "UNKNOWN",
+        "exit_reason": "[Big_Win] Layer_5_Stagnation_Full_MicroProfit",
+        "profit_pct": 0.0055,
+        "max_profit_reached": 0.0055,
+        "atr_at_exit": 0.481429,
+        "market_mode": "High_Vol"
     }
 ]

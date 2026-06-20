@@ -388,6 +388,7 @@ def optimize_strategy(analysis_results, current_config, sector_report):
             })
 
         # 4. Over-held trades -> Decrease profit target (tp_atr_multiplier) by 10%
+        # Additionally adjust trailing stop parameters (tighten them to lock profit quicker)
         if over_held_rate > 0.30:
             suggested_tp_atr = current_tp_atr * 0.90
             applied_tp_atr = clamp_parameter_change(current_tp_atr, suggested_tp_atr, is_int=False)
@@ -400,6 +401,34 @@ def optimize_strategy(analysis_results, current_config, sector_report):
                 "applied": applied_tp_atr,
                 "confidence": confidence,
                 "reasoning": f"Decreasing tp_atr_multiplier for {symbol} because Over_Held_Rate reached {over_held_rate:.1%} due to profit retracements exceeding 5% (Sector: {symbol_sector})"
+            })
+            
+            # Tighten trailing activation by 15% (e.g. 5% -> 4.25%) to trigger trailing sooner
+            current_trail_act = symbol_config.get("trailing_activation", defaults.get("trailing_activation", 0.03))
+            suggested_trail_act = max(0.01, current_trail_act * 0.85)
+            applied_trail_act = clamp_parameter_change(current_trail_act, suggested_trail_act, is_int=False)
+            suggestions.append({
+                "parameter": "trailing_activation",
+                "issue": "Over-held Position (Trailing Activation)",
+                "current": current_trail_act,
+                "suggested": suggested_trail_act,
+                "applied": applied_trail_act,
+                "confidence": confidence,
+                "reasoning": f"Tightening trailing_activation for {symbol} to trigger earlier due to high over-held rate {over_held_rate:.1%}"
+            })
+            
+            # Tighten trailing distance by 10% (e.g. 1.2 ATR -> 1.08 ATR) to exit quicker on pullback
+            current_trail_dist = symbol_config.get("trailing_distance_atr", defaults.get("trailing_distance_atr", 1.2))
+            suggested_trail_dist = max(0.5, current_trail_dist * 0.90)
+            applied_trail_dist = clamp_parameter_change(current_trail_dist, suggested_trail_dist, is_int=False)
+            suggestions.append({
+                "parameter": "trailing_distance_atr",
+                "issue": "Over-held Position (Trailing Distance)",
+                "current": current_trail_dist,
+                "suggested": suggested_trail_dist,
+                "applied": applied_trail_dist,
+                "confidence": confidence,
+                "reasoning": f"Reducing trailing_distance_atr for {symbol} to secure profits quicker due to high over-held rate {over_held_rate:.1%}"
             })
 
         # Sector level safety override: if the sector has high slippage, automatically advise adjusting MMP threshold

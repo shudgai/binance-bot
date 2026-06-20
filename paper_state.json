@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 155.95459744999997,
+    "balance_usdt": 156.32220664999997,
     "positions": {
         "BICO:USDT": {
             "qty": 0.0,
@@ -47,9 +47,9 @@
             "realized_pnl": 0.3856800000000021
         },
         "TAO:USDT": {
-            "qty": -0.321,
-            "avg_price": 230.86,
-            "realized_pnl": -0.31979999999999736
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.08466000000000884
         },
         "FET:USDT": {
             "qty": 0.0,
@@ -860,6 +860,20 @@
             "realized_pnl": 0.0,
             "fee": 0.0366777,
             "is_close": false
+        },
+        {
+            "id": "d2bf3696",
+            "order_id": "fbdc4727",
+            "symbol": "TAO:USDT",
+            "price": 229.6,
+            "qty": 0.321,
+            "quote_qty": 73.7016,
+            "time": 1781961765664,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.4044600000000062,
+            "fee": 0.0368508,
+            "is_close": true
         }
     ]
 }

@@ -655,7 +655,7 @@ def apply_symbol_profile(sym, profile):
         "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
         "max_loss_usdt", "trailing_activation", "trailing_distance_atr",
         "volume_threshold_factor", "min_flip_time", 
-        "breakeven_trigger", "profile_type", "leverage", "mtf_filter"
+        "breakeven_trigger", "profile_type", "leverage", "mtf_filter", "sector"
     ]:
         if key in profile:
             state[key] = profile[key]
@@ -843,6 +843,7 @@ def build_symbol_state(sym):
         "max_loss_usdt": conf.get("max_loss_usdt", 10.0), # 預設每單最大虧損金額上限 (對應150u資金)
         "trailing_activation": conf.get("trailing_activation", 0.03), # 獲利達幾%啟動 (預設 3%)
         "trailing_distance_atr": conf.get("trailing_distance_atr", 1.2), # 回撤多少ATR平倉 (預設 1.2倍)
+        "sector": conf.get("sector", "Speculative"), # 預設賽道標籤
         "personality": "balanced",
         "personality_source": "infer",
         "last_personality_update": 0.0,
@@ -1086,13 +1087,27 @@ def get_balance():
     except:
         return 150.0
 
+# --- 賽道手動分配權重定義 (第二層：動態權重分配) ---
+SECTOR_WEIGHTS = {
+    "AI": 0.50,            # AI 賽道分配 50% 資金額度
+    "Layer2": 0.30,        # L2 賽道分配 30% 資金額度
+    "Gaming": 0.20,        # Gaming 賽道分配 20% 資金額度
+    "Speculative": 0.15,   # 高投機賽道分配 15% 資金額度
+    "Layer1_Layer2": 0.30  # L1/L2 基礎賽道分配 30% 資金額度
+}
+
 def compute_per_coin_margin(sym=None):
     balance = get_balance()
     if balance <= 0 or not sym:
         return 0
 
-    # 用戶要求：每次持倉3個幣種，資金均分 (各拿 33%)
-    return balance * 0.33 * 0.95
+    s = STATES.get(sym, {})
+    sector = s.get("sector", "Speculative")
+    # 根據幣種所屬賽道動態取得分配權重，若無定義則預設 0.20
+    weight = SECTOR_WEIGHTS.get(sector, 0.20)
+    
+    # 實際配置金額 = 總餘額 * 賽道權重 * 風控保留係數 (95%)
+    return balance * weight * 0.95
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
