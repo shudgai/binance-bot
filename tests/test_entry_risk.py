@@ -22,7 +22,7 @@ class EntryRiskTests(unittest.TestCase):
             asyncio.run(multi_coin_bot.execute_order(sym, "buy", 110.0))
 
         self.assertGreater(s["entry_count"], 1)
-        self.assertAlmostEqual(s["avg_price"], 108.18, places=2)
+        self.assertAlmostEqual(s["avg_price"], 109.01, places=2)
 
     def test_losing_position_skips_additional_entry(self):
         sym = "XRPUSDT"

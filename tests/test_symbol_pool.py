@@ -7,6 +7,7 @@ class SymbolPoolTests(unittest.TestCase):
     @patch("multi_coin_bot.save_symbol_pool")
     def test_locked_symbol_stays_when_pool_is_replaced(self, mock_save):
         sym = "XRPUSDT"
+        multi_coin_bot.STATES[sym] = multi_coin_bot.build_symbol_state(sym)
         multi_coin_bot.reset_coin_state(sym)
         s = multi_coin_bot.STATES[sym]
         s["qty"] = 0.01

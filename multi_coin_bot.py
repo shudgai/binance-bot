@@ -162,22 +162,22 @@ DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
-    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
-    "LINKUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 180, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
-    "TRXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
+    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "k_factor": 2.5},
+    "LINKUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 180, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "k_factor": 2.5},
+    "TRXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "k_factor": 2.5},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) - 快速爆發，中等槓桿 ---
-    "RENDERUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "SUIUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 3.6, "volume_threshold_factor": 1.8, "breakeven_trigger": 0.7, "min_flip_time": 90, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "INJUSDT": {"sl_atr_multiplier": 2.2, "tp_atr_multiplier": 4.4, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "NEARUSDT": {"sl_atr_multiplier": 2.3, "tp_atr_multiplier": 4.6, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 180, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "VELVETUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "LABUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "RENDERUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
+    "SUIUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 3.6, "volume_threshold_factor": 1.8, "breakeven_trigger": 0.7, "min_flip_time": 90, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
+    "INJUSDT": {"sl_atr_multiplier": 2.2, "tp_atr_multiplier": 4.4, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
+    "NEARUSDT": {"sl_atr_multiplier": 2.3, "tp_atr_multiplier": 4.6, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 180, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
+    "VELVETUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
+    "LABUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "k_factor": 4.5},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
-    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2},
-    "DOGEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2},
-    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2}
+    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 5.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0},
+    "DOGEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0},
+    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "k_factor": 6.0}
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -672,7 +672,7 @@ def update_all_dynamic_personalities():
 ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
 
 MAX_POSITIONS = 3
-COOLDOWN_SEC = 600
+COOLDOWN_SEC = 1200
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
@@ -749,6 +749,7 @@ def build_symbol_state(sym):
         "add_entry_pct": 0.25,
         "risk_multiplier": 1.0,
         "volume_threshold_factor": conf.get("volume_threshold_factor", 0.8),
+        "k_factor": conf.get("k_factor", 3.0),
         "volume_multiplier": conf.get("volume_multiplier", 1.0),
         "sl_atr_multiplier": conf.get("sl_atr_multiplier", 1.5),
         "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
@@ -760,6 +761,8 @@ def build_symbol_state(sym):
     }
 
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
+if "XRPUSDT" not in STATES:
+    STATES["XRPUSDT"] = build_symbol_state("XRPUSDT")
 apply_all_symbol_profiles()
 WATCH_TASKS = {}
 
@@ -1018,8 +1021,8 @@ def mark_exit(sym, is_stop_loss=False, reason=""):
     now = time.time()
     s["status"] = "COOLDOWN"
     s["next_status_time"] = now + COOLDOWN_SEC
-    s["status_reason"] = f"冷卻中 (10分鐘) - {reason}"
-    print(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN 10分鐘")
+    s["status_reason"] = f"冷卻中 (20分鐘) - {reason}"
+    print(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN 20分鐘")
     if is_stop_loss:
         s["stop_count"] += 1
         if s["stop_count"] == 1:
@@ -1050,6 +1053,7 @@ def reset_coin_state(sym):
     s["pending_confirm_low"] = 0
     s["has_been_negative"] = False
     s["trail_tp_price"] = 0.0
+    s["adjusted_this_tick"] = False
     s["entry_count"] = 0
     s["avg_entry_price"] = 0.0
     s["max_additional_entries"] = 2
@@ -1429,6 +1433,12 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
     
+    # --- 實施「最小意義獲利門檻 (MMP)」 ---
+    is_divergence = "Layer_1_Volume_Divergence" in reason
+    if not is_stop_loss and not is_divergence and profit_pct < 0.0015:
+        print(f"🛡️ [MMP過濾] {sym} 獲利 {profit_pct*100:.2f}% < 0.15% 且非止損/量縮背離，攔截無效平倉 ({reason})")
+        return
+        
     atr_val = s.get("entry_atr", s.get("current_atr", price * 0.01))
     sl_mult = s.get("sl_atr_multiplier", 1.5)
     initial_risk_pct = (sl_mult * atr_val) / real_avg if real_avg > 0 else 0.01
@@ -2066,7 +2076,7 @@ def is_entry_volume_confirmed(sym, side):
         volume_threshold = 1.4
         layer_name = "投機與風險層"
     elif layer == "High_Beta_Momentum":
-        volume_threshold = 1.3
+        volume_threshold = 1.5
         layer_name = "高彈性動能層"
     else:
         volume_threshold = 1.1
@@ -2256,9 +2266,19 @@ def compute_signal_strength(sym):
     is_above_sma200 = s.get("sma200_15m", 0) > 0 and close > s.get("sma200_15m", 0) * 0.999
     is_below_sma200 = s.get("sma200_15m", 0) > 0 and close < s.get("sma200_15m", 0) * 1.001
 
-    # 限制開倉不要太偏離短期趨勢線，避免追價開倉
-    close_near_ema20_long = ema20 <= 0 or close <= ema20 * 1.05
-    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.95
+    # 限制開倉不要太偏離短期趨勢線，避免追價開倉 (實施動態擴張門檻)
+    k_factor = s.get("k_factor", 3.0)
+    current_atr = s.get("current_atr", 0.0)
+    dynamic_limit = (k_factor * current_atr) / close if close > 0 else 0.05
+    current_deviation = abs(close - ema20) / ema20 if ema20 > 0 else 0
+    
+    if current_deviation > dynamic_limit:
+        # print(f"🚫 [擴張過濾] {sym} 拒絕進場：過度乖離 ({current_deviation*100:.2f}% > 門檻 {dynamic_limit*100:.2f}%)")
+        close_near_ema20_long = False
+        close_near_ema20_short = False
+    else:
+        close_near_ema20_long = ema20 <= 0 or close <= ema20 * (1 + dynamic_limit)
+        close_near_ema20_short = ema20 <= 0 or close >= ema20 * (1 - dynamic_limit)
     is_in_bb_zone_long = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
     is_in_bb_zone_short = s.get("bb_up", 0) > 0 and close >= s["bb_up"] * 0.99
 

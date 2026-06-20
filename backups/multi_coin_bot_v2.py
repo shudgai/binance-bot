@@ -57,9 +57,60 @@ if USE_TESTNET:
 
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
+    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSUSDT", "SUIUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
+
+PERSONALITY_TEMPLATES = {
+    "calm": {
+        "personality": "calm",
+        "risk_multiplier": 0.8,
+        "volume_multiplier": 0.9,
+        "entry_cooldown_sec": 120,
+        "max_additional_entries": 1,
+        "entry_size_pct": 0.4,
+        "add_entry_pct": 0.2,
+        "sl_atr_multiplier": 4.5,
+        "tp_atr_multiplier": 1.0,
+        "hard_stop_loss_pct": 0.025,
+    },
+    "balanced": {
+        "personality": "balanced",
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "entry_cooldown_sec": 90,
+        "max_additional_entries": 1,
+        "entry_size_pct": 0.5,
+        "add_entry_pct": 0.25,
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 0.8,
+        "hard_stop_loss_pct": 0.02,
+    },
+    "aggressive": {
+        "personality": "aggressive",
+        "risk_multiplier": 1.15,
+        "volume_multiplier": 1.1,
+        "entry_cooldown_sec": 60,
+        "max_additional_entries": 2,
+        "entry_size_pct": 0.6,
+        "add_entry_pct": 0.35,
+        "sl_atr_multiplier": 3.5,
+        "tp_atr_multiplier": 0.7,
+        "hard_stop_loss_pct": 0.03,
+    },
+    "adaptive": {
+        "personality": "adaptive",
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "entry_cooldown_sec": 90,
+        "max_additional_entries": 1,
+        "entry_size_pct": 0.5,
+        "add_entry_pct": 0.25,
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 0.75,
+        "hard_stop_loss_pct": 0.02,
+    },
+}
 
 
 def normalize_symbol(sym):
@@ -90,31 +141,110 @@ def normalize_symbol_list(symbols, max_count=20):
     return seen[:max_count]
 
 
-def load_symbol_pool():
+
+
+def save_symbol_profiles(profiles):
+    symbols = load_symbol_pool()
+    normalized_profiles = {}
+    for sym, profile in (profiles or {}).items():
+        normalized = normalize_symbol(sym)
+        if normalized and isinstance(profile, dict):
+            normalized_profiles[normalized] = profile
+    payload = {"symbols": symbols, "profiles": normalized_profiles}
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return normalized_profiles
+
+
+def load_symbol_config():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return normalize_symbol_list(data.get("symbols", []))
-        return normalize_symbol_list(data)
+            symbols = normalize_symbol_list(data.get("symbols", []))
+            profiles = {}
+            raw_profiles = data.get("profiles", {})
+            if isinstance(raw_profiles, dict):
+                for sym, profile in raw_profiles.items():
+                    normalized = normalize_symbol(sym)
+                    if normalized and isinstance(profile, dict):
+                        profiles[normalized] = profile
+            return symbols or list(DEFAULT_SYMBOLS), profiles
+        return normalize_symbol_list(data), {}
     except FileNotFoundError:
-        return list(DEFAULT_SYMBOLS)
+        return list(DEFAULT_SYMBOLS), {}
     except Exception as e:
         print(f"⚠️ 讀取幣種清單失敗: {e}")
-        return list(DEFAULT_SYMBOLS)
+        return list(DEFAULT_SYMBOLS), {}
+
+
+def load_symbol_pool():
+    symbols, _ = load_symbol_config()
+    return symbols
 
 
 def save_symbol_pool(symbols):
     normalized = normalize_symbol_list(symbols)
+    profiles = load_symbol_profiles()
+    payload = {"symbols": normalized}
+    if profiles:
+        payload["profiles"] = profiles
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump({"symbols": normalized}, f, ensure_ascii=False)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     return normalized
 
 
-ALL_SYMBOLS = load_symbol_pool()
+def load_symbol_profiles():
+    _, profiles = load_symbol_config()
+    return profiles
+
+
+def get_personality_template(personality):
+    if isinstance(personality, str):
+        personality = personality.strip().lower()
+    return PERSONALITY_TEMPLATES.get(personality) or PERSONALITY_TEMPLATES["balanced"]
+
+
+def infer_symbol_personality(sym, existing_profile=None):
+    if existing_profile and isinstance(existing_profile, dict) and existing_profile.get("personality") in PERSONALITY_TEMPLATES:
+        return existing_profile["personality"]
+    if sym.endswith("USDT"):
+        base = sym[:-4]
+        if base in ("BTC", "ETH", "BNB", "SOL", "ADA"):
+            return "calm"
+        if base in ("XRP", "DOGE", "SHIB", "PEPE", "SUI"):
+            return "aggressive"
+    return "balanced"
+
+
+def apply_symbol_profile(sym, profile_data=None):
+    s = STATES.get(sym)
+    if s is None:
+        return
+    profile_data = profile_data or SYMBOL_PROFILES.get(sym) or {}
+    personality = infer_symbol_personality(sym, profile_data)
+    template = get_personality_template(personality)
+    s["personality"] = template["personality"]
+    s["risk_multiplier"] = float(profile_data.get("risk_multiplier", template["risk_multiplier"]))
+    s["volume_multiplier"] = float(profile_data.get("volume_multiplier", template["volume_multiplier"]))
+    s["entry_cooldown_sec"] = int(profile_data.get("entry_cooldown_sec", template["entry_cooldown_sec"]))
+    s["max_additional_entries"] = int(profile_data.get("max_additional_entries", template["max_additional_entries"]))
+    s["entry_size_pct"] = float(profile_data.get("entry_size_pct", template["entry_size_pct"]))
+    s["add_entry_pct"] = float(profile_data.get("add_entry_pct", template["add_entry_pct"]))
+    s["sl_atr_multiplier"] = float(profile_data.get("sl_atr_multiplier", template["sl_atr_multiplier"]))
+    s["tp_atr_multiplier"] = float(profile_data.get("tp_atr_multiplier", template["tp_atr_multiplier"]))
+    s["hard_stop_loss_pct"] = float(profile_data.get("hard_stop_loss_pct", template["hard_stop_loss_pct"]))
+
+
+def apply_all_symbol_profiles():
+    for sym in list(STATES.keys()):
+        apply_symbol_profile(sym)
+
+
+ALL_SYMBOLS, SYMBOL_PROFILES = load_symbol_config()
 
 MAX_POSITIONS = 2
-COOLDOWN_SEC = 300
+COOLDOWN_SEC = 600
 MAIN_LOOP_INTERVAL_SEC = 6
 PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
@@ -180,10 +310,19 @@ def build_symbol_state(sym):
         "avg_entry_price": 0.0,
         "max_additional_entries": 1,
         "entry_cooldown_sec": 90,
+        "entry_size_pct": 0.5,
+        "add_entry_pct": 0.25,
+        "risk_multiplier": 1.0,
+        "volume_multiplier": 1.0,
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 0.8,
+        "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
+        "personality": "balanced",
         "last_entry_time": 0.0,
     }
 
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
+apply_all_symbol_profiles()
 WATCH_TASKS = {}
 
 # ── 指標計算函數 ──────────────────────────────────────────────
@@ -333,6 +472,7 @@ def apply_symbol_pool_change(requested_symbols):
     ALL_SYMBOLS = new_symbols[:target_count]
     for sym in ALL_SYMBOLS:
         STATES.setdefault(sym, build_symbol_state(sym))
+    apply_all_symbol_profiles()
     save_symbol_pool(ALL_SYMBOLS)
     return list(ALL_SYMBOLS)
 
@@ -408,13 +548,16 @@ def get_balance():
     except:
         return 150.0
 
-def compute_per_coin_margin():
+def compute_per_coin_margin(sym=None):
     balance = get_balance()
     if balance <= 0:
         return 0
-    # 交易金額直接與帳戶餘額掛鉤，使用約 95% 的可用資金
     usable = balance * 0.95
-    return usable
+    slots = max(MAX_POSITIONS, 1)
+    margin = usable / slots
+    if sym and sym in STATES:
+        margin *= STATES[sym].get("risk_multiplier", 1.0)
+    return margin
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
@@ -438,8 +581,8 @@ def mark_exit(sym, is_stop_loss=False):
     now = time.time()
     s["status"] = "COOLDOWN"
     s["next_status_time"] = now + COOLDOWN_SEC
-    s["status_reason"] = "冷卻中 (5分鐘)"
-    print(f"⏳ [狀態] {sym} 平倉 → COOLDOWN 5分鐘")
+    s["status_reason"] = "冷卻中 (10分鐘)"
+    print(f"⏳ [狀態] {sym} 平倉 → COOLDOWN 10分鐘")
     if is_stop_loss:
         s["stop_count"] += 1
         if s["stop_count"] == 1:
@@ -610,11 +753,11 @@ async def load_open_positions():
                 sym = t.get("symbol", "").replace(":USDT", "USDT")
                 if sym in STATES:
                     trade_time_sec = t.get("time", 0) / 1000.0
-                    # 如果這筆平倉是在最近 5 分鐘內發生的，且當前沒有持倉
-                    if current_time - trade_time_sec < 300 and STATES[sym]["qty"] == 0:
+                    # 如果這筆平倉是在最近 10 分鐘內發生的，且當前沒有持倉
+                    if current_time - trade_time_sec < 600 and STATES[sym]["qty"] == 0:
                         if STATES[sym]["status"] != "COOLDOWN":
                             STATES[sym]["status"] = "COOLDOWN"
-                            STATES[sym]["next_status_time"] = trade_time_sec + 300
+                            STATES[sym]["next_status_time"] = trade_time_sec + 600
     except Exception as e:
         print(f"⚠️ [讀取持倉失敗] {e}")
 
@@ -859,6 +1002,7 @@ async def check_exits(sym):
     # 動態停損：ATR × 2（開倉前2分鐘保護期 × 3）
     sl_mult = 3.0 if hold_sec < 120 else 2.0
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (p * 0.01)
+    sl_mult *= s.get("sl_atr_multiplier", 1.0) / 2.0
 
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
@@ -918,11 +1062,12 @@ async def check_exits(sym):
     is_strong = (is_long and s["current_rsi"] > 50) or (not is_long and s["current_rsi"] <= 50)
 
     # ATR TP/SL 價格 (兩條路線共用)
+    tp_multiplier = s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER)
     if is_long:
-        tp = avg + max(atr_val * TP_ATR_MULTIPLIER, avg * 0.003)
+        tp = avg + max(atr_val * tp_multiplier, avg * 0.003)
         sl = avg - (atr_val * sl_mult)
     else:
-        tp = avg - max(atr_val * TP_ATR_MULTIPLIER, avg * 0.003)
+        tp = avg - max(atr_val * tp_multiplier, avg * 0.003)
         sl = avg + (atr_val * sl_mult)
 
     # ── 保本鎖利與利潤防護機制 (Break-even & Capital Protection Lock) ──
@@ -1056,11 +1201,12 @@ async def check_position_exits(sym):
         return
 
     # 10% 硬停損
-    hard_sl = avg * HARD_STOP_LOSS_PCT
+    hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
+    hard_sl = avg * hard_sl_pct
     if (is_long and p <= avg - hard_sl) or (not is_long and p >= avg + hard_sl):
         cs = 'sell' if is_long else 'buy'
-        print(f"⛔ [10%停損] {sym}")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="10%停損", is_stop_loss=True)
+        print(f"⛔ [硬停損 {hard_sl_pct*100:.1f}%] {sym}")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"硬停損 {hard_sl_pct*100:.1f}%", is_stop_loss=True)
         return
 
     # 3x ATR 停利
@@ -1084,7 +1230,7 @@ async def check_position_exits(sym):
 async def execute_order(sym, side, price):
     s = STATES[sym]
     pk = paper_key(sym)
-    margin = compute_per_coin_margin()
+    margin = compute_per_coin_margin(sym)
     if margin <= 0:
         print(f"⚠️ [風控] {sym} 無可用保證金")
         return
@@ -1108,10 +1254,8 @@ async def execute_order(sym, side, price):
         print(f"⚠️ [風控] {sym} 數量過小 {base_amt:.6f}")
         return
 
-    if side == 'buy':
-        base_amt *= 0.5 if s["entry_count"] == 0 else 0.25
-    else:
-        base_amt *= 0.5 if s["entry_count"] == 0 else 0.25
+    allocation_pct = s.get("entry_size_pct", 0.5) if s["entry_count"] == 0 else s.get("add_entry_pct", 0.25)
+    base_amt *= allocation_pct
 
     if PAPER_TRADING:
         try:
@@ -1226,14 +1370,27 @@ def is_entry_pin_safe(sym, side):
 
 def is_entry_volume_confirmed(sym, side):
     s = STATES[sym]
-    if len(s["ohlcv"]) < 2:
+    if len(s["ohlcv"]) < 5:
         return False
     current_vol = s["current_vol"]
-    vol_ma20 = s["vol_ma20"]
-    if vol_ma20 <= 0:
+    
+    vols = [x[5] for x in s["ohlcv"][-5:]]
+    vol_ma5 = sum(vols) / len(vols)
+    if vol_ma5 <= 0:
         return False
-    if current_vol < vol_ma20 * VOLUME_RATIO_THRESHOLD:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] 當前量 {current_vol:.2f} < 均量門檻 {vol_ma20 * VOLUME_RATIO_THRESHOLD:.2f}")
+        
+    layer = s.get("layer", "核心趨勢層")
+    if layer == "投機與風險層":
+        volume_threshold = 1.4
+    elif layer == "高彈性動能層":
+        volume_threshold = 1.3
+    else:
+        volume_threshold = 1.1
+
+    threshold = vol_ma5 * volume_threshold * s.get("volume_multiplier", 1.0)
+    
+    if current_vol < threshold:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能不足] ({layer}) 當前量 {current_vol:.2f} < MA5門檻 {threshold:.2f} ({volume_threshold}x)")
         return False
     return True
 

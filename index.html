@@ -649,7 +649,7 @@
                         {{ formatMiniPrice(coin.price) }}
                     </span>
                     <button 
-                        v-if="allPositions[coin.symbol.replace('USDT', ':USDT')] && Math.abs(allPositions[coin.symbol.replace('USDT', ':USDT')].qty) > 0"
+                        v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0"
                         @click.stop="closePositionBySymbol(coin.symbol)"
                         class="btn btn-danger"
                         style="padding: 2px 6px; font-size: 10px; margin-top: 4px; border-radius: 4px; width: 100%;"
@@ -670,19 +670,20 @@
                     <table class="trades-table">
                         <thead>
                             <tr>
-                                <th>時間</th>
+                                <th>日期</th>
                                 <th>幣種</th>
                                 <th>方向</th>
-                                <th>價格</th>
+                                <th>成交價</th>
                                 <th>數量</th>
-                                <th>手續費</th>
+                                <th>總金額(USDT)</th>
+                                <th>手續費(USDT)</th>
                                 <th>未實現損益</th>
                                 <th>已實現損益 (%)</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="t in trades" :key="t.id">
+                            <tr v-for="t in sortedTrades" :key="t.id">
                                 <td>{{ formatTradeTime(t.time) }}</td>
                                 <td style="font-weight: bold;">{{ t.symbol.replace(':USDT', '').replace('USDT', '') }}</td>
                                 <td>
@@ -693,7 +694,8 @@
                                 </td>
                                 <td>{{ t.price }}</td>
                                 <td>{{ t.qty }}</td>
-                                <td>{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }} USDT</td>
+                                <td>{{ (t.price * Math.abs(t.qty)).toFixed(2) }}</td>
+                                <td style="color:#000000; font-size:70%;">{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }}</td>
                                 <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
                                     {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
                                     <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
@@ -707,7 +709,7 @@
                                     </span>
                                 </td>
                                 <td>
-                                    <button v-if="!t.is_close && canCloseTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
+                                    <button v-if="isOpenTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
                                 </td>
                             </tr>
                             <tr v-if="trades.length === 0">
@@ -885,7 +887,7 @@
 </div>
 
 <script>
-const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } = Vue;
 
 createApp({
     setup() {
@@ -897,6 +899,16 @@ createApp({
         const consoleRef = ref(null);
         const isPlacingOrder = ref(false);
         const trades = ref([]);
+        const sortedTrades = computed(() => {
+            return [...trades.value].sort((a, b) => {
+                const hasA = canCloseTrade(a) ? 1 : 0;
+                const hasB = canCloseTrade(b) ? 1 : 0;
+                if (hasA !== hasB) {
+                    return hasB - hasA;
+                }
+                return b.time - a.time;
+            });
+        });
         const liveTrades = ref([]);
         const tempTradeAmount = computed(() => parseFloat((bot.value.balance_quote || 0).toFixed(4)));
         const limitPrice = ref('');
@@ -921,19 +933,28 @@ createApp({
         const position = ref({ asset: '-', qty: 0, avg_price: 0, total_cost: 0, current_price: 0, current_value: 0, pnl: 0, pnl_percent: 0, realized_pnl: 0 });
 
         const customSymbol = ref('');
-        const addCustomCoin = () => {
+        const addCustomCoin = async () => {
             let s = customSymbol.value.trim().toUpperCase();
             if (!s) return;
             if (!s.endsWith('USDT')) s += 'USDT';
             if (!coins.value.find(c => c.symbol === s)) {
                 coins.value.push({ symbol: s, name: s.replace('USDT',''), label: '自訂', price: 0, prevPrice: 0, priceClass: '' });
+                try {
+                    const symbols = coins.value.map(c => c.symbol);
+                    await fetch(`${API_BASE}/bot-status/set-active-symbols`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbols: symbols })
+                    });
+                } catch(e) {}
                 // Reinitialize unified websocket to include the new custom coin
                 initWebSocket();
             }
             setActiveCoin(s);
             customSymbol.value = '';
         };
-        const coins = ref([
+        const savedCoins = localStorage.getItem('coins');
+        const coins = ref(savedCoins ? JSON.parse(savedCoins) : [
             { symbol: 'XRPUSDT', name: 'XRP', label: 'XRP', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'ADAUSDT', name: 'ADA', label: 'ADA', price: 0, prevPrice: 0, priceClass: '' },
@@ -945,7 +966,12 @@ createApp({
             { symbol: 'FETUSDT', name: 'FET', label: 'FET', price: 0, prevPrice: 0, priceClass: '' },
             { symbol: 'SUIUSDT', name: 'SUI', label: 'SUI', price: 0, prevPrice: 0, priceClass: '' }
         ]);
-        const activeSymbol = ref(localStorage.getItem('activeSymbol') || 'SUIUSDT');
+        const activeSymbol = ref(localStorage.getItem('activeSymbol') || (coins.value.length > 0 ? coins.value[0].symbol : 'SUIUSDT'));
+
+        watch(() => coins.value.map(c => c.symbol), () => {
+            localStorage.setItem('coins', JSON.stringify(coins.value));
+        }, { deep: true });
+
         const showAllTradesModal = ref(false);
         const allTradesHistory = ref([]);
 
@@ -1101,10 +1127,19 @@ createApp({
 
         const activeCoin = computed(() => coins.value.find(c => c.symbol === activeSymbol.value));
 
+        const getPositionInfo = (sym) => {
+            if (!sym) return null;
+            const cleanSym = sym.replace(':', '');
+            const colonSym = sym.includes(':') ? sym : sym.replace('USDT', ':USDT');
+            return allPositions.value[colonSym] || allPositions.value[cleanSym] || allPositions.value[sym] || null;
+        };
+
         const sortedCoins = computed(() => {
             return [...coins.value].sort((a, b) => {
-                const hasA = allPositions.value[a.symbol] ? 1 : 0;
-                const hasB = allPositions.value[b.symbol] ? 1 : 0;
+                const posA = getPositionInfo(a.symbol);
+                const posB = getPositionInfo(b.symbol);
+                const hasA = posA && Math.abs(posA.qty) > 0 ? 1 : 0;
+                const hasB = posB && Math.abs(posB.qty) > 0 ? 1 : 0;
                 if (hasA !== hasB) {
                     return hasB - hasA;
                 }
@@ -1615,18 +1650,24 @@ createApp({
             const cp = parseFloat(trade.current_price);
             if (cp > 0) return cp;
             const sym = trade.symbol.replace(':USDT', 'USDT');
+            const pos = getPositionInfo(trade.symbol);
+            if (pos && pos.current_price > 0) return pos.current_price;
+            const activeSymClean = activeSymbol.value.replace(':USDT', 'USDT');
+            if (sym === activeSymClean && position.value && position.value.current_price > 0) {
+                return position.value.current_price;
+            }
             const coin = coins.value.find(c => c.symbol === sym);
             return coin?.price || 0;
         };
 
         const getTradeUnrealizedPnl = (trade) => {
             if (trade.is_close) return 0;
-            const sym = trade.symbol.replace(':USDT', 'USDT');
-            const pos = allPositions.value[sym];
+            const pos = getPositionInfo(trade.symbol);
             if (!pos || Math.abs(pos.qty) < 0.001) return 0;
             const currentPrice = getTradeCurrentPrice(trade);
             if (currentPrice <= 0) return 0;
-            if (trade.isBuyer) return (currentPrice - trade.price) * trade.qty;
+            const isBuyer = trade.isBuyer !== undefined ? trade.isBuyer : trade.is_buyer;
+            if (isBuyer) return (currentPrice - trade.price) * trade.qty;
             return (trade.price - currentPrice) * trade.qty;
         };
 
@@ -1648,9 +1689,18 @@ createApp({
             return pnl / (trade.price * trade.qty) * 100;
         };
 
+        const isOpenTrade = (trade) => {
+            if (trade.is_close) return false;
+            const pos = getPositionInfo(trade.symbol);
+            if (!pos || Math.abs(pos.qty) === 0) return false;
+            // Find the most recent opening trade for this symbol
+            const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
+            return latestOpenTrade && latestOpenTrade.id === trade.id;
+        };
+
         const canCloseTrade = (trade) => {
-            const sym = trade.symbol.replace(':USDT', 'USDT');
-            return allPositions.value[sym] && Math.abs(allPositions.value[sym].qty) > 0;
+            const pos = getPositionInfo(trade.symbol);
+            return pos && Math.abs(pos.qty) > 0;
         };
 
         const closeTradePosition = async (trade) => {
@@ -1800,6 +1850,7 @@ createApp({
             fetchExchangeRate();
             fetchBotStatus();
             fetchPosition();
+            fetchAllPositions();
             fetchTrades();
             fetchOpenOrders();
             loadKlines();
@@ -1859,13 +1910,13 @@ createApp({
             currentCurrency, currentCurrencySymbol, twdRate,
             toggleCurrency, setActiveCoin,
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
-            bot, position, trades, liveTrades, error,
-            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
+            bot, position, trades, sortedTrades, liveTrades, error,
+            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
-            allPositions, openOrders,
+            allPositions, getPositionInfo, openOrders,
             showLogs,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
