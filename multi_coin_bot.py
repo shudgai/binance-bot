@@ -291,6 +291,29 @@ def load_coin_profiles():
 
 COIN_PROFILE_CONFIG = load_coin_profiles()
 
+LAST_CONFIG_MTIME = 0
+
+def check_and_reload_config():
+    global COIN_PROFILE_CONFIG, exit_mgr, LAST_CONFIG_MTIME
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_path, "config", "coin_profiles.json")
+    if os.path.exists(config_path):
+        try:
+            mtime = os.path.getmtime(config_path)
+            if LAST_CONFIG_MTIME == 0:
+                LAST_CONFIG_MTIME = mtime
+                return
+            if mtime > LAST_CONFIG_MTIME:
+                LAST_CONFIG_MTIME = mtime
+                new_config = load_coin_profiles()
+                if new_config:
+                    COIN_PROFILE_CONFIG.clear()
+                    COIN_PROFILE_CONFIG.update(new_config)
+                    # exit_mgr updates automatically because it shares the same dict reference
+                    print("🔄 [熱載入] 偵測到配置更新！已動態重新載入最新個性化交易參數 (MMP、止損比率等已同步)。")
+        except Exception as e:
+            print(f"⚠️ [熱載入] 檢查配置更新失敗: {e}")
+
 exit_mgr = ExitManager(COIN_PROFILE_CONFIG)
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -2993,6 +3016,7 @@ async def periodic_htf_update(exchange):
 async def periodic_status_log():
     while True:
         await asyncio.sleep(60)
+        check_and_reload_config()
         active = sum(1 for s in STATES.values() if s["status"] == "ACTIVE")
         cooldown = sum(1 for s in STATES.values() if s["status"] == "COOLDOWN")
         banned = sum(1 for s in STATES.values() if s["status"] == "BANNED")
