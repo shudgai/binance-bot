@@ -187,10 +187,12 @@ def analyze_trades(history_path):
     for symbol, trades in symbol_groups.items():
         total_trades = len(trades)
         
-        # Calculate Slippage Erosion
+        # Calculate Slippage Erosion / Friction Rate
         slippage_erosion_sum = 0.0
         slippage_valid_count = 0
         slippage_high_count = 0
+        
+        friction_rate_sum = 0.0
         
         # Calculate MMP Blocks
         mmp_blocks = 0
@@ -202,6 +204,19 @@ def analyze_trades(history_path):
         over_held_count = 0
 
         for trade in trades:
+            # Try loading friction_rate directly
+            friction_rate = trade.get("friction_rate")
+            if friction_rate is not None:
+                friction_rate_sum += friction_rate
+            else:
+                # Fallback: estimate friction rate from theoretical vs real or slippage
+                actual_val = trade.get("actual_entry", trade.get("entry_price", 1.0)) * trade.get("qty", 1.0)
+                slippage_val = trade.get("slippage", 0.0)
+                fees_val = trade.get("fees", 0.0)
+                est_friction = slippage_val * trade.get("qty", 1.0) + fees_val
+                friction_rate = (est_friction / actual_val) * 100 if actual_val > 0 else 0.0
+                friction_rate_sum += friction_rate
+
             # Theoretical vs Real profits
             theoretical = trade.get("Theoretical_Profit") or trade.get("theoretical_profit")
             real = trade.get("Real_Profit") or trade.get("real_profit") or trade.get("profit_pct", 0.0)
@@ -228,6 +243,7 @@ def analyze_trades(history_path):
                 over_held_count += 1
 
         avg_slippage_erosion = slippage_erosion_sum / slippage_valid_count if slippage_valid_count > 0 else 0.0
+        avg_friction_rate = friction_rate_sum / total_trades if total_trades > 0 else 0.0
         mmp_block_rate = mmp_blocks / total_trades if total_trades > 0 else 0.0
         win_rate = wins / total_trades if total_trades > 0 else 0.0
         over_held_rate = over_held_count / total_trades if total_trades > 0 else 0.0
@@ -239,6 +255,7 @@ def analyze_trades(history_path):
             "mmp_block_rate": mmp_block_rate,
             "win_rate": win_rate,
             "over_held_rate": over_held_rate,
+            "friction_rate": avg_friction_rate,
             "raw_trades": trades
         }
 
@@ -276,6 +293,7 @@ def generate_sector_report(analysis_results, current_config):
                 "win_rate_sum": 0.0,
                 "slippage_erosion_sum": 0.0,
                 "over_held_sum": 0.0,
+                "friction_rate_sum": 0.0,
                 "symbols_count": 0
             }
             
@@ -283,6 +301,7 @@ def generate_sector_report(analysis_results, current_config):
         sector_stats[sector]["win_rate_sum"] += metrics["win_rate"]
         sector_stats[sector]["slippage_erosion_sum"] += metrics["slippage_erosion"]
         sector_stats[sector]["over_held_sum"] += metrics["over_held_rate"]
+        sector_stats[sector]["friction_rate_sum"] += metrics.get("friction_rate", 0.0)
         sector_stats[sector]["symbols_count"] += 1
 
     report = {}
@@ -290,24 +309,26 @@ def generate_sector_report(analysis_results, current_config):
         avg_win_rate = stats["win_rate_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
         avg_slippage = stats["slippage_erosion_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
         avg_over_held = stats["over_held_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
+        avg_friction = stats["friction_rate_sum"] / stats["symbols_count"] if stats["symbols_count"] > 0 else 0.0
         
         # Sector Health Recommendation Rules
-        if avg_win_rate >= 0.60 and avg_slippage <= 0.05:
+        if avg_win_rate >= 0.60 and avg_friction <= 0.30:
             rec = "增加權重 (這是目前最穩健的獲利來源)"
-        elif avg_win_rate >= 0.50 and avg_slippage <= 0.10:
+        elif avg_win_rate >= 0.50 and avg_friction <= 0.60:
             rec = "繼續擴張 (表現良好，維持常規交易)"
-        elif avg_slippage > 0.08:
-            rec = "提高 MMP 門檻 (滑價損耗過高，減少無意義的交易)"
+        elif avg_friction >= 0.80:
+            rec = "提高 MMP 門檻 (滑價與手續費損耗高，防守線拉緊)"
         elif avg_over_held > 0.30:
             rec = "調低獲利目標 (過度持倉高，防守線拉緊)"
         else:
-            rec = "微調觀察 (勝率偏低或滑價普通，建議保守交易)"
+            rec = "微調觀察 (勝率偏低或摩擦率高，建議保守交易)"
             
         report[sector] = {
             "total_trades": stats["total_trades"],
             "win_rate": avg_win_rate,
             "slippage_erosion": avg_slippage,
             "over_held_rate": avg_over_held,
+            "friction_rate": avg_friction,
             "recommendation": rec
         }
     return report
@@ -356,6 +377,37 @@ def optimize_strategy(analysis_results, current_config, sector_report):
                     "confidence": confidence,
                     "reasoning": f"Increasing num_splits for {symbol} because Slippage_Erosion reached {slippage_erosion:.1%} over the last {total_trades} trades (Sector: {symbol_sector})"
                 })
+
+        # --- 新增：基於「摩擦力佔比 (Friction Rate)」的動態 MMP 調整公式 (第一階段) ---
+        friction_rate = metrics.get("friction_rate", 0.0)
+        # 若摩擦力大於 0.8% (高摩擦警報)：自動將 MMP 提高 15%，以過濾掉可能被磨損的手續費微利單
+        if friction_rate >= 0.8:
+            suggested_mmp = current_mmp * 1.15
+            applied_mmp = clamp_parameter_change(current_mmp, suggested_mmp, is_int=False)
+            confidence = calculate_confidence(total_trades, min(1.0, friction_rate / 2.0))
+            suggestions.append({
+                "parameter": "mmp",
+                "issue": "High Friction Cost Warning",
+                "current": current_mmp,
+                "suggested": suggested_mmp,
+                "applied": applied_mmp,
+                "confidence": confidence,
+                "reasoning": f"Increasing mmp for {symbol} by 15% because average friction rate is high ({friction_rate:.2f}%) over the last {total_trades} trades. (Blocking high friction micro trades)"
+            })
+        # 若摩擦力小於 0.3% (極佳流動性)：代表磨損很小，可以調低 MMP 10% 以捕捉更多微小獲利機會
+        elif friction_rate < 0.3 and win_rate >= 0.50:
+            suggested_mmp = current_mmp * 0.90
+            applied_mmp = clamp_parameter_change(current_mmp, suggested_mmp, is_int=False)
+            confidence = calculate_confidence(total_trades, win_rate)
+            suggestions.append({
+                "parameter": "mmp",
+                "issue": "Excellent Liquidity / Low Friction",
+                "current": current_mmp,
+                "suggested": suggested_mmp,
+                "applied": applied_mmp,
+                "confidence": confidence,
+                "reasoning": f"Decreasing mmp for {symbol} by 10% because average friction rate is very low ({friction_rate:.2f}%) and win rate is stable ({win_rate:.1%}) over the last {total_trades} trades."
+            })
 
         # 2. High MMP Block Rate -> Decrease mmp by 10%
         if mmp_block_rate > 0.70:
@@ -486,12 +538,12 @@ def main():
     # 2. Sector Health Diagnostics (賽道戰報)
     sector_report = generate_sector_report(analysis_results, current_config)
     print("\n📊 Sector Health Report (賽道戰報):")
-    print("-" * 105)
-    print(f"{'Sector (賽道)':<15} | {'Trades':<6} | {'Avg Win Rate':<12} | {'Avg Slippage':<12} | {'Avg Over-held':<13} | {'Action Recommendation':<30}")
-    print("-" * 105)
+    print("-" * 115)
+    print(f"{'Sector (賽道)':<15} | {'Trades':<6} | {'Avg Win Rate':<12} | {'Avg Friction':<12} | {'Avg Over-held':<13} | {'Action Recommendation':<30}")
+    print("-" * 115)
     for sector, metrics in sector_report.items():
-        print(f"{sector:<15} | {metrics['total_trades']:<6} | {metrics['win_rate']:<12.2%} | {metrics['slippage_erosion']:<12.2%} | {metrics['over_held_rate']:<13.2%} | {metrics['recommendation']}")
-    print("-" * 105)
+        print(f"{sector:<15} | {metrics['total_trades']:<6} | {metrics['win_rate']:<12.2%} | {metrics['friction_rate']:<12.2%} | {metrics['over_held_rate']:<13.2%} | {metrics['recommendation']}")
+    print("-" * 115)
 
     # 3. Run optimization logic
     optimizations = optimize_strategy(analysis_results, current_config, sector_report)

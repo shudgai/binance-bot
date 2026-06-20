@@ -160,11 +160,31 @@ PAPER_TRADING = True
 TIMEFRAME = '1m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_history.json")
 
-def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0):
+def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
+                        expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0, fees=0.0, qty=0.0):
     """
     將每筆交易的結果記錄到 trade_history.json 中，供 AI 後續分析。
+    包含預期價格、實際價格與摩擦損耗（Friction Rate）。
     """
     history_file = TRADE_HISTORY_FILE
+    
+    # 計算進場與出場的滑價 (Slippage)
+    entry_slippage = abs(actual_entry - expected_entry) if expected_entry > 0 else 0.0
+    exit_slippage = abs(actual_exit - expected_exit) if expected_exit > 0 else 0.0
+    total_slippage = entry_slippage + exit_slippage
+    
+    # 計算總摩擦力 (Total Friction = 總滑價金額 + 手續費)
+    # 滑價金額 = (進場滑價 * 數量) + (出場滑價 * 數量)
+    slippage_cost = total_slippage * qty if qty > 0 else 0.0
+    total_friction = slippage_cost + fees
+    
+    # 計算摩擦力佔比 (Friction Rate) - 佔總交易金額 (進場價值) 的百分比
+    total_value = actual_entry * qty if (actual_entry > 0 and qty > 0) else 1.0
+    friction_rate = (total_friction / total_value) * 100 if total_value > 0 else 0.0
+
+    # 計算理想狀態下的獲利與實際獲利落差
+    # 理想獲利 = (預期出場 - 預期進場) * 數量 (買多為正，做空相反)
+    # 實際獲利百分比 profit_pct 已經由外部傳入
     
     # 準備要記錄的數據
     trade_data = {
@@ -175,7 +195,16 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "profit_pct": round(profit_pct, 4), # 實質獲利百分比
         "max_profit_reached": round(max_profit_reached, 4), # 最高觸及獲利
         "atr_at_exit": round(current_atr, 6),
-        "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol" # 自動標記市場環境
+        "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol", # 自動標記市場環境
+        "expected_entry": round(expected_entry, 6),
+        "expected_exit": round(expected_exit, 6),
+        "actual_entry": round(actual_entry, 6),
+        "actual_exit": round(actual_exit, 6),
+        "fees": round(fees, 4),
+        "qty": round(qty, 4),
+        "slippage": round(total_slippage, 6),
+        "friction_rate": round(friction_rate, 4), # 摩擦力佔比 %
+        "theoretical_profit": round((expected_exit - expected_entry)/expected_entry if expected_entry > 0 else 0.0, 4)
     }
 
     # 讀取現有紀錄
@@ -197,7 +226,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
     try:
         with open(history_file, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=4, ensure_ascii=False)
-        print(f"📝 [Memory] 已記錄 {symbol} 的交易結果。")
+        print(f"📝 [Memory] 已記錄 {symbol} 的交易結果 (Friction Rate: {friction_rate:.2f}%)。")
     except Exception as e:
         print(f"⚠️ [Memory] 紀錄 {symbol} 失敗: {e}")
 
@@ -844,6 +873,7 @@ def build_symbol_state(sym):
         "trailing_activation": conf.get("trailing_activation", 0.03), # 獲利達幾%啟動 (預設 3%)
         "trailing_distance_atr": conf.get("trailing_distance_atr", 1.2), # 回撤多少ATR平倉 (預設 1.2倍)
         "sector": conf.get("sector", "Speculative"), # 預設賽道標籤
+        "expected_entry_price": 0.0, # 記錄觸發委託時的預期進場價格
         "personality": "balanced",
         "personality_source": "infer",
         "last_personality_update": 0.0,
@@ -1178,6 +1208,7 @@ def reset_coin_state(sym):
     s["hard_stop_loss_pct"] = 0.02
     s["personality"] = "balanced"
     s["personality_source"] = "infer"
+    s["expected_entry_price"] = 0.0
     s["last_personality_update"] = 0.0
     s["last_entry_time"] = 0.0
     s["last_flip_time"] = 0.0
@@ -1635,13 +1666,25 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if remaining < 0.01:
         if remaining > 0.000001:
             print(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
+            
+        # 計算手續費 (買入與賣出雙邊手續費，預設 0.04% 幣安合約 VIP0 費率或個性化)
+        # 用於實體摩擦力計算
+        trade_value = (s.get("avg_price", price) + price) * qty
+        approx_fees = trade_value * 0.0004
+        
         record_trade_result(
             symbol=sym,
             entry_reason=s.get("entry_reason", "UNKNOWN"),
             exit_reason=full_reason,
             profit_pct=profit_pct,
             current_atr=s.get("current_atr", 0.0),
-            max_profit_reached=s.get("highest_profit_pct", 0.0)
+            max_profit_reached=s.get("highest_profit_pct", 0.0),
+            expected_entry=s.get("expected_entry_price", s.get("avg_price", price)),
+            expected_exit=price, # 觸發平倉時的現價視為預期出場價
+            actual_entry=s.get("avg_price", price),
+            actual_exit=price if PAPER_TRADING else (engine.final_avg_fill_price if 'engine' in locals() else price),
+            fees=approx_fees,
+            qty=qty
         )
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
         reset_coin_state(sym)
@@ -2178,6 +2221,7 @@ async def execute_order(sym, side, price, route="UNKNOWN"):
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["entry_count"] += 1
+            s["expected_entry_price"] = price # 記錄預期進場價
             direction = "做多" if side == 'buy' else "做空"
             print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT)")
         except Exception as e:
@@ -2242,6 +2286,7 @@ async def execute_order(sym, side, price, route="UNKNOWN"):
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["entry_count"] += 1
+            s["expected_entry_price"] = price # 記錄預期進場價
             s["last_flip_time"] = now
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
