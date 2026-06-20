@@ -232,5 +232,94 @@
         "profit_pct": 0.0166,
         "atr_at_exit": 0.001879,
         "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 10:53:25",
+        "symbol": "EPICUSDT",
+        "entry_reason": "Exhaustion_Entry",
+        "exit_reason": "[微利] Layer_1_Volume_Divergence",
+        "profit_pct": 0.0079,
+        "atr_at_exit": 0.00305,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 11:26:50",
+        "symbol": "BICOUSDT",
+        "entry_reason": "UNKNOWN",
+        "exit_reason": "[大虧] [Trend_Follow]",
+        "profit_pct": -0.0335,
+        "max_profit_reached": 0.0,
+        "atr_at_exit": 0.002963,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 11:43:21",
+        "symbol": "HEIUSDT",
+        "entry_reason": "UNKNOWN",
+        "exit_reason": "[微利] Layer_5_Stagnation_Full_MicroProfit",
+        "profit_pct": 0.0054,
+        "max_profit_reached": 0.0054,
+        "atr_at_exit": 0.003471,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 12:01:07",
+        "symbol": "TAOUSDT",
+        "entry_reason": "UNKNOWN",
+        "exit_reason": "[打平] ATR_STOP_LOSS (2.0x)",
+        "profit_pct": -0.0018,
+        "max_profit_reached": 0.0,
+        "atr_at_exit": 0.187143,
+        "market_mode": "High_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 12:06:17",
+        "symbol": "FETUSDT",
+        "entry_reason": "a",
+        "exit_reason": "[打平] ATR_STOP_LOSS (2.0x)",
+        "profit_pct": -0.0016,
+        "max_profit_reached": 0.0,
+        "atr_at_exit": 0.000143,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 12:23:06",
+        "symbol": "EPICUSDT",
+        "entry_reason": "Exhaustion_Entry",
+        "exit_reason": "[微利] TREND_REVERSAL_TAKE_PROFIT",
+        "profit_pct": 0.0093,
+        "max_profit_reached": 0.0093,
+        "atr_at_exit": 0.003014,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 12:31:17",
+        "symbol": "BELUSDT",
+        "entry_reason": "a",
+        "exit_reason": "[大虧] [Trend_Follow]",
+        "profit_pct": -0.0129,
+        "max_profit_reached": 0.0034,
+        "atr_at_exit": 0.001321,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 12:40:35",
+        "symbol": "FETUSDT",
+        "entry_reason": "Exhaustion_Entry",
+        "exit_reason": "[小虧] ATR_STOP_LOSS (2.0x)",
+        "profit_pct": -0.0037,
+        "max_profit_reached": 0.0026,
+        "atr_at_exit": 0.000243,
+        "market_mode": "Low_Vol"
+    },
+    {
+        "timestamp": "2026-06-20 12:52:02",
+        "symbol": "ARBUSDT",
+        "entry_reason": "Exhaustion_Entry",
+        "exit_reason": "[微利] Layer_5_Stagnation_Full_MicroProfit",
+        "profit_pct": 0.006,
+        "max_profit_reached": 0.006,
+        "atr_at_exit": 0.00045,
+        "market_mode": "Low_Vol"
     }
 ]
