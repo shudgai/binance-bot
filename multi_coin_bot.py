@@ -1450,6 +1450,72 @@ def has_strong_momentum(sym, is_long):
         return volume_ratio > 1.2 and s["close_price"] > s.get("bb_mid", 0.0) and s["current_rsi"] > 52 and s.get("macd_hist", 0.0) > 0 and recent_return > 0.005
     return volume_ratio > 1.2 and s["close_price"] < s.get("bb_mid", 0.0) and s["current_rsi"] < 48 and s.get("macd_hist", 0.0) < 0 and recent_return < -0.005
 
+def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
+                        expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0, fees=0.0, qty=0.0):
+    """
+    將每筆交易的結果記錄到 trade_history.json 中，並生成 AI 友好的經驗摘要。
+    """
+    history_file = TRADE_HISTORY_FILE
+    
+    entry_slippage = abs(actual_entry - expected_entry) if expected_entry > 0 else 0.0
+    exit_slippage = abs(actual_exit - expected_exit) if expected_exit > 0 else 0.0
+    total_slippage = entry_slippage + exit_slippage
+    slippage_cost = total_slippage * qty if qty > 0 else 0.0
+    total_friction = slippage_cost + fees
+    total_value = actual_entry * qty if (actual_entry > 0 and qty > 0) else 1.0
+    friction_rate = (total_friction / total_value) * 100 if total_value > 0 else 0.0
+
+    pnl_tag = "[大賺]" if profit_pct > 0.01 else "[微利]" if profit_pct > 0.002 else "[打平]" if profit_pct > -0.002 else "[小虧]" if profit_pct > -0.01 else "[大虧]"
+    
+    is_anomaly = False
+    if "Layer_1" in exit_reason or "Breakout" in exit_reason:
+        is_anomaly = True
+    if friction_rate > 0.4:
+        is_anomaly = True
+
+    summary = f"{pnl_tag} {symbol} 透過 {exit_reason} 出場。獲利 {profit_pct*100:.2f}%，摩擦力 {friction_rate:.2f}%。"
+    if is_anomaly:
+        summary += " (⚠️ 異常交易，需重點關注)"
+
+    trade_data = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": symbol,
+        "entry_reason": entry_reason or "UNKNOWN",
+        "exit_reason": exit_reason,
+        "profit_pct": round(profit_pct, 4),
+        "max_profit_reached": round(max_profit_reached, 4),
+        "atr_at_exit": round(current_atr, 6),
+        "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol",
+        "expected_entry": round(expected_entry, 6),
+        "expected_exit": round(expected_exit, 6),
+        "actual_entry": round(actual_entry, 6),
+        "actual_exit": round(actual_exit, 6),
+        "fees": round(fees, 4),
+        "qty": round(qty, 4),
+        "slippage": round(total_slippage, 6),
+        "friction_rate": round(friction_rate, 4),
+        "theoretical_profit": round((expected_exit - expected_entry)/expected_entry if expected_entry > 0 else 0.0, 4),
+        "ai_summary": summary
+    }
+
+    if os.path.exists(history_file):
+        with open(history_file, 'r', encoding='utf-8') as f:
+            try:
+                history = json.load(f)
+                if not isinstance(history, list): history = []
+            except: history = []
+    else:
+        history = []
+
+    history.append(trade_data)
+
+    try:
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=4, ensure_ascii=False)
+        print(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
+    except Exception as e:
+        print(f"⚠️ [AI Memory] 紀錄失敗: {e}")
+
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
     s["adjusted_this_tick"] = True
