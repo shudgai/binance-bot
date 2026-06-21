@@ -2047,10 +2047,10 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # 動態量能門檻：空單要求「放量下跌」，多單維持原本 0.8
-    vol_factor = s.get("volume_threshold_factor", 0.8)
+    # 動態量能門檻：空單要求「放量下跌」，多單降至 0.5
+    vol_factor = s.get("volume_threshold_factor", 0.5)
     if side == 'sell':
-        vol_factor = 1.2  # 嚴格要求空單必須大於 20MA 的 1.2 倍
+        vol_factor = 0.8  # 空單要求大於 20MA 的 0.8 倍
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
@@ -2125,10 +2125,10 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.4: # 原 0.6，放寬至允許 40% 的極低波動
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.25: # 原 0.6，放寬至允許 25% 的極低波動
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.003: # 原 0.005，放寬至布林帶寬度 0.3%
+    if bb_width_pct > 0 and bb_width_pct < 0.0015: # 原 0.005，放寬至布林帶寬度 0.15%
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
     if not is_entry_pin_safe(sym, side):
@@ -2144,12 +2144,12 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 8: # 原 10，放寬 ADX 趨勢強度門檻
+    if adx_val < 5: # 原 10，大幅放寬 ADX 趨勢強度門檻
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
         return False
 
     # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
-    min_volume = s["vol_ma20"] * 0.1
+    min_volume = s["vol_ma20"] * 0.05
     if s["current_vol"] < min_volume:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
         return False
@@ -2161,10 +2161,10 @@ def compute_signal_strength(sym):
         return (None, 0)
 
     # --- 新增 C：動能/成交量過濾 ---
-    # 確保當前 K 線成交量不要低得離譜 (放寬至 0.3 倍均量即可通過)
+    # 確保當前 K 線成交量不要低得離譜 (放寬至 0.15 倍均量即可通過)
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
-    if vol_ma10 > 0 and current_vol < vol_ma10 * 0.3:
+    if vol_ma10 > 0 and current_vol < vol_ma10 * 0.15:
         return (None, 0)
 
     rsi = s["current_rsi"]
