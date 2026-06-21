@@ -2131,7 +2131,7 @@ async def execute_order(sym, side, price):
         last_entry_price = s.get("last_entry_price", s.get("avg_price", 0.0))
         if last_entry_price > 0 and current_atr > 0:
             price_diff = abs(price - last_entry_price)
-            if price_diff < 1.5 * current_atr:
+            if price_diff < 1.2 * current_atr:
                 print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {1.5 * current_atr:.4f}")
                 return
                 
@@ -2153,8 +2153,9 @@ async def execute_order(sym, side, price):
             return
             
         # 確保動能擴張 (MACD 柱線絕對值變長)
-        if abs(macd_hist) <= abs(prev_macd_hist):
-            print(f"🛑 [動能關卡] {sym} MACD動能未擴張 (Hist: {abs(macd_hist):.5f} <= Prev: {abs(prev_macd_hist):.5f})，拒絕加倉!")
+        # 允許動能微幅縮減 (只要沒有大幅衰退 > 30%)
+        if abs(macd_hist) < abs(prev_macd_hist) * 0.7:
+            print(f"🛑 [動能關卡] {sym} MACD動能大幅衰竭 (Hist: {abs(macd_hist):.5f} < Prev: {abs(prev_macd_hist):.5f}*0.7)，拒絕加倉!")
             return
 
         # 3. 原有的保本檢查
@@ -2169,12 +2170,16 @@ async def execute_order(sym, side, price):
     
     # 2. 遞減式金字塔加倉比例 (Decreasing Allocation)
     if s["entry_count"] == 0:
-        allocation_pct = 0.50  # 首倉 50%
+        allocation_pct = 0.40  # 首倉 40%
     elif s["entry_count"] == 1:
         allocation_pct = 0.30  # 次倉 30%
     else:
-        allocation_pct = 0.20  # 再倉 20%
+        allocation_pct = 0.30  # 再倉 30%
     base_notional = target_notional * allocation_pct
+    
+    # 最低加倉門檻保護 (確保滿足幣安合約最小下單金額 5~10 USDT)
+    if base_notional < 10.0 and margin * lev >= 10.0:
+        base_notional = 10.0
     
     # 3. 最大名義價值限制與風險關卡 (Risk Check)
     balance = get_balance()
@@ -2791,9 +2796,13 @@ async def check_entries():
         last_trade_side = s.get("last_trade_side", "")
         if last_trade_side != "" and side != last_trade_side:
             flip_elapsed = time.time() - s.get("last_trade_time", 0)
-            min_flip = s.get("min_flip_time", 900)  # 嚴格方向鎖定：由 300 秒延長至 15 分鐘 (900秒)
+            # 動態冷卻：如果上次是停損出場，代表趨勢已逆轉，允許更快的反手 (縮短為 60 秒)
+            last_exit = s.get("last_exit_reason", "")
+            is_stop_loss = "Stop" in last_exit or "Loss" in last_exit or "Trailing" in last_exit or "Momentum_Fade" in last_exit
+            min_flip = 60 if is_stop_loss else s.get("min_flip_time", 900)
+            
             if flip_elapsed < min_flip:
-                print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s)，禁止頻繁反手。")
+                print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s, 原因:{last_exit})，禁止頻繁反手。")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
