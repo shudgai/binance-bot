@@ -1018,9 +1018,14 @@ def mark_exit(sym, is_stop_loss=False, reason=""):
     s = STATES[sym]
     now = time.time()
     s["status"] = "COOLDOWN"
-    s["next_status_time"] = now + COOLDOWN_SEC
-    s["status_reason"] = f"冷卻中 (5分鐘) - {reason}"
-    print(f"⏳ [狀態] {sym} 平倉 ({reason}) ({reason}) → COOLDOWN 5分鐘")
+    
+    # 動態靜默期：一般平倉 5 分鐘，停損 30 分鐘
+    actual_cooldown = 1800 if is_stop_loss else 300
+    s["next_status_time"] = now + actual_cooldown
+    
+    cd_min = actual_cooldown // 60
+    s["status_reason"] = f"冷卻中 ({cd_min}分鐘) - {reason}"
+    print(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN {cd_min}分鐘")
     if is_stop_loss:
         s["stop_count"] += 1
         if s["stop_count"] == 1:
@@ -2131,12 +2136,31 @@ async def execute_order(sym, side, price):
                 print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
                 return
             
+        # [加倉防護 4] 方向確認 (確保不在逆勢接刀)
+        if len(s.get("ohlcv", [])) >= 2:
+            current_close = s["ohlcv"][-1][4]
+            prev_close = s["ohlcv"][-2][4]
+            if side == 'buy' and current_close <= prev_close:
+                print(f"🛑 [方向確認] {sym} 多單加倉失敗，當前收盤價未高於前K線，拒絕接刀！")
+                return
+            if side == 'sell' and current_close >= prev_close:
+                print(f"🛑 [方向確認] {sym} 空單加倉失敗，當前收盤價未低於前K線，拒絕接刀！")
+                return
+
         # 1. 空間關卡 (Space Check): 距離上一次加倉是否大於 1.5 * ATR
         current_atr = s.get("current_atr", 0.0)
         last_entry_price = s.get("last_entry_price", s.get("avg_price", 0.0))
         if last_entry_price > 0 and current_atr > 0:
             price_diff = abs(price - last_entry_price)
-            if price_diff < max(1.2 * current_atr, price * 0.002):
+                    # 動態空間門檻 (依幣種性格)
+        personality = s.get("personality", "balanced")
+        if personality in ["trend_follower", "breakout_chaser"]: # Core_Trend
+            floor_pct = 0.004
+        elif personality in ["mean_reversion", "contrarian"]: # Speculative
+            floor_pct = 0.002
+        else: # High_Beta / Balanced
+            floor_pct = 0.003
+        if price_diff < max(1.5 * current_atr, price * floor_pct):
                 print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {1.5 * current_atr:.4f}")
                 return
                 
