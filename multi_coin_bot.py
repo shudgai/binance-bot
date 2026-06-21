@@ -2220,10 +2220,10 @@ async def execute_order(sym, side, price):
             if s["entry_count"] > 1:
                 new_avg = s["avg_price"]
                 if side == 'buy':
-                    new_breakeven = new_avg * 1.001
+                    new_breakeven = new_avg * 1.002
                     s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), new_breakeven)
                 else:
-                    new_breakeven = new_avg * 0.999
+                    new_breakeven = new_avg * 0.998
                     if s.get("trailing_stop_price", 0.0) == 0.0:
                         s["trailing_stop_price"] = new_breakeven
                     else:
@@ -2271,10 +2271,10 @@ async def execute_order(sym, side, price):
             if s["entry_count"] > 1:
                 new_avg = s["avg_price"]
                 if side == 'buy':
-                    new_breakeven = new_avg * 1.001 # 涵蓋手續費
+                    new_breakeven = new_avg * 1.002 # 涵蓋手續費與更多緩衝
                     s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), new_breakeven)
                 else:
-                    new_breakeven = new_avg * 0.999
+                    new_breakeven = new_avg * 0.998
                     if s.get("trailing_stop_price", 0.0) == 0.0:
                         s["trailing_stop_price"] = new_breakeven
                     else:
