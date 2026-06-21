@@ -2,7 +2,8 @@
 cd /home/shudgai999/project/binance-bot || exit 1
 SESSION="binance_bot"
 PID_FILE="/tmp/multi_coin_bot.pid"
-LOCK_FILE="/tmp/binance_bot_single_instance.lock"
+DIR_NAME=$(basename "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")
+LOCK_FILE="/tmp/binance_bot_single_instance_${DIR_NAME}.lock"
 
 stopped=false
 

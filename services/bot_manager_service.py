@@ -264,7 +264,8 @@ def kill_bot():
 
     # 移除單例鎖定檔，避免已終止程序遺留鎖定導致新進程啟動失敗
     try:
-        os.remove("/tmp/binance_bot_single_instance.lock")
+        dir_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        os.remove(f"/tmp/binance_bot_single_instance_{dir_name}.lock")
     except FileNotFoundError:
         pass
     except Exception:

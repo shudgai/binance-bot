@@ -196,7 +196,7 @@
             .left-panel.tab-active, .right-panel.tab-active { display: flex; }
             .coin-strip { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 10px 14px; gap: 8px; scrollbar-width: none; }
             .coin-strip::-webkit-scrollbar { display: none; }
-            .coin-chip { flex-shrink: 0; padding: 8px 14px; font-size: 13px; min-width: 58px; text-align: center; }
+            .coin-chip { flex-shrink: 0; padding: 8px 14px; font-size: 13px; min-width: 70px; text-align: center; white-space: nowrap; }
             .price-hero-value { font-size: 26px; }
             .chart-section { flex: none; }
             #chart-container { height: 280px !important; min-height: 280px; }
@@ -244,6 +244,7 @@
             border: 1px solid var(--border-color); background: #ffffff;
             cursor: pointer; font-size: 12px; font-weight: 700; transition: all 0.2s;
             display: flex; flex-direction: column; align-items: center; gap: 2px;
+            white-space: nowrap;
         }
         .coin-chip:hover { border-color: rgba(0,0,0,0.2); background: #f3f4f6; transform: translateY(-1px); }
         .coin-chip.active {
@@ -1613,64 +1614,55 @@ createApp({
             for (const w of wsConnections) { try { w.close(); } catch(e) {} }
             wsConnections.length = 0;
 
+            if (coins.value.length === 0) return;
+
             wsFallbackTimeout = setTimeout(() => {
                 const hasAnyPrice = coins.value.some(c => c.price > 0);
                 if (!hasAnyPrice) startHTTPFallback();
             }, 8000);
 
-            let connected = 0, failed = 0;
-            for (const coin of coins.value) {
-                const sym = coin.symbol.toLowerCase();
-                const w = new WebSocket(`wss://fstream.binance.com/ws/${sym}@ticker`);
-                w._coinSymbol = coin.symbol;
-                w.onopen = () => { connected++; };
-                w.onerror = () => { failed++; };
-                w.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        if (data.e === '24hrTicker' && data?.s) {
-                            if (wsFallbackTimeout) { clearTimeout(wsFallbackTimeout); wsFallbackTimeout = null; }
-                            if (isUsingFallback) { isUsingFallback = false; clearInterval(fallbackInterval); addLog('⚡ WebSocket 恢復'); }
-                            const c = coins.value.find(x => x.symbol === data.s);
-                            if (c) {
-                                c.prevPrice = c.price;
-                                c.price = parseFloat(data.c);
-                                if (c.prevPrice > 0) {
-                                    c.priceClass = c.price > c.prevPrice ? 'up' : c.price < c.prevPrice ? 'down' : '';
-                                    setTimeout(() => { c.priceClass = ''; }, 400);
-                                }
-                                if (data.s === activeSymbol.value) {
-                                    updateLatestCandle(data.s, c.price);
-                                    if (position.value.qty > 0) {
-                                        position.value.current_price = c.price;
-                                        position.value.current_value = position.value.qty * c.price;
-                                        position.value.pnl = position.value.current_value - position.value.total_cost;
-                                        position.value.pnl_percent = position.value.total_cost > 0 ? (position.value.pnl / position.value.total_cost) * 100 : 0;
-                                    }
+            const streams = coins.value.map(c => `${c.symbol.toLowerCase()}@ticker`).join('/');
+            const url = `wss://fstream.binance.com/stream?streams=${streams}`;
+            const w = new WebSocket(url);
+            
+            w.onopen = () => { /* connection success */ };
+            w.onerror = () => { /* connection error */ };
+            w.onmessage = (event) => {
+                try {
+                    const raw = JSON.parse(event.data);
+                    const data = raw.data || raw;
+                    if (data.e === '24hrTicker' && data?.s) {
+                        if (wsFallbackTimeout) { clearTimeout(wsFallbackTimeout); wsFallbackTimeout = null; }
+                        if (isUsingFallback) { isUsingFallback = false; clearInterval(fallbackInterval); addLog('⚡ WebSocket 恢復'); }
+                        const c = coins.value.find(x => x.symbol === data.s);
+                        if (c) {
+                            c.prevPrice = c.price;
+                            c.price = parseFloat(data.c);
+                            if (c.prevPrice > 0) {
+                                c.priceClass = c.price > c.prevPrice ? 'up' : c.price < c.prevPrice ? 'down' : '';
+                                setTimeout(() => { c.priceClass = ''; }, 400);
+                            }
+                            if (data.s === activeSymbol.value) {
+                                updateLatestCandle(data.s, c.price);
+                                if (position.value.qty > 0) {
+                                    position.value.current_price = c.price;
+                                    position.value.current_value = position.value.qty * c.price;
+                                    position.value.pnl = position.value.current_value - position.value.total_cost;
+                                    position.value.pnl_percent = position.value.total_cost > 0 ? (position.value.pnl / position.value.total_cost) * 100 : 0;
                                 }
                             }
                         }
-                    } catch(e) {}
-                };
-                w.onclose = () => {
-                    failed++;
-                    setTimeout(() => {
-                        if (!isUsingFallback) {
-                            const idx = wsConnections.indexOf(w);
-                            if (idx > -1) { wsConnections.splice(idx, 1); }
-                            const nw = new WebSocket(`wss://fstream.binance.com/ws/${sym}@ticker`);
-                            nw._coinSymbol = coin.symbol;
-                            // re-assign same event handlers
-                            nw.onopen = w.onopen;
-                            nw.onerror = w.onerror;
-                            nw.onmessage = w.onmessage;
-                            nw.onclose = w.onclose;
-                            wsConnections.push(nw);
-                        }
-                    }, 10000);
-                };
-                wsConnections.push(w);
-            }
+                    }
+                } catch(e) {}
+            };
+            w.onclose = () => {
+                setTimeout(() => {
+                    if (!isUsingFallback) {
+                        initWebSocket();
+                    }
+                }, 10000);
+            };
+            wsConnections.push(w);
         };
 
         // Backend logs sync

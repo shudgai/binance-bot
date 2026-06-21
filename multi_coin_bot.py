@@ -37,7 +37,7 @@ def send_alert(message):
     except Exception as e:
         print(f"⚠️ [通知失敗] 無法發送 Telegram 訊息: {e}")
 
-LOCK_FILE = "/tmp/binance_bot_single_instance.lock"
+LOCK_FILE = f"/tmp/binance_bot_single_instance_{os.path.basename(os.path.dirname(os.path.abspath(__file__)))}.lock"
 lock_file_handle = None
 
 
@@ -1373,6 +1373,9 @@ async def load_open_positions():
     if not PAPER_TRADING:
         return
     try:
+        if not os.path.exists("paper_state.json"):
+            with open("paper_state.json", "w") as f:
+                json.dump({"balance_usdt": 150.0, "session_start_balance": 150.0, "positions": {}, "trades": []}, f, indent=4)
         with open("paper_state.json", "r") as f:
             state = json.load(f)
             

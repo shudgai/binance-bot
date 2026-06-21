@@ -1,15 +1,14 @@
 {
   "symbols": [
-    "BTCUSDT",
-    "ETHUSDT",
-    "BNBUSDT",
     "TAOUSDT",
-    "BICOUSDT",
     "EPICUSDT",
-    "SYNUSDT",
-    "BELUSDT",
-    "ALICEUSDT",
     "EIGENUSDT",
-    "AXSUSDT"
+    "REUSDT",
+    "BICOUSDT",
+    "SYNUSDT",
+    "AXSUSDT",
+    "ALICEUSDT",
+    "BELUSDT",
+    "SANDUSDT"
   ]
 }
