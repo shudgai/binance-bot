@@ -1,110 +1,102 @@
 {
-    "BELUSDT": {
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "volume_threshold_factor": 1.8,
-        "breakeven_trigger": 0.6,
-        "min_flip_time": 300,
-        "mtf_filter": true,
-        "profile_type": "High_Beta_Momentum",
-        "leverage": 4,
-        "k_factor": 2.0,
-        "sector": "Speculative",
-        "mmp": 0.006
-    },
-    "BICOUSDT": {
-        "sector": "Speculative",
-        "trailing_activation": 0.05,
-        "trailing_distance_atr": 1.5,
-        "mmp": 0.004,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+    "TAOUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     },
     "EPICUSDT": {
-        "sector": "Speculative",
-        "mmp": 0.0032,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
-    },
-    "SYNUSDT": {
-        "sector": "Speculative",
-        "mmp": 0.0032,
-        "num_splits": 7,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
-    },
-    "TAOUSDT": {
-        "sector": "AI",
-        "trailing_activation": 0.03,
-        "trailing_distance_atr": 1.0,
-        "mmp": 0.004,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
-    },
-    "ALICEUSDT": {
-        "sector": "Speculative",
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     },
     "EIGENUSDT": {
-        "sector": "Speculative",
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
+    },
+    "REUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
+    },
+    "BICOUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
+    },
+    "SYNUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     },
     "AXSUSDT": {
-        "sector": "Speculative",
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     },
-    "BTCUSDT": {
-        "mmp": 0.004,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "sector": "BlueChip",
-        "description": "Bitcoin - Core Asset",
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+    "ALICEUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     },
-    "ETHUSDT": {
-        "mmp": 0.004,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "sector": "BlueChip",
-        "description": "Ethereum - Core Asset",
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+    "BELUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     },
-    "BNBUSDT": {
-        "mmp": 0.004,
-        "volume_threshold_factor": 1.8,
-        "sl_atr_multiplier": 2.5,
-        "sector": "BlueChip",
-        "description": "Binance Coin - Core Asset",
-        "tp_atr_multiplier": 3.0,
-        "k_factor": 2.0,
-        "mtf_filter": true
+    "SANDUSDT": {
+        "sl_atr_multiplier": 4.0,
+        "tp_atr_multiplier": 8.0,
+        "volume_threshold_factor": 2.5,
+        "breakeven_trigger": 0.8,
+        "profile_type": "Wild",
+        "leverage": 2,
+        "mmp": 0.01,
+        "volatility_circuit_breaker": true
     }
 }

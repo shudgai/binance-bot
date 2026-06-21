@@ -120,7 +120,11 @@ if __name__ == "__main__":
     # 測試用的幣種清單 (未來可改為讀取 bot_symbols.json)
     try:
         with open('bot_symbols.json', 'r') as f:
-            test_symbols = json.load(f)
+            data = json.load(f)
+            if isinstance(data, dict):
+                test_symbols = data.get("symbols", [])
+            else:
+                test_symbols = data
     except FileNotFoundError:
         test_symbols = ["BTCUSDT", "SOLUSDT", "SUIUSDT", "HUSDT", "PEPEUSDT"]
         

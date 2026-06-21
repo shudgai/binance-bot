@@ -158,6 +158,7 @@ exchange_spot = ccxtpro.binance({
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '1m'
+MAX_GLOBAL_DRAWDOWN_PCT = 0.10  # 總帳戶浮動損益虧損超過 10% 時觸發
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_history.json")
 
 def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
@@ -616,6 +617,108 @@ def save_symbol_profiles(profiles):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return normalized_profiles
+
+
+def clean_for_serialization(val):
+    if isinstance(val, dict):
+        return {k: clean_for_serialization(v) for k, v in val.items()}
+    elif isinstance(val, (list, tuple)):
+        return [clean_for_serialization(x) for x in val]
+    elif hasattr(val, "tolist"): # numpy array or scalar
+        return val.tolist()
+    elif isinstance(val, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(val)
+    elif isinstance(val, (np.floating, np.float64, np.float32, np.float16)):
+        if np.isinf(val):
+            return "inf" if val > 0 else "-inf"
+        elif np.isnan(val):
+            return "nan"
+        return float(val)
+    elif isinstance(val, np.bool_):
+        return bool(val)
+    elif isinstance(val, float):
+        if np.isinf(val):
+            return "inf" if val > 0 else "-inf"
+        elif np.isnan(val):
+            return "nan"
+        return val
+    return val
+
+def restore_deserialized_value(val):
+    if isinstance(val, dict):
+        return {k: restore_deserialized_value(v) for k, v in val.items()}
+    elif isinstance(val, list):
+        return [restore_deserialized_value(x) for x in val]
+    elif val == "inf":
+        return float('inf')
+    elif val == "-inf":
+        return float('-inf')
+    elif val == "nan":
+        return float('nan')
+    return val
+
+def save_current_states():
+    """將目前的交易狀態持久化到檔案"""
+    try:
+        exclude_keys = {
+            "adjusted_this_tick", "last_trade_price", "last_trade_qty",
+            "ohlcv", "closes", "tr_list", "atr_history", "trade_qty_history",
+            "trade_price_history", "pnl_history", "current_atr", "atr_ma20",
+            "current_rsi", "ema20", "ema50", "macd_line", "macd_signal",
+            "macd_hist", "prev_macd_line", "prev_macd_signal", "bb_up",
+            "bb_mid", "bb_low", "vol_ma10", "vol_ma20", "current_vol",
+            "prev_close"
+        }
+        save_data = {}
+        for sym, s in STATES.items():
+            symbol_data = {}
+            for k, v in s.items():
+                if k in exclude_keys:
+                    continue
+                # 遞迴清理 numpy 型別以避免 JSON 序列化失敗
+                symbol_data[k] = clean_for_serialization(v)
+            save_data[sym] = symbol_data
+        
+        temp_file = "current_states.json.tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, indent=4, ensure_ascii=False)
+        os.replace(temp_file, "current_states.json")
+    except Exception as e:
+        print(f"⚠️ [狀態持久化失敗] {e}")
+
+def load_saved_states():
+    """從檔案讀取之前的交易狀態"""
+    if os.path.exists("current_states.json"):
+        try:
+            with open("current_states.json", "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                for sym, data in saved_data.items():
+                    if sym in STATES:
+                        # 遞迴恢復特殊浮點數
+                        restored_data = restore_deserialized_value(data)
+                        # 更新現有的狀態資料
+                        STATES[sym].update(restored_data)
+                        print(f"🔄 [狀態恢復] 已從檔案恢復 {sym} 的狀態。")
+            return True
+        except Exception as e:
+            print(f"⚠️ [狀態恢復失敗] {e}")
+    return False
+
+
+async def close_all_positions_emergency():
+    """緊急狀況：平倉所有持倉"""
+    print("🚨 [緊急防護] 觸發全域止損，正在執行全平所有持倉...")
+    open_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) > 0.000001]
+    
+    for sym in open_syms:
+        s = STATES[sym]
+        side = 'sell' if s["qty"] > 0 else 'buy'
+        # 使用市價平倉 (呼叫 close_position)
+        # 傳入 is_stop_loss=True 繞過 MMP 獲利門檻限制，強制平倉
+        await close_position(sym, side, abs(s["qty"]), s["close_price"], s["avg_price"], 
+                              reason="GLOBAL_EMERGENCY_STOP", is_stop_loss=True)
+    print("✅ [緊急防護] 所有持倉已執行平倉。")
+
 
 
 def infer_symbol_personality(sym):
@@ -1720,6 +1823,9 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         s["qty"] = round_step(raw_qty, prec['step_size'])
         print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
 
+    save_current_states() 
+    print(f"💾 [狀態已備份] {sym} 平倉完成。")
+
 
 def should_recover_from_reversal(sym, is_long):
     s = STATES[sym]
@@ -2317,6 +2423,9 @@ async def execute_order(sym, side, price, route="UNKNOWN"):
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
 
+    save_current_states()
+    print(f"💾 [狀態已備份] {sym} 開倉成功。")
+
 def is_entry_pin_safe(sym, side):
     s = STATES[sym]
     if len(s["ohlcv"]) < 2:
@@ -2908,6 +3017,7 @@ async def main_loop(exchange):
         print(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
     await fetch_real_balance()
     await load_open_positions()
+    load_saved_states()
     
     # --- 新增：啟動時從交易所同步未成交活躍訂單 (防斷電防遺忘對帳機制) ---
     if not PAPER_TRADING and EXECUTION_ENGINE is not None:
@@ -2938,6 +3048,36 @@ async def main_loop(exchange):
                 STATES[sym]["adjusted_this_tick"] = False
             await update_market_wind(exchange)
             await fetch_all_klines(exchange)
+
+            # --- 新增：全域風險檢查 (在 K 線獲取完成後執行，確保 close_price 精確) ---
+            total_pnl_usdt = 0.0
+            active_positions = 0
+            for sym in ALL_SYMBOLS:
+                s = STATES[sym]
+                if abs(s["qty"]) > 0.000001:
+                    active_positions += 1
+                    p = s["close_price"]
+                    avg = s["avg_price"]
+                    qty = abs(s["qty"])
+                    if s["qty"] > 0:
+                        total_pnl_usdt += (p - avg) * qty
+                    else:
+                        total_pnl_usdt += (avg - p) * qty
+            
+            if active_positions > 0:
+                balance = get_balance()
+                total_pnl_pct = total_pnl_usdt / balance if balance > 0 else 0.0
+                
+                # 如果總體浮動虧損百分比達到或超過 MAX_GLOBAL_DRAWDOWN_PCT (例如 -10%)
+                if total_pnl_pct <= -MAX_GLOBAL_DRAWDOWN_PCT:
+                    print(f"🚨 [全域風險警告] 目前持倉總體虧損: {total_pnl_pct*100:.2f}% (門檻: -{MAX_GLOBAL_DRAWDOWN_PCT*100:.2f}%, 虧損金額: {total_pnl_usdt:.2f} USDT, 帳戶餘額: {balance:.2f} USDT)")
+                    await close_all_positions_emergency()
+                    
+                    # 進入系統保護休息狀態，讓市場回穩
+                    print("⏳ [系統保護] 已觸發全域止損，機器人進入 10 分鐘休息模式...")
+                    await asyncio.sleep(600)
+                    continue
+            # ----------------------------------------------------------------------
             for sym in ALL_SYMBOLS:
                 try:
                     compute_indicators(sym)
@@ -2972,6 +3112,8 @@ async def main_loop(exchange):
 
             # 權重節流檢測
             weight_sleep = check_binance_weight()
+
+            save_current_states() 
 
             elapsed = time.time() - loop_start
             sleep_time = max(1.5, MAIN_LOOP_INTERVAL_SEC - elapsed) + weight_sleep
