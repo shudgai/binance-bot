@@ -1736,10 +1736,14 @@ createApp({
                                 }
                                 if (data.s === activeSymbol.value) {
                                     updateLatestCandle(data.s, c.price);
-                                    if (position.value.qty > 0) {
+                                    if (Math.abs(position.value.qty) > 0) {
                                         position.value.current_price = c.price;
-                                        position.value.current_value = position.value.qty * c.price;
-                                        position.value.pnl = position.value.current_value - position.value.total_cost;
+                                        position.value.current_value = Math.abs(position.value.qty) * c.price;
+                                        if (position.value.qty > 0) {
+                                            position.value.pnl = position.value.current_value - position.value.total_cost;
+                                        } else {
+                                            position.value.pnl = position.value.total_cost - position.value.current_value;
+                                        }
                                         position.value.pnl_percent = position.value.total_cost > 0 ? (position.value.pnl / position.value.total_cost) * 100 : 0;
                                     }
                                 }
