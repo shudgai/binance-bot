@@ -684,7 +684,7 @@ PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
-SL_ATR_MULTIPLIER = 1.0
+SL_ATR_MULTIPLIER = 2.5
 TP_ATR_MULTIPLIER = 3.0
 HARD_STOP_LOSS_PCT = 0.015
 
@@ -2710,6 +2710,11 @@ async def check_entries():
         if side_strength[0] is None:
             continue
         side, strength, route = side_strength
+        
+        # [AI Action 3] 環境過濾：大盤多頭時禁止做空山寨幣
+        if side == "sell" and MARKET_WIND.get("btc_trend") == "BULL":
+            print(f"🛑 [大盤過濾] {sym} 訊號為空，但 BTC 處於上漲趨勢 (BULL)，禁止逆勢做空！")
+            continue
         
         # --- 方向鎖定 (Direction Lock) ---
         if has_position and side != current_direction:
