@@ -2099,8 +2099,9 @@ async def execute_order(sym, side, price):
             floor_pct = 0.002
         else: # High_Beta / Balanced
             floor_pct = 0.003
-        if price_diff < max(1.5 * current_atr, price * floor_pct):
-                print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {1.5 * current_atr:.4f}")
+        threshold = max(1.5 * current_atr, price * floor_pct)
+        if price_diff < threshold:
+                print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {threshold:.4f}")
                 return
                 
         # 2. 動能關卡 (Momentum Check): 量能與 MACD 雙重確認
@@ -2214,6 +2215,21 @@ async def execute_order(sym, side, price):
             s["last_entry_time"] = now
             s["last_entry_price"] = price
             s["entry_count"] += 1
+            
+            # --- 動態保本上推 (Dynamic Breakeven) ---
+            if s["entry_count"] > 1:
+                new_avg = s["avg_price"]
+                if side == 'buy':
+                    new_breakeven = new_avg * 1.001
+                    s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), new_breakeven)
+                else:
+                    new_breakeven = new_avg * 0.999
+                    if s.get("trailing_stop_price", 0.0) == 0.0:
+                        s["trailing_stop_price"] = new_breakeven
+                    else:
+                        s["trailing_stop_price"] = min(s.get("trailing_stop_price", 0.0), new_breakeven)
+                print(f"🛡️ [動態停損] {sym} 加倉成功，停損點移至 {s['trailing_stop_price']:.6f} 確保保本")
+                
             direction = "做多" if side == 'buy' else "做空"
             print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT)")
         except Exception as e:
@@ -2250,6 +2266,20 @@ async def execute_order(sym, side, price):
             s["last_entry_price"] = price
             s["entry_count"] += 1
             s["last_flip_time"] = now
+            
+            # --- 動態保本上推 (Dynamic Breakeven) ---
+            if s["entry_count"] > 1:
+                new_avg = s["avg_price"]
+                if side == 'buy':
+                    new_breakeven = new_avg * 1.001 # 涵蓋手續費
+                    s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), new_breakeven)
+                else:
+                    new_breakeven = new_avg * 0.999
+                    if s.get("trailing_stop_price", 0.0) == 0.0:
+                        s["trailing_stop_price"] = new_breakeven
+                    else:
+                        s["trailing_stop_price"] = min(s.get("trailing_stop_price", 0.0), new_breakeven)
+                print(f"🛡️ [動態停損] {sym} 實盤加倉成功，停損點移至 {s['trailing_stop_price']:.6f} 確保保本")
             
             # --- 混合停損: 交易所掛單 (Stop Market) ---
             try:
