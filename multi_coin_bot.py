@@ -761,6 +761,7 @@ def build_symbol_state(sym):
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
 apply_all_symbol_profiles()
 WATCH_TASKS = {}
+request_semaphore = asyncio.Semaphore(5)
 
 # ── 指標計算函數 ──────────────────────────────────────────────
 
@@ -1049,6 +1050,7 @@ def reset_coin_state(sym):
     s["trail_tp_price"] = 0.0
     s["entry_count"] = 0
     s["avg_entry_price"] = 0.0
+    s["first_entry_price"] = 0.0
     s["max_additional_entries"] = 2
     s["entry_cooldown_sec"] = 90
     s["entry_size_pct"] = 0.5
@@ -1151,10 +1153,12 @@ async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SI
             await asyncio.sleep(pause_sec)
 
 async def fetch_all_klines(exchange):
-    tasks = {}
-    for sym in ALL_SYMBOLS:
-        tasks[sym] = exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
-    results = await asyncio.gather(*[tasks[sym] for sym in ALL_SYMBOLS], return_exceptions=True)
+    async def fetch_with_sem(sym):
+        async with request_semaphore:
+            return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
+            
+    tasks = {sym: fetch_with_sem(sym) for sym in ALL_SYMBOLS}
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     for i, sym in enumerate(ALL_SYMBOLS):
         if not isinstance(results[i], Exception):
             STATES[sym]["ohlcv"] = results[i]
@@ -1164,7 +1168,8 @@ async def fetch_all_klines(exchange):
 
 async def fetch_sma200_15m(exchange, sym):
     try:
-        ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=200)
+        async with request_semaphore:
+            ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=200)
         closes = np.array([x[4] for x in ohlcv])
         return float(np.mean(closes))
     except Exception as e:
@@ -1180,7 +1185,8 @@ async def fetch_all_sma200(exchange):
 
 async def fetch_ema50_1h(exchange, sym):
     try:
-        ohlcv = await exchange.fetch_ohlcv(sym, '1h', limit=100)
+        async with request_semaphore:
+            ohlcv = await exchange.fetch_ohlcv(sym, '1h', limit=100)
         if not ohlcv or len(ohlcv) == 0:
             return 0.0
         closes = np.array([x[4] for x in ohlcv])
@@ -1412,6 +1418,14 @@ def has_strong_momentum(sym, is_long):
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
+
+    try:
+        await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
+    finally:
+        s["adjusted_this_tick"] = False
+
+async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
+    s = STATES[sym]
     s["adjusted_this_tick"] = True
     if abs(s["qty"]) < 0.000001:
         return
@@ -1469,6 +1483,13 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
     if remaining < 0.01:
         if remaining > 0.000001:
             print(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
+        if s.get("exchange_stop_order_id") and not PAPER_TRADING:
+            try:
+                await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
+                print(f"✅ [止損單取消] {sym} 部位已全平，撤銷交易所止損單")
+            except Exception as ce:
+                print(f"⚠️ [取消止損單失敗] {sym}: {ce}")
+                
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
         reset_coin_state(sym)
     else:
@@ -1476,6 +1497,22 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
         raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
         s["qty"] = round_step(raw_qty, prec['step_size'])
         print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
+        
+        if s.get("exchange_stop_order_id") and not PAPER_TRADING:
+            try:
+                await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
+                stop_side = 'sell' if s["qty"] > 0 else 'buy'
+                hard_sl_pct = s.get("hard_stop_loss_pct", 0.02)
+                stop_price = s["avg_price"] * (1 - hard_sl_pct) if s["qty"] > 0 else s["avg_price"] * (1 + hard_sl_pct)
+                stop_price = round_step(stop_price, prec['tick_size'])
+                new_stop = await exchange_futures.create_order(
+                    sym, type='STOP_MARKET', side=stop_side, amount=abs(s["qty"]),
+                    params={'stopPrice': stop_price, 'reduceOnly': True}
+                )
+                s["exchange_stop_order_id"] = new_stop['id']
+                print(f"🛡️ [止損單更新] {sym} 部分平倉後更新止損單 @ {stop_price} (數量: {abs(s['qty'])})")
+            except Exception as ce:
+                print(f"⚠️ [更新止損單失敗] {sym}: {ce}")
 
 
 def should_recover_from_reversal(sym, is_long):
@@ -1517,7 +1554,15 @@ async def check_exits(sym):
     # 高波動期縮短保護盲區到 20 秒，低波動維持 60 秒
     cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
     if hold_sec < cooldown_limit:
-        return
+        # 防插針量能檢查
+        current_vol = s.get("current_vol", 0.0)
+        vol_ma20 = s.get("vol_ma20", 1.0)
+        vol_ratio = current_vol / vol_ma20 if vol_ma20 > 0 else 1.0
+        
+        if vol_ratio > 2.5:
+            print(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
+        else:
+            return
 
     p = s["close_price"]
     avg = s["avg_price"]
@@ -1542,9 +1587,22 @@ async def check_exits(sym):
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     breakeven_threshold = max(entry_atr_pct * 0.6, 0.0015)
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
-        sl = avg * 1.0015 if is_long else avg * 0.9985
+        atr_half = s.get("current_atr", atr_val) * 0.5
+        sl = avg + atr_half if is_long else avg - atr_half
     else:
         sl = avg - sl_dist if is_long else avg + sl_dist
+
+    # --- 停損同步 (Trailing SL Sync) - Philosophy B+ ---
+    if s.get("entry_count", 0) > 0:
+        first_entry = s.get("first_entry_price", avg)
+        atr_half = s.get("current_atr", atr_val) * 0.5
+        
+        if is_long:
+            sl_floor = first_entry - atr_half
+            sl = max(sl, sl_floor)
+        else:
+            sl_floor = first_entry + atr_half
+            sl = min(sl, sl_floor)
 
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
@@ -1636,24 +1694,51 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             return
 
-    if s["highest_profit_pct"] >= tier3_target and profit_pct < s["highest_profit_pct"] * (0.8 if is_trend_ok else 0.6):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [大行情鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>4ATR)，觸發大行情回撤平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]")
-        s["highest_profit_pct"] = 0.0
-        return
-    elif s["highest_profit_pct"] >= tier2_target and profit_pct < s["highest_profit_pct"] * (0.7 if is_trend_ok else 0.5):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [中利鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>2.5ATR)，回落至 {profit_pct*100:.3f}% 平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-        s["highest_profit_pct"] = 0.0
-        return
-    elif s["highest_profit_pct"] >= tier1_target and profit_pct < s["highest_profit_pct"] * 0.5:
-        cs = 'sell' if is_long else 'buy'
-        print(f"🛡️ [基本鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>1.5ATR)，回落至 {profit_pct*100:.3f}% 保護平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
-        s["highest_profit_pct"] = 0.0
-        return
+    if not is_strong:
+        macd_hist_expanding = False
+        if len(s.get("ohlcv", [])) >= 34:
+            closes = np.array([x[4] for x in s["ohlcv"]])
+            try:
+                # We can compute MACD or just use a simple heuristic if calculate_macd isn't accessible
+                # Let's rely on s["macd_hist"] and assume we can approximate expansion
+                pass
+            except:
+                pass
+        
+        # Simplified momentum expansion check without recalculating MACD arrays:
+        # We assume if the current price is continuing the trend powerfully, momentum is expanding.
+        # But better: calculate_macd returns 5 values (macd, signal, hist, prev_macd, prev_sig) in this codebase!
+        # Wait, the codebase has `calculate_macd(closes)` returning `macd_line, macd_signal, macd_hist, prev_macd_line, prev_macd_signal`.
+        # So we can calculate it:
+        try:
+            closes = np.array([x[4] for x in s["ohlcv"]])
+            _, _, m_hist, p_line, p_sig = calculate_macd(closes)
+            p_hist = p_line - p_sig
+            macd_hist_expanding = abs(m_hist) > abs(p_hist)
+        except:
+            macd_hist_expanding = False
+
+        if s["highest_profit_pct"] >= tier3_target and profit_pct < s["highest_profit_pct"] * (0.8 if is_trend_ok else 0.6):
+            if macd_hist_expanding:
+                print(f"⚡ [強勢保留] {sym} 獲利達大行情水準，雖回撤20%但動能仍在擴張，暫不鎖利！")
+            else:
+                cs = 'sell' if is_long else 'buy'
+                print(f"🛡️ [大行情鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>4ATR)，觸發大行情回撤平倉")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]")
+                s["highest_profit_pct"] = 0.0
+                return
+        elif s["highest_profit_pct"] >= tier2_target and profit_pct < s["highest_profit_pct"] * (0.7 if is_trend_ok else 0.5):
+            cs = 'sell' if is_long else 'buy'
+            print(f"🛡️ [中利鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>2.5ATR)，回落至 {profit_pct*100:.3f}% 平倉")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
+            s["highest_profit_pct"] = 0.0
+            return
+        elif s["highest_profit_pct"] >= tier1_target and profit_pct < s["highest_profit_pct"] * 0.5:
+            cs = 'sell' if is_long else 'buy'
+            print(f"🛡️ [基本鎖利] {sym} 獲利達 {s['highest_profit_pct']*100:.3f}%(>1.5ATR)，回落至 {profit_pct*100:.3f}% 保護平倉")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Take_Profit]")
+            s["highest_profit_pct"] = 0.0
+            return
 
     # 取消固定百分比停利，改由移動停損 (Trailing Stop) 統一接管，以利捕捉最大波段
 
@@ -1860,7 +1945,11 @@ async def execute_order(sym, side, price):
             await exchange_futures.set_leverage(lev, convert_to_ccxt_symbol(sym))
         except Exception as e:
             print(f"⚠️ [槓桿設定失敗] {sym}: {e}")
+            
     margin = compute_per_coin_margin(sym)
+    
+
+
     if margin <= 0:
         print(f"⚠️ [風控] {sym} 無可用保證金")
         return
@@ -1883,33 +1972,102 @@ async def execute_order(sym, side, price):
         if now - s["last_entry_time"] < s["entry_cooldown_sec"]:
             print(f"⏳ [加倉冷卻] {sym} 距離上次加倉不足 {s['entry_cooldown_sec']} 秒")
             return
-        if s["entry_count"] >= s["max_additional_entries"]:
-            print(f"⚠️ [加倉上限] {sym} 已達最大加倉次數")
+        if s["entry_count"] >= 3:
+            print(f"⚠️ [加倉上限] {sym} 已達絕對層數上限 (3層)")
             return
+            
+        # 動能斜率判斷: 最近兩根K線的漲跌幅度是否縮小
+        if len(s.get("ohlcv", [])) >= 3:
+            c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
+            c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
+            body1 = abs(c1[4] - c1[1])
+            body2 = abs(c2[4] - c2[1])
+            vol1 = c1[5]
+            vol2 = c2[5]
+            
+            is_bull1 = c1[4] > c1[1]
+            is_bull2 = c2[4] > c2[1]
+            
+            if side == 'buy' and is_bull1 and is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
+                print(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                return
+            if side == 'sell' and not is_bull1 and not is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
+                print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                return
+            
+        # 1. 空間關卡 (Space Check): 距離上一次加倉是否大於 1.5 * ATR
+        current_atr = s.get("current_atr", 0.0)
+        last_entry_price = s.get("last_entry_price", s.get("avg_price", 0.0))
+        if last_entry_price > 0 and current_atr > 0:
+            price_diff = abs(price - last_entry_price)
+            if price_diff < 1.5 * current_atr:
+                print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {1.5 * current_atr:.4f}")
+                return
+                
+        # 2. 動能關卡 (Momentum Check): 量能與 MACD 雙重確認
+        if not is_entry_volume_confirmed(sym, side):
+            print(f"🛑 [動能關卡] {sym} 量能不足以支持加倉!")
+            return
+            
+        macd_line = s.get("macd_line", 0.0)
+        macd_signal = s.get("macd_signal", 0.0)
+        prev_macd_line = s.get("prev_macd_line", 0.0)
+        prev_macd_signal = s.get("prev_macd_signal", 0.0)
+        macd_hist = macd_line - macd_signal
+        prev_macd_hist = prev_macd_line - prev_macd_signal
+        
+        # 確保方向一致
+        if (side == 'buy' and macd_hist <= 0) or (side == 'sell' and macd_hist >= 0):
+            print(f"🛑 [動能關卡] {sym} MACD動能不一致 (Hist: {macd_hist:.4f})，拒絕加倉!")
+            return
+            
+        # 確保動能擴張 (MACD 柱線絕對值變長)
+        if abs(macd_hist) <= abs(prev_macd_hist):
+            print(f"🛑 [動能關卡] {sym} MACD動能未擴張 (Hist: {abs(macd_hist):.5f} <= Prev: {abs(prev_macd_hist):.5f})，拒絕加倉!")
+            return
+
+        # 3. 原有的保本檢查
         if s["avg_price"] > 0 and s["close_price"] > 0:
             profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - s["close_price"]) / s["avg_price"]
             if profit_pct < 0.001:
-                print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
+                print(f"🛑 [保本關卡] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
                 return
 
     # 1. 計算目標名義價值 (保證金 * 槓桿倍數)
     target_notional = margin * lev
     
-    # 2. 套用性格分配比例 (首倉 vs 加倉)
-    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
+    # 2. 遞減式金字塔加倉比例 (Decreasing Allocation)
+    if s["entry_count"] == 0:
+        allocation_pct = 0.50  # 首倉 50%
+    elif s["entry_count"] == 1:
+        allocation_pct = 0.30  # 次倉 30%
+    else:
+        allocation_pct = 0.20  # 再倉 20%
     base_notional = target_notional * allocation_pct
     
-    # 3. 最大名義價值限制 (防極端爆倉)
-    max_notional = 1000.0  # 絕對最大名義價值 1000 USDT
+    # 3. 最大名義價值限制與風險關卡 (Risk Check)
+    max_notional = min(1000.0, balance * 0.3)  # 絕對最大名義價值 1000 USDT
     if base_notional > max_notional:
         base_notional = max_notional
         
-    # 4. 真實可用餘額二次檢查
-    # 如果要求的保證金 (名義價值 / 槓桿) 大於當前真實可用餘額，則向下修正
+    # 4. 資金關卡與餘額檢查 (Capital Check)
     balance = get_balance()
     required_margin = base_notional / lev
-    if required_margin > balance * 0.98:
-        base_notional = (balance * 0.98) * lev
+    
+    if not PAPER_TRADING:
+        try:
+            bal = await exchange_futures.fetch_balance()
+            free_usdt = float(bal.get("USDT", {}).get("free", 0.0))
+            # 資金關卡：確保加倉後系統依然保留總資金 10% 的可用餘額做為緩衝
+            safe_free_usdt = max(0.0, free_usdt - (balance * 0.2))
+            if required_margin > safe_free_usdt:
+                print(f"⚠️ [資金關卡] {sym} 扣除 20% 緩衝後，安全餘額 {safe_free_usdt:.2f} < 所需保證金 {required_margin:.2f}，自動降至安全餘額下單！")
+                base_notional = safe_free_usdt * lev
+        except Exception as e:
+            print(f"⚠️ [餘額檢查失敗] {e}")
+    else:
+        if required_margin > balance * 0.98:
+            base_notional = (balance * 0.98) * lev
 
     # 5. 轉換為幣種數量並進行精度修剪
     base_amt = base_notional / price
@@ -1936,17 +2094,21 @@ async def execute_order(sym, side, price):
         try:
             update_paper_state(pk, side, price, base_amt)
             if side == 'buy':
+                prev_qty = abs(s["qty"])
                 s["qty"] += base_amt
             else:
+                prev_qty = abs(s["qty"])
                 s["qty"] -= base_amt
+            
             if s["avg_price"] <= 0:
                 s["avg_price"] = price
-                s["entry_atr"] = s.get("current_atr", 0.0)
+                s["entry_atr"] = max(s.get("current_atr", 0.0), fill_price * 0.005 if "fill_price" in locals() else price * 0.005)
             else:
-                s["avg_price"] = ((s["avg_price"] * abs(s["qty"] - base_amt)) + (price * base_amt)) / abs(s["qty"])
+                s["avg_price"] = ((s["avg_price"] * prev_qty) + (price * base_amt)) / abs(s["qty"])
             s["open_time"] = now
             s["last_buy_time"] = now
             s["last_entry_time"] = now
+            s["last_entry_price"] = price
             s["entry_count"] += 1
             direction = "做多" if side == 'buy' else "做空"
             print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT)")
@@ -1974,15 +2136,41 @@ async def execute_order(sym, side, price):
                 
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
-                s["entry_atr"] = s.get("current_atr", 0.0)
+                s["entry_atr"] = max(s.get("current_atr", 0.0), fill_price * 0.005 if "fill_price" in locals() else price * 0.005)
             else:
                 s["avg_price"] = ((s["avg_price"] * abs(old_qty)) + (fill_price * base_amt)) / abs(s["qty"])
                 
             s["open_time"] = now
             s["last_buy_time"] = now
             s["last_entry_time"] = now
+            s["last_entry_price"] = price
             s["entry_count"] += 1
             s["last_flip_time"] = now
+            
+            # --- 混合停損: 交易所掛單 (Stop Market) ---
+            try:
+                stop_side = 'sell' if s["qty"] > 0 else 'buy'
+                hard_sl_pct = s.get("hard_stop_loss_pct", 0.02)
+                stop_price = s["avg_price"] * (1 - hard_sl_pct) if s["qty"] > 0 else s["avg_price"] * (1 + hard_sl_pct)
+                prec = await get_contract_precision(sym)
+                stop_price = round_step(stop_price, prec['tick_size'])
+                
+                if s.get("exchange_stop_order_id"):
+                    try:
+                        await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
+                    except Exception as ce:
+                        print(f"⚠️ [取消舊止損單失敗] {sym}: {ce}")
+                
+                stop_order = await exchange_futures.create_order(
+                    sym, type='STOP_MARKET', side=stop_side, amount=abs(s["qty"]),
+                    params={'stopPrice': stop_price, 'reduceOnly': True}
+                )
+                s["exchange_stop_order_id"] = stop_order['id']
+                print(f"🛡️ [交易所掛單] {sym} 成功掛出 Stop Market 止損單 @ {stop_price} (數量: {abs(s['qty'])})")
+            except Exception as se:
+                print(f"🚨 [交易所止損掛單失敗] {sym}: {se}")
+            # ----------------------------------------
+            
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
 
@@ -2047,10 +2235,10 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # 動態量能門檻：空單要求「放量下跌」，多單降至 0.5
-    vol_factor = s.get("volume_threshold_factor", 0.5)
+    # 動態量能門檻：放寬模式 (由 1.1/1.2 調降至 1.0)
+    vol_factor = s.get("volume_threshold_factor", 1.0)
     if side == 'sell':
-        vol_factor = 0.8  # 空單要求大於 20MA 的 0.8 倍
+        vol_factor = 1.0
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
@@ -2066,8 +2254,8 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * s.get("current_atr", 0.0)
     
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    if rr_ratio < 1.49: # 原為 1.99，放寬至盈虧比 1.5 即可進場
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 1.5 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
+    if rr_ratio < 1.99:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.0 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
 
     return True
@@ -2245,9 +2433,7 @@ def compute_signal_strength(sym):
     rsi_ok_long = rsi > 45.0 or (rsi >= 40.0 and (long_macd_cross or macd_hist > 0))
     rsi_ok_short = rsi < 55.0 or (rsi <= 60.0 and (short_macd_cross or macd_hist < 0))
 
-    # Route A (Trend Following): 簡化版 - 只需4個核心條件
-    # 1. MACD確認 2. K線方向 3. RSI動能(寬鬆) 4. EMA20合理範圍
-    # 移除SMA200要求，允許更多進場機會
+    # Route A (Trend Following): 嚴格版 - 需要 SMA200 長線確認
     
     # --- 優化：加入趨勢加分機制 ---
     # 如果方向與 EMA50 趨勢一致，加 5 分，否則扣 5 分
@@ -2263,6 +2449,7 @@ def compute_signal_strength(sym):
         trend_score = 0
 
     route_a_long = (
+        is_above_sma200 and
         (long_macd_cross or macd_hist > 0) and 
         last_two_candles_long and 
         rsi_ok_long and 
@@ -2270,6 +2457,7 @@ def compute_signal_strength(sym):
     )
     
     route_a_short = (
+        is_below_sma200 and
         (short_macd_cross or macd_hist < 0) and 
         last_two_candles_short and 
         rsi_ok_short and 
@@ -2494,10 +2682,18 @@ async def check_entries():
     candidates.sort(key=lambda x: -x[2])
     print(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
-    for i in range(min(remaining_slots, len(candidates))):
-        sym, side, _, route = candidates[i]
+    for sym, side, strength, route in candidates:
         s = STATES[sym]
-        print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻下單！")
+        has_pos = abs(s["qty"]) > 0.000001
+        
+        if not has_pos:
+            if remaining_slots <= 0:
+                continue
+            remaining_slots -= 1
+            print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
+        else:
+            print(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
+            
         await execute_order(sym, side, s["close_price"])
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
@@ -2535,7 +2731,16 @@ async def ensure_watch_tasks(exchange):
     pass
 
 
+async def market_wind_loop(exchange):
+    while True:
+        try:
+            await update_market_wind(exchange)
+        except Exception as e:
+            print(f"⚠️ [大盤風向更新失敗] {e}")
+        await asyncio.sleep(60)
+
 async def main_loop(exchange):
+    asyncio.create_task(market_wind_loop(exchange))
     global ALL_SYMBOLS
     """初始化後進入主交易循環"""
 
@@ -2576,7 +2781,7 @@ async def main_loop(exchange):
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
-            await update_market_wind(exchange)
+            # await update_market_wind(exchange)  # 已移至獨立 Task
             await fetch_all_klines(exchange)
             for sym in ALL_SYMBOLS:
                 try:
