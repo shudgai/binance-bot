@@ -1,14 +1,1 @@
-{
-  "symbols": [
-    "TAOUSDT",
-    "EPICUSDT",
-    "EIGENUSDT",
-    "REUSDT",
-    "BICOUSDT",
-    "SYNUSDT",
-    "AXSUSDT",
-    "ALICEUSDT",
-    "BELUSDT",
-    "SANDUSDT"
-  ]
-}
+{"symbols": ["TAOUSDT", "EPICUSDT", "EIGENUSDT", "REUSDT", "BICOUSDT", "SYNUSDT", "AXSUSDT", "ALICEUSDT", "BELUSDT", "SANDUSDT"]}

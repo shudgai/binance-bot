@@ -804,6 +804,7 @@ createApp({
                 } catch(e) {}
                 // Reinitialize unified websocket to include the new custom coin
                 initWebSocket();
+                fetchInitialPrices();
             }
             setActiveCoin(s);
             customSymbol.value = '';
@@ -1231,9 +1232,9 @@ createApp({
                         coins.value = newCoins;
                         if (!newCoins.some(c => c.symbol === activeSymbol.value)) {
                             setActiveCoin(newCoins[0].symbol);
-                        } else {
-                            initWebSocket();
                         }
+                        initWebSocket();
+                        fetchInitialPrices();
                     }
                 }
 
@@ -1250,6 +1251,21 @@ createApp({
 
         const updateTradeAmount = async () => {
             // 已棄用：現已強制使用餘額做為交易金額
+        };
+
+        const fetchInitialPrices = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/prices`);
+                if (!res.ok) return;
+                const resp = await res.json();
+                const prices = resp.data || resp;
+                for (let c of coins.value) {
+                    if (prices[c.symbol]) {
+                        c.price = parseFloat(prices[c.symbol]);
+                        if (c.symbol === activeSymbol.value) updateLatestCandle(c.symbol, c.price);
+                    }
+                }
+            } catch(e) {}
         };
 
         const fetchPosition = async () => {
@@ -1325,9 +1341,9 @@ createApp({
                                 });
                                 if (!symbols.includes(activeSymbol.value)) {
                                     setActiveCoin(symbols[0]);
-                                } else {
-                                    initWebSocket();
                                 }
+                                initWebSocket();
+                                fetchInitialPrices();
                             } else {
                                 addLog("⚠️ 掃描完成但無合適目標", "warning");
                             }
@@ -1621,8 +1637,7 @@ createApp({
                 if (!hasAnyPrice) startHTTPFallback();
             }, 8000);
 
-            const streams = coins.value.map(c => `${c.symbol.toLowerCase()}@ticker`).join('/');
-            const url = `wss://fstream.binance.com/stream?streams=${streams}`;
+            const url = `wss://fstream.binance.com/ws/!ticker@arr`;
             const w = new WebSocket(url);
             
             w.onopen = () => { /* connection success */ };
@@ -1630,28 +1645,36 @@ createApp({
             w.onmessage = (event) => {
                 try {
                     const raw = JSON.parse(event.data);
-                    const data = raw.data || raw;
-                    if (data.e === '24hrTicker' && data?.s) {
-                        if (wsFallbackTimeout) { clearTimeout(wsFallbackTimeout); wsFallbackTimeout = null; }
-                        if (isUsingFallback) { isUsingFallback = false; clearInterval(fallbackInterval); addLog('⚡ WebSocket 恢復'); }
-                        const c = coins.value.find(x => x.symbol === data.s);
-                        if (c) {
-                            c.prevPrice = c.price;
-                            c.price = parseFloat(data.c);
-                            if (c.prevPrice > 0) {
-                                c.priceClass = c.price > c.prevPrice ? 'up' : c.price < c.prevPrice ? 'down' : '';
-                                setTimeout(() => { c.priceClass = ''; }, 400);
-                            }
-                            if (data.s === activeSymbol.value) {
-                                updateLatestCandle(data.s, c.price);
-                                if (position.value.qty > 0) {
-                                    position.value.current_price = c.price;
-                                    position.value.current_value = position.value.qty * c.price;
-                                    position.value.pnl = position.value.current_value - position.value.total_cost;
-                                    position.value.pnl_percent = position.value.total_cost > 0 ? (position.value.pnl / position.value.total_cost) * 100 : 0;
+                    const dataArray = Array.isArray(raw) ? raw : [raw];
+                    let receivedAny = false;
+
+                    for (const data of dataArray) {
+                        if (data.e === '24hrTicker' && data?.s) {
+                            const c = coins.value.find(x => x.symbol === data.s);
+                            if (c) {
+                                receivedAny = true;
+                                c.prevPrice = c.price;
+                                c.price = parseFloat(data.c);
+                                if (c.prevPrice > 0) {
+                                    c.priceClass = c.price > c.prevPrice ? 'up' : c.price < c.prevPrice ? 'down' : '';
+                                    setTimeout(() => { c.priceClass = ''; }, 400);
+                                }
+                                if (data.s === activeSymbol.value) {
+                                    updateLatestCandle(data.s, c.price);
+                                    if (position.value && position.value.qty > 0) {
+                                        position.value.current_price = c.price;
+                                        position.value.current_value = position.value.qty * c.price;
+                                        position.value.pnl = position.value.current_value - position.value.total_cost;
+                                        position.value.pnl_percent = position.value.total_cost > 0 ? (position.value.pnl / position.value.total_cost) * 100 : 0;
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    if (receivedAny) {
+                        if (wsFallbackTimeout) { clearTimeout(wsFallbackTimeout); wsFallbackTimeout = null; }
+                        if (isUsingFallback) { isUsingFallback = false; clearInterval(fallbackInterval); addLog('⚡ WebSocket 恢復'); }
                     }
                 } catch(e) {}
             };
@@ -1701,6 +1724,7 @@ createApp({
             fetchOpenOrders();
             loadKlines();
             initWebSocket();
+            fetchInitialPrices();
             initLiveTradesWs();
             fetchBackendLogs();
 
