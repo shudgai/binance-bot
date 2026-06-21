@@ -165,20 +165,16 @@ COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
     "SOLUSDT": {"sl_atr_multiplier": 2.2, "tp_atr_multiplier": 4.5, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 300, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
     "LINKUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 180, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
-    "TRXUSDT": {"sl_atr_multiplier": 1.9, "tp_atr_multiplier": 3.8, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
+    "AVAXUSDT": {"sl_atr_multiplier": 1.9, "tp_atr_multiplier": 3.8, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) - 快速爆發，中等槓桿 ---
-    "RENDERUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "NEARUSDT": {"sl_atr_multiplier": 1.7, "tp_atr_multiplier": 3.4, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 180, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
     "SUIUSDT": {"sl_atr_multiplier": 1.4, "tp_atr_multiplier": 2.7, "volume_threshold_factor": 1.8, "breakeven_trigger": 0.7, "min_flip_time": 90, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
     "INJUSDT": {"sl_atr_multiplier": 1.7, "tp_atr_multiplier": 3.3, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "NEARUSDT": {"sl_atr_multiplier": 1.7, "tp_atr_multiplier": 3.4, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 180, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "VELVETUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
-    "LABUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
-
-    # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
-    "AVAXUSDT": {"sl_atr_multiplier": 1.9, "tp_atr_multiplier": 3.8, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 240, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2},
-    "DOGEUSDT": {"sl_atr_multiplier": 2.6, "tp_atr_multiplier": 5.2, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2},
-    "PEPEUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 2.0, "breakeven_trigger": 0.8, "min_flip_time": 600, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2}
+    "RENDERUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 3.0, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "FETUSDT": {"sl_atr_multiplier": 1.6, "tp_atr_multiplier": 3.2, "volume_threshold_factor": 1.5, "breakeven_trigger": 0.6, "min_flip_time": 120, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "TIAUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 3.6, "volume_threshold_factor": 1.6, "breakeven_trigger": 0.7, "min_flip_time": 150, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4},
+    "TAOUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 4.0, "volume_threshold_factor": 1.7, "breakeven_trigger": 0.7, "min_flip_time": 180, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4}
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())

@@ -1,16 +1,1 @@
-{
-  "symbols": [
-    "SOLUSDT",
-    "LINKUSDT",
-    "TRXUSDT",
-    "RENDERUSDT",
-    "SUIUSDT",
-    "INJUSDT",
-    "NEARUSDT",
-    "VELVETUSDT",
-    "LABUSDT",
-    "AVAXUSDT",
-    "DOGEUSDT",
-    "1000PEPEUSDT"
-  ]
-}
+{"symbols": ["SOLUSDT", "LINKUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "INJUSDT", "RENDERUSDT", "FETUSDT", "TIAUSDT", "TAOUSDT"]}
