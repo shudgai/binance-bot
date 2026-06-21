@@ -967,6 +967,10 @@ def update_trade_signal(sym, trade):
 
 
 REAL_BALANCE = 150.0
+START_OF_DAY_BALANCE = 0.0
+LAST_DAY_STR = ''
+IS_DAILY_BANNED = False
+from datetime import datetime
 
 async def fetch_real_balance():
     global REAL_BALANCE
@@ -1353,14 +1357,9 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
             trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
-            # --- 保本邏輯 ---
-            trigger_mult = s.get("breakeven_trigger")
-            if trigger_mult is None:
-                trigger_mult = s.get("sl_atr_multiplier", 1.5)
-            sl_dist_atr = trigger_mult * atr_val
-            breakeven_trigger = s["avg_price"] + sl_dist_atr
-            if current_price >= breakeven_trigger:
-                breakeven_sl = s["avg_price"]
+            # --- 0.5% 強制保本邏輯 ---
+            if current_price >= s["avg_price"] * 1.005:
+                breakeven_sl = s["avg_price"] * 1.0005 # +0.05% 覆蓋手續費
                 trail_sl = max(trail_sl, breakeven_sl)
             
             safe_min_sl = liq_price * 1.2
@@ -1376,14 +1375,9 @@ def update_trailing_stop(sym, current_price, is_long):
             # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
             trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
-            # --- 保本邏輯 ---
-            trigger_mult = s.get("breakeven_trigger")
-            if trigger_mult is None:
-                trigger_mult = s.get("sl_atr_multiplier", 1.5)
-            sl_dist_atr = trigger_mult * atr_val
-            breakeven_trigger = s["avg_price"] - sl_dist_atr
-            if current_price <= breakeven_trigger:
-                breakeven_sl = s["avg_price"]
+            # --- 0.5% 強制保本邏輯 ---
+            if current_price <= s["avg_price"] * 0.995:
+                breakeven_sl = s["avg_price"] * 0.9995 # -0.05% 覆蓋手續費
                 trail_sl = min(trail_sl, breakeven_sl)
             
             safe_max_sl = liq_price * 0.8
