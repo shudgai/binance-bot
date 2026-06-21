@@ -159,6 +159,33 @@ USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '1m'
 MAX_GLOBAL_DRAWDOWN_PCT = 0.10  # 總帳戶浮動損益虧損超過 10% 時觸發
+
+# --- 相關性群組設定 ---
+CORRELATION_GROUPS = {
+    "Mainstream": ["BTC", "ETH", "SOL", "BNB", "XRP"],  # 主流/大市值幣種
+    "Metaverse_Gaming": ["AXS", "ALICE", "SAND"],      # 元宇宙與鏈遊板塊
+    "AI_Tech": ["TAO", "FET", "NEAR", "RENDER"]        # AI 與基礎設施板塊
+}
+
+# 設定每個群組允許的最大同時持倉數
+MAX_POSITIONS_PER_GROUP = 2  # 每個群組最多同時持有 2 個相關幣種
+
+# --- 動態倉位管理設定 ---
+RISK_PER_TRADE_PCT = 0.01   # 每筆交易允許損失的最大比例（1% 總餘額）
+MAX_NOTIONAL_PCT   = 0.20   # 單筆名義部位上限（不超過總餘額 20% × 槓桿）
+# ----------------------
+
+# --- 追蹤止損加速設定 ---
+TRAILING_ACCEL_ENABLED = True  # 啟用動態追蹤加速：獲利越多，追蹤距離越緊
+# 追蹤倍數階梯：[利潤門檻, ATR 追蹤倍數]
+TRAILING_ACCEL_TIERS = [
+    (0.05,  0.8),   # 獲利 >= 5%  → 0.8 ATR (極緊，防大回吐)
+    (0.03,  1.0),   # 獲利 >= 3%  → 1.0 ATR (收緊)
+    (0.015, 1.2),   # 獲利 >= 1.5% → 1.2 ATR (適中)
+    (0.0,   1.5),   # 其他         → 1.5 ATR (原有寬鬆值)
+]
+# ----------------------
+
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_history.json")
 
 def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
@@ -1265,6 +1292,51 @@ def compute_per_coin_margin(sym=None):
     # 實際配置金額 = 總餘額 * 賽道權重 * 風控保留係數 (95%)
     return balance * weight * 0.95
 
+def calculate_dynamic_qty(sym, price, side):
+    """
+    根據 ATR 止損距離與風險比例動態計算首次開倉數量。
+    公式：qty = (balance × RISK_PER_TRADE_PCT) / (ATR × sl_multiplier)
+    上限：qty × price ≤ balance × MAX_NOTIONAL_PCT × leverage
+
+    優點：
+    - 高波動幣 (ATR大) → 自動縮減數量 → 固定風險金額
+    - 低波動幣 (ATR小) → 自動增加數量 → 資金效率最大化
+    - 無論市況，每筆最大損失都控制在 RISK_PER_TRADE_PCT 以內
+    """
+    balance = get_balance()
+    if balance <= 0 or price <= 0:
+        return 0.0
+
+    s = STATES.get(sym, {})
+    lev = get_symbol_leverage(sym)
+    is_long = (side == "buy")
+
+    # --- 取得止損距離 (與實際止損邏輯一致) ---
+    atr_val = s.get("current_atr", 0.0)
+    if atr_val <= 0:
+        atr_val = price * 0.01   # 預設 1% 止損距離作為保底
+
+    sl_multiplier = get_effective_exit_setting(
+        sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long
+    )
+    sl_distance = max(atr_val * sl_multiplier, price * 0.005)
+
+    # --- 計算基準數量 (風險單位) ---
+    risk_dollar = balance * RISK_PER_TRADE_PCT
+    qty = risk_dollar / sl_distance
+
+    # --- 名義部位上限 (防止止損極小時數量爆炸) ---
+    max_notional = balance * MAX_NOTIONAL_PCT * lev
+    if qty * price > max_notional:
+        qty = max_notional / price
+
+    # --- 最小名義價值保護 (幣安合約最低約 6 USDT) ---
+    if qty * price < 6.0:
+        qty = 6.0 / price
+
+    print(f"📐 [動態倉位] {sym} | 餘額:{balance:.2f}U | ATR:{atr_val:.6f} | SL距離:{sl_distance:.6f} | 風險:{risk_dollar:.2f}U | 計算數量:{qty:.4f} (名義:{qty*price:.2f}U)")
+    return qty
+
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
 def update_states():
@@ -2117,9 +2189,17 @@ async def check_position_exits(exchange, sym):
     if profit_dist >= sl_dist:
         # 達到 1:1，首先確保停損位移到保本點 (含 0.25% 手續費與滑價緩衝)
         breakeven_sl = avg * 1.0025 if is_long else avg * 0.9975
-        
-        # 接著，如果利潤繼續拉開，使用 1.5 * ATR 進行追蹤止損
-        trail_dist = atr_val * 1.5
+
+        # --- TSL 加速：追蹤倍數根據當前利潤動態收緊 ---
+        if TRAILING_ACCEL_ENABLED:
+            tsl_mult = TRAILING_ACCEL_TIERS[-1][1]  # 預設最寬鬆值
+            for profit_threshold, mult in TRAILING_ACCEL_TIERS:
+                if profit_pct >= profit_threshold:
+                    tsl_mult = mult
+                    break
+        else:
+            tsl_mult = 1.5  # 原有固定值
+        trail_dist = atr_val * tsl_mult
         trail_sl = p - trail_dist if is_long else p + trail_dist
 
         # 決定最終的動態停損位 (只會往有利方向移動)
@@ -2127,14 +2207,25 @@ async def check_position_exits(exchange, sym):
             new_sl = max(breakeven_sl, trail_sl)
             if new_sl > s.get("dynamic_sl", 0.0):
                 s["dynamic_sl"] = new_sl
-                print(f"🛡️ [動態停損] {sym} 移至 {new_sl:.6f} (保本/追蹤)")
+                print(f"🛡️ [動態停損] {sym} 移至 {new_sl:.6f} (保本/追蹤 {tsl_mult}x ATR, 獲利:{profit_pct*100:.2f}%)")
         else:
             new_sl = min(breakeven_sl, trail_sl)
             current_dyn_sl = s.get("dynamic_sl", float('inf'))
             if current_dyn_sl == 0.0 or new_sl < current_dyn_sl:
                 s["dynamic_sl"] = new_sl
-                print(f"🛡️ [動態停損] {sym} 移至 {new_sl:.6f} (保本/追蹤)")
-                
+                print(f"🛡️ [動態停損] {sym} 移至 {new_sl:.6f} (保本/追蹤 {tsl_mult}x ATR, 獲利:{profit_pct*100:.2f}%)")
+
+    # --- 整合 update_trailing_stop() 的追蹤價格至 dynamic_sl ---
+    # （此函數計算了「只往有利方向移動」的非對稱追蹤停損，現在與 dynamic_sl 合併取最優）
+    _, tsp = update_trailing_stop(sym, p, is_long)
+    if is_long and tsp > 0 and tsp > s.get("dynamic_sl", 0.0):
+        s["dynamic_sl"] = tsp
+    elif not is_long and tsp > 0:
+        current_dyn_sl = s.get("dynamic_sl", 0.0)
+        if current_dyn_sl == 0.0 or tsp < current_dyn_sl:
+            s["dynamic_sl"] = tsp
+
+
     # --- 新增動態追蹤止盈平倉檢測 (ExecutionEngine Trailing Stop) ---
     global EXECUTION_ENGINE
     if not PAPER_TRADING and EXECUTION_ENGINE is not None:
@@ -2295,28 +2386,29 @@ async def execute_order(sym, side, price, route="UNKNOWN"):
                 print(f"🛑 [加倉風控] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
                 return
 
-    # 1. 計算目標名義價值 (保證金 * 槓桿倍數)
-    target_notional = margin * lev
-    
-    # 2. 套用性格分配比例 (首倉 vs 加倉)
-    allocation_pct = s["entry_size_pct"] if s["entry_count"] == 0 else s["add_entry_pct"]
-    base_notional = target_notional * allocation_pct
-    
-    # 3. 最大名義價值限制 (防極端爆倉)
-    max_notional = 1000.0  # 絕對最大名義價值 1000 USDT
-    if base_notional > max_notional:
-        base_notional = max_notional
-        
-    # 4. 真實可用餘額二次檢查
-    # 如果要求的保證金 (名義價值 / 槓桿) 大於當前真實可用餘額，則向下修正
+    # ── 倉位大小計算 ───────────────────────────────────────────
     balance = get_balance()
-    required_margin = base_notional / lev
-    if required_margin > balance * 0.98:
-        base_notional = (balance * 0.98) * lev
 
-    # 5. 轉換為幣種數量並進行精度修剪
-    base_amt = base_notional / price
-    base_amt = await sanitize_order_qty(sym, base_amt)
+    if s["entry_count"] == 0:
+        # 首次開倉：ATR 風險單位法 (Dynamic Position Sizing)
+        # qty = (balance × RISK_PER_TRADE_PCT) / sl_distance
+        base_amt = calculate_dynamic_qty(sym, price, side)
+        base_amt = await sanitize_order_qty(sym, base_amt)
+    else:
+        # 加倉：沿用原有保守的固定比例法
+        target_notional = margin * lev
+        allocation_pct  = s["add_entry_pct"]
+        base_notional   = target_notional * allocation_pct
+        # 絕對最大名義上限 (防極端爆倉)
+        if base_notional > 1000.0:
+            base_notional = 1000.0
+        # 餘額二次檢查
+        required_margin = base_notional / lev
+        if required_margin > balance * 0.98:
+            base_notional = (balance * 0.98) * lev
+        base_amt = base_notional / price
+        base_amt = await sanitize_order_qty(sym, base_amt)
+
     
     # 6. 幣安最小下單額限制 (Min Notional Check)
     actual_notional = base_amt * price
@@ -2522,6 +2614,25 @@ def is_entry_volume_confirmed(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.0 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
 
+def can_open_new_position(symbol):
+    """檢查目標幣種所在的群組是否已達最大持倉數"""
+    base_symbol = symbol.replace("USDT", "").upper()
+    for group_name, symbols in CORRELATION_GROUPS.items():
+        # 確保群組內的符號也均為大寫和去除了 USDT 的乾淨符號
+        clean_group_symbols = [s.replace("USDT", "").upper() for s in symbols]
+        if base_symbol in clean_group_symbols:
+            active_in_group = 0
+            for s_sym in clean_group_symbols:
+                # 重新映射回 STATES 鍵名
+                full_sym = f"{s_sym}USDT"
+                if full_sym in STATES:
+                    s = STATES[full_sym]
+                    if abs(s["qty"]) > 0.000001:
+                        active_in_group += 1
+            
+            if active_in_group >= MAX_POSITIONS_PER_GROUP:
+                print(f"⚠️ [配額限制] 群組 {group_name} 已達上限 ({MAX_POSITIONS_PER_GROUP})，暫不允許開倉 {symbol}")
+                return False
     return True
 
 
@@ -2877,6 +2988,9 @@ async def check_entries():
                     if expected_rr < 2.0:
                         print(f"⚠️ [盈虧比過濾] {sym} 確認階段預期盈虧比 {expected_rr:.2f} < 2.0，放棄")
                         continue
+                    
+                    if not can_open_new_position(sym):
+                        continue
                         
                     candidates.append((sym, side, strength, route))
                     continue
@@ -2939,7 +3053,9 @@ async def check_entries():
             print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
             continue
 
-        # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
+        # 通過初步過濾，進行配額與相關性過濾檢查，符合則進入 pending 狀態等待下一根 K 線確認
+        if not can_open_new_position(sym):
+            continue
         s["pending_side"] = side
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
@@ -2954,6 +3070,9 @@ async def check_entries():
 
     for i in range(min(remaining_slots, len(candidates))):
         sym, side, _, route = candidates[i]
+        # 執行開倉前的最後配額與相關性鎖定檢查，防止同群組在同 Tick 重複開倉
+        if not can_open_new_position(sym):
+            continue
         s = STATES[sym]
         print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻下單！")
         await execute_order(sym, side, s["close_price"], route)

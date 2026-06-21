@@ -5,3 +5,5 @@ __pycache__/
 api_b64.txt
 *.log
 .DS_Store
+current_states.json
+current_states.json.tmp
