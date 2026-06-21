@@ -1053,7 +1053,7 @@ def reset_coin_state(sym):
     s["avg_entry_price"] = 0.0
     s["first_entry_price"] = 0.0
     s["max_additional_entries"] = 2
-    s["entry_cooldown_sec"] = 90
+    s["entry_cooldown_sec"] = 180
     s["entry_size_pct"] = 0.5
     s["add_entry_pct"] = 0.25
     s["risk_multiplier"] = 1.0
@@ -1929,6 +1929,11 @@ async def check_position_exits(exchange, sym):
     if hold_sec < 120:
         return
 
+    # [防插針與連續洗盤保護] 如果在 5 分鐘內已經發生過平倉/停損，暫停非緊急出單
+    if time.time() - s.get("last_flip_time", 0) < 300 and "Stop" in s.get("last_exit_reason", ""):
+        # 給予 300 秒的緩衝期，避免被連續插針洗盤
+        return
+
     # 1. 取得 ATR 停利停損倍數
     sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
@@ -2131,7 +2136,7 @@ async def execute_order(sym, side, price):
         last_entry_price = s.get("last_entry_price", s.get("avg_price", 0.0))
         if last_entry_price > 0 and current_atr > 0:
             price_diff = abs(price - last_entry_price)
-            if price_diff < 1.2 * current_atr:
+            if price_diff < max(1.2 * current_atr, price * 0.002):
                 print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {1.5 * current_atr:.4f}")
                 return
                 
