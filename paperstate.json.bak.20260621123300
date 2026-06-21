@@ -2,5 +2,6 @@
   "balanceusdt": 150.0,
   "realized_pnl": 0.0,
   "positions": {},
-  "trades": []
+  "trades": [],
+  "balance": 150.8482
 }
