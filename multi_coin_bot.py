@@ -861,7 +861,7 @@ def is_symbol_locked(sym):
     s = STATES.get(sym)
     if not s:
         return False
-    return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED")
+    return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED") or s.get("pending_side") is not None
 
 
 def filter_valid_symbols(exchange, symbols):
