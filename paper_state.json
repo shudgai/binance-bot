@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 148.97788051500012,
+    "balance_usdt": 148.87999051500017,
     "session_start_balance": 150.0,
     "positions": {
         "SUI:USDT": {
@@ -20,7 +20,7 @@
         "AVAX:USDT": {
             "qty": 0.0,
             "avg_price": 0.0,
-            "realized_pnl": 0.7799999999999994
+            "realized_pnl": 0.804000000000002
         },
         "TRX:USDT": {
             "qty": 0.0,
@@ -51,6 +51,11 @@
             "qty": 0.0,
             "avg_price": 0.0,
             "realized_pnl": -0.2841999999999848
+        },
+        "NEAR:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": -0.040000000000004476
         }
     },
     "trades": [
@@ -906,6 +911,62 @@
             "isMaker": false,
             "realized_pnl": -0.08999999999999808,
             "fee": 0.0216585,
+            "is_close": true
+        },
+        {
+            "id": "15cdcd3f",
+            "order_id": "f032fd7c",
+            "symbol": "AVAX:USDT",
+            "price": 6.313,
+            "qty": 6.0,
+            "quote_qty": 37.878,
+            "time": 1782056071421,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.018939,
+            "is_close": false
+        },
+        {
+            "id": "6b25ea2d",
+            "order_id": "cee9cda3",
+            "symbol": "AVAX:USDT",
+            "price": 6.317,
+            "qty": 6.0,
+            "quote_qty": 37.902,
+            "time": 1782056145958,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.024000000000002686,
+            "fee": 0.018951000000000003,
+            "is_close": true
+        },
+        {
+            "id": "2ab62972",
+            "order_id": "57cadede",
+            "symbol": "NEAR:USDT",
+            "price": 2.201,
+            "qty": 20.0,
+            "quote_qty": 44.02,
+            "time": 1782056968955,
+            "isBuyer": true,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.022010000000000002,
+            "is_close": false
+        },
+        {
+            "id": "ccf9a852",
+            "order_id": "db922f4f",
+            "symbol": "NEAR:USDT",
+            "price": 2.199,
+            "qty": 20.0,
+            "quote_qty": 43.98,
+            "time": 1782057341795,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": -0.040000000000004476,
+            "fee": 0.02199,
             "is_close": true
         }
     ]

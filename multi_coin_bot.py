@@ -1385,7 +1385,7 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     closes = np.array([x[4] for x in recent_candles])
     recent_high = float(np.max(highs))
     recent_low = float(np.min(lows))
-    range_width_pct = (recent_high - recent_low) / recent_low if recent_low > 0 else 0
+    range_width_pct = (recent_high - recent_low) / max(recent_low, 1e-8)
 
     atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
     atr_pct = atr_val / current_price if current_price > 0 else 0
@@ -1435,93 +1435,6 @@ def has_strong_momentum(sym, is_long):
     return volume_ratio > 1.2 and s["close_price"] < s.get("bb_mid", 0.0) and s["current_rsi"] < 48 and s.get("macd_hist", 0.0) < 0 and recent_return < -0.005
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
-    s = STATES[sym]
-
-    try:
-        await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
-    finally:
-        s["adjusted_this_tick"] = False
-
-
-import os
-import json
-import time
-
-def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
-                        expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0, fees=0.0, qty=0.0):
-    """
-    將每筆交易的結果記錄到 trade_history.json 中，並生成 AI 友好的經驗摘要。
-    """
-    history_file = TRADE_HISTORY_FILE
-    
-    # --- 原有摩擦力計算邏輯 ---
-    entry_slippage = abs(actual_entry - expected_entry) if expected_entry > 0 else 0.0
-    exit_slippage = abs(actual_exit - expected_exit) if expected_exit > 0 else 0.0
-    total_slippage = entry_slippage + exit_slippage
-    slippage_cost = total_slippage * qty if qty > 0 else 0.0
-    total_friction = slippage_cost + fees
-    total_value = actual_entry * qty if (actual_entry > 0 and qty > 0) else 1.0
-    friction_rate = (total_friction / total_value) * 100 if total_value > 0 else 0.0
-
-    # --- 新增：AI 經驗摘要生成邏輯 ---
-    # 根據獲利與原因，自動生成一句簡潔的摘要給 AI 看
-    pnl_tag = "[大賺]" if profit_pct > 0.01 else "[微利]" if profit_pct > 0.002 else "[打平]" if profit_pct > -0.002 else "[小虧]" if profit_pct > -0.01 else "[大虧]"
-    
-    # 判斷是否為「異常」或「重點」交易
-    is_anomaly = False
-    if "Layer_1" in exit_reason or "Breakout" in exit_reason:
-        is_anomaly = True
-    if friction_rate > 0.4:
-        is_anomaly = True
-
-    # 組建摘要字串
-    summary = f"{pnl_tag} {symbol} 透過 {exit_reason} 出場。獲利 {profit_pct*100:.2f}%，摩擦力 {friction_rate:.2f}%。"
-    if is_anomaly:
-        summary += " (⚠️ 異常交易，需重點關注)"
-
-    # 準備要記錄的數據
-    trade_data = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "symbol": symbol,
-        "entry_reason": entry_reason or "UNKNOWN",
-        "exit_reason": exit_reason,
-        "profit_pct": round(profit_pct, 4),
-        "max_profit_reached": round(max_profit_reached, 4),
-        "atr_at_exit": round(current_atr, 6),
-        "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol",
-        "expected_entry": round(expected_entry, 6),
-        "expected_exit": round(expected_exit, 6),
-        "actual_entry": round(actual_entry, 6),
-        "actual_exit": round(actual_exit, 6),
-        "fees": round(fees, 4),
-        "qty": round(qty, 4),
-        "slippage": round(total_slippage, 6),
-        "friction_rate": round(friction_rate, 4),
-        "theoretical_profit": round((expected_exit - expected_entry)/expected_entry if expected_entry > 0 else 0.0, 4),
-        "ai_summary": summary  # <--- 這是給 AI 看的核心欄位
-    }
-
-    # 讀取並寫回檔案
-    if os.path.exists(history_file):
-        with open(history_file, 'r', encoding='utf-8') as f:
-            try:
-                history = json.load(f)
-                if not isinstance(history, list): history = []
-            except: history = []
-    else:
-        history = []
-
-    history.append(trade_data)
-
-    try:
-        with open(history_file, 'w', encoding='utf-8') as f:
-            json.dump(history, f, indent=4, ensure_ascii=False)
-        print(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
-    except Exception as e:
-        print(f"⚠️ [AI Memory] 紀錄失敗: {e}")
-
-
-async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
     s["adjusted_this_tick"] = True
     if abs(s["qty"]) < 0.000001:
@@ -1665,7 +1578,7 @@ async def check_exits(sym):
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
     # 高波動期縮短保護盲區到 20 秒，低波動維持 60 秒
-    cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
+    cooldown_limit = 120.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 180.0
     if hold_sec < cooldown_limit:
         # 防插針量能檢查
         current_vol = s.get("current_vol", 0.0)
@@ -1698,7 +1611,7 @@ async def check_exits(sym):
     # ── 動態保本防護 (Dynamic Breakeven) ──
     # 只要利潤達到 1 倍 ATR (或至少 0.2%)，就將停損永久上移至保本點 (+0.15% 確保夠付手續費)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * 0.6, 0.0015)
+    breakeven_threshold = max(entry_atr_pct * 1.5, 0.005)
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         atr_half = s.get("current_atr", atr_val) * 0.5
         sl = avg + atr_half if is_long else avg - atr_half
@@ -1763,7 +1676,7 @@ async def check_exits(sym):
     early_exit_limit = -(sl_pct * 0.5)
     if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
         cs = 'sell' if is_long else 'buy'
-        is_sl = profit_pct < 0.0
+        is_sl = profit_pct < 0
         print(f"📉 [反轉出場] {sym} MACD狀態反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=is_sl)
         return
@@ -1957,15 +1870,15 @@ async def check_position_exits(exchange, sym):
         s["dynamic_sl"] = initial_sl
 
     # 2. 保本與移動停損邏輯
-    # 判斷是否達到 1:1 盈虧比 (利潤超過初始風險距離)
+    # 判斷是否達到 1.5 倍風險距離才啟動保本/追蹤，確保停損位移到保本點 (含 0.25% 手續費與滑價緩衝)
     profit_dist = (p - avg) if is_long else (avg - p)
     
     if profit_dist >= sl_dist * 1.5:
         # 達到 1.5 倍風險距離才啟動保本/追蹤，確保停損位移到保本點 (含 0.25% 手續費與滑價緩衝)
         breakeven_sl = avg * 1.0025 if is_long else avg * 0.9975
         
-        # 接著，如果利潤繼續拉開，使用 2.2 * ATR 進行追蹤止損，給予更大的呼吸空間
-        trail_dist = atr_val * 2.2
+        # 接著，如果利潤繼續拉開，使用 3.0 * ATR 進行追蹤止損，給予更大的呼吸空間
+        trail_dist = atr_val * 3.0
         trail_sl = p - trail_dist if is_long else p + trail_dist
 
         # 決定最終的動態停損位 (只會往有利方向移動)
@@ -2401,7 +2314,7 @@ def is_entry_volume_confirmed(sym, side):
         return False
     
     # [Layer 3] 動態量能門檻：嚴格爆發 (至少 1.5 倍)
-    vol_factor = max(1.5, s.get("volume_threshold_factor", 1.5))
+    vol_factor = max(0.8, s.get("volume_threshold_factor", 0.8))
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
@@ -2449,7 +2362,7 @@ def is_entry_allowed(sym, side, route="a"):
         return False
         
     # --- MTF 1H & 15m 趨勢過濾 (強化防護) ---
-    if s.get("mtf_filter", True):
+    if s.get("mtf_filter", False):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
         
@@ -2476,9 +2389,9 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.25: # 原 0.6，放寬至允許 25% 的極低波動
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.4: # 原 0.25，放寬至允許 40% 的極低波動
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
-        return False
+        pass # 讓它通過，不要 return False
     if bb_width_pct > 0 and bb_width_pct < 0.0015: # 原 0.005，放寬至布林帶寬度 0.15%
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
         return False
@@ -2495,8 +2408,8 @@ def is_entry_allowed(sym, side, route="a"):
     lows = np.array([x[3] for x in s["ohlcv"]])
     closes = np.array([x[4] for x in s["ohlcv"]])
     adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 5: # 原 10，大幅放寬 ADX 趨勢強度門檻
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
+    if adx_val < 2: # 幾乎允許所有有微小趨勢的行情
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度極低 {adx_val:.1f}")
         return False
 
     # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
@@ -2718,13 +2631,13 @@ async def check_entries():
                     # [Layer 3] 嚴格K線：實體綠K且上影線 < 實體的 50%
                     body = prev_close - prev_open
                     upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 0.5:
+                    if body > 0 and upper_shadow < body * 0.8:
                         is_valid = True
                 elif s["pending_side"] == "sell":
                     # [Layer 3] 嚴格K線：實體紅K且下影線 < 實體的 50%
                     body = prev_open - prev_close
                     lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 0.5:
+                    if body > 0 and lower_shadow < body * 0.8:
                         is_valid = True
                         
                 if is_valid:
