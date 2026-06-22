@@ -1742,6 +1742,18 @@ async def check_exits(sym):
             sl_floor = first_entry + atr_half
             sl = min(sl, sl_floor)
 
+    # ── 最低停損距離保護 (Minimum Stop-Loss Distance) ──
+    # 修正公式：為了讓停損點距離現價「至少」保持 0.5%，做多時取 min，做空時取 max。
+    hard_sl_pct = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
+    if is_long:
+        sl = min(sl, p * 0.995)
+        hard_sl = avg * (1 - hard_sl_pct)
+        sl = max(sl, hard_sl)  # 確保保護不會把停損點推到比硬性虧損限制還要遠
+    else:
+        sl = max(sl, p * 1.005)
+        hard_sl = avg * (1 + hard_sl_pct)
+        sl = min(sl, hard_sl)
+
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
     if profit_pct < 0:
@@ -1811,23 +1823,36 @@ async def check_exits(sym):
     tier1_target = max(atr_pct * 1.5, 0.0035)
 
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 ──
-    # 只要出現價格創新高/低但量能急縮，即視為動能竭盡，無條件平倉 (移除%限制)
     if len(s["ohlcv"]) >= 3:
-        # 只看已經收盤的 K 線，避免被當前正在跳動的未收盤 K 線誤導
         c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
         c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
         
+        # 判斷是否為盤整區間 (ATR 低於 24 小時平均的 80%)
+        is_in_consolidation = (current_atr > 0 and atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.8)
+        
+        # 價格位置過濾：確保價格接近關鍵區塊 (布林帶邊界 或 15m SMA200)
+        sma200 = s.get("sma200_15m", 0)
+        bb_up = s.get("bb_up", 0)
+        bb_low = s.get("bb_low", 0)
+        
+        near_resistance = (bb_up > 0 and p >= bb_up * 0.99) or (sma200 > 0 and p >= sma200 * 1.01)
+        near_support = (bb_low > 0 and p <= bb_low * 1.01) or (sma200 > 0 and p <= sma200 * 0.99)
+        
+        is_valid_location = (is_long and near_resistance) or (not is_long and near_support)
+        
+        # 盤整區間要求更嚴格的衰竭門檻 (量能小於 50%)，否則使用一般門檻 (65%)
+        vol_threshold = 0.50 if is_in_consolidation else 0.65
+        
         divergence_exit = False
-        if is_long and c1[4] > c2[4] and c1[5] < c2[5] * 0.65:
-            # 多單：價格創高，但量能急縮 (< 65%)
-            divergence_exit = True
-        elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * 0.65:
-            # 空單：價格創低，但量能急縮 (< 65%)
-            divergence_exit = True
+        if is_valid_location:
+            if is_long and c1[4] > c2[4] and c1[5] < c2[5] * vol_threshold:
+                divergence_exit = True
+            elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * vol_threshold:
+                divergence_exit = True
             
         if divergence_exit:
             cs = 'sell' if is_long else 'buy'
-            print(f"📉 [量價背離] {sym} 價格創高/低但量能急縮 (V:{c1[5]:.0f} < V_prev:{c2[5]:.0f}*0.65)，動能竭盡提前平倉！")
+            print(f"📉 [量價背離] {sym} 價格創高/低但量能急縮 (V:{c1[5]:.0f} < V_prev:{c2[5]:.0f}*{vol_threshold:.2f})，動能竭盡提前平倉！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
             s["highest_profit_pct"] = 0.0
             return

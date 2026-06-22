@@ -755,17 +755,17 @@
                 </div>
                 <div class="info-card">
                     <div class="info-title">未實現損益</div>
-                    <div :class="['info-val mono', position.pnl > 0 ? 'up' : (position.pnl < 0 ? 'down' : '')]" style="font-size:15px;">
-                        {{ position.pnl > 0 ? '+' : '' }}{{ formatCurrencyVal(position.pnl) }} USDT
-                        <span v-if="position.qty" style="font-size:10px; opacity:0.7; margin-left:4px;">
-                            ({{ position.pnl_percent.toFixed(2) }}%)
+                    <div :class="['info-val mono', position?.pnl > 0 ? 'up' : (position?.pnl < 0 ? 'down' : '')]" style="font-size:15px;">
+                        {{ position?.pnl > 0 ? '+' : '' }}{{ formatCurrencyVal(position?.pnl) }} USDT
+                        <span v-if="position?.qty" style="font-size:10px; opacity:0.7; margin-left:4px;">
+                            ({{ position?.pnl_percent ? Number(position.pnl_percent).toFixed(2) : '0.00' }}%)
                         </span>
                     </div>
                 </div>
                 <div class="info-card">
                     <div class="info-title">總已實現利潤</div>
-                    <div :class="['info-val mono', (bot.balance_quote - bot.session_start_balance) > 0 ? 'up' : (bot.balance_quote - bot.session_start_balance) < 0 ? 'down' : '']" style="font-size:15px;">
-                        {{ (bot.balance_quote - bot.session_start_balance) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot.balance_quote - bot.session_start_balance) }} USDT
+                    <div :class="['info-val mono', (bot?.balance_quote - bot?.session_start_balance) > 0 ? 'up' : ((bot?.balance_quote - bot?.session_start_balance) < 0 ? 'down' : '')]" style="font-size:15px;">
+                        {{ (bot?.balance_quote - bot?.session_start_balance) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot?.balance_quote - bot?.session_start_balance) }} USDT
                     </div>
                 </div>
                 <div class="info-card" style="cursor: pointer;" @click="toggleCurrency" title="點擊切換顯示幣別">
@@ -1140,8 +1140,9 @@ createApp({
         };
 
         const formatCurrencyVal = (val) => {
-            if (!val) return '0.00';
-            const v = currentCurrency.value === 'TWD' ? val * twdRate.value : val;
+            const numVal = Number(val);
+            if (isNaN(numVal) || numVal === 0) return '0.00';
+            const v = currentCurrency.value === 'TWD' ? numVal * twdRate.value : numVal;
             const absV = Math.abs(v);
             let d = 2;
             if (absV < 0.0001) d = 8;
