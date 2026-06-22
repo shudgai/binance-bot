@@ -13,7 +13,7 @@ bot_status = {
     "balance_quote": 150.0,
     "active_orders": 0,
     "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
-    "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "PEPEUSDT"], # 使用者自訂的 5 個關注幣種
+    "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"], # 使用者自訂的關注幣種
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
@@ -33,8 +33,6 @@ def normalize_symbol(sym):
     sym = str(sym).strip().upper()
     if not sym:
         return ""
-    if sym in ("PEPE", "PEPEUSDT"):
-        return "1000PEPEUSDT"
     if not sym.endswith("USDT"):
         sym = f"{sym}USDT"
     return sym
@@ -96,11 +94,28 @@ def save_symbol_config(symbols):
 def get_bot_status():
     from services.paper_trade_service import get_paper_balance
     import os
+    import json
     from dotenv import load_dotenv
     
     load_dotenv()
     if os.getenv("TRADING_MODE", "paper") == "paper":
         bot_status["balance_quote"] = get_paper_balance()
+        
+        # Calculate total realized PNL from paper_state.json
+        try:
+            total_realized = 0.0
+            state_path = os.path.join(os.path.dirname(__file__), "..", "paper_state.json")
+            if os.path.exists(state_path):
+                with open(state_path, "r") as f:
+                    state = json.load(f)
+                for t in state.get("trades", []):
+                    if t.get("is_close"):
+                        pnl = t.get("realized_pnl", 0.0)
+                        fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+                        total_realized += (pnl - fee)
+            bot_status["total_realized_pnl"] = total_realized
+        except Exception as e:
+            bot_status["total_realized_pnl"] = 0.0
         
     return bot_status
 

@@ -754,18 +754,15 @@
                     <div class="info-val" style="font-size:15px; color: #f39c12;">{{ bot.leverage || 20 }}x</div>
                 </div>
                 <div class="info-card">
-                    <div class="info-title">未實現損益</div>
-                    <div :class="['info-val mono', position?.pnl > 0 ? 'up' : (position?.pnl < 0 ? 'down' : '')]" style="font-size:15px;">
-                        {{ position?.pnl > 0 ? '+' : '' }}{{ formatCurrencyVal(position?.pnl) }} USDT
-                        <span v-if="position?.qty" style="font-size:10px; opacity:0.7; margin-left:4px;">
-                            ({{ position?.pnl_percent ? Number(position.pnl_percent).toFixed(2) : '0.00' }}%)
-                        </span>
+                    <div class="info-title">總未實現損益</div>
+                    <div :class="['info-val mono', totalUnrealizedPnl > 0 ? 'up' : (totalUnrealizedPnl < 0 ? 'down' : '')]" style="font-size:15px;">
+                        {{ totalUnrealizedPnl > 0 ? '+' : '' }}{{ formatCurrencyVal(totalUnrealizedPnl) }} USDT
                     </div>
                 </div>
                 <div class="info-card">
                     <div class="info-title">總已實現利潤</div>
-                    <div :class="['info-val mono', (bot?.balance_quote - bot?.session_start_balance) > 0 ? 'up' : ((bot?.balance_quote - bot?.session_start_balance) < 0 ? 'down' : '')]" style="font-size:15px;">
-                        {{ (bot?.balance_quote - bot?.session_start_balance) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot?.balance_quote - bot?.session_start_balance) }} USDT
+                    <div :class="['info-val mono', bot?.total_realized_pnl > 0 ? 'up' : (bot?.total_realized_pnl < 0 ? 'down' : '')]" style="font-size:15px;">
+                        {{ bot?.total_realized_pnl > 0 ? '+' : '' }}{{ formatCurrencyVal(bot?.total_realized_pnl || 0) }} USDT
                     </div>
                 </div>
                 <div class="info-card" style="cursor: pointer;" @click="toggleCurrency" title="點擊切換顯示幣別">
@@ -1100,6 +1097,25 @@ createApp({
         const API_BASE = '/api';
 
         const activeCoin = computed(() => coins.value.find(c => c.symbol === activeSymbol.value));
+
+        const totalUnrealizedPnl = computed(() => {
+            let total = 0;
+            for (let sym in allPositions.value) {
+                const pos = allPositions.value[sym];
+                if (Math.abs(pos.qty) < 0.000001) continue;
+                const coin = coins.value.find(c => c.symbol === sym.replace(':USDT', 'USDT'));
+                if (coin && coin.price) {
+                    const cost = Math.abs(pos.qty) * pos.avg_price;
+                    const val = Math.abs(pos.qty) * coin.price;
+                    if (pos.qty > 0) {
+                        total += (val - cost);
+                    } else {
+                        total += (cost - val);
+                    }
+                }
+            }
+            return total;
+        });
 
         const sortedCoins = computed(() => {
             return [...coins.value].sort((a, b) => {
@@ -1858,7 +1874,7 @@ createApp({
         };
 
         return {
-            customSymbol, addCustomCoin, coins, sortedCoins, activeSymbol, activeCoin,
+            customSymbol, addCustomCoin, coins, sortedCoins, activeSymbol, activeCoin, totalUnrealizedPnl,
             formattedMainPrice, mainPriceClass,
             currentCurrency, currentCurrencySymbol, twdRate,
             toggleCurrency, setActiveCoin,

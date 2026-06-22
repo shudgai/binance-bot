@@ -15,6 +15,7 @@ import fcntl
 import math
 import requests
 import traceback
+import inspect
 from dotenv import load_dotenv
 from services.utils import paper_key
 from update_paper_state import update_paper_state
@@ -160,28 +161,27 @@ USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '5m'
 TRADE_HISTORY_FILE = "trade_history.json"
-MAX_GLOBAL_CONCURRENT_TRADES = 3
+MAX_GLOBAL_CONCURRENT_TRADES = 2
 DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
-    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 15.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
+    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 15.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
     "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
-    "TRXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
-    "TIAUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
+    "TIAUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) - 快速爆發，中等槓桿 ---
-    "RENDERUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "RENDERUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
     "INJUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "VELVETUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "LABUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "FETUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "TAOUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "SEIUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
     "AVAXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5},
-    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5},
-    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5}
+    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5}
 
 }
 
@@ -216,7 +216,7 @@ if USE_TESTNET:
 DEFAULT_SYMBOLS = [
     "SOLUSDT", "LINKUSDT", "TRXUSDT", "TIAUSDT", "RENDERUSDT",
     "SUIUSDT", "INJUSDT", "NEARUSDT", "VELVETUSDT", "LABUSDT",
-    "AVAXUSDT", "DOGEUSDT", "PEPEUSDT"
+    "AVAXUSDT", "DOGEUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 
@@ -303,8 +303,6 @@ _PRECISION_CACHE = {}
 
 def convert_to_ccxt_symbol(symbol: str) -> str:
     symbol = str(symbol).upper().strip()
-    if symbol == "PEPEUSDT":
-        return "1000PEPE/USDT"
     if symbol.endswith("USDT"):
         return f"{symbol[:-4]}/USDT"
     return symbol
@@ -366,8 +364,6 @@ def normalize_symbol(sym):
     sym = str(sym).strip().upper()
     if not sym:
         return ""
-    if sym in ("PEPE", "PEPEUSDT"):
-        return "1000PEPEUSDT"
     if not sym.endswith("USDT"):
         sym = f"{sym}USDT"
     return sym
@@ -491,7 +487,7 @@ def save_symbol_profiles(profiles):
 def infer_symbol_personality(sym):
     if sym in ("BTCUSDT", "ETHUSDT"):
         return "calm"
-    aggressive_coins = {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT"}
+    aggressive_coins = {"DOGEUSDT", "SHIBUSDT"}
     balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "INJUSDT", "RENDERUSDT"}
     if sym in aggressive_coins:
         return "aggressive"
@@ -559,6 +555,32 @@ def get_effective_exit_setting(sym, key, base_value, is_long):
         if value > base_value:
             return base_value
     return value
+
+
+def get_dynamic_atr_multiplier(sym, base_multiplier):
+    """
+    計算當前 ATR 與 24 小時平均 ATR 的比值，並動態調整乘數。
+    當波動激增（大於平均 1.5 倍）時，等比例放大乘數以給予價格防插針空間；
+    當市場死水（小於平均 0.7 倍）時，縮小乘數以節省潛在停損距離。
+    """
+    s = STATES.get(sym)
+    if not s:
+        return base_multiplier
+        
+    atr_history = s.get("atr_history", [])
+    atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
+    current_atr = s.get("current_atr", 0.0)
+    
+    if atr_24h_avg > 0:
+        vol_ratio = current_atr / atr_24h_avg
+        if vol_ratio > 1.5:
+            # 波動激增，放大乘數 (最高 1.5 倍)
+            return base_multiplier * min(vol_ratio, 1.5)
+        elif vol_ratio < 0.7:
+            # 波動死水，縮小乘數 (固定 0.8 倍)
+            return base_multiplier * 0.8
+            
+    return base_multiplier
 
 
 def apply_symbol_profile(sym, profile):
@@ -692,6 +714,10 @@ def build_symbol_state(sym):
     conf = COIN_PROFILE_CONFIG.get(sym, {})
     return {
         "status": "ACTIVE",
+        "error_strikes": 0,
+        "is_banned": False,
+        "sync_required": False,
+        "last_exit_time": 0,
         "status_reason": "",
         "next_status_time": 0,
         "stop_count": 0,
@@ -1243,6 +1269,26 @@ async def fetch_all_sma200(exchange):
         if not isinstance(results[i], Exception):
             STATES[sym]["sma200_15m"] = results[i]
 
+async def fetch_ema20_15m(exchange, sym):
+    try:
+        async with request_semaphore:
+            ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=100)
+        if not ohlcv or len(ohlcv) == 0:
+            return 0.0
+        closes = np.array([x[4] for x in ohlcv])
+        ema20 = calculate_ema(closes, 20)
+        return float(ema20)
+    except Exception as e:
+        print(f"⚠️ [15m EMA20獲取失敗] {sym}: {e}")
+        return 0.0
+
+async def fetch_all_ema20_15m(exchange):
+    tasks = [fetch_ema20_15m(exchange, sym) for sym in ALL_SYMBOLS]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for i, sym in enumerate(ALL_SYMBOLS):
+        if not isinstance(results[i], Exception):
+            STATES[sym]["ema20_15m"] = results[i]
+
 async def fetch_ema50_1h(exchange, sym):
     try:
         async with request_semaphore:
@@ -1297,6 +1343,28 @@ async def load_open_positions():
 
 # ── 指標計算 ──────────────────────────────────────────────────
 
+def detect_divergence(sym):
+    s = STATES.get(sym)
+    if not s or "rsi_history" not in s or len(s["rsi_history"]) < 3 or len(s.get("ohlcv", [])) < 3:
+        return None
+        
+    closes = [x[4] for x in s["ohlcv"][-3:]]
+    rsis = s["rsi_history"][-3:]
+    
+    # 價格創新低，但 RSI 沒創新低 (底背離)
+    if closes[2] < closes[0] and rsis[2] > rsis[0]:
+        return f"{sym} 出現底背離！價格破底 ({closes[0]:.4f}->{closes[2]:.4f}) 但 RSI 墊高 ({rsis[0]:.1f}->{rsis[2]:.1f})"
+    return None
+
+def check_all_divergence_logic():
+    """自動掃描所有幣種的底背離訊號"""
+    divergence_results = []
+    for sym in ALL_SYMBOLS:
+        res = detect_divergence(sym)
+        if res:
+            divergence_results.append(res)
+    return divergence_results
+
 def compute_indicators(sym):
     s = STATES[sym]
     ohlcv = s["ohlcv"]
@@ -1332,6 +1400,11 @@ def compute_indicators(sym):
         losses = -deltas[deltas < 0].mean() if np.any(deltas < 0) else 1e-10
         rs = gains / losses
         s["current_rsi"] = 100.0 - (100.0 / (1.0 + rs))
+        if "rsi_history" not in s:
+            s["rsi_history"] = []
+        s["rsi_history"].append(s["current_rsi"])
+        if len(s["rsi_history"]) > 10:
+            s["rsi_history"].pop(0)
     s["vol_ma10"] = float(np.mean(volumes[-10:])) if len(volumes) >= 10 else float(np.mean(volumes))
     s["vol_ma20"] = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
     s["current_vol"] = float(volumes[-1])
@@ -1605,6 +1678,7 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
         pnl_tag = "[大虧]"
         
     full_reason = f"{pnl_tag} {reason}".strip()
+    s["last_exit_time"] = time.time()
 
     sanitized_qty = await sanitize_order_qty(sym, qty)
     if sanitized_qty <= 0.0:
@@ -1741,7 +1815,11 @@ async def check_exits(sym):
 
 
     # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
-    sl_base = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
+    sl_base_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
+    
+    # --- 動態停損乘數 (Dynamic ATR Multiplier) ---
+    sl_base = get_dynamic_atr_multiplier(sym, sl_base_raw)
+
     sl_mult = sl_base * 1.5 if hold_sec < 120 else sl_base
     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
@@ -1819,12 +1897,33 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
+    # ── [新增] Trailing Stop 機制 ──
+    # 當未實現獲利 >= 1.0% 時，啟動移動停損；若從最高點回撤 1.2%，則平倉鎖利。
+    ts_activation_pct = 0.010
+    ts_retracement_pct = 0.012
+    if s["highest_profit_pct"] >= ts_activation_pct:
+        if profit_pct <= (s["highest_profit_pct"] - ts_retracement_pct):
+            cs = 'sell' if is_long else 'buy'
+            print(f"📉 [移動停損鎖利] {sym} 從最高獲利 {s['highest_profit_pct']*100:.2f}% 回撤 {ts_retracement_pct*100:.2f}%，觸發出場。")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trailing_Stop]")
+            s["highest_profit_pct"] = 0.0
+            return
+
     regime_decision, regime_reason = detect_market_regime(sym, p, avg, is_long)
     if regime_decision == "BREAKOUT_REVERSAL":
         cs = 'sell' if is_long else 'buy'
-        print(f"🚨 [市場 regime] {sym} {regime_reason}，立即平倉並反手")
+        print(f"🚨 [市場 regime] {sym} {regime_reason}，立即平倉並考慮反手")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Breakout_Fail]_Fail]", is_stop_loss=True)
         s["highest_profit_pct"] = 0.0
+        
+        # 自動反手邏輯：設置 pending_reverse，並防護避免短時間來回反手
+        last_reverse = s.get("last_reverse_time", 0)
+        if time.time() - last_reverse > 1800:  # 30分鐘內不允許連續反手
+            s["pending_reverse"] = "sell" if is_long else "buy"
+            s["pending_reverse_time"] = time.time()
+            s["last_reverse_time"] = time.time()
+        else:
+            print(f"⏳ [反手冷卻] {sym} 距離上次反手不到 30 分鐘，為了防禦假震盪，本次放棄反手。")
         return
 
 
@@ -1863,15 +1962,15 @@ async def check_exits(sym):
     if p < s["trailing_lowest"]:
         s["trailing_lowest"] = p
 
-    # 1. 趨勢反轉：MACD 狀態反向 → 立即認賠出場 (修正盲區，不只看交叉瞬間)
-    macd_is_down = s["macd_line"] < s["macd_signal"]
-    macd_is_up = s["macd_line"] > s["macd_signal"]
+    # 1. 趨勢反轉：MACD 連續兩根狀態反向 → 認賠出場 (避免單根 MACD 雜訊)
+    macd_is_down = (s["macd_line"] < s["macd_signal"]) and (s.get("prev_macd_line", 0.0) < s.get("prev_macd_signal", 0.0))
+    macd_is_up = (s["macd_line"] > s["macd_signal"]) and (s.get("prev_macd_line", 0.0) > s.get("prev_macd_signal", 0.0))
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
     if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
         cs = 'sell' if is_long else 'buy'
         is_sl = profit_pct < 0.0
-        print(f"📉 [反轉出場] {sym} MACD狀態反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
+        print(f"📉 [反轉出場] {sym} MACD連續兩根確認反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=is_sl)
         return
 
@@ -2468,6 +2567,25 @@ def is_entry_pin_safe(sym, side):
         return True
 
 
+def get_dynamic_volume_factor(states):
+    total_current_vol = 0.0
+    total_ma20_vol = 0.0
+    
+    for s in states.values():
+        total_current_vol += s.get("current_vol", 0)
+        total_ma20_vol += s.get("vol_ma20", 0)
+    
+    # 防止除以零的錯誤
+    if total_ma20_vol == 0:
+        return 1.2
+        
+    market_volume_state = total_current_vol / total_ma20_vol
+    
+    # 邏輯：如果整體市場量能低於平均水準，放寬門檻至 1.0
+    # 否則保持 1.2 的高標準過濾
+    return 1.0 if market_volume_state < 1.0 else 1.2
+
+
 def is_entry_volume_confirmed(sym, side):
     s = STATES[sym]
     if len(s["ohlcv"]) < 2:
@@ -2478,32 +2596,32 @@ def is_entry_volume_confirmed(sym, side):
         return False
     
     # [Layer 3] 動態量能門檻 (根據幣種性格動態調整)
-    base_vol_factor = s.get("volume_threshold_factor", 1.5)
-    profile_type = s.get("profile_type", "Core_Trend")
+    base_vol_factor = s.get("volume_threshold_factor", 1.2)
+    vol_factor = base_vol_factor
     
-    if profile_type == "Core_Trend":
-        dynamic_vol_factor = 1.2
-    elif profile_type == "High_Beta_Momentum":
-        dynamic_vol_factor = 1.5
-    elif profile_type == "Speculative_Risk":
-        dynamic_vol_factor = 1.8
+    # [新增] 大盤量能過濾：環境感知
+    market_dynamic_factor = get_dynamic_volume_factor(STATES)
+    if market_dynamic_factor == 1.0:
+        vol_factor = 1.0
+        print(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 1.0x")
     else:
-        dynamic_vol_factor = base_vol_factor
-        
-    # 為了讓 Core_Trend 能真正降低門檻，直接使用 dynamic_vol_factor，不用 max() 卡住
-    vol_factor = dynamic_vol_factor
-    
-    # [新增] 根據 ATR 高低自動動態調整倍數
-    atr_24h_avg = s.get("atr_24h_avg", 0.0)
-    current_atr = s.get("current_atr", 0.0)
-    atr_ratio = (current_atr / atr_24h_avg) if atr_24h_avg > 0 else 1.0
-    
-    if atr_ratio >= 1.5:
-        vol_factor = 1.1
-        print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率極高 (ATR ratio: {atr_ratio:.2f})，動態降低量能門檻至 1.1x")
-    elif atr_ratio >= 1.2:
-        vol_factor = max(1.0, vol_factor - 0.2)
-        print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率偏高 (ATR ratio: {atr_ratio:.2f})，微調量能門檻至 {vol_factor:.1f}x")
+        # [新增] RSI 強勢放寬量能門檻
+        rsi = s.get("current_rsi", 50.0)
+        if rsi > 70 or rsi < 30:
+            vol_factor = 1.0
+            print(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 1.0x")
+        else:
+            # [新增] 根據 ATR 高低自動動態調整倍數
+            atr_24h_avg = s.get("atr_24h_avg", 0.0)
+            current_atr = s.get("current_atr", 0.0)
+            atr_ratio = (current_atr / atr_24h_avg) if atr_24h_avg > 0 else 1.0
+            
+            if atr_ratio >= 1.5:
+                vol_factor = min(1.1, vol_factor)
+                print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率極高 (ATR ratio: {atr_ratio:.2f})，動態降低量能門檻至 {vol_factor}x")
+            elif atr_ratio >= 1.2:
+                vol_factor = max(1.0, vol_factor - 0.2)
+                print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率偏高 (ATR ratio: {atr_ratio:.2f})，微調量能門檻至 {vol_factor:.1f}x")
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
@@ -2535,6 +2653,32 @@ def is_entry_allowed(sym, side, route="a"):
     if side == 'sell' and not MARKET_WIND.get("allow_short", True) and is_trend:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤上漲風控] 大盤異常漲勢，禁止開空")
         return False
+
+    # --- [BTC 1H 趨勢大盤過濾] ---
+    btc_1h = MARKET_WIND.get("btc_trend_1h")
+    if is_trend and btc_1h is not None:
+        if side == 'buy' and btc_1h == "BEAR":
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，禁止所有做多 (buy) 訊號以防接刀")
+            return False
+
+    s = STATES[sym]
+    cp = s["close_price"]
+
+    # --- [RSI 底部反彈防禦] ---
+    if side == 'sell' and s.get("current_rsi", 50.0) < 30:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI 底部反彈防禦] 空單 RSI ({s.get('current_rsi', 50.0):.1f}) < 30 極度超賣，攔截開空訊號防接刀")
+        return False
+
+    # --- [15m EMA 趨勢過濾] ---
+    if is_trend:
+        ema20_15m = s.get("ema20_15m", 0.0)
+        if ema20_15m > 0:
+            if side == 'buy' and cp < ema20_15m:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做多，但 15m EMA 向下 (現價 {cp:.4f} < 15m_EMA20 {ema20_15m:.4f})")
+                return False
+            if side == 'sell' and cp > ema20_15m:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做空，但 15m EMA 向上 (現價 {cp:.4f} > 15m_EMA20 {ema20_15m:.4f})")
+                return False
 
     # --- [BTC 4H 趨勢過濾] ---
     # None = 中立（資料尚未取得），視為允許雙向進場
@@ -2762,7 +2906,7 @@ def compute_signal_strength(sym):
         if long_macd_cross:
             strength += 5.0
         strength += trend_score
-        return ("buy", strength if strength >= 6.0 else 0.0, route)
+        return ("buy", strength if strength >= 12.0 else 0.0, route)
 
     if short_base_ok:
         route = "a"
@@ -2770,7 +2914,7 @@ def compute_signal_strength(sym):
         if short_macd_cross:
             strength += 5.0
         strength += trend_score
-        return ("sell", strength if strength >= 6.0 else 0.0, route)
+        return ("sell", strength if strength >= 12.0 else 0.0, route)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
     # 專門抓大趨勢回檔時的「價跌量縮」潛在底部
@@ -2836,6 +2980,23 @@ def compute_signal_strength(sym):
 
     return (None, 0, None)
 
+async def is_eligible_for_reverse(sym, current_strength):
+    s = STATES.get(sym)
+    if not s or s.get("is_banned"):
+        return False
+    
+    # 強度門檻 (>= 12.0)
+    if current_strength < 12.0:
+        return False
+    
+    # 冷卻時間門檻 (30 分鐘 = 1800 秒)
+    last_exit = s.get("last_exit_time", 0)
+    if (time.time() - last_exit) < 1800:
+        print(f"⏳ [REVERSE_DENIED] {sym} 尚未過冷卻期 (距離上次平倉不足 30 分鐘)")
+        return False
+        
+    return True
+
 async def check_entries():
     open_count = get_open_position_count()
     remaining_slots = MAX_POSITIONS - open_count
@@ -2843,6 +3004,22 @@ async def check_entries():
     candidates = []
     for sym in ALL_SYMBOLS:
         s = STATES[sym]
+        
+        # --- 新增：自動反手快速通道 ---
+        pending_rev = s.get("pending_reverse")
+        if pending_rev:
+            if time.time() - s.get("pending_reverse_time", 0) < 300: # 5 分鐘內有效
+                print(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
+                price = s["close_price"]
+                s["pending_reverse"] = None
+                await create_orders(sym, pending_rev, price)
+                # 反手成功後重新載入並冷卻
+                await asyncio.sleep(1)
+                await load_open_positions()
+                continue
+            else:
+                s["pending_reverse"] = None
+
         if s["status"] != "ACTIVE":
             continue
             
@@ -2900,8 +3077,11 @@ async def check_entries():
                                 continue
 
                     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-                    sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
+                    sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
                     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+                    
+                    # 套用相同的動態倍數邏輯
+                    sl_multiplier = get_dynamic_atr_multiplier(sym, sl_multiplier_raw)
                     
                     sl_dist = max(atr_val * sl_multiplier, p * 0.005)
                     tp_dist = max(atr_val * tp_multiplier, p * 0.015)
@@ -3007,10 +3187,20 @@ async def check_entries():
                     continue
         # Exhaustion_Entry 放行：反轉策略本來就在趨勢末端進場，不需要 MTF 同向確認
         
-        # --- 方向鎖定 (Direction Lock) ---
+        # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
         if has_position and side != current_direction:
-            # 已經有持倉，不允許反向訊號加倉
-            continue
+            if await is_eligible_for_reverse(sym, strength):
+                print(f"⚡ [AUTOMATIC_REVERSE] {sym} 觸發強勢反轉，執行平倉並反手建立 {side} 倉位")
+                # 執行平倉
+                await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
+                # 安全性強制校準
+                await asyncio.sleep(1)
+                # 執行反向開倉
+                await create_orders(sym, side, s["close_price"])
+                continue
+            else:
+                # 已經有持倉，不允許反向訊號加倉且未達反手門檻
+                continue
 
         if not is_entry_allowed(sym, side, route):
             continue
@@ -3042,8 +3232,10 @@ async def check_entries():
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
         atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-        sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
+        sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
         tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+        
+        sl_multiplier = get_dynamic_atr_multiplier(sym, sl_multiplier_raw)
 
         sl_dist = max(atr_val * sl_multiplier, p * 0.005)
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
@@ -3150,6 +3342,79 @@ async def market_wind_loop(exchange):
             print(f"⚠️ [大盤風向更新失敗] {e}")
         await asyncio.sleep(60)
 
+async def handle_trading_error(sym):
+    """
+    處理交易邏輯中的異常：
+    1. 增加錯誤計數
+    2. 達到閾值時封鎖 (Ban)
+    3. 標記為需要校準 (Sync)
+    """
+    s = STATES.get(sym)
+    if not s: return
+
+    s["error_strikes"] = s.get("error_strikes", 0) + 1
+    print(f"⚠️ [ERROR_STRIKE] {sym} 發生第 {s['error_strikes']} 次異常")
+
+    if s["error_strikes"] >= 3:
+        s["is_banned"] = True
+        print(f"🚫 [BANNED] {sym} 因連續報錯被封鎖，將停止監控。")
+    
+    s["sync_required"] = True
+    # 重置當前幣種的暫時性持倉狀態，防止數據污染
+    reset_coin_state(sym)
+
+async def safe_execute(func, sym, *args):
+    """
+    安全護盾：隔離單幣種錯誤，確保一個幣種崩潰不會影響全域
+    """
+    s = STATES.get(sym)
+    if not s or s.get("is_banned"):
+        return None
+
+    try:
+        if inspect.iscoroutinefunction(func):
+            return await func(sym, *args)
+        else:
+            return func(sym, *args)
+    except Exception as e:
+        print(f"🚨 [SAFE_SHIELD] {sym} 發生異常在 {func.__name__}: {e}")
+        await handle_trading_error(sym)
+        return None
+
+async def calibrate_with_exchange(exchange):
+    """
+    與交易所進行實際持倉校準。
+    若偵測到本地數據與交易所數據不符，強制覆蓋為交易所數據。
+    """
+    if PAPER_TRADING:
+        print("ℹ️ [CALIBRATION] 紙上交易模式，跳過交易所校準。")
+        return
+
+    try:
+        # 從交易所抓取所有持倉
+        positions = await exchange.fetch_positions()
+        for pos in positions:
+            # 處理不同交易所的 symbol 格式 (如 BTC/USDT -> BTC)
+            raw_symbol = pos['symbol']
+            sym = raw_symbol.split('/')[0] if '/' in raw_symbol else raw_symbol
+            
+            if sym in STATES:
+                real_qty = float(pos.get('contracts', 0.0))
+                current_qty = STATES[sym].get("qty", 0.0)
+
+                # 設定容差 (例如 0.1% 以內視為一致，避免浮點數誤差)
+                if abs(real_qty - current_qty) > (abs(current_qty) * 0.001) and abs(real_qty) > 0:
+                    print(f"⚖️ [CALIBRATION] 校準 {sym}: 內部 {current_qty} -> 交易所 {real_qty}")
+                    STATES[sym]["qty"] = real_qty
+                    # 如果有持倉但內部記錄是空的，這就是關鍵的校準
+                    if current_qty == 0:
+                        STATES[sym]["entry_price"] = float(pos.get('entryPrice', pos.get('avg_price', 0.0)))
+                        STATES[sym]["avg_price"] = STATES[sym]["entry_price"]
+                        print(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
+                        
+    except Exception as e:
+        print(f"⚠️ [CALIBRATION_FAIL] 無法連線交易所校準: {e}")
+
 async def main_loop(exchange):
     asyncio.create_task(market_wind_loop(exchange))
     global ALL_SYMBOLS
@@ -3171,10 +3436,14 @@ async def main_loop(exchange):
         await asyncio.wait_for(initialize_atr_history(exchange), timeout=60)
     except (asyncio.TimeoutError, Exception) as e:
         print(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
+    
+    print("🔍 [INIT] 正在啟動時校準倉位...")
+    await calibrate_with_exchange(exchange)
     await fetch_real_balance()
     await load_open_positions()
     await fetch_all_sma200(exchange)
     await fetch_all_ema50_1h(exchange)
+    await fetch_all_ema20_15m(exchange)
 
     last_balance_update = time.time()
 
@@ -3189,17 +3458,36 @@ async def main_loop(exchange):
             closed_syms = [sym for sym in ALL_SYMBOLS if abs(STATES[sym]["qty"]) <= 0.000001]
             # 將有持倉的幣種排在最後面，確保日誌輸出時位於最底端（最容易看到）
             ALL_SYMBOLS = closed_syms + open_syms
+            
+            for sym in ALL_SYMBOLS:
+                if STATES[sym].get("sync_required"):
+                    print(f"🔄 [SYNC_REQUIRED] 正在重新校準 {sym}...")
+                    # 重新讀取本地全域倉位狀態
+                    await load_open_positions() 
+                    STATES[sym]["sync_required"] = False
 
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
             # await update_market_wind(exchange)  # 已移至獨立 Task
             await fetch_all_klines(exchange)
             for sym in ALL_SYMBOLS:
-                try:
-                    compute_indicators(sym)
-                except Exception as e:
-                    print(f"⚠️ [指標計算異常] {sym} 處理失敗，跳過此幣種本次更新: {e}")
-            
+                if STATES[sym].get("status") == "COOLDOWN":
+                    if time.time() < STATES[sym].get("next_status_time", 0):
+                        continue
+                    else:
+                        STATES[sym]["status"] = "ACTIVE"
+                        print(f"✅ [冷卻結束] {sym} 恢復 ACTIVE 狀態")
+
+                # 使用安全護盾執行指標計算
+                await safe_execute(compute_indicators, sym)
+                    
+            # --- 新增背離自動掃描 ---
+            # 每 5 分鐘執行一次檢查
+            if time.time() % 300 < MAIN_LOOP_INTERVAL_SEC:
+                div_list = check_all_divergence_logic()
+                for msg in div_list:
+                    print(f"🌟 [自動背離掃描] {msg}")
+
             # --- 狀態更新區塊 ---
             try:
                 update_states()
@@ -3213,13 +3501,14 @@ async def main_loop(exchange):
 
             # --- 出場檢查區塊 (最關鍵的防禦) ---
             for sym in ALL_SYMBOLS:
-                try:
-                    await check_exits(sym)
-                except Exception as e:
-                    # 如果某個幣種的 check_exits 崩潰，只會報錯並跳過，不會影響到其他幣種
-                    print(f"⚠️ [出場檢查異常] {sym} 出場邏輯報錯，跳過此幣種檢查: {e}")
+                if STATES[sym].get("status") != "ACTIVE":
+                    continue
+                # 使用安全護盾執行出場檢查
+                await safe_execute(check_exits, sym)
 
             # --- 進場檢查區塊 ---
+            # 由於 check_entries 本身會處理所有幣種（全域掃描），但它內部處理了每個候選名單，
+            # 若發生重大全域異常，還是先保留 try-except 以免卡死
             try:
                 await check_entries()
             except Exception as e:
@@ -3250,6 +3539,13 @@ async def main_loop(exchange):
             error_msg = f"發生未預期的錯誤：\n{str(e)}\n{traceback.format_exc()}"
             print(f"❌ [系統錯誤] {error_msg}")
             
+            # 發生致命錯誤時，強制重新載入開倉部位，避免狀態卡死
+            try:
+                await load_open_positions()
+                print("♻️ 已重新載入真實部位完成")
+            except Exception as e2:
+                print(f"⚠️ 重新載入部位失敗: {e2}")
+            
             # 觸發通知 (如果有定義 send_alert 的話)
             try:
                 send_alert(error_msg)
@@ -3273,7 +3569,8 @@ async def periodic_htf_update(exchange):
         await asyncio.sleep(900)
         await fetch_all_sma200(exchange)
         await fetch_all_ema50_1h(exchange)
-        print("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50")
+        await fetch_all_ema20_15m(exchange)
+        print("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20")
 
 async def periodic_status_log():
     while True:
@@ -3296,7 +3593,25 @@ async def periodic_status_log():
         except Exception:
             pass
 
+async def sync_paper_state():
+    while True:
+        await asyncio.sleep(1)
+        if not PAPER_TRADING:
+            continue
+        try:
+            with open("paper_state.json", "r") as f:
+                state = json.load(f)
+            for sym in ALL_SYMBOLS:
+                pk = paper_key(sym)
+                pos = state.get("positions", {}).get(pk, {})
+                qty = float(pos.get("qty", 0.0))
+                STATES[sym]["qty"] = qty
+                STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+        except:
+            pass
+
 async def main():
+    asyncio.create_task(sync_paper_state())
     asyncio.create_task(periodic_htf_update(exchange_futures))
     asyncio.create_task(periodic_status_log())
     
