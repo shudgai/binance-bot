@@ -1342,8 +1342,13 @@ def update_trailing_stop(sym, current_price, is_long):
     if atr_val <= 0:
         return False, s["trailing_stop_price"]
 
+    # 安全性：限制 ATR 極端跳動影響強平價防禦
+    atr_history = s.get("atr_history", [])
+    atr_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else atr_val
+    safe_atr = min(atr_val, atr_avg * 3) if atr_avg > 0 else atr_val
+
     trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
-    liq_price = s["avg_price"] * (1 - s["sl_atr_multiplier"] * (s.get("current_atr", 0.0) / max(s["close_price"], 1e-8)))
+    liq_price = s["avg_price"] * (1 - s["sl_atr_multiplier"] * (safe_atr / max(s["close_price"], 1e-8)))
     
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
@@ -1726,7 +1731,7 @@ async def check_exits(sym):
     breakeven_threshold = max(entry_atr_pct * 0.6, 0.0015)
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         atr_half = s.get("current_atr", atr_val) * 0.5
-        sl = avg + atr_half if is_long else avg - atr_half
+        sl = avg + atr_half + avg * 0.001 if is_long else avg - atr_half - avg * 0.001
     else:
         sl = avg - sl_dist if is_long else avg + sl_dist
 
@@ -1736,23 +1741,33 @@ async def check_exits(sym):
         atr_half = s.get("current_atr", atr_val) * 0.5
         
         if is_long:
-            sl_floor = first_entry - atr_half
+            sl_floor = first_entry - atr_half + avg * 0.001
             sl = max(sl, sl_floor)
         else:
-            sl_floor = first_entry + atr_half
+            sl_floor = first_entry + atr_half - avg * 0.001
             sl = min(sl, sl_floor)
 
     # ── 最低停損距離保護 (Minimum Stop-Loss Distance) ──
-    # 修正公式：為了讓停損點距離現價「至少」保持 0.5%，做多時取 min，做空時取 max。
     hard_sl_pct = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
+    
     if is_long:
-        sl = min(sl, p * 0.995)
-        hard_sl = avg * (1 - hard_sl_pct)
-        sl = max(sl, hard_sl)  # 確保保護不會把停損點推到比硬性虧損限制還要遠
+        hard_sl_limit = avg * (1 - hard_sl_pct)
+        # A. 距離保護：確保停損點距離現價至少 0.5% (如果太近，強制往下壓低至 0.5% 距離)
+        if sl > p * 0.995:
+            sl = p * 0.995
+        
+        # B. 硬性停損限制：停損點絕對不能低於硬性停損線 (不能虧損超過 2%)
+        if sl < hard_sl_limit:
+            sl = hard_sl_limit
     else:
-        sl = max(sl, p * 1.005)
-        hard_sl = avg * (1 + hard_sl_pct)
-        sl = min(sl, hard_sl)
+        hard_sl_limit = avg * (1 + hard_sl_pct)
+        # A. 距離保護：確保停損點距離現價至少 0.5% (如果太近，強制往上拉高至 0.5% 距離)
+        if sl < p * 1.005:
+            sl = p * 1.005
+        
+        # B. 硬性停損限制：停損點絕對不能高於硬性停損線 (不能虧損超過 2%)
+        if sl > hard_sl_limit:
+            sl = hard_sl_limit
 
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
