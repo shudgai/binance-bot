@@ -1950,6 +1950,11 @@ async def check_exits(sym):
             return
 
     if True: # 動態回吐防護 移動停利 (Trailing Stop)
+        # [新增] 獲利達標強制停止加倉
+        if profit_pct > 0.02 and s.get("entry_count", 0) > 0 and s.get("max_additional_entries", 0) > 0:
+            print(f"🎯 [強制鎖利] {sym} 獲利已達 2%，鎖定利潤，禁止繼續加倉")
+            s["max_additional_entries"] = 0
+
         # 只要利潤達到基本門檻 (tier1_target)，就啟動動態移動停利
         if s["highest_profit_pct"] >= tier1_target:
             atr_val = s.get("current_atr", 0)
@@ -2253,6 +2258,9 @@ async def execute_order(sym, side, price):
     allocation_pct = base_allocation * volatility_factor
     
     base_notional = target_notional * allocation_pct
+    
+    # [新增] 強制加入一個保護層：單筆加倉上限為總資產的 10% (轉換為名義價值)
+    base_notional = min(base_notional, get_balance() * 0.1 * lev)
     
     # 最低加倉門檻保護 (確保滿足幣安合約最小下單金額 5~10 USDT)
     if base_notional < 10.0 and margin * lev >= 10.0:
