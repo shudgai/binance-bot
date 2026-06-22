@@ -2433,11 +2433,11 @@ def is_entry_allowed(sym, side, route="a"):
     btc_4h = MARKET_WIND.get("btc_trend_4h")  # 可能值: "BULL", "BEAR", "NEUTRAL", None
     if is_trend and btc_4h is not None:
         if side == 'buy' and btc_4h == "BEAR":
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [4H大盤過濾] BTC 4H 確認熊市，禁止做多")
-            return False
+            print(f"@@COIN_DEBUG@@ ⚠️ {sym} [4H大盤過濾] BTC 4H 確認熊市，但為提高開倉頻率已放行做多")
+            # return False
         if side == 'sell' and btc_4h == "BULL":
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [4H大盤過濾] BTC 4H 確認牛市，禁止做空")
-            return False
+            print(f"@@COIN_DEBUG@@ ⚠️ {sym} [4H大盤過濾] BTC 4H 確認牛市，但為提高開倉頻率已放行做空")
+            # return False
     # btc_4h == None 或 "NEUTRAL" 時：視為中立，放行個體訊號
 
     s = STATES[sym]
@@ -2491,12 +2491,12 @@ def is_entry_allowed(sym, side, route="a"):
     
     # 動態空間過濾：根據幣種真實波動率 (ATR%) 調整攔截嚴格度
     atr_pct = current_atr / cp if cp > 0 else 0
-    if atr_pct > 0.005:  # 高波動幣種 (如 INJ)：放寬至 0.2x SL 即可進場
-        space_mult = 0.2
-    elif atr_pct < 0.002: # 極低波動幣種 (如 DOGE)：嚴格要求至少 0.5x SL 空間
-        space_mult = 0.5
-    else:                 # 一般情況：0.3x SL
+    if atr_pct > 0.005:  # 高波動幣種：放寬至 0.1x SL 即可進場
+        space_mult = 0.1
+    elif atr_pct < 0.002: # 極低波動幣種：要求至少 0.3x SL 空間
         space_mult = 0.3
+    else:                 # 一般情況：0.2x SL
+        space_mult = 0.2
 
     if side == 'buy' and bb_up > 0:
         space_above = bb_up - cp
@@ -2827,18 +2827,17 @@ async def check_entries():
                         print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 0.5%)，無法覆蓋手續費與滑點，拒絕進場")
                         continue
                         
-                    # [Layer 4] 布林帶空間過濾
+                    # [Layer 4] 布林帶空間過濾 (統一使用 check_trade_space 判定，此處僅作寬鬆兜底 0.2x)
                     if side == "buy" and s.get("bb_up", 0) > 0:
                         space = s["bb_up"] - p
-                        if space < sl_dist * 0.5:
-                            print(f"⚠️ [空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < 0.5*SL({sl_dist*0.5:.4f})，拒絕進場")
+                        if space < sl_dist * 0.2:
+                            print(f"⚠️ [空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < 0.2*SL({sl_dist*0.2:.4f})，拒絕進場")
                             continue
                     if side == "sell" and s.get("bb_low", 0) > 0:
                         space = p - s["bb_low"]
-                        if space < sl_dist * 0.5:
-                            print(f"⚠️ [空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < 0.5*SL({sl_dist*0.5:.4f})，拒絕進場")
+                        if space < sl_dist * 0.2:
+                            print(f"⚠️ [空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < 0.2*SL({sl_dist*0.2:.4f})，拒絕進場")
                             continue
-                        
                     candidates.append((sym, side, strength, route))
                     continue
                 else:
