@@ -1160,11 +1160,31 @@ async def update_market_wind(exchange):
 
 async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SIZE, limit: int = ATR_WARMUP_LIMIT, pause_sec: float = ATR_WARMUP_PAUSE_SEC):
     target_symbols = ALL_SYMBOLS[:ATR_WARMUP_SYMBOL_COUNT]
-    print(f"⏳ [初始化] 開始分批獲取 {limit} 根 {TIMEFRAME} K線，以預熱前 {len(target_symbols)} 個主攻幣種的 ATR 歷史，下次批次間隔 {pause_sec}s...")
-    total = len(target_symbols)
-    if total == 0:
-        print("⚠️ [初始化] 監控幣種清單為空，跳過 ATR 歷史預熱")
+    
+    # --- 讀取本地 ATR 快取 ---
+    import os, json
+    loaded_symbols = set()
+    try:
+        if os.path.exists("atr_history_cache.json"):
+            with open("atr_history_cache.json", "r") as f:
+                cache_data = json.load(f)
+            for sym in cache_data:
+                if sym in STATES and sym in target_symbols:
+                    STATES[sym]["atr_history"] = cache_data[sym]
+                    loaded_symbols.add(sym)
+            if loaded_symbols:
+                print(f"💾 [快取] 成功從本地載入 {len(loaded_symbols)} 個幣種的 ATR 歷史資料！")
+    except Exception as e:
+        print(f"⚠️ [快取] 讀取失敗: {e}")
+
+    # 只針對沒有快取的幣種進行網路請求
+    target_symbols = [sym for sym in target_symbols if sym not in loaded_symbols]
+    if not target_symbols:
+        print("✅ [初始化] 所有幣種皆已從快取載入，跳過網路預熱！")
         return
+
+    print(f"⏳ [初始化] 尚有 {len(target_symbols)} 個幣種需要網路獲取，開始分批獲取 {limit} 根 {TIMEFRAME} K線...")
+    total = len(target_symbols)
 
     for batch_index in range(0, total, batch_size):
         batch = target_symbols[batch_index:batch_index + batch_size]
@@ -3196,6 +3216,17 @@ async def periodic_status_log():
         open_syms = get_open_symbols()
         open_str = ', '.join(f"{sym}({'多' if STATES[sym]['qty']>0 else '空'})" for sym in open_syms) if open_syms else "無"
         print(f"📊 [狀態] 監控池={active} 冷卻={cooldown} 禁賽={banned} | 當前持倉({len(open_syms)}/{MAX_POSITIONS}): {open_str}")
+        
+        # 定期儲存 ATR 快取
+        import json
+        try:
+            cache_data = {}
+            for sym in STATES:
+                cache_data[sym] = STATES[sym]["atr_history"][-1000:]
+            with open("atr_history_cache.json", "w") as f:
+                json.dump(cache_data, f)
+        except Exception:
+            pass
 
 async def main():
     asyncio.create_task(periodic_htf_update(exchange_futures))
