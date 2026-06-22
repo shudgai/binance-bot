@@ -828,9 +828,11 @@ def calculate_adx(highs, lows, closes, period=14):
     return dx
 
 def get_dynamic_stagnation_limit(current_atr, atr_ma20):
-    if current_atr < atr_ma20:
+    if current_atr < atr_ma20 * 0.5:
         return 180
-    return 300
+    elif current_atr < atr_ma20:
+        return 300
+    return 480
 
 def check_binance_weight():
     try:
@@ -1856,9 +1858,9 @@ async def check_exits(sym):
     elif personality == "volatile_breakout":
         tier_mult = 1.2
         
-    tier3_target = max(atr_pct * 4.0 * tier_mult, 0.012 * tier_mult)
-    tier2_target = max(atr_pct * 2.5 * tier_mult, 0.006 * tier_mult)
-    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.0035 * tier_mult)
+    tier3_target = max(atr_pct * 4.0 * tier_mult, 0.012 * tier_mult, 0.008)
+    tier2_target = max(atr_pct * 2.5 * tier_mult, 0.006 * tier_mult, 0.006)
+    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.0035 * tier_mult, 0.004)
 
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 (升級版) ──
     # 結合了「爆發後衰竭」、「位移停滯」、「位置過濾」三大核心
@@ -1903,7 +1905,7 @@ async def check_exits(sym):
             elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * vol_threshold:
                 divergence_exit = True
             
-        if divergence_exit:
+        if divergence_exit and profit_pct > 0.002:
             cs = 'sell' if is_long else 'buy'
             print(f"📉 [量價背離] {sym} 抵達關鍵區位且量縮停滯 (V:{c1[5]:.0f} < {vol_threshold:.2f}x)，動能竭盡提前平倉！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
@@ -1983,8 +1985,8 @@ async def check_exits(sym):
                     await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Stagnation_Exit]")
                     s["highest_profit_pct"] = 0.0
                     return
-        # 僵局二階：平過50% + 8分仍未突破1% → 全平
-        if s["has_partial_closed"] and hold_sec > 480 and profit_pct < 0.01:
+        # 僵局二階：平過50% + 8分仍未突破1% → 全平 (加入最小獲利緩衝 0.2%)
+        if s["has_partial_closed"] and hold_sec > 480 and 0.002 < profit_pct < 0.01:
             if is_vol_stagnant and is_range_tight:
                 cs = 'sell' if is_long else 'buy'
                 print(f"⏳ [量能僵局] {sym} 剩餘50%持倉8分仍未突破1%且量縮橫盤，全平")
