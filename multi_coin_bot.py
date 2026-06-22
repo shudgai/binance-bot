@@ -1822,29 +1822,44 @@ async def check_exits(sym):
     tier2_target = max(atr_pct * 2.5, 0.006)
     tier1_target = max(atr_pct * 1.5, 0.0035)
 
-    # ── 動能竭盡 (量價背離) 頂部逃頂機制 ──
-    if len(s["ohlcv"]) >= 3:
+    # ── 動能竭盡 (量價背離) 頂部逃頂機制 (升級版) ──
+    # 結合了「爆發後衰竭」、「位移停滯」、「位置過濾」三大核心
+    if len(s["ohlcv"]) >= 5:
         c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
         c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
         
-        # 判斷是否為盤整區間 (ATR 低於 24 小時平均的 80%)
-        is_in_consolidation = (current_atr > 0 and atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.8)
+        # 1. 爆發後的衰竭 (Climax-Exhaustion)
+        # 檢查過去 4 根已收盤 K 線中，是否曾出現過高量爆發 (> 1.5倍均量)
+        recent_vols = [x[5] for x in s["ohlcv"][-5:-1]]
+        vol_ma20 = s.get("vol_ma20", 0)
+        has_recent_climax = max(recent_vols) > vol_ma20 * 1.5 if vol_ma20 > 0 else True
         
-        # 價格位置過濾：確保價格接近關鍵區塊 (布林帶邊界 或 15m SMA200)
+        # 2. 價格位移進展 (Price Progress)
+        # 如果價格仍在創新高/低，視為健康休整，不觸發衰竭
+        is_moving_progress = (p > c1[2]) if is_long else (p < c1[3])
+        
+        # 3. 價格位置過濾 (Location Confluence)
         sma200 = s.get("sma200_15m", 0)
         bb_up = s.get("bb_up", 0)
         bb_low = s.get("bb_low", 0)
         
         near_resistance = (bb_up > 0 and p >= bb_up * 0.99) or (sma200 > 0 and p >= sma200 * 1.01)
         near_support = (bb_low > 0 and p <= bb_low * 1.01) or (sma200 > 0 and p <= sma200 * 0.99)
+        extreme_resistance = bb_up > 0 and p >= bb_up
+        extreme_support = bb_low > 0 and p <= bb_low
         
-        is_valid_location = (is_long and near_resistance) or (not is_long and near_support)
+        # 極端區域直接視為有效位置，否則需接近壓力/支撐
+        is_valid_location = (is_long and (near_resistance or extreme_resistance)) or (not is_long and (near_support or extreme_support))
+        
+        # 判斷是否為盤整區間 (ATR 低於 24 小時平均的 80%)
+        is_in_consolidation = (current_atr > 0 and atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.8)
         
         # 盤整區間要求更嚴格的衰竭門檻 (量能小於 50%)，否則使用一般門檻 (65%)
         vol_threshold = 0.50 if is_in_consolidation else 0.65
         
         divergence_exit = False
-        if is_valid_location:
+        # 綜合觸發：曾有爆發 + 已經停滯 + 位於關鍵區 + 量縮
+        if has_recent_climax and not is_moving_progress and is_valid_location:
             if is_long and c1[4] > c2[4] and c1[5] < c2[5] * vol_threshold:
                 divergence_exit = True
             elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * vol_threshold:
@@ -1852,7 +1867,7 @@ async def check_exits(sym):
             
         if divergence_exit:
             cs = 'sell' if is_long else 'buy'
-            print(f"📉 [量價背離] {sym} 價格創高/低但量能急縮 (V:{c1[5]:.0f} < V_prev:{c2[5]:.0f}*{vol_threshold:.2f})，動能竭盡提前平倉！")
+            print(f"📉 [量價背離] {sym} 抵達關鍵區位且量縮停滯 (V:{c1[5]:.0f} < {vol_threshold:.2f}x)，動能竭盡提前平倉！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
             s["highest_profit_pct"] = 0.0
             return
@@ -2622,34 +2637,58 @@ def compute_signal_strength(sym):
     if len(s["ohlcv"]) >= 50:
         c1 = s["ohlcv"][-2]  # 最新已收盤 (驗證K線)
         c2 = s["ohlcv"][-3]  # 前一根已收盤 (縮量衰竭K線)
-        c2_vol_low = c2[5] < s.get("vol_ma20", 1) * 0.8
+        
+        # 4. 波動率過濾 (Volatility Filter)
+        # 避免接刀：如果是極端瀑布行情 (ATR大於2倍均值)，禁止進場
+        current_atr = s.get("current_atr", 0.0)
+        atr_history = s.get("atr_history", [])
+        atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
+        if atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
+            return (None, 0, None)
+
+        c2_vol_low = c2[5] < s.get("vol_ma20", 1) * 0.65
+        
+        # 1. 位置過濾 (Location Awareness)
+        recent_low_50 = min([x[3] for x in s["ohlcv"][-50:]])
+        recent_high_50 = max([x[2] for x in s["ohlcv"][-50:]])
+        sma200 = s.get("sma200_15m", 0)
         
         # 多單：抓回檔底部
         if c2[4] < c2[1] and c2_vol_low:  # c2 價跌且量縮
-            recent_low_50 = min([x[3] for x in s["ohlcv"][-50:]])
-            support_ok = (c1[3] <= s.get("bb_low", 0) * 1.005) or (c1[3] <= recent_low_50 * 1.005)
-            reversal_ok = (c1[4] > c1[1]) and ((min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 0.5)
+            bb_low = s.get("bb_low", 0)
+            support_ok = (bb_low > 0 and c1[3] <= bb_low * 1.005) or (sma200 > 0 and c1[3] <= sma200 * 1.005) or (c1[3] <= recent_low_50 * 1.005)
+            
+            # 2. 價格結構確認 (Price Action)
+            # 收盤價回升且有下影線 (Hammer)
+            price_rebound = c1[4] > c2[4]
+            has_lower_wick = (min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 0.5
+            pa_ok = price_rebound and has_lower_wick
             bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2)
             
             ema50_1h = s.get("ema50_1h", 0)
             trend_ok = (ema50_1h == 0) or (close > ema50_1h * 0.99)
             
-            if trend_ok and (support_ok or reversal_ok or bounce_ok):
-                print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
+            if trend_ok and support_ok and (pa_ok or bounce_ok):
+                print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                 return ("buy", 15.0, "Exhaustion_Entry")
                 
         # 空單：抓反彈頂部
         if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
-            recent_high_50 = max([x[2] for x in s["ohlcv"][-50:]])
-            support_ok = (c1[2] >= s.get("bb_up", 0) * 0.995) or (c1[2] >= recent_high_50 * 0.995)
-            reversal_ok = (c1[4] < c1[1]) and ((c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 0.5)
+            bb_up = s.get("bb_up", 0)
+            resistance_ok = (bb_up > 0 and c1[2] >= bb_up * 0.995) or (sma200 > 0 and c1[2] >= sma200 * 0.995) or (c1[2] >= recent_high_50 * 0.995)
+            
+            # 2. 價格結構確認 (Price Action)
+            # 收盤價回落且有上影線 (Shooting Star)
+            price_rebound = c1[4] < c2[4]
+            has_upper_wick = (c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 0.5
+            pa_ok = price_rebound and has_upper_wick
             bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2)
             
             ema50_1h = s.get("ema50_1h", 0)
             trend_ok = (ema50_1h == 0) or (close < ema50_1h * 1.01)
             
-            if trend_ok and (support_ok or reversal_ok or bounce_ok):
-                print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
+            if trend_ok and resistance_ok and (pa_ok or bounce_ok):
+                print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                 return ("sell", 15.0, "Exhaustion_Entry")
 
     return (None, 0, None)
