@@ -1970,21 +1970,24 @@ async def check_exits(sym):
         is_range_tight = (bb_width / p) < 0.003 if p > 0 else False
         
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
-        if hold_sec > stagnation_limit and profit_pct > 0.003:
+        if hold_sec > stagnation_limit and profit_pct >= 0.002:
             if is_vol_stagnant and is_range_tight:
-                if not s["has_partial_closed"] and 0.003 <= profit_pct < 0.008:
-                    half = abs(s["qty"]) * 0.5
-                    cs = 'sell' if is_long else 'buy'
-                    print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，平50%")
-                    await close_position(sym, cs, half, p, avg, reason="[Vol_Stagnation_1]")
-                    s["has_partial_closed"] = True
-                    return
-                elif profit_pct >= 0.008:
-                    cs = 'sell' if is_long else 'buy'
-                    print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，全平")
-                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Stagnation_Exit]")
-                    s["highest_profit_pct"] = 0.0
-                    return
+                if not s["has_partial_closed"]:
+                    # 若利潤大於 0.6% 則先平 50% 鎖定部分利潤，否則微利情況下直接全平以釋放資金
+                    if 0.006 <= profit_pct < 0.008:
+                        half = abs(s["qty"]) * 0.5
+                        cs = 'sell' if is_long else 'buy'
+                        print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，平50%")
+                        await close_position(sym, cs, half, p, avg, reason="[Vol_Stagnation_1]")
+                        s["has_partial_closed"] = True
+                        return
+                    else:
+                        cs = 'sell' if is_long else 'buy'
+                        reason = "[Vol_Stagnation_Exit]" if profit_pct >= 0.008 else "[Stagnation_BreakEven]"
+                        print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，全平釋放資金")
+                        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason)
+                        s["highest_profit_pct"] = 0.0
+                        return
         # 僵局二階：平過50% + 8分仍未突破1% → 全平 (加入最小獲利緩衝 0.2%)
         if s["has_partial_closed"] and hold_sec > 480 and 0.002 < profit_pct < 0.01:
             if is_vol_stagnant and is_range_tight:
