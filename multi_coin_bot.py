@@ -1860,8 +1860,7 @@ async def check_exits(sym):
         
     tier3_target = max(atr_pct * 4.0 * tier_mult, 0.012 * tier_mult, 0.008)
     tier2_target = max(atr_pct * 2.5 * tier_mult, 0.006 * tier_mult, 0.006)
-    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.0035 * tier_mult, 0.004)
-
+    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.003 * tier_mult, 0.003)
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 (升級版) ──
     # 結合了「爆發後衰竭」、「位移停滯」、「位置過濾」三大核心
     if len(s["ohlcv"]) >= 5:
@@ -1968,6 +1967,14 @@ async def check_exits(sym):
         is_vol_stagnant = len(recent_vols) >= 3 and all(v < vol_ma20 * 0.6 for v in recent_vols)
         bb_width = s.get("bb_up", 0) - s.get("bb_low", 0)
         is_range_tight = (bb_width / p) < 0.003 if p > 0 else False
+        
+        # 絕對時間衰減出局 (Time-Decay Exit): 持倉超過 15 分鐘 (900秒) 且有微利，無視盤整狀態直接出局
+        if hold_sec > 900 and profit_pct >= 0.0015:
+            cs = 'sell' if is_long else 'buy'
+            print(f"⏳ [時間衰減] {sym} 持倉已達 {hold_sec//60} 分鐘且有微利，不想浪費時間，直接全平！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Decay_Exit]")
+            s["highest_profit_pct"] = 0.0
+            return
         
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
         if hold_sec > stagnation_limit and profit_pct >= 0.0015:
@@ -2718,8 +2725,7 @@ def compute_signal_strength(sym):
             pa_ok = price_rebound and has_lower_wick
             bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2)
             
-            ema50_1h = s.get("ema50_1h", 0)
-            trend_ok = (ema50_1h == 0) or (close > ema50_1h * 0.99)
+            trend_ok = True
             
             if trend_ok and support_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
@@ -2737,8 +2743,7 @@ def compute_signal_strength(sym):
             pa_ok = price_rebound and has_upper_wick
             bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2)
             
-            ema50_1h = s.get("ema50_1h", 0)
-            trend_ok = (ema50_1h == 0) or (close < ema50_1h * 1.01)
+            trend_ok = True
             
             if trend_ok and resistance_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
@@ -2827,16 +2832,48 @@ async def check_entries():
                         print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 0.5%)，無法覆蓋手續費與滑點，拒絕進場")
                         continue
                         
-                    # [Layer 4] 布林帶空間過濾 (統一使用 check_trade_space 判定，此處僅作寬鬆兜底 0.2x)
+                    # [Layer 4] 動態空間過濾 (Adaptive Space Check)
+                    # 強勢趨勢 (MACD擴張 + RSI強勢) -> 0.15x SL
+                    # 盤整區間 (ATR低 + 橫盤) -> 0.5x SL
+                    # 預設 -> 0.2x SL
+                    
+                    macd_hist = s.get("macd_hist", 0.0)
+                    prev_macd_hist = s.get("prev_macd_hist", 0.0)
+                    rsi = s.get("current_rsi", 50.0)
+                    current_atr = s.get("current_atr", 0.0)
+                    atr_ma20 = s.get("atr_ma20", 0.0)
+                    recent_candles = s.get("ohlcv", [])
+                    if len(recent_candles) >= 20:
+                        highs = np.array([x[2] for x in recent_candles])
+                        lows = np.array([x[3] for x in recent_candles])
+                        range_width_pct = (np.max(highs) - np.min(lows)) / np.min(lows)
+                    else:
+                        range_width_pct = 1.0
+
+                    space_multiplier = 0.2
+                    
+                    # 判斷強勢趨勢
+                    is_strong_trend = abs(macd_hist) > abs(prev_macd_hist) and (
+                        (side == "buy" and rsi > 60.0) or (side == "sell" and rsi < 40.0)
+                    )
+                    
+                    # 判斷盤整區間
+                    is_consolidation = (atr_ma20 > 0 and current_atr < atr_ma20 * 0.8) and range_width_pct < 0.02
+                    
+                    if is_strong_trend:
+                        space_multiplier = 0.15
+                    elif is_consolidation:
+                        space_multiplier = 0.5
+                    
                     if side == "buy" and s.get("bb_up", 0) > 0:
                         space = s["bb_up"] - p
-                        if space < sl_dist * 0.2:
-                            print(f"⚠️ [空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < 0.2*SL({sl_dist*0.2:.4f})，拒絕進場")
+                        if space < sl_dist * space_multiplier:
+                            print(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
                             continue
                     if side == "sell" and s.get("bb_low", 0) > 0:
                         space = p - s["bb_low"]
-                        if space < sl_dist * 0.2:
-                            print(f"⚠️ [空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < 0.2*SL({sl_dist*0.2:.4f})，拒絕進場")
+                        if space < sl_dist * space_multiplier:
+                            print(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
                             continue
                     candidates.append((sym, side, strength, route))
                     continue
@@ -2921,12 +2958,16 @@ async def check_entries():
         atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
         sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
         tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-        
+
         sl_dist = max(atr_val * sl_multiplier, p * 0.005)
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-        
+
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.5)
+        base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.5)
+        
+        # 動態 RR：如果訊號強度極高 (> 15.0)，允許 RR 降到 1.3
+        rr_thresh = 1.3 if strength > 15.0 else base_rr_thresh
+        
         if expected_rr < rr_thresh:
             print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
             continue
