@@ -2716,7 +2716,10 @@ def compute_signal_strength(sym):
         # 多單：抓回檔底部
         if c2[4] < c2[1] and c2_vol_low:  # c2 價跌且量縮
             bb_low = s.get("bb_low", 0)
-            support_ok = (bb_low > 0 and c1[3] <= bb_low * 1.005) or (sma200 > 0 and c1[3] <= sma200 * 1.005) or (c1[3] <= recent_low_50 * 1.005)
+            # 必須是在真正的底部：低於 BB 下軌，或是非常靠近 SMA200 / 近期低點 (差距小於 0.5%)
+            is_near_sma = (sma200 > 0) and (abs(c1[3] - sma200) / sma200 < 0.005)
+            is_near_low = (recent_low_50 > 0) and (c1[3] <= recent_low_50 * 1.005)
+            support_ok = (bb_low > 0 and c1[3] <= bb_low * 1.005) or is_near_sma or is_near_low
             
             # 2. 價格結構確認 (Price Action)
             # 收盤價回升且有下影線 (Hammer)
@@ -2734,7 +2737,9 @@ def compute_signal_strength(sym):
         # 空單：抓反彈頂部
         if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
             bb_up = s.get("bb_up", 0)
-            resistance_ok = (bb_up > 0 and c1[2] >= bb_up * 0.995) or (sma200 > 0 and c1[2] >= sma200 * 0.995) or (c1[2] >= recent_high_50 * 0.995)
+            is_near_sma_res = (sma200 > 0) and (abs(c1[2] - sma200) / sma200 < 0.005)
+            is_near_high = (recent_high_50 > 0) and (c1[2] >= recent_high_50 * 0.995)
+            resistance_ok = (bb_up > 0 and c1[2] >= bb_up * 0.995) or is_near_sma_res or is_near_high
             
             # 2. 價格結構確認 (Price Action)
             # 收盤價回落且有上影線 (Shooting Star)
