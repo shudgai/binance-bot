@@ -1796,6 +1796,24 @@ async def check_exits(sym):
         if sl > hard_sl_limit:
             sl = hard_sl_limit
 
+    # [新增] 事件觸發型縮短停損 (Event-triggered SL Shrink)
+    is_bear_market = not MARKET_WIND.get("allow_long", True)
+    is_bull_market = not MARKET_WIND.get("allow_short", True)
+    if hold_sec > 1800: # 持倉超過 30 分鐘
+        if (is_long and is_bear_market) or (not is_long and is_bull_market):
+            shrink_ratio = 0.5
+            new_sl_dist = atr_val * sl_atr_multiplier * shrink_ratio
+            if is_long:
+                new_sl = avg - new_sl_dist
+                if new_sl > sl:
+                    sl = new_sl
+                    print(f"⚠️ [事件觸發防護] {sym} 持倉>30分且大盤逆風，強制縮短停損至 {sl_atr_multiplier*shrink_ratio:.2f} ATR (新停損價: {sl:.4f})")
+            else:
+                new_sl = avg + new_sl_dist
+                if new_sl < sl:
+                    sl = new_sl
+                    print(f"⚠️ [事件觸發防護] {sym} 持倉>30分且大盤逆風，強制縮短停損至 {sl_atr_multiplier*shrink_ratio:.2f} ATR (新停損價: {sl:.4f})")
+
     if profit_pct > s["highest_profit_pct"]:
         s["highest_profit_pct"] = profit_pct
     if profit_pct < 0:
@@ -2111,12 +2129,35 @@ async def execute_order(sym, side, price):
             is_bull1 = c1[4] > c1[1]
             is_bull2 = c2[4] > c2[1]
             
+            # [新增] RSI 背離與強度權重
+            macd_hist = s.get("macd_hist", 0.0)
+            prev_macd_hist = 0.0
+            if len(s.get("ohlcv", [])) >= 34:
+                try:
+                    import numpy as np
+                    closes = np.array([x[4] for x in s["ohlcv"]])
+                    _, _, m_hist, p_line, p_sig = calculate_macd(closes)
+                    macd_hist = m_hist
+                    prev_macd_hist = p_line - p_sig
+                except:
+                    pass
+            
+            rsi = s.get("current_rsi", 50.0)
+            is_strong_long = rsi > 70 and macd_hist > 0 and macd_hist > prev_macd_hist
+            is_strong_short = rsi < 30 and macd_hist < 0 and macd_hist < prev_macd_hist
+            
             if side == 'buy' and is_bull1 and is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
-                print(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
-                return
+                if is_strong_long:
+                    print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢突破中，忽略實體與量能衰減")
+                else:
+                    print(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                    return
             if side == 'sell' and not is_bull1 and not is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
-                print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
-                return
+                if is_strong_short:
+                    print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢跌破中，忽略實體與量能衰減")
+                else:
+                    print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                    return
             
         # [加倉防護 4] 方向確認 (確保不在逆勢接刀)
         if len(s.get("ohlcv", [])) >= 2:
@@ -2188,11 +2229,17 @@ async def execute_order(sym, side, price):
     
     # 2. 遞減式金字塔加倉比例 (Decreasing Allocation)
     if s["entry_count"] == 0:
-        allocation_pct = 0.40  # 首倉 40%
+        base_allocation = 0.40  # 首倉 40%
     elif s["entry_count"] == 1:
-        allocation_pct = 0.30  # 次倉 30%
+        base_allocation = 0.30  # 次倉 30%
     else:
-        allocation_pct = 0.30  # 再倉 30%
+        base_allocation = 0.30  # 再倉 30%
+        
+    atr_val = s.get("current_atr", 0.0)
+    atr_ma20 = s.get("atr_ma20", atr_val)
+    volatility_factor = max(0.5, min(1.0, (atr_ma20 / atr_val))) if atr_val > 0 else 1.0
+    allocation_pct = base_allocation * volatility_factor
+    
     base_notional = target_notional * allocation_pct
     
     # 最低加倉門檻保護 (確保滿足幣安合約最小下單金額 5~10 USDT)
