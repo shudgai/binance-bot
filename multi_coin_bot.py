@@ -2401,8 +2401,20 @@ def is_entry_volume_confirmed(sym, side):
     if vol_ma20 <= 0:
         return False
     
-    # [Layer 3] 動態量能門檻：嚴格爆發 (至少 1.5 倍)
-    vol_factor = max(1.5, s.get("volume_threshold_factor", 1.5))
+    # [Layer 3] 動態量能門檻 (根據幣種性格動態調整)
+    base_vol_factor = s.get("volume_threshold_factor", 1.5)
+    profile_type = s.get("profile_type", "Core_Trend")
+    
+    if profile_type == "Core_Trend":
+        dynamic_vol_factor = 1.2
+    elif profile_type == "High_Beta_Momentum":
+        dynamic_vol_factor = 1.5
+    elif profile_type == "Speculative_Risk":
+        dynamic_vol_factor = 1.8
+    else:
+        dynamic_vol_factor = base_vol_factor
+        
+    vol_factor = max(dynamic_vol_factor, base_vol_factor)
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
