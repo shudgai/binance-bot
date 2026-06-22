@@ -165,23 +165,23 @@ DEFAULT_LEVERAGE = 5
 
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
-    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
-    "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
-    "TRXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
-    "TIAUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
+    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 15.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
+    "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
+    "TRXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
+    "TIAUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.5},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) - 快速爆發，中等槓桿 ---
-    "RENDERUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 4.5, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "INJUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "VELVETUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
-    "LABUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "RENDERUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "INJUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "VELVETUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
+    "LABUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.5},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) - 極端防禦，低槓桿 ---
-    "AVAXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 7.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5},
-    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5},
-    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5}
+    "AVAXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5},
+    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5},
+    "PEPEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 2, "rr_threshold": 1.5}
 
 }
 
@@ -686,7 +686,7 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 2.5
 TP_ATR_MULTIPLIER = 3.0
-HARD_STOP_LOSS_PCT = 0.025  # 放寬至 2.5%（原 1.5%），避免高波動行情被插針直接砍倉
+HARD_STOP_LOSS_PCT = 0.04  # 放寬至 2.5%（原 1.5%），避免高波動行情被插針直接砍倉
 
 def build_symbol_state(sym):
     conf = COIN_PROFILE_CONFIG.get(sym, {})
@@ -1949,14 +1949,18 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             return
 
-    if True: # 嚴格 20% 移動停利 (Trailing Stop)
-        # 只要利潤達到基本門檻 (tier1_target)，就啟動 20% 嚴格移動停利
+    if True: # 動態回吐防護 移動停利 (Trailing Stop)
+        # 只要利潤達到基本門檻 (tier1_target)，就啟動動態移動停利
         if s["highest_profit_pct"] >= tier1_target:
-            # 當前回落超過最高利潤的 20% (也就是跌破 0.8) 就立刻平倉
-            if profit_pct <= s["highest_profit_pct"] * 0.8:
+            atr_val = s.get("current_atr", 0)
+            atr_ma20 = s.get("atr_ma20", 0)
+            trail_trigger = 0.65 if atr_val > atr_ma20 else 0.70
+            
+            # 當前回落超過動態觸發點
+            if profit_pct <= s["highest_profit_pct"] * trail_trigger:
                 cs = 'sell' if is_long else 'buy'
-                print(f"🛡️ [嚴格移動停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.3f}% 回吐達20%，於 {profit_pct*100:.3f}% 鎖定利潤出場")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trailing_Stop_20%]")
+                print(f"🛡️ [動態移動停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.3f}% 回吐 (觸發點 {trail_trigger:.2f})，於 {profit_pct*100:.3f}% 鎖定利潤出場")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"[Trailing_Stop_{trail_trigger}]")
                 s["highest_profit_pct"] = 0.0
                 return
 
