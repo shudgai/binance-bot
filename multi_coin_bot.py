@@ -2107,8 +2107,8 @@ async def execute_order(sym, side, price):
         avg_price = s.get("avg_price", 0.0)
         if avg_price > 0:
             profit_pct = (price - avg_price) / avg_price if side == 'buy' else (avg_price - price) / avg_price
-            if profit_pct < 0.003:
-                print(f"🛑 [虧損加倉防護] {sym} 目前利潤 {profit_pct*100:.2f}% 不足 0.3%，拒絕加倉！")
+            if profit_pct < 0.008:
+                print(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 0.8%，拒絕加倉以防拉高成本！")
                 return
 
         # [加倉防護 2] 價格大幅反轉過濾
@@ -2186,12 +2186,6 @@ async def execute_order(sym, side, price):
             price_diff = abs(price - last_entry_price)
                     # 動態空間門檻 (依幣種性格)
         personality = s.get("personality", "balanced")
-        if personality in ["trend_follower", "breakout_chaser"]: # Core_Trend
-            floor_pct = 0.004
-        elif personality in ["mean_reversion", "contrarian"]: # Speculative
-            floor_pct = 0.002
-        else: # High_Beta / Balanced
-            floor_pct = 0.003
         profile_type = COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", "")
         # 根據性格調整空間門檻 (Core_Trend 允許更緊湊的加碼)
         if profile_type in ["Core_Trend", "High_Beta_Momentum"]:
@@ -2199,8 +2193,8 @@ async def execute_order(sym, side, price):
         else:
             space_threshold = 1.0 * current_atr
             
-        if price_diff < max(space_threshold, price * floor_pct):
-                print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {space_threshold:.4f}")
+        if price_diff < max(space_threshold, price * 0.005):
+                print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {max(space_threshold, price * 0.005):.4f}")
                 return
                 
         # 2. 動能關卡 (Momentum Check): 量能與 MACD 雙重確認
@@ -2228,10 +2222,9 @@ async def execute_order(sym, side, price):
             print(f"🛑 [動能關卡] {sym} MACD動能不一致 (Hist: {macd_hist:.4f})，拒絕加倉!")
             return
             
-        # 確保動能擴張 (MACD 柱線絕對值變長)
-        # 允許動能微幅縮減 (只要沒有大幅衰退 > 30%)
-        if abs(macd_hist) < abs(prev_macd_hist) * 0.85:
-            print(f"🛑 [動能關卡] {sym} MACD動能大幅衰竭 (Hist: {abs(macd_hist):.5f} < Prev: {abs(prev_macd_hist):.5f}*0.85)，拒絕加倉!")
+        # 確保動能擴張 (MACD 柱線絕對值必須嚴格擴張)
+        if abs(macd_hist) <= abs(prev_macd_hist):
+            print(f"🛑 [動能關卡] {sym} MACD動能未擴張 (Hist: {abs(macd_hist):.5f} <= Prev: {abs(prev_macd_hist):.5f})，拒絕加倉!")
             return
 
         # 3. 原有的保本檢查
@@ -2248,15 +2241,19 @@ async def execute_order(sym, side, price):
     if s["entry_count"] == 0:
         base_allocation = 0.40  # 首倉 40%
     elif s["entry_count"] == 1:
-        base_allocation = 0.30  # 次倉 30%
+        base_allocation = 0.25  # 次倉 25%
     else:
-        base_allocation = 0.30  # 再倉 30%
+        base_allocation = 0.15  # 再倉 15%
         
     atr_val = s.get("current_atr", 0.0)
     atr_ma20 = s.get("atr_ma20", atr_val)
-    volatility_factor = max(0.5, min(1.0, (atr_ma20 / atr_val))) if atr_val > 0 else 1.0
-    allocation_pct = base_allocation * volatility_factor
     
+    if atr_val > atr_ma20 * 1.5:
+        volatility_penalty = 0.7  # 波動過大時，只投 70% 的預定比例
+    else:
+        volatility_penalty = 1.0
+        
+    allocation_pct = base_allocation * volatility_penalty
     base_notional = target_notional * allocation_pct
     
     # [新增] 強制加入一個保護層：單筆加倉上限為總資產的 10% (轉換為名義價值)
