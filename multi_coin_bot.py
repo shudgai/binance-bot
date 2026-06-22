@@ -2358,9 +2358,25 @@ def is_entry_pin_safe(sym, side):
 
     enabled = pin_threshold < 4.0
     
-    # [新增] MACD 動能強勁時，放寬容錯空間
+    # [新增] MACD 動能強勁且持續放大時，放寬容錯空間
     macd_hist = s.get("macd_hist", 0.0)
-    is_strong_macd = (side == 'buy' and macd_hist > 0) or (side == 'sell' and macd_hist < 0)
+    prev_macd_hist = 0.0
+    try:
+        if len(s.get("ohlcv", [])) >= 34:
+            import numpy as np
+            closes = np.array([x[4] for x in s["ohlcv"]])
+            _, _, m_hist, p_line, p_sig = calculate_macd(closes)
+            macd_hist = m_hist
+            prev_macd_hist = p_line - p_sig
+    except:
+        pass
+
+    is_strong_macd = False
+    if side == 'buy' and macd_hist > 0 and macd_hist > prev_macd_hist:
+        is_strong_macd = True
+    elif side == 'sell' and macd_hist < 0 and macd_hist < prev_macd_hist:
+        is_strong_macd = True
+
     if is_strong_macd:
         pin_threshold = max(pin_threshold, 5.0)
         enabled = False
@@ -2419,8 +2435,8 @@ def is_entry_volume_confirmed(sym, side):
     atr_ratio = (current_atr / atr_24h_avg) if atr_24h_avg > 0 else 1.0
     
     if atr_ratio >= 1.5:
-        vol_factor = 1.0
-        print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率極高 (ATR ratio: {atr_ratio:.2f})，動態降低量能門檻至 1.0x")
+        vol_factor = 1.1
+        print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率極高 (ATR ratio: {atr_ratio:.2f})，動態降低量能門檻至 1.1x")
     elif atr_ratio >= 1.2:
         vol_factor = max(1.0, vol_factor - 0.2)
         print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率偏高 (ATR ratio: {atr_ratio:.2f})，微調量能門檻至 {vol_factor:.1f}x")
