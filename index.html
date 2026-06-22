@@ -768,7 +768,7 @@
                         {{ (bot.balance_quote - bot.session_start_balance) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot.balance_quote - bot.session_start_balance) }} USDT
                     </div>
                 </div>
-                <div class="balance-box ms-auto text-end" style="cursor: pointer;" @click="toggleCurrency" title="點擊切換顯示幣別">
+                <div class="info-card" style="cursor: pointer;" @click="toggleCurrency" title="點擊切換顯示幣別">
                     <div class="info-title">帳戶 <span id="quoteAssetLabel">{{ getQuoteAsset() }}</span> 餘額</div>
                     <div class="info-val mono">{{ formatQuoteBalance() }}</div>
                 </div>

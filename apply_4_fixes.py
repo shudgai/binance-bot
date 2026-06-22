@@ -15,8 +15,8 @@ with open(backup_file, 'w', encoding='utf-8') as f:
 # Find `def check_position_exits(exchange, sym):` and insert logic
 silence_zone_logic = """
     # --- [優化] 進場後靜默區 (接刀防護) ---
-    if hold_sec < 60 and profit_pct < -0.005:
-        print(f"🔪 [接刀防護] {sym} 進場後 60 秒內瞬間跌破 0.5%，強制平倉並封禁 1 小時！ (淨利: {profit_pct*100:.2f}%)")
+    if hold_sec < 120 and profit_pct < -0.01:
+        print(f"🔪 [接刀防護] {sym} 進場後 120 秒內瞬間跌破 1%，強制平倉並封禁 1 小時！ (淨利: {profit_pct*100:.2f}%)")
         await close_position(sym, ("sell" if is_long else "buy"), abs(s["qty"]), p, avg, reason="Silence_Zone_Knife_Catch", is_stop_loss=True)
         # 設置臨時封禁 1 小時
         s["status"] = "BANNED"

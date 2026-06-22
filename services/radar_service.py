@@ -91,7 +91,7 @@ def auto_radar_switch(force_start=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
-        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 12 高量高波動小幣)...", "warning")
+        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 10 高量高波動小幣)...", "warning")
         
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
@@ -103,7 +103,7 @@ def auto_radar_switch(force_start=False):
         
         clean_blacklist()
         ignore_list = list(BLACKLIST.keys())
-        top_symbols = get_top_volume_altcoins(12, ignore_list=ignore_list)
+        top_symbols = get_top_volume_altcoins(10, ignore_list=ignore_list)
 
         if not top_symbols:
             add_system_log("⚠️ [雷達掃描] 無法獲取熱門小幣榜單，維持原狀", "warning")
@@ -118,8 +118,8 @@ def auto_radar_switch(force_start=False):
             add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(all_preserved)}", "warning")
 
         final_symbols = all_preserved + top_symbols
-        if len(final_symbols) > 12:
-            final_symbols = final_symbols[:12]
+        if len(final_symbols) > 10:
+            final_symbols = final_symbols[:10]
 
         # 排序讓比較不受順序影響
         if sorted(final_symbols) == sorted(current_syms):
