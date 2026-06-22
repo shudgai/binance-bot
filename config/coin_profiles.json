@@ -1,0 +1,145 @@
+{
+    "SOLUSDT": {
+        "sl_atr_multiplier": 2.2,
+        "tp_atr_multiplier": 6.0,
+        "volume_threshold_factor": 1.2,
+        "breakeven_trigger": 0.5,
+        "min_flip_time": 300,
+        "mtf_filter": true,
+        "profile_type": "Core_Trend",
+        "leverage": 8,
+        "rr_threshold": 1.1
+    },
+    "LINKUSDT": {
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 4.5,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.4,
+        "min_flip_time": 180,
+        "mtf_filter": true,
+        "profile_type": "Core_Trend",
+        "leverage": 8,
+        "rr_threshold": 1.1
+    },
+    "TRXUSDT": {
+        "sl_atr_multiplier": 1.9,
+        "tp_atr_multiplier": 3.8,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.5,
+        "min_flip_time": 240,
+        "mtf_filter": true,
+        "profile_type": "Core_Trend",
+        "leverage": 8,
+        "rr_threshold": 1.1
+    },
+    "RENDERUSDT": {
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 6.0,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.6,
+        "min_flip_time": 120,
+        "mtf_filter": false,
+        "profile_type": "High_Beta_Momentum",
+        "leverage": 4,
+        "rr_threshold": 1.1
+    },
+    "SUIUSDT": {
+        "sl_atr_multiplier": 1.4,
+        "tp_atr_multiplier": 6.0,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.7,
+        "min_flip_time": 90,
+        "mtf_filter": false,
+        "profile_type": "High_Beta_Momentum",
+        "leverage": 4,
+        "rr_threshold": 1.1
+    },
+    "INJUSDT": {
+        "sl_atr_multiplier": 1.7,
+        "tp_atr_multiplier": 6.0,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.6,
+        "min_flip_time": 120,
+        "mtf_filter": false,
+        "profile_type": "High_Beta_Momentum",
+        "leverage": 4,
+        "rr_threshold": 1.1
+    },
+    "NEARUSDT": {
+        "sl_atr_multiplier": 1.7,
+        "tp_atr_multiplier": 4.5,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.5,
+        "min_flip_time": 180,
+        "mtf_filter": true,
+        "profile_type": "High_Beta_Momentum",
+        "leverage": 4,
+        "rr_threshold": 1.1
+    },
+    "TIAUSDT": {
+        "sl_atr_multiplier": 2.0,
+        "tp_atr_multiplier": 4.5,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.5,
+        "min_flip_time": 180,
+        "mtf_filter": true,
+        "profile_type": "Core_Trend",
+        "leverage": 8,
+        "rr_threshold": 1.1
+    },
+    "VELVETUSDT": {
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 3.0,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.6,
+        "min_flip_time": 120,
+        "mtf_filter": false,
+        "profile_type": "High_Beta_Momentum",
+        "leverage": 4,
+        "rr_threshold": 1.1
+    },
+    "LABUSDT": {
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 3.0,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.6,
+        "min_flip_time": 120,
+        "mtf_filter": false,
+        "profile_type": "High_Beta_Momentum",
+        "leverage": 4,
+        "rr_threshold": 1.1
+    },
+    "AVAXUSDT": {
+        "sl_atr_multiplier": 1.9,
+        "tp_atr_multiplier": 4.5,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.5,
+        "min_flip_time": 240,
+        "mtf_filter": true,
+        "profile_type": "Speculative_Risk",
+        "leverage": 2,
+        "rr_threshold": 1.1
+    },
+    "DOGEUSDT": {
+        "sl_atr_multiplier": 2.6,
+        "tp_atr_multiplier": 5.2,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.8,
+        "min_flip_time": 600,
+        "mtf_filter": false,
+        "profile_type": "Speculative_Risk",
+        "leverage": 2,
+        "rr_threshold": 1.1
+    },
+    "PEPEUSDT": {
+        "sl_atr_multiplier": 3.0,
+        "tp_atr_multiplier": 6.0,
+        "volume_threshold_factor": 1.3,
+        "breakeven_trigger": 0.8,
+        "min_flip_time": 600,
+        "mtf_filter": false,
+        "profile_type": "Speculative_Risk",
+        "leverage": 2,
+        "rr_threshold": 1.1
+    }
+}

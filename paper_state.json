@@ -1,1 +1,46 @@
-{"balance_usdt": 150.0, "positions": {}, "trades": []}
+{
+    "balance_usdt": 149.8800981,
+    "session_start_balance": 150.0,
+    "positions": {
+        "NEAR:USDT": {
+            "qty": -56.0,
+            "avg_price": 2.14,
+            "realized_pnl": 0.0
+        },
+        "SUI:USDT": {
+            "qty": -170.5,
+            "avg_price": 0.7036,
+            "realized_pnl": 0.0
+        }
+    },
+    "trades": [
+        {
+            "id": "ea8eedb6",
+            "order_id": "076ccd3e",
+            "symbol": "NEAR:USDT",
+            "price": 2.14,
+            "qty": 56.0,
+            "quote_qty": 119.84,
+            "time": 1782103936594,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.05992,
+            "is_close": false
+        },
+        {
+            "id": "bc32a2b7",
+            "order_id": "6381d13e",
+            "symbol": "SUI:USDT",
+            "price": 0.7036,
+            "qty": 170.5,
+            "quote_qty": 119.9638,
+            "time": 1782103937660,
+            "isBuyer": false,
+            "isMaker": false,
+            "realized_pnl": 0.0,
+            "fee": 0.059981900000000005,
+            "is_close": false
+        }
+    ]
+}

@@ -1972,8 +1972,10 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * s.get("current_atr", 0.0)
     
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    if rr_ratio < 1.99:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.0 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
+    # 從配置取得盈虧比門檻，若未設定則使用 1.7 作為預設值
+    rr_threshold = COIN_PROFILE_CONFIG.get(sym, {}).get('rr_threshold', 1.7)
+    if rr_ratio < rr_threshold:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < {rr_threshold:.2f} (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
 
     return True
@@ -2290,8 +2292,10 @@ async def check_entries():
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
         
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        if expected_rr < 2.0:
-            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2，放棄暫存")
+        # 從配置取得盈虧比門檻，若未設定則使用 1.7 作為預設值
+        rr_threshold = COIN_PROFILE_CONFIG.get(sym, {}).get('rr_threshold', 1.7)
+        if expected_rr < rr_threshold:
+            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_threshold:.2f}，放棄暫存")
             continue
 
         # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認

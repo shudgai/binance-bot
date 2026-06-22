@@ -136,8 +136,10 @@ old_rr = """                    expected_rr = tp_dist / sl_dist if sl_dist > 0 e
                         continue"""
 
 new_rr = """                    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-                    if expected_rr < 2.0:
-                        print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < 2.0，放棄")
+                    # 從配置取得盈虧比門檻，若未設定則使用 1.7 作為預設值
+                    rr_threshold = COIN_PROFILE_CONFIG.get(sym, {}).get('rr_threshold', 1.7)
+                    if expected_rr < rr_threshold:
+                        print(f"⚠️ [盈虧比過濾] {sym} 確認階段預期盈虧比 {expected_rr:.2f} < {rr_threshold:.2f}，放棄")
                         continue
                         
                     # [Layer 4] 布林帶空間過濾
