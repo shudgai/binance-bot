@@ -1348,6 +1348,11 @@ def update_trailing_stop(sym, current_price, is_long):
     safe_atr = min(atr_val, atr_avg * 3) if atr_avg > 0 else atr_val
 
     trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
+    profit_pct = s.get("highest_profit_pct", 0.0)
+    if profit_pct > 0.03:
+        trailing_multiplier = 3.0
+    elif profit_pct < 0.01:
+        trailing_multiplier = 1.5
     liq_price = s["avg_price"] * (1 - s["sl_atr_multiplier"] * (safe_atr / max(s["close_price"], 1e-8)))
     
     if is_long:
@@ -1798,11 +1803,21 @@ async def check_exits(sym):
     if profit_pct > 0.015 and s["highest_profit_pct"] > 0.015:
         drawdown = (s["highest_profit_pct"] - profit_pct) / s["highest_profit_pct"]
         if drawdown >= 0.25:
-            cs = 'sell' if is_long else 'buy'
-            print(f"📉 [動能衰減] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回落 25% (現為 {profit_pct*100:.2f}%)，提早獲利了結")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop]top]")
-            s["highest_profit_pct"] = 0.0
-            return
+            macd_hist_expanding = False
+            try:
+                closes = np.array([x[4] for x in s["ohlcv"]])
+                _, _, m_hist, p_line, p_sig = calculate_macd(closes)
+                p_hist = p_line - p_sig
+                macd_hist_expanding = abs(m_hist) > abs(p_hist)
+            except:
+                pass
+            
+            if not macd_hist_expanding:
+                cs = 'sell' if is_long else 'buy'
+                print(f"📉 [動能衰減] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回落 25% (現為 {profit_pct*100:.2f}%) 且 MACD 衰退，提早獲利了結")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Whipsaw_Stop_top]")
+                s["highest_profit_pct"] = 0.0
+                return
     if p > s["trailing_highest"]:
         s["trailing_highest"] = p
     if p < s["trailing_lowest"]:
@@ -1833,9 +1848,17 @@ async def check_exits(sym):
     # 取代固定 %，改用 ATR 倍數，讓低波動幣種也能被及時保護
     atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     
-    tier3_target = max(atr_pct * 4.0, 0.012)
-    tier2_target = max(atr_pct * 2.5, 0.006)
-    tier1_target = max(atr_pct * 1.5, 0.0035)
+    # 引入「個性化」停利目標 (Personality-based TP)
+    personality = s.get("personality", "steady_trend")
+    tier_mult = 1.0
+    if personality == "calm_range":
+        tier_mult = 0.8
+    elif personality == "volatile_breakout":
+        tier_mult = 1.2
+        
+    tier3_target = max(atr_pct * 4.0 * tier_mult, 0.012 * tier_mult)
+    tier2_target = max(atr_pct * 2.5 * tier_mult, 0.006 * tier_mult)
+    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.0035 * tier_mult)
 
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 (升級版) ──
     # 結合了「爆發後衰竭」、「位移停滯」、「位置過濾」三大核心
@@ -1937,27 +1960,37 @@ async def check_exits(sym):
 
     if not is_strong:
         # ── 盤整／弱勢路線 ────────────────────────────────
-        # 僵局一階：時間到 → 有任何正利潤就全平，利潤微薄(0.2%~0.5%)平50%
+        # 將「時間僵局」轉向「量能僵局」 (Volume Stagnation)
+        recent_vols = [x[5] for x in s["ohlcv"][-4:-1]] if len(s["ohlcv"]) >= 4 else []
+        vol_ma20 = s.get("vol_ma20", 1)
+        is_vol_stagnant = len(recent_vols) >= 3 and all(v < vol_ma20 * 0.6 for v in recent_vols)
+        bb_width = s.get("bb_up", 0) - s.get("bb_low", 0)
+        is_range_tight = (bb_width / p) < 0.003 if p > 0 else False
+        
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
         if hold_sec > stagnation_limit and profit_pct > 0.003:
-            if not s["has_partial_closed"] and 0.003 <= profit_pct < 0.008:
-                half = abs(s["qty"]) * 0.5
-                cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局一階] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，平50%")
-                await close_position(sym, cs, half, p, avg, reason="[Stagnation_1]")
-                s["has_partial_closed"] = True
-                return
-            elif profit_pct >= 0.008:
-                cs = 'sell' if is_long else 'buy'
-                print(f"⏳ [僵局平倉] {sym} 持倉{stagnation_limit//60}分利潤{profit_pct*100:.2f}%，全平")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Exit]")
-                s["highest_profit_pct"] = 0.0
-                return
+            if is_vol_stagnant and is_range_tight:
+                if not s["has_partial_closed"] and 0.003 <= profit_pct < 0.008:
+                    half = abs(s["qty"]) * 0.5
+                    cs = 'sell' if is_long else 'buy'
+                    print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，平50%")
+                    await close_position(sym, cs, half, p, avg, reason="[Vol_Stagnation_1]")
+                    s["has_partial_closed"] = True
+                    return
+                elif profit_pct >= 0.008:
+                    cs = 'sell' if is_long else 'buy'
+                    print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，全平")
+                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Stagnation_Exit]")
+                    s["highest_profit_pct"] = 0.0
+                    return
         # 僵局二階：平過50% + 8分仍未突破1% → 全平
         if s["has_partial_closed"] and hold_sec > 480 and profit_pct < 0.01:
-            cs = 'sell' if is_long else 'buy'
-            print(f"⏳ [僵局二階] {sym} 剩餘50%持倉8分仍未突破1%，全平")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_2]")
+            if is_vol_stagnant and is_range_tight:
+                cs = 'sell' if is_long else 'buy'
+                print(f"⏳ [量能僵局] {sym} 剩餘50%持倉8分仍未突破1%且量縮橫盤，全平")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Stagnation_2]")
+                s["highest_profit_pct"] = 0.0
+                return
             s["highest_profit_pct"] = 0.0
             s["has_partial_closed"] = False
             return
