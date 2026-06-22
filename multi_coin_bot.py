@@ -1905,7 +1905,7 @@ async def check_exits(sym):
             elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * vol_threshold:
                 divergence_exit = True
             
-        if divergence_exit and profit_pct > 0.002:
+        if divergence_exit and profit_pct >= 0.0015:
             cs = 'sell' if is_long else 'buy'
             print(f"📉 [量價背離] {sym} 抵達關鍵區位且量縮停滯 (V:{c1[5]:.0f} < {vol_threshold:.2f}x)，動能竭盡提前平倉！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
@@ -1970,7 +1970,7 @@ async def check_exits(sym):
         is_range_tight = (bb_width / p) < 0.003 if p > 0 else False
         
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
-        if hold_sec > stagnation_limit and profit_pct >= 0.002:
+        if hold_sec > stagnation_limit and profit_pct >= 0.0015:
             if is_vol_stagnant and is_range_tight:
                 if not s["has_partial_closed"]:
                     # 若利潤大於 0.6% 則先平 50% 鎖定部分利潤，否則微利情況下直接全平以釋放資金
@@ -1988,8 +1988,8 @@ async def check_exits(sym):
                         await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason)
                         s["highest_profit_pct"] = 0.0
                         return
-        # 僵局二階：平過50% + 8分仍未突破1% → 全平 (加入最小獲利緩衝 0.2%)
-        if s["has_partial_closed"] and hold_sec > 480 and 0.002 < profit_pct < 0.01:
+        # 僵局二階：平過50% + 8分仍未突破1% → 全平 (加入最小獲利緩衝 0.15%)
+        if s["has_partial_closed"] and hold_sec > 480 and 0.0015 <= profit_pct < 0.01:
             if is_vol_stagnant and is_range_tight:
                 cs = 'sell' if is_long else 'buy'
                 print(f"⏳ [量能僵局] {sym} 剩餘50%持倉8分仍未突破1%且量縮橫盤，全平")
