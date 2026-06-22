@@ -2303,21 +2303,18 @@ def is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
 
     if side == 'buy':
-        if close_price <= prev_close:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} <= 前K收盤 {prev_close:.4f}")
-            return False
+        # 移除嚴格的 prev_close 比較，允許提早進場抄底
         if upper_wick > body * pin_threshold:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
             return False
         return True
 
-    if close_price >= prev_close:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 收盤價 {close_price:.4f} >= 前K收盤 {prev_close:.4f}")
-        return False
-    if lower_wick > body * pin_threshold:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
-        return False
-    return True
+    if side == 'sell':
+        # 移除嚴格的 prev_close 比較，允許提早進場摸頂
+        if lower_wick > body * pin_threshold:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
+            return False
+        return True
 
 
 def is_entry_volume_confirmed(sym, side):
@@ -2458,15 +2455,7 @@ def is_entry_allowed(sym, side, route="a"):
     if route != "Exhaustion_Entry" and not is_entry_volume_confirmed(sym, side):
         return False
         
-    # ADX 趨勢強度限制
-    highs = np.array([x[2] for x in s["ohlcv"]])
-    lows = np.array([x[3] for x in s["ohlcv"]])
-    closes = np.array([x[4] for x in s["ohlcv"]])
-    adx_val = calculate_adx(highs, lows, closes)
-    if adx_val < 5: # 原 10，大幅放寬 ADX 趨勢強度門檻
-
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ADX過濾] 趨勢強度 ADX {adx_val:.1f} < 8")
-        return False
+    # 移除 ADX 過濾，讓 Exhaustion_Entry 在盤整時也能高空低多
 
     # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
     min_volume = s["vol_ma20"] * 0.05
