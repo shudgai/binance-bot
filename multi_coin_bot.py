@@ -2490,31 +2490,9 @@ def is_entry_allowed(sym, side, route="a"):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    # 空間過濾：只有在價格距 BB 邊界「太近」（小於 0.3x SL）時才攔截
-    # 修正：原邏輯相反，現在正確的判斷方式：
-    # - 做多：需要 bb_up - cp >= 0.3 * sl_dist（上方有足夠空間）
-    # - 做空：需要 cp - bb_down >= 0.3 * sl_dist（下方有足夠空間）
-    sl_dist = current_atr * s.get("sl_atr_multiplier", 1.5)
+    # 動態空間過濾 (Adaptive Space Check) 已移至 check_conditions 內 (Layer 4)
+    # 此處不再進行硬性攔截，交由 Layer 4 根據強弱趨勢決定
     
-    # 動態空間過濾：根據幣種真實波動率 (ATR%) 調整攔截嚴格度
-    atr_pct = current_atr / cp if cp > 0 else 0
-    if atr_pct > 0.005:  # 高波動幣種：放寬至 0.1x SL 即可進場
-        space_mult = 0.1
-    elif atr_pct < 0.002: # 極低波動幣種：要求至少 0.3x SL 空間
-        space_mult = 0.3
-    else:                 # 一般情況：0.2x SL
-        space_mult = 0.2
-
-    if side == 'buy' and bb_up > 0:
-        space_above = bb_up - cp
-        if space_above < sl_dist * space_mult:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [動態空間過濾] 多單：上方空間不足 ({space_above:.6f} < {sl_dist*space_mult:.6f}, atr_pct={atr_pct*100:.2f}%)")
-            return False
-    if side == 'sell' and bb_down > 0:
-        space_below = cp - bb_down
-        if space_below < sl_dist * space_mult:
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [動態空間過濾] 空單：下方空間不足 ({space_below:.6f} < {sl_dist*space_mult:.6f}, atr_pct={atr_pct*100:.2f}%)")
-            return False
 
     if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.25: # 原 0.6，放寬至允許 25% 的極低波動
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
@@ -2857,7 +2835,7 @@ async def check_entries():
 
                     space_multiplier = 0.2
                     
-                    # 判斷強勢趨勢
+                    # 判斷強勢趨勢 (動能擴張且突破)
                     is_strong_trend = abs(macd_hist) > abs(prev_macd_hist) and (
                         (side == "buy" and rsi > 60.0) or (side == "sell" and rsi < 40.0)
                     )
@@ -2866,20 +2844,21 @@ async def check_entries():
                     is_consolidation = (atr_ma20 > 0 and current_atr < atr_ma20 * 0.8) and range_width_pct < 0.02
                     
                     if is_strong_trend:
-                        space_multiplier = 0.15
+                        space_multiplier = 0.0  # 強勢突破時，完全不看空間（允許追價）
                     elif is_consolidation:
                         space_multiplier = 0.5
                     
-                    if side == "buy" and s.get("bb_up", 0) > 0:
-                        space = s["bb_up"] - p
-                        if space < sl_dist * space_multiplier:
-                            print(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
-                            continue
-                    if side == "sell" and s.get("bb_low", 0) > 0:
-                        space = p - s["bb_low"]
-                        if space < sl_dist * space_multiplier:
-                            print(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
-                            continue
+                    if not is_strong_trend:  # 只有非強勢突破時，才受到空間過濾限制
+                        if side == "buy" and s.get("bb_up", 0) > 0:
+                            space = s["bb_up"] - p
+                            if space < sl_dist * space_multiplier:
+                                print(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
+                                continue
+                        if side == "sell" and s.get("bb_low", 0) > 0:
+                            space = p - s["bb_low"]
+                            if space < sl_dist * space_multiplier:
+                                print(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
+                                continue
                     candidates.append((sym, side, strength, route))
                     continue
                 else:
