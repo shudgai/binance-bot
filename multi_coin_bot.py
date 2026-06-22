@@ -1079,15 +1079,15 @@ def update_states():
             s["first_stop_time"] = 0
             logger.info(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
 
-def mark_exit(sym, is_stop_loss=False, reason=""):
+def mark_exit(sym, is_stop_loss=False, reason="", profit_pct=0.0):
     s = STATES[sym]
     now = time.time()
     s["status"] = "COOLDOWN"
     
-    if is_stop_loss:
-        actual_cooldown = 30  # 強制止損：縮短狀態冷卻至 30 秒，讓機器人能快速重新評估
-    else:
-        actual_cooldown = 60  # 主動平倉：維持 60 秒狀態冷卻
+    s["last_exit_time"] = now
+    
+    # 實施平倉冷卻期：每當某個幣種完成平倉時，強制進入 15 分鐘的 COOLDOWN 狀態
+    actual_cooldown = 900
         
     s["reverse_cooldown_until"] = now + 300  # 無論主動平倉還是停損，一律強制 300 秒的反手冷卻，防震盪
 
@@ -1097,15 +1097,17 @@ def mark_exit(sym, is_stop_loss=False, reason=""):
     cd_min = actual_cooldown / 60.0
     s["status_reason"] = f"冷卻中 ({cd_min:.1f}分鐘) - {reason}"
     logger.info(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN {cd_min:.1f}分鐘")
-    if is_stop_loss:
-        s["stop_count"] += 1
+    
+    is_chop = is_stop_loss or abs(profit_pct) < 0.01
+    if is_chop:
+        s["stop_count"] = s.get("stop_count", 0) + 1
         if s["stop_count"] == 1:
             s["first_stop_time"] = now
         if s["stop_count"] >= MAX_STOPS_IN_WINDOW and (now - s["first_stop_time"]) <= BAN_WINDOW:
             s["status"] = "BANNED"
-            s["next_status_time"] = now + BAN_DURATION
-            s["status_reason"] = f"封禁中 (12h，{MAX_STOPS_IN_WINDOW}次停損)"
-            logger.error(f"🚫 [狀態] {sym} 1h內{MAX_STOPS_IN_WINDOW}次停損 → BANNED 12h")
+            s["next_status_time"] = now + 21600  # 6 小時封禁
+            s["status_reason"] = f"封禁中 (6h，{MAX_STOPS_IN_WINDOW}次無效震盪)"
+            logger.error(f"🚫 [狀態] {sym} 1h內{MAX_STOPS_IN_WINDOW}次無效震盪(微利/虧) → BANNED 6h")
         elif s["stop_count"] >= MAX_STOPS_IN_WINDOW:
             s["stop_count"] = 1
             s["first_stop_time"] = now
@@ -1689,7 +1691,7 @@ async def close_position(sym, close_side, qty, price, avg_price, reason="", is_s
             except Exception as ce:
                 logger.error(f"⚠️ [取消止損單失敗] {sym}: {ce}")
                 
-        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
+        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, profit_pct=profit_pct)
         reset_coin_state(sym)
     else:
         prec = await get_contract_precision(sym)
@@ -2080,9 +2082,21 @@ async def check_position_exits(exchange, sym):
     # 判斷是否達到 1.5 倍風險距離才啟動保本/追蹤，確保停損位移到保本點 (含 0.25% 手續費與滑價緩衝)
     profit_dist = (p - avg) if is_long else (avg - p)
     
-    if profit_dist >= sl_dist * 1.5:
-        # 達到 1.5 倍風險距離才啟動保本/追蹤，確保停損位移到保本點 (含 0.25% 手續費與滑價緩衝)
-        breakeven_sl = avg * 1.0025 if is_long else avg * 0.9975
+    if profit_dist >= atr_val * 1.5:
+        # 達到 1.5 倍 ATR 距離啟動保本 (保證進場價 + 0.1%)
+        breakeven_sl = avg * 1.001 if is_long else avg * 0.999
+        
+        # 立即更新 trailing_stop_price 記錄保本狀態，防止後續 hard_stop_loss_pct 被誤觸
+        if is_long:
+            if s.get("trailing_stop_price", 0.0) == 0.0:
+                s["trailing_stop_price"] = breakeven_sl
+            else:
+                s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), breakeven_sl)
+        else:
+            if s.get("trailing_stop_price", 0.0) == 0.0:
+                s["trailing_stop_price"] = breakeven_sl
+            else:
+                s["trailing_stop_price"] = min(s.get("trailing_stop_price", 0.0), breakeven_sl)
         
         # 接著，如果利潤繼續拉開，使用 3.0 * ATR 進行追蹤止損，給予更大的呼吸空間
         trail_dist = atr_val * 3.0
@@ -2718,10 +2732,10 @@ def compute_signal_strength(sym):
         return (None, 0)
 
     # --- 新增 C：動能/成交量過濾 ---
-    # 確保當前 K 線成交量不要低得離譜，甚至要求突破均量 1.5 倍
+    # 確保當前 K 線成交量不要低得離譜，甚至要求突破均量 2.0 倍
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
-    if vol_ma10 > 0 and current_vol < vol_ma10 * 1.5:
+    if vol_ma10 > 0 and current_vol < vol_ma10 * 2.0:
         return (None, 0)
 
     rsi = s["current_rsi"]
@@ -2836,12 +2850,16 @@ def compute_signal_strength(sym):
     long_base_ok = route_a_long
     short_base_ok = route_a_short
 
+    # 計算進場信心懲罰
+    cooldown_penalty = 5.0 if (time.time() - s.get("last_exit_time", 0) <= 600) else 0.0
+
     if long_base_ok:
         route = "a"
         strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
         strength += trend_score
+        strength -= cooldown_penalty
         return ("buy", strength if strength >= 6.0 else 0.0, route)
 
     if short_base_ok:
@@ -2850,6 +2868,7 @@ def compute_signal_strength(sym):
         if short_macd_cross:
             strength += 5.0
         strength += trend_score
+        strength -= cooldown_penalty
         return ("sell", strength if strength >= 6.0 else 0.0, route)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
@@ -2871,7 +2890,8 @@ def compute_signal_strength(sym):
             
             if trend_ok and (support_ok or reversal_ok or bounce_ok):
                 logger.info(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
-                return ("buy", 15.0, "Exhaustion_Entry")
+                strength = 15.0 - cooldown_penalty
+                return ("buy", strength if strength >= 6.0 else 0.0, "Exhaustion_Entry")
                 
         # 空單：抓反彈頂部
         if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
@@ -2885,7 +2905,8 @@ def compute_signal_strength(sym):
             
             if trend_ok and (support_ok or reversal_ok or bounce_ok):
                 logger.info(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok})")
-                return ("sell", 15.0, "Exhaustion_Entry")
+                strength = 15.0 - cooldown_penalty
+                return ("sell", strength if strength >= 6.0 else 0.0, "Exhaustion_Entry")
 
     return (None, 0, None)
 
