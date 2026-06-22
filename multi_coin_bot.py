@@ -2357,10 +2357,21 @@ def is_entry_pin_safe(sym, side):
             pin_threshold = 3.0
 
     enabled = pin_threshold < 4.0
+    
+    # [新增] MACD 動能強勁時，放寬容錯空間
+    macd_hist = s.get("macd_hist", 0.0)
+    is_strong_macd = (side == 'buy' and macd_hist > 0) or (side == 'sell' and macd_hist < 0)
+    if is_strong_macd:
+        pin_threshold = max(pin_threshold, 5.0)
+        enabled = False
+
     if enabled:
         print(f"@@COIN_DEBUG@@ 🔧 {sym} 反插針門檻收緊為 {pin_threshold:.1f} (body_ratio={body_ratio:.2f}, vol={s.get('current_vol',0):.0f}, ema20={ema20:.4f}) [enabled]")
     else:
-        print(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
+        if is_strong_macd:
+            print(f"@@COIN_DEBUG@@ 🚀 {sym} MACD動能強勁，放寬反插針門檻至 {pin_threshold:.1f} [relaxed]")
+        else:
+            print(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
 
     if side == 'buy':
         # 移除嚴格的 prev_close 比較，允許提早進場抄底
@@ -2401,6 +2412,18 @@ def is_entry_volume_confirmed(sym, side):
         
     # 為了讓 Core_Trend 能真正降低門檻，直接使用 dynamic_vol_factor，不用 max() 卡住
     vol_factor = dynamic_vol_factor
+    
+    # [新增] 根據 ATR 高低自動動態調整倍數
+    atr_24h_avg = s.get("atr_24h_avg", 0.0)
+    current_atr = s.get("current_atr", 0.0)
+    atr_ratio = (current_atr / atr_24h_avg) if atr_24h_avg > 0 else 1.0
+    
+    if atr_ratio >= 1.5:
+        vol_factor = 1.0
+        print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率極高 (ATR ratio: {atr_ratio:.2f})，動態降低量能門檻至 1.0x")
+    elif atr_ratio >= 1.2:
+        vol_factor = max(1.0, vol_factor - 0.2)
+        print(f"@@COIN_DEBUG@@ ⚡ {sym} 波動率偏高 (ATR ratio: {atr_ratio:.2f})，微調量能門檻至 {vol_factor:.1f}x")
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
