@@ -2195,16 +2195,24 @@ async def execute_order(sym, side, price):
                 return
                 
         # 2. 動能關卡 (Momentum Check): 量能與 MACD 雙重確認
-        if not is_entry_volume_confirmed(sym, side):
-            print(f"🛑 [動能關卡] {sym} 量能不足以支持加倉!")
-            return
-            
         macd_line = s.get("macd_line", 0.0)
         macd_signal = s.get("macd_signal", 0.0)
         prev_macd_line = s.get("prev_macd_line", 0.0)
         prev_macd_signal = s.get("prev_macd_signal", 0.0)
         macd_hist = macd_line - macd_signal
         prev_macd_hist = prev_macd_line - prev_macd_signal
+        
+        # [新增] 強勢行情豁免邏輯 (High Momentum Exemption)
+        rsi = s.get("current_rsi", 50.0)
+        is_strong_momentum_long = (side == 'buy' and rsi > 75 and macd_hist > 0 and macd_hist > prev_macd_hist)
+        is_strong_momentum_short = (side == 'sell' and rsi < 25 and macd_hist < 0 and macd_hist < prev_macd_hist)
+        
+        if is_strong_momentum_long or is_strong_momentum_short:
+            print(f"@@COIN_DEBUG@@ 🚀 [強勢豁免] {sym} RSI與MACD動能極強，豁免量能過濾直接加倉！")
+        else:
+            if not is_entry_volume_confirmed(sym, side):
+                print(f"🛑 [動能關卡] {sym} 量能不足以支持加倉!")
+                return
         
         # 確保方向一致
         if (side == 'buy' and macd_hist <= 0) or (side == 'sell' and macd_hist >= 0):
