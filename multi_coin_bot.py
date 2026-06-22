@@ -2414,7 +2414,8 @@ def is_entry_volume_confirmed(sym, side):
     else:
         dynamic_vol_factor = base_vol_factor
         
-    vol_factor = max(dynamic_vol_factor, base_vol_factor)
+    # 為了讓 Core_Trend 能真正降低門檻，直接使用 dynamic_vol_factor，不用 max() 卡住
+    vol_factor = dynamic_vol_factor
         
     min_volume = vol_ma20 * vol_factor
     if current_vol < min_volume:
@@ -2430,8 +2431,9 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * s.get("current_atr", 0.0)
     
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    if rr_ratio < 2.5:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < 2.5 (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
+    rr_threshold = s.get("rr_threshold", 1.5)
+    if rr_ratio < rr_threshold:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < {rr_threshold} (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
 
     return True
