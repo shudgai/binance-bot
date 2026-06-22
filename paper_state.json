@@ -8,14 +8,14 @@
             "realized_pnl": -0.4480000000000004
         },
         "SUI:USDT": {
-            "qty": 61.4,
+            "qty": 0.0,
             "avg_price": 0.7303,
-            "realized_pnl": -0.10726999999999519
+            "realized_pnl": 0.11991000000000705
         },
         "TIA:USDT": {
             "qty": 0.0,
-            "avg_price": 0.383,
-            "realized_pnl": 0.04680000000000134
+            "avg_price": 0.3918,
+            "realized_pnl": 0.13800000000000395
         },
         "AVAX:USDT": {
             "qty": 0.0,
@@ -41,6 +41,11 @@
             "qty": 0.0,
             "avg_price": 14.972,
             "realized_pnl": -0.4589999999999961
+        },
+        "PEPE:USDT": {
+            "qty": 0.0,
+            "avg_price": 2.87e-06,
+            "realized_pnl": 0.13065885999999874
         }
     },
     "trades": [
@@ -362,6 +367,51 @@
             "isBuyer": true,
             "realized_pnl": 0.0,
             "is_close": false
+        },
+        {
+            "symbol": "TIA:USDT",
+            "price": 0.3918,
+            "qty": 114.0,
+            "time": 1782128743232,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "symbol": "PEPE:USDT",
+            "price": 2.87e-06,
+            "qty": 13065886.0,
+            "time": 1782129015334,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.734,
+            "qty": 61.4,
+            "time": 1782129319027,
+            "isBuyer": false,
+            "realized_pnl": 0.22718000000000224,
+            "is_close": true
+        },
+        {
+            "symbol": "TIA:USDT",
+            "price": 0.3926,
+            "qty": 114.0,
+            "time": 1782129347129,
+            "isBuyer": false,
+            "realized_pnl": 0.09120000000000261,
+            "is_close": true
+        },
+        {
+            "symbol": "PEPE:USDT",
+            "price": 2.88e-06,
+            "qty": 13065886.0,
+            "time": 1782129347138,
+            "isBuyer": false,
+            "realized_pnl": 0.13065885999999874,
+            "is_close": true
         }
     ]
 }
