@@ -8,9 +8,9 @@
             "realized_pnl": -0.4480000000000004
         },
         "SUI:USDT": {
-            "qty": 0.0,
-            "avg_price": 0.0,
-            "realized_pnl": -0.18754999999999827
+            "qty": 61.4,
+            "avg_price": 0.7303,
+            "realized_pnl": -0.10726999999999519
         },
         "TIA:USDT": {
             "qty": 0.0,
@@ -24,8 +24,8 @@
         },
         "RENDER:USDT": {
             "qty": 0.0,
-            "avg_price": 1.683,
-            "realized_pnl": -0.10680000000000009
+            "avg_price": 1.674,
+            "realized_pnl": -0.026399999999997037
         },
         "INJ:USDT": {
             "qty": 0.0,
@@ -33,14 +33,14 @@
             "realized_pnl": 0.03639999999999599
         },
         "DOGE:USDT": {
-            "qty": 449.0,
+            "qty": 0.0,
             "avg_price": 0.08348,
-            "realized_pnl": 0.0
+            "realized_pnl": 0.017959999999999268
         },
         "LAB:USDT": {
-            "qty": 3.0,
+            "qty": 0.0,
             "avg_price": 14.972,
-            "realized_pnl": 0.0
+            "realized_pnl": -0.4589999999999961
         }
     },
     "trades": [
@@ -287,6 +287,78 @@
             "price": 14.972,
             "qty": 3.0,
             "time": 1782117752424,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "symbol": "DOGE:USDT",
+            "price": 0.08352,
+            "qty": 449.0,
+            "time": 1782118055204,
+            "isBuyer": false,
+            "realized_pnl": 0.017959999999999268,
+            "is_close": true
+        },
+        {
+            "symbol": "LAB:USDT",
+            "price": 14.896,
+            "qty": 3.0,
+            "time": 1782118748551,
+            "isBuyer": false,
+            "realized_pnl": -0.2279999999999962,
+            "is_close": true
+        },
+        {
+            "symbol": "LAB:USDT",
+            "price": 14.895,
+            "qty": 3.0,
+            "time": 1782118758005,
+            "isBuyer": false,
+            "realized_pnl": -0.23099999999999987,
+            "is_close": true
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.7111,
+            "qty": 63.1,
+            "time": 1782119421434,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.7094,
+            "qty": 63.1,
+            "time": 1782121539749,
+            "isBuyer": false,
+            "realized_pnl": -0.10726999999999519,
+            "is_close": true
+        },
+        {
+            "symbol": "RENDER:USDT",
+            "price": 1.674,
+            "qty": 26.8,
+            "time": 1782124230849,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "symbol": "RENDER:USDT",
+            "price": 1.677,
+            "qty": 26.8,
+            "time": 1782126127527,
+            "isBuyer": false,
+            "realized_pnl": 0.08040000000000305,
+            "is_close": true
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.7303,
+            "qty": 61.4,
+            "time": 1782128436506,
             "isBuyer": true,
             "realized_pnl": 0.0,
             "is_close": false
