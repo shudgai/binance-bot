@@ -1931,7 +1931,7 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             return
 
-    if not is_strong:
+    if True: # 移除 is_strong 阻擋，讓所有獲利鎖定邏輯正常運作
         macd_hist_expanding = False
         if len(s.get("ohlcv", [])) >= 34:
             closes = np.array([x[4] for x in s["ohlcv"]])
@@ -1979,7 +1979,7 @@ async def check_exits(sym):
 
     # 取消固定百分比停利，改由移動停損 (Trailing Stop) 統一接管，以利捕捉最大波段
 
-    if not is_strong:
+    if True: # 移除 is_strong 阻擋，讓時間衰減正常運作
         # ── 盤整／弱勢路線 ────────────────────────────────
         # 將「時間僵局」轉向「量能僵局」 (Volume Stagnation)
         recent_vols = [x[5] for x in s["ohlcv"][-4:-1]] if len(s["ohlcv"]) >= 4 else []
