@@ -11,7 +11,9 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
     """
     Updates the paper trading state in paper_state.json.
     Handles both new entries and closing positions.
+    qty passed in should be absolute (positive).
     """
+    qty_abs = abs(qty)
     with _lock:
         if not os.path.exists(PAPER_STATE_FILE):
             state = {
@@ -44,7 +46,7 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
             trade_entry = {
                 "symbol": paper_key,
                 "price": price,
-                "qty": qty,
+                "qty": qty_abs,
                 "time": int(time.time() * 1000),
                 "isBuyer": (side == "buy"),
                 "realized_pnl": pnl,
@@ -53,14 +55,22 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
             state["trades"].append(trade_entry)
         else:
             # Handle new entry
-            if paper_key in positions and positions[paper_key].get("qty", 0) != 0:
+            signed_qty = qty_abs if side == "buy" else -qty_abs
+            
+            if paper_key in positions and abs(positions[paper_key].get("qty", 0)) > 0.000001:
                 # If position exists and is not closed, update avg price/qty (scaling in)
                 old_pos = positions[paper_key]
                 old_qty = old_pos.get("qty", 0)
                 old_avg = old_pos.get("avg_price", 0)
                 
-                new_qty = old_qty + qty
-                new_avg = ((old_avg * old_qty) + (price * qty)) / new_qty
+                new_qty = old_qty + signed_qty
+                
+                # Simple average logic for scaling in the same direction
+                if (old_qty > 0 and signed_qty > 0) or (old_qty < 0 and signed_qty < 0):
+                    new_avg = ((old_avg * abs(old_qty)) + (price * abs(signed_qty))) / abs(new_qty)
+                else:
+                    # If hedging or reversing, we don't update avg price simply here, but usually it's closed first.
+                    new_avg = price if abs(new_qty) > 0.000001 else 0.0
                 
                 positions[paper_key] = {
                     "qty": new_qty,
@@ -70,16 +80,16 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
             else:
                 # New position
                 positions[paper_key] = {
-                    "qty": qty,
+                    "qty": signed_qty,
                     "avg_price": price,
-                    "realized_pnl": 0.0
+                    "realized_pnl": positions.get(paper_key, {}).get("realized_pnl", 0.0)
                 }
             
             # Add to trades list
             state["trades"].append({
                 "symbol": paper_key,
                 "price": price,
-                "qty": qty,
+                "qty": qty_abs,
                 "time": int(time.time() * 1000),
                 "isBuyer": (side == "buy"),
                 "realized_pnl": 0.0,
