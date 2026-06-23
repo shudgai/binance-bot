@@ -2711,8 +2711,8 @@ def is_entry_allowed(sym, side, route="a"):
     btc_1h = MARKET_WIND.get("btc_trend_1h")
     if is_trend and btc_1h is not None:
         if side == 'buy' and btc_1h == "BEAR":
-            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，禁止所有做多 (buy) 訊號以防接刀")
-            return False
+            print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
+            # return False
 
     s = STATES[sym]
     cp = s["close_price"]
