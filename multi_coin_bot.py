@@ -1084,6 +1084,7 @@ def reset_coin_state(sym):
     s = STATES[sym]
     s["qty"] = 0.0
     s["avg_price"] = 0.0
+    s["entries"] = []
     s["open_time"] = 0.0
     s["trailing_highest"] = 0.0
     s["trailing_lowest"] = float('inf')
@@ -1355,6 +1356,7 @@ async def load_open_positions():
             if abs(qty) > 0.000001:
                 STATES[sym]["qty"] = qty
                 STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+                STATES[sym]["entries"] = pos.get("entries", [])
 
         # 檢查最近的平倉紀錄，加上冷卻時間，防止剛平倉完馬上又自動開倉
         trades = state.get("trades", [])
@@ -1450,6 +1452,8 @@ def compute_indicators(sym):
         s["macd_hist"] = m_hist
         s["prev_macd_line"] = p_line
         s["prev_macd_signal"] = p_sig
+    if len(closes) >= 15:
+        s["adx"] = calculate_adx(highs, lows, closes, 14)
     if len(closes) >= 20:
         up, mid, low = calculate_bollinger_bands(closes)
         s["bb_up"] = up
@@ -1766,6 +1770,19 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
         prec = await get_contract_precision(sym)
         raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
         s["qty"] = round_step(raw_qty, prec['step_size'])
+        
+        # FIFO Entry removal
+        qty_to_remove = qty
+        if "entries" in s:
+            while qty_to_remove > 0.000001 and len(s["entries"]) > 0:
+                first_entry = s["entries"][0]
+                if first_entry["qty"] <= qty_to_remove + 0.000001:
+                    qty_to_remove -= first_entry["qty"]
+                    s["entries"].pop(0)
+                else:
+                    first_entry["qty"] -= qty_to_remove
+                    qty_to_remove = 0
+
         print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
         
         if s.get("exchange_stop_order_id") and not PAPER_TRADING:
@@ -2602,6 +2619,11 @@ async def execute_order(sym, side, price):
                 s["entry_atr"] = max(s.get("current_atr", 0.0), fill_price * 0.005 if "fill_price" in locals() else price * 0.005)
             else:
                 s["avg_price"] = ((s["avg_price"] * prev_qty) + (price * base_amt)) / abs(s["qty"])
+                
+            if "entries" not in s:
+                s["entries"] = []
+            s["entries"].append({"price": price, "qty": base_amt, "time": now, "side": side})
+
             s["open_time"] = now
             s["last_buy_time"] = now
             s["last_entry_time"] = now
@@ -2637,6 +2659,10 @@ async def execute_order(sym, side, price):
             else:
                 s["avg_price"] = ((s["avg_price"] * abs(old_qty)) + (fill_price * base_amt)) / abs(s["qty"])
                 
+            if "entries" not in s:
+                s["entries"] = []
+            s["entries"].append({"price": fill_price, "qty": base_amt, "time": now, "side": side})
+
             s["open_time"] = now
             s["last_buy_time"] = now
             s["last_entry_time"] = now
@@ -3213,6 +3239,48 @@ async def is_eligible_for_reverse(sym, current_strength):
         
     return True
 
+
+def get_dynamic_cooldown(current_atr, avg_atr, adx_value, base_cooldown=15):
+    volatility_ratio = current_atr / avg_atr if avg_atr > 0 else 1.0
+    vol_factor = 1.0 + (max(0, volatility_ratio - 1.0) * 0.5)
+
+    if adx_value > 30:
+        trend_factor = 0.8
+    elif adx_value < 20:
+        trend_factor = 1.5
+    else:
+        trend_factor = 1.0
+
+    dynamic_cooldown = base_cooldown * vol_factor * trend_factor
+    return max(5, min(60, round(dynamic_cooldown)))
+
+def check_pyramiding_eligibility(s):
+    if not s.get('entries'):
+        return False, 0
+
+    last_entry = s['entries'][-1]
+    last_entry_time = last_entry['time']
+    
+    current_atr = s.get('current_atr', 0.0)
+    avg_atr = s.get('atr_ma20', current_atr)
+    adx_value = s.get('adx', 25.0)
+
+    dynamic_cooldown_mins = get_dynamic_cooldown(current_atr, avg_atr, adx_value)
+    
+    current_time = time.time()
+    seconds_passed = current_time - last_entry_time
+    minutes_passed = seconds_passed / 60
+    
+    is_cooldown_over = minutes_passed >= dynamic_cooldown_mins
+    is_under_max_layers = len(s['entries']) < 3
+    
+    if is_cooldown_over and is_under_max_layers:
+        price_gap = abs(s['close_price'] - s.get('avg_price', s['close_price'])) / s.get('avg_price', s['close_price'])
+        if price_gap < 0.05:
+            return True, dynamic_cooldown_mins
+            
+    return False, dynamic_cooldown_mins
+
 async def check_entries():
     open_count = get_open_position_count()
     remaining_slots = MAX_POSITIONS - open_count
@@ -3484,19 +3552,22 @@ async def check_entries():
         print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
         
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
-        if has_position and side != current_direction:
-            if await is_eligible_for_reverse(sym, strength):
-                print(f"⚡ [AUTOMATIC_REVERSE] {sym} 觸發強勢反轉，執行平倉並反手建立 {side} 倉位")
-                # 執行平倉
-                await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
-                # 安全性強制校準
-                await asyncio.sleep(1)
-                # 執行反向開倉
-                await create_orders(sym, side, s["close_price"])
-                continue
+        if has_position:
+            if side != current_direction:
+                if await is_eligible_for_reverse(sym, strength):
+                    print(f"⚡ [AUTOMATIC_REVERSE] {sym} 觸發強勢反轉，執行平倉並反手建立 {side} 倉位")
+                    await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
+                    await asyncio.sleep(1)
+                    await create_orders(sym, side, s["close_price"])
+                    continue
+                else:
+                    continue
             else:
-                # 已經有持倉，不允許反向訊號加倉且未達反手門檻
-                continue
+                # 金字塔加倉邏輯 (順勢加碼)
+                is_eligible, cooldown_mins = check_pyramiding_eligibility(s)
+                if not is_eligible:
+                    print(f"⏳ [加碼防禦] {sym} 欲順勢加倉 {side}，但未達動態冷卻 ({cooldown_mins}m) 或已達上限，攔截加碼")
+                    continue
 
         if not is_entry_allowed(sym, side, route):
             continue
