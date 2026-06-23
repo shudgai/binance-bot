@@ -3347,16 +3347,16 @@ async def check_entries():
                 
                 is_valid = False
                 if s["pending_side"] == "buy":
-                    # [Layer 3] 嚴格K線：實體綠K且上影線 < 實體的 50%
+                    # [Layer 3] 嚴格K線：實體綠K且上影線 < 實體的 70%
                     body = prev_close - prev_open
                     upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 0.5:
+                    if body > 0 and upper_shadow < body * 0.7:
                         is_valid = True
                 elif s["pending_side"] == "sell":
-                    # [Layer 3] 嚴格K線：實體紅K且下影線 < 實體的 50%
+                    # [Layer 3] 嚴格K線：實體紅K且下影線 < 實體的 70%
                     body = prev_open - prev_close
                     lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 0.5:
+                    if body > 0 and lower_shadow < body * 0.7:
                         is_valid = True
                         
                 if is_valid:
@@ -3365,11 +3365,11 @@ async def check_entries():
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
                     
-                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.99:
-                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 99% ({trigger_high*0.99:.4f}) 以上，疑似插針假突破，取消多單。")
+                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.98:
+                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98% ({trigger_high*0.98:.4f}) 以上，疑似插針假突破，取消多單。")
                         is_valid = False
-                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.01:
-                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 101% ({trigger_low*1.01:.4f}) 以下，疑似插針假跌破，取消空單。")
+                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.02:
+                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 102% ({trigger_low*1.02:.4f}) 以下，疑似插針假跌破，取消空單。")
                         is_valid = False
 
                 if is_valid:
