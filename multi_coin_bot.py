@@ -3034,6 +3034,33 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if s["current_vol"] < s["vol_ma20"] * 0.05:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 強勢訊號但量能極度枯竭 (當前 {s['current_vol']:.0f} < 均量 5%)，攔截")
             return False
+            
+        # [修改點 1 & 3] 加入「量能背離」過濾 (強度 15~20 適用，>20 豁免)
+        if strength <= 20.0:
+            if s["current_vol"] >= s["vol_ma20"] * 1.5:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能背離過濾] 強勢訊號({strength:.1f})但當前量 ({s['current_vol']:.0f}) 過大 (>= 1.5x均量 {s['vol_ma20']*1.5:.0f})，視為趨勢延續，攔截")
+                return False
+
+        # [修改點 2] 加入「價格結構確認」 (Price Action Confirmation)，擴大至過去 3 根 K 線
+        if len(s["ohlcv"]) >= 2:
+            current_close = s["ohlcv"][-1][4]
+            lookback = min(3, len(s["ohlcv"]) - 1)
+            past_candles = s["ohlcv"][-(lookback + 1):-1]
+            past_highs = [c[2] for c in past_candles]
+            past_lows = [c[3] for c in past_candles]
+            avg_high = sum(past_highs) / len(past_highs)
+            avg_low = sum(past_lows) / len(past_lows)
+            
+            if side == "sell":
+                struct_ok = (current_close < avg_high) or (current_close < max(past_lows))
+                if not struct_ok:
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 空單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未低於3K平均高點({avg_high:.4f})且未破任一低點({max(past_lows):.4f})，攔截")
+                    return False
+            if side == "buy":
+                struct_ok = (current_close > avg_low) or (current_close > min(past_highs))
+                if not struct_ok:
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 多單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未高於3K平均低點({avg_low:.4f})且未破任一高點({min(past_highs):.4f})，攔截")
+                    return False
         
     # 移除 ADX 過濾，讓 Exhaustion_Entry 在盤整時也能高空低多
 
@@ -3159,38 +3186,53 @@ def compute_signal_strength(sym):
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
+    # 💥 極端反轉路線 (Extreme Reversal)
+    # 當市場極端超買/超賣時，鎖定反向開倉，並給予極高強度交由 is_entry_allowed 結構過濾把關
+    if rsi >= 80.0:
+        strength = 15.0 + ((rsi - 80.0) / 2.0)  # RSI 80->15, 85->17.5, 90->20
+        return ("sell", strength, "Extreme_Reversal")
+        
+    if rsi <= 20.0:
+        strength = 15.0 + ((20.0 - rsi) / 2.0)
+        return ("buy", strength, "Extreme_Reversal")
+
     # 放寬 RSI 門檻（做多 > 32，做空 < 68，且 MACD 確認時再放寬至 25/75）
-    rsi_ok_long  = rsi > 32.0 or (rsi >= 25.0 and (long_macd_cross  or macd_hist > 0))
-    rsi_ok_short = rsi < 68.0 or (rsi <= 75.0 and (short_macd_cross or macd_hist < 0))
+    # 修改：限制順勢策略不要在極端超買區追多 (RSI < 75)，不要在極端超賣區追空 (RSI > 25)
+    rsi_ok_long  = rsi < 75.0 and (rsi > 32.0 or (rsi >= 25.0 and (long_macd_cross  or macd_hist > 0)))
+    rsi_ok_short = rsi > 25.0 and (rsi < 68.0 or (rsi <= 75.0 and (short_macd_cross or macd_hist < 0)))
 
     # --- 加分機制：SMA200 加分、連2根K線加分、EMA50 順向加分 ---
-    trend_score = 0
+    long_trend_score = 0
+    short_trend_score = 0
+    
     # SMA200 順向 +4 / 逆向 -3（不再是硬性攔截）
     if is_above_sma200:
-        trend_score += 4
+        long_trend_score += 4
+        short_trend_score -= 3
     elif is_below_sma200 and not sma200_neutral:
-        # 多單在 SMA200 下方：小懲罰（但不直接拒絕）
-        trend_score -= 3
-    if is_below_sma200:
-        trend_score += 4  # 空單在 SMA200 下方：加分
-    elif is_above_sma200 and not sma200_neutral:
-        trend_score -= 3  # 空單在 SMA200 上方：小懲罰
+        long_trend_score -= 3
+        short_trend_score += 4
+        
     # EMA50 順向加分
     if trend_confluence_long and (long_macd_cross or macd_hist > 0):
-        trend_score += 5
-    elif trend_confluence_short and (short_macd_cross or macd_hist < 0):
-        trend_score += 5
+        long_trend_score += 5
+    if trend_confluence_short and (short_macd_cross or macd_hist < 0):
+        short_trend_score += 5
+        
     # 逆勢扣分
-    if (trend_confluence_long and (short_macd_cross or macd_hist < 0)) or \
-       (trend_confluence_short and (long_macd_cross or macd_hist > 0)):
-        trend_score -= 5
+    if trend_confluence_short and (long_macd_cross or macd_hist > 0):
+        long_trend_score -= 5
+    if trend_confluence_long and (short_macd_cross or macd_hist < 0):
+        short_trend_score -= 5
+        
     # 連2根同向加分
-    if last_two_candles_long or last_two_candles_short:
-        trend_score += 3
+    if last_two_candles_long:
+        long_trend_score += 3
+    if last_two_candles_short:
+        short_trend_score += 3
 
     # Route A (Trend Following): SMA200 改為加分而非硬性要求
     route_a_long = (
-        (is_above_sma200 or sma200_neutral) and  # SMA200: 順向或中立才放行
         (long_macd_cross or macd_hist > 0) and
         last_candle_long and                      # 放寬：只需1根
         rsi_ok_long and
@@ -3198,7 +3240,6 @@ def compute_signal_strength(sym):
     )
 
     route_a_short = (
-        (is_below_sma200 or sma200_neutral) and  # SMA200: 順向或中立才放行
         (short_macd_cross or macd_hist < 0) and
         last_candle_short and                     # 放寬：只需1根
         rsi_ok_short and
@@ -3213,7 +3254,7 @@ def compute_signal_strength(sym):
         strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
-        strength += trend_score
+        strength += long_trend_score
         return ("buy", strength if strength >= 12.0 else 0.0, route)
 
     if short_base_ok:
@@ -3221,7 +3262,7 @@ def compute_signal_strength(sym):
         strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
-        strength += trend_score
+        strength += short_trend_score
         return ("sell", strength if strength >= 12.0 else 0.0, route)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
@@ -3359,13 +3400,20 @@ async def check_entries():
         pending_rev = s.get("pending_reverse")
         if pending_rev:
             if time.time() - s.get("pending_reverse_time", 0) < 300: # 5 分鐘內有效
-                print(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
-                price = s["close_price"]
-                s["pending_reverse"] = None
-                await execute_order(sym, pending_rev, price)
-                # 反手成功後重新載入並冷卻
-                await asyncio.sleep(1)
-                await load_open_positions()
+                if not s.get("is_ordering"):
+                    print(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
+                    price = s["close_price"]
+                    s["pending_reverse"] = None
+                    s["is_ordering"] = True
+                    
+                    async def _rev_task(sym, pending_rev, price):
+                        try:
+                            await execute_order(sym, pending_rev, price)
+                        finally:
+                            STATES[sym]["is_ordering"] = False
+                            await load_open_positions()
+                            
+                    asyncio.create_task(_rev_task(sym, pending_rev, price))
                 continue
             else:
                 s["pending_reverse"] = None
@@ -3454,8 +3502,8 @@ async def check_entries():
                     
                     expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
                     base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
-                    # 如果訊號強度極高 (> 15.0)，允許 RR 降到 1.2，否則維持原本的 1.3 (或 base_rr_thresh)
-                    rr_thresh = 1.2 if strength > 15.0 else base_rr_thresh
+                    # 如果訊號強度極高 (> 20.0)，允許 RR 降到 1.1；(> 15.0) 降到 1.2，否則維持原本的 base_rr_thresh
+                    rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
                     
                     if expected_rr < rr_thresh:
                         print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
@@ -3704,9 +3752,8 @@ async def check_entries():
         base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
         
         # 【第二步修改：放寬 RR 門檻】
-        # 如果訊號強度極高 (> 15.0)，允許 RR 降到 1.2，否則維持原本的 1.3 (或 base_rr_thresh)
-        # 注意：因為你之前已經把 base_rr_thresh 改成 1.3，所以這裡設為 1.2 即可。
-        rr_thresh = 1.2 if strength > 15.0 else base_rr_thresh
+        # 如果訊號強度極高 (> 20.0)，允許 RR 降到 1.1；(> 15.0) 降到 1.2，否則維持原本的 base_rr_thresh
+        rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
         
         if route != "Automatic_Reverse" and expected_rr < rr_thresh:
             print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
@@ -3750,7 +3797,17 @@ async def check_entries():
         else:
             print(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
             
-        await execute_order(sym, side, s["close_price"])
+        if not s.get("is_ordering"):
+            s["is_ordering"] = True
+            
+            async def _entry_task(sym, side, price):
+                try:
+                    await execute_order(sym, side, price)
+                finally:
+                    STATES[sym]["is_ordering"] = False
+            
+            asyncio.create_task(_entry_task(sym, side, s["close_price"]))
+            
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
         s["pending_confirm_low"] = 0
