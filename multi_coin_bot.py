@@ -3500,10 +3500,11 @@ async def check_entries():
 
         # Exhaustion_Entry（量能衰竭）是反轉策略，允許在趨勢反向位置進場，不受長線趨勢與動能限制
         if route != "Exhaustion_Entry":
-            # B. 大趨勢一致性過濾 (Trend Alignment)
+            # --- 【修改處：加入強勢訊號 Override 邏輯】 ---
             if strength > 15.0:
-                pass # 交給後續的 [強勢訊號 Override] 日誌處理
+                print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 SMA200/EMA50 趨勢過濾直接允許進場")
             else:
+                # 只有在強度不足時，才執行嚴格的趨勢過濾
                 if side == "buy":
                     if sma200_15m > 0 and cp < sma200_15m:
                         print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 下方 (大趨勢向下，拒絕做多)")
