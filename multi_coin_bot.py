@@ -2949,6 +2949,19 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI 底部反彈防禦] 空單 RSI ({s.get('current_rsi', 50.0):.1f}) < 30 極度超賣，攔截開空訊號防接刀")
         return False
 
+    # --- [過熱噴發過濾 (Moving Average Deviation Filter)] ---
+    if is_trend:
+        ema20 = s.get("ema20", 0.0)
+        if ema20 > 0:
+            deviation = (cp - ema20) / ema20
+            if strength <= 20.0:
+                if side == "buy" and deviation > 0.08:
+                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做多但價格偏離 EMA20 已達 {deviation*100:.2f}% (> 8%)，視為過熱噴發，拒絕進場防接刀")
+                    return False
+                if side == "sell" and deviation < -0.08:
+                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做空但價格偏離 EMA20 已達 {abs(deviation)*100:.2f}% (> 8%)，視為過熱下挫，拒絕進場防地板空")
+                    return False
+
     # --- [15m EMA 趨勢過濾] ---
     if is_trend:
         if strength >= 10.0:
