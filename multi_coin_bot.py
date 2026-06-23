@@ -792,7 +792,7 @@ def build_symbol_state(sym):
         "last_entry_time": 0.0,
         "is_ordering": False,
         "last_action_time": 0.0,
-        "rsi_extreme_low": conf.get("rsi_extreme_low", 25),
+        "rsi_extreme_low": conf.get("rsi_extreme_low", 20),
         "rsi_extreme_high": conf.get("rsi_extreme_high", 75),
         "rsi_recovery_hook": conf.get("rsi_recovery_hook", 30),
         "volatility_cap": conf.get("volatility_cap", 3.0),
@@ -3016,7 +3016,7 @@ def compute_signal_strength(sym):
 
     # --- 第三層防禦：極值檢查 (Extreme Value Defense) ---
     rsi = s.get("current_rsi", 50.0)
-    rsi_extreme_low = s.get("rsi_extreme_low", 25)
+    rsi_extreme_low = s.get("rsi_extreme_low", 20)
     rsi_extreme_high = s.get("rsi_extreme_high", 75)
 
     if rsi < rsi_extreme_low:
@@ -3109,7 +3109,7 @@ def compute_signal_strength(sym):
     is_in_bb_zone_long  = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
     is_in_bb_zone_short = s.get("bb_up",  0) > 0 and close >= s["bb_up"]  * 0.99
 
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>50/S<50): {rsi > 50.0}/{rsi < 50.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
+    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # 放寬 RSI 門檻（做多 > 38，做空 < 62，且 MACD 確認時再放寬）
     rsi_ok_long  = rsi > 38.0 or (rsi >= 33.0 and (long_macd_cross  or macd_hist > 0))
@@ -3523,8 +3523,8 @@ async def check_entries():
                     continue
 
         # D. 真實性驗證 (Volume Confirmation) - 適用於所有策略
-        if volume < (vol_ma20 * 0.5):
-            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * 0.5)")
+        if volume < (vol_ma20 * 0.3):
+            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * 0.3)")
             continue
 
         # E. 參與度過濾 (Participation Filter)
@@ -3534,7 +3534,7 @@ async def check_entries():
             price_change = cp - s["ohlcv"][-1][1]
             
             # 1. RVOL 檢查 (爆發力)
-            rvol_check = current_vol > (vol_ma20 * 0.5)
+            rvol_check = current_vol > (vol_ma20 * 0.3)
             
             # 2. 流動性底線 (估算 24H 交易額 > 1,000,000 USD)
             # 以 5 分鐘 K 線為例，一天有 288 根 K 線，用 vol_ma20 * cp * 288 粗估
@@ -3553,7 +3553,7 @@ async def check_entries():
                     print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
                     continue
                 if not rvol_check:
-                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 0.5倍)")
+                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 0.3倍)")
                     continue
                 if not volume_price_sync:
                     print(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
