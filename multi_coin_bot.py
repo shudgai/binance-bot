@@ -598,7 +598,8 @@ def apply_symbol_profile(sym, profile):
         "max_additional_entries", "entry_size_pct", "add_entry_pct",
         "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
         "volume_threshold_factor", "min_flip_time", "breakeven_trigger",
-        "profile_type", "leverage", "mtf_filter"
+        "profile_type", "leverage", "mtf_filter",
+        "rsi_extreme_low", "rsi_extreme_high", "rsi_recovery_hook", "volatility_cap"
     ]:
         if key in profile:
             state[key] = profile[key]
@@ -780,7 +781,7 @@ def build_symbol_state(sym):
         "entry_size_pct": 0.5,
         "add_entry_pct": 0.25,
         "risk_multiplier": 1.0,
-        "volume_threshold_factor": conf.get("volume_threshold_factor", 1.5),
+        "volume_threshold_factor": conf.get("volume_threshold_factor", 1.4),
         "volume_multiplier": conf.get("volume_multiplier", 1.0),
         "sl_atr_multiplier": conf.get("sl_atr_multiplier", 1.5),
         "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
@@ -791,6 +792,10 @@ def build_symbol_state(sym):
         "last_entry_time": 0.0,
         "is_ordering": False,
         "last_action_time": 0.0,
+        "rsi_extreme_low": conf.get("rsi_extreme_low", 25),
+        "rsi_extreme_high": conf.get("rsi_extreme_high", 75),
+        "rsi_recovery_hook": conf.get("rsi_recovery_hook", 30),
+        "volatility_cap": conf.get("volatility_cap", 3.0),
     }
 
 STATES = {sym: build_symbol_state(sym) for sym in ALL_SYMBOLS}
@@ -2650,9 +2655,12 @@ def is_entry_volume_confirmed(sym, side):
         vol_factor = 1.0
         print(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 1.0x")
     else:
-        # [新增] RSI 強勢放寬量能門檻
+        # [新增] RSI 強勢放寬量能門檻 vs 極端狂熱提高門檻
         rsi = s.get("current_rsi", 50.0)
-        if rsi > 70 or rsi < 30:
+        if s.get("is_extreme_high_rsi", False):
+            vol_factor = vol_factor * 1.2
+            print(f"@@COIN_DEBUG@@ ⚠️ {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) 處於狂熱頂點，強制提高量能門檻至 {vol_factor:.2f}x 防追高")
+        elif rsi > 70 or rsi < 30:
             vol_factor = 1.0
             print(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 1.0x")
         else:
@@ -2819,6 +2827,27 @@ def compute_signal_strength(sym):
     current_vol = s.get("current_vol", 0.0)
     if vol_ma10 > 0 and current_vol < vol_ma10 * 0.15:
         return (None, 0)
+
+    # --- 第三層防禦：極值檢查 (Extreme Value Defense) ---
+    rsi = s.get("current_rsi", 50.0)
+    rsi_extreme_low = s.get("rsi_extreme_low", 25)
+    rsi_extreme_high = s.get("rsi_extreme_high", 75)
+
+    if rsi < rsi_extreme_low:
+        # 場景 A：防止「接跌刀」
+        rsi_history = s.get("rsi_history", [])
+        is_hooking_up = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
+        if not is_hooking_up:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) < {rsi_extreme_low} 且未見轉折向上，拒絕進場防接刀")
+            return (None, 0)
+
+    if rsi > rsi_extreme_high:
+        # 場景 B：防止「追高頂點」
+        # 標記高 RSI 狀態供後續放大量能門檻
+        s["is_extreme_high_rsi"] = True
+    else:
+        s["is_extreme_high_rsi"] = False
+
 
     rsi = s["current_rsi"]
     close = s["close_price"]
@@ -3176,12 +3205,12 @@ async def check_entries():
                         space_multiplier = 0.5
                     
                     if not is_strong_trend:  # 只有非強勢突破時，才受到空間過濾限制
-                        if side == "buy" and s.get("bb_up", 0) > 0:
+                        if side == "buy" and s.get("bb_up", 0) > 0 and p < s.get("bb_up", 0):
                             space = s["bb_up"] - p
                             if space < sl_dist * space_multiplier:
                                 print(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
                                 continue
-                        if side == "sell" and s.get("bb_low", 0) > 0:
+                        if side == "sell" and s.get("bb_low", 0) > 0 and p > s.get("bb_low", 0):
                             space = p - s["bb_low"]
                             if space < sl_dist * space_multiplier:
                                 print(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
@@ -3209,28 +3238,96 @@ async def check_entries():
         #     print(f"🛑 [大盤過濾] {sym} 訊號為空，但 BTC 4H 趨勢為 {MARKET_WIND.get('btc_trend_4h')}，禁止做空！")
         #     continue
             
-        # [Layer 2] MTF 中線與大趨勢過濾
+        # --- 2. 多重共振過濾區塊 (Multi-Confluence Entry Filter) ---
         cp = s["close_price"]
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        
-        # Exhaustion_Entry（量能衰竭）是反轉策略，允許在趨勢反向位置進場，不受 MTF 限制
+        rsi = s.get("current_rsi", 50)
+        macd_hist = s.get("macd_hist", 0.0)
+        vol_ma20 = s.get("vol_ma20", 0.0)
+        volume = s["ohlcv"][-1][5] if len(s["ohlcv"]) > 0 else 0
+
+        # A. 數據完整性檢查 (防止啟動初期報錯)
+        if sma200_15m == 0 or vol_ma20 == 0:
+            continue
+
+        # Exhaustion_Entry（量能衰竭）是反轉策略，允許在趨勢反向位置進場，不受長線趨勢與動能限制
         if route != "Exhaustion_Entry":
+            # B. 大趨勢一致性過濾 (Trend Alignment)
             if side == "buy":
-                if ema50_1h > 0 and cp < ema50_1h:
-                    print(f"🛑 [MTF過濾] {sym} 多單被攔截：價格低於 1H EMA50 ({ema50_1h:.4f})")
-                    continue
                 if sma200_15m > 0 and cp < sma200_15m:
-                    print(f"🛑 [MTF過濾] {sym} 多單被攔截：價格低於 15m SMA200 ({sma200_15m:.4f})")
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 下方 (大趨勢向下，拒絕做多)")
+                    continue
+                if ema50_1h > 0 and cp < ema50_1h:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 下方 (中線趨勢向下，拒絕做多)")
                     continue
             else: # sell
-                if ema50_1h > 0 and cp > ema50_1h:
-                    print(f"🛑 [MTF過濾] {sym} 空單被攔截：價格高於 1H EMA50 ({ema50_1h:.4f})")
-                    continue
                 if sma200_15m > 0 and cp > sma200_15m:
-                    print(f"🛑 [MTF過濾] {sym} 空單被攔截：價格高於 15m SMA200 ({sma200_15m:.4f})")
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 上方 (大趨勢向上，拒絕做空)")
                     continue
-        # Exhaustion_Entry 放行：反轉策略本來就在趨勢末端進場，不需要 MTF 同向確認
+                if ema50_1h > 0 and cp > ema50_1h:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 上方 (中線趨勢向上，拒絕做空)")
+                    continue
+            
+            # C. 動能共振過濾 (Momentum Confluence)
+            if side == "buy":
+                # 做多要求：RSI > 40 且 MACD 柱狀圖為正
+                if rsi <= 40 or macd_hist <= 0:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} <= 40 或 MACD {macd_hist:.6f} <= 0)")
+                    continue
+            else: # sell
+                # 做空要求：RSI < 60 且 MACD 柱狀圖為負
+                if rsi >= 60 or macd_hist >= 0:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} >= 60 或 MACD {macd_hist:.6f} >= 0)")
+                    continue
+
+        # D. 真實性驗證 (Volume Confirmation) - 適用於所有策略
+        if volume < (vol_ma20 * 0.5):
+            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * 0.5)")
+            continue
+
+        # E. 參與度過濾 (Participation Filter)
+        if len(s["ohlcv"]) > 1:
+            current_vol = volume
+            prev_vol = s["ohlcv"][-2][5]
+            price_change = cp - s["ohlcv"][-1][1]
+            
+            # 1. RVOL 檢查 (爆發力)
+            rvol_check = current_vol > (vol_ma20 * 1.5)
+            
+            # 2. 流動性底線 (估算 24H 交易額 > 1,000,000 USD)
+            # 以 5 分鐘 K 線為例，一天有 288 根 K 線，用 vol_ma20 * cp * 288 粗估
+            h24_quote_volume_est = vol_ma20 * cp * 288
+            liquidity_check = h24_quote_volume_est > 1000000
+            
+            # 3. 量價協同 (真實性)
+            volume_price_sync = False
+            if side == "buy" and price_change > 0 and current_vol > prev_vol:
+                volume_price_sync = True
+            elif side == "sell" and price_change < 0 and current_vol > prev_vol:
+                volume_price_sync = True
+                
+            if route != "Exhaustion_Entry":
+                if not liquidity_check:
+                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
+                    continue
+                if not rvol_check:
+                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 1.5倍)")
+                    continue
+                if not volume_price_sync:
+                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})")
+                    continue
+
+        # F. 極端區域防禦 (Extreme Zone Defense)
+        if route != "Exhaustion_Entry":
+            if side == "buy" and rsi > 80:
+                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超買，拒絕追高做多")
+                continue
+            if side == "sell" and rsi < 30:
+                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超賣，拒絕殺低做空")
+                continue
+
+        print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
         
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
         if has_position and side != current_direction:
