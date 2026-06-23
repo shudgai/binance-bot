@@ -3337,14 +3337,14 @@ async def check_entries():
     for sym in ALL_SYMBOLS:
         s = STATES[sym]
         
-        # --- 新增：自動反手快速通道 ---
+        # --- 自動反手快速通道 ---
         pending_rev = s.get("pending_reverse")
         if pending_rev:
             if time.time() - s.get("pending_reverse_time", 0) < 300: # 5 分鐘內有效
                 print(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
                 price = s["close_price"]
                 s["pending_reverse"] = None
-                await create_orders(sym, pending_rev, price)
+                await execute_order(sym, pending_rev, price)
                 # 反手成功後重新載入並冷卻
                 await asyncio.sleep(1)
                 await load_open_positions()
@@ -3690,27 +3690,18 @@ async def check_entries():
             print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 0.5%)，無法覆蓋手續費與滑點，放棄暫存")
             continue
 
-        # 通過初步過濾，進入 pending 狀態等待下一根 K 線確認
+        # --- Flip Buffer: 防止快速反手 (在寫入 pending 之前判斷) ---
+        # 修復: 使用 last_entry_time (time.time() 秒級) 比較，而非 K 線時間戳 (ms)
+        last_entry_time = s.get("last_entry_time", 0.0)
+        if route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
+            print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
+            continue
+
+        # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         s["pending_side"] = side
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
         s["pending_route"] = route
-        
-        # --- 新增：Minimum Flip Buffer (防止快速反手) ---
-        # 如果當前訊號與上次開倉方向相反，檢查是否超過 300 秒 (5分鐘)
-        if side == 'buy' and s.get("last_flip_time", 0) > 0:
-            # 檢查上次是否是做空 (qty < 0)
-            # 這裡我們用 last_flip_time 記錄最後一次開倉的時間
-            # 如果我們想更精確，可以記錄 last_flip_side
-            pass # 這裡先實作基礎時間檢查，稍後優化
-        
-        # 為了精確，我們需要知道上次是哪一邊。
-        # 由於我們在 execute_order 裡更新了 last_flip_time，
-        # 我們可以檢查當前訊號與上次開倉的狀態。
-        # 但最簡單的防禦是：如果剛才才平倉/開倉，就不要馬上反手。
-        if current_candle_time - s.get("last_flip_time", 0) < 300:
-            print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次翻轉僅 {current_candle_time - s.get('last_flip_time', 0):.0f}s)")
-            continue
 
         print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
 
