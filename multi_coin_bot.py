@@ -3382,14 +3382,17 @@ async def check_entries():
                     # 再測一次大環境 (MTF & RR)，因為換線了可能改變
                     p = s["close_price"]
                     if s.get("mtf_filter", True):
-                        ema50_1h = s.get("ema50_1h", 0.0)
-                        if ema50_1h > 0:
-                            if side == "buy" and p < ema50_1h:
-                                print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
-                                continue
-                            if side == "sell" and p > ema50_1h:
-                                print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
-                                continue
+                        if strength > 15.0:
+                            print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
+                        else:
+                            ema50_1h = s.get("ema50_1h", 0.0)
+                            if ema50_1h > 0:
+                                if side == "buy" and p < ema50_1h:
+                                    print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
+                                    continue
+                                if side == "sell" and p > ema50_1h:
+                                    print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
+                                    continue
 
                     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
                     sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
@@ -3495,20 +3498,23 @@ async def check_entries():
         # Exhaustion_Entry（量能衰竭）是反轉策略，允許在趨勢反向位置進場，不受長線趨勢與動能限制
         if route != "Exhaustion_Entry":
             # B. 大趨勢一致性過濾 (Trend Alignment)
-            if side == "buy":
-                if sma200_15m > 0 and cp < sma200_15m:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 下方 (大趨勢向下，拒絕做多)")
-                    continue
-                if ema50_1h > 0 and cp < ema50_1h:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 下方 (中線趨勢向下，拒絕做多)")
-                    continue
-            else: # sell
-                if sma200_15m > 0 and cp > sma200_15m:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 上方 (大趨勢向上，拒絕做空)")
-                    continue
-                if ema50_1h > 0 and cp > ema50_1h:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 上方 (中線趨勢向上，拒絕做空)")
-                    continue
+            if strength > 15.0:
+                pass # 交給後續的 [強勢訊號 Override] 日誌處理
+            else:
+                if side == "buy":
+                    if sma200_15m > 0 and cp < sma200_15m:
+                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 下方 (大趨勢向下，拒絕做多)")
+                        continue
+                    if ema50_1h > 0 and cp < ema50_1h:
+                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 下方 (中線趨勢向下，拒絕做多)")
+                        continue
+                else: # sell
+                    if sma200_15m > 0 and cp > sma200_15m:
+                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 上方 (大趨勢向上，拒絕做空)")
+                        continue
+                    if ema50_1h > 0 and cp > ema50_1h:
+                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 上方 (中線趨勢向上，拒絕做空)")
+                        continue
             
             # C. 動能共振過濾 (Momentum Confluence)
             if side == "buy":
@@ -3606,14 +3612,17 @@ async def check_entries():
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         p = s["close_price"]
         if s.get("mtf_filter", True):
-            ema50_1h = s.get("ema50_1h", 0.0)
-            if ema50_1h > 0:
-                if side == "buy" and p < ema50_1h:
-                    print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
-                    continue
-                if side == "sell" and p > ema50_1h:
-                    print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
-                    continue
+            if strength > 15.0:
+                print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
+            else:
+                ema50_1h = s.get("ema50_1h", 0.0)
+                if ema50_1h > 0:
+                    if side == "buy" and p < ema50_1h:
+                        print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
+                        continue
+                    if side == "sell" and p > ema50_1h:
+                        print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
+                        continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
         atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
