@@ -1712,6 +1712,14 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
     else:
         pnl_tag = "[大虧]"
         
+    # 紀錄虧損時間 (用於同向虧損冷卻期)
+    if profit_pct < -0.002:
+        # close_side 是 'sell' 代表原先是多單 (Long)
+        if close_side == "sell":
+            s["last_loss_time_long"] = time.time()
+        else:
+            s["last_loss_time_short"] = time.time()
+        
     full_reason = f"{pnl_tag} {reason}".strip()
     s["last_exit_time"] = time.time()
 
@@ -3041,11 +3049,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能背離過濾] 強勢訊號({strength:.1f})但當前量 ({s['current_vol']:.0f}) 過大 (>= 1.5x均量 {s['vol_ma20']*1.5:.0f})，視為趨勢延續，攔截")
                 return False
 
-        # [修改點 2] 加入「價格結構確認」 (Price Action Confirmation)，擴大至過去 3 根 K 線
+        # [修改點 2] 價格結構確認 (Price Action Confirmation)，擴大至過去 3 根 K 線
         if len(s["ohlcv"]) >= 2:
             current_close = s["ohlcv"][-1][4]
             lookback = min(3, len(s["ohlcv"]) - 1)
-            past_candles = s["ohlcv"][-(lookback + 1):-1]
+            past_candles = s["ohlcv"][-lookback-1:-1]
             past_highs = [c[2] for c in past_candles]
             past_lows = [c[3] for c in past_candles]
             avg_high = sum(past_highs) / len(past_highs)
@@ -3061,6 +3069,68 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 if not struct_ok:
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 多單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未高於3K平均低點({avg_low:.4f})且未破任一高點({min(past_highs):.4f})，攔截")
                     return False
+
+        # --- 新增：三道轉折防護機制 (High-Point Decay, RSI History, Cooldown) ---
+        # 1. 同向虧損冷卻期 (Same-Side Cooldown) - 優先檢查，節省資源
+        COOLDOWN_HOURS = 4
+        COOLDOWN_SEC = COOLDOWN_HOURS * 3600
+        now = time.time()
+        
+        last_loss_time = s.get("last_loss_time_short", 0) if side == "sell" else s.get("last_loss_time_long", 0)
+        if now - last_loss_time < COOLDOWN_SEC:
+            remaining_mins = (COOLDOWN_SEC - (now - last_loss_time)) / 60
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向虧損冷卻] 過去 4 小時內曾發生同向({side})虧損平倉，冷卻剩餘 {remaining_mins:.1f} 分鐘，攔截進場")
+            return False
+
+        # 2. 判斷是否為「逆勢轉折交易」 (判斷依據：與 SMA200 長線趨勢相反，或是明確的 Extreme_Reversal 路由)
+        sma200_15m = s.get("sma200_15m", 0)
+        is_counter_trend = False
+        
+        if route == "Extreme_Reversal":
+            is_counter_trend = True
+        else:
+            if side == "sell":
+                # 在 SMA200 之上做空，視為逆勢轉折
+                if sma200_15m > 0 and current_close > sma200_15m:
+                    is_counter_trend = True
+            else: # buy
+                # 在 SMA200 之下做多，視為逆勢轉折
+                if sma200_15m > 0 and current_close < sma200_15m:
+                    is_counter_trend = True
+
+        # 以下兩道「嚴格空間防禦」僅針對「逆勢轉折交易」開啟
+        if is_counter_trend:
+            # 3. 距離高低點衰減過濾 (High-Point Decay Filter)
+            if len(s["ohlcv"]) >= 20:
+                past_20 = s["ohlcv"][-20:]
+                highest_20 = max([c[2] for c in past_20])
+                lowest_20 = min([c[3] for c in past_20])
+                COUNTER_TREND_MAX_DECAY_PCT = 0.025
+                
+                if side == "sell":
+                    decay_pct = (highest_20 - current_close) / highest_20 if highest_20 > 0 else 0
+                    if decay_pct > COUNTER_TREND_MAX_DECAY_PCT:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [衰減過濾] 逆勢空單強勢({strength:.1f})但現價({current_close})距離20K高點({highest_20})已跌落 {decay_pct*100:.1f}% (> 2.5%)，視為半山腰追空，攔截")
+                        return False
+                else:
+                    decay_pct = (current_close - lowest_20) / lowest_20 if lowest_20 > 0 else 0
+                    if decay_pct > COUNTER_TREND_MAX_DECAY_PCT:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [衰減過濾] 逆勢多單強勢({strength:.1f})但現價({current_close})距離20K低點({lowest_20})已反彈 {decay_pct*100:.1f}% (> 2.5%)，視為半山腰追多，攔截")
+                        return False
+
+            # 4. RSI 超買/超賣歷史確認 (RSI History Confirmation)
+            if "rsi_history" in s and len(s["rsi_history"]) > 0:
+                recent_rsis = s["rsi_history"][-10:] # 取最近 10 根 RSI (最多 10 根)
+                if side == "sell":
+                    highest_rsi = max(recent_rsis)
+                    if highest_rsi < 68.0:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< 68.0)，未經歷極度過熱，視為虛假轉折，攔截")
+                        return False
+                else:
+                    lowest_rsi = min(recent_rsis)
+                    if lowest_rsi > 32.0:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> 32.0)，未經歷極度超賣，視為虛假轉折，攔截")
+                        return False
         
     # 移除 ADX 過濾，讓 Exhaustion_Entry 在盤整時也能高空低多
 
@@ -3184,7 +3254,23 @@ def compute_signal_strength(sym):
     is_in_bb_zone_long  = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
     is_in_bb_zone_short = s.get("bb_up",  0) > 0 and close >= s["bb_up"]  * 0.99
 
-    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
+    # 預先計算供 Log 顯示的預估強度
+    l_ts = 0; s_ts = 0
+    if is_above_sma200: l_ts += 4; s_ts -= 3
+    elif is_below_sma200 and not sma200_neutral: l_ts -= 3; s_ts += 4
+    if trend_confluence_long and (long_macd_cross or macd_hist > 0): l_ts += 5
+    if trend_confluence_short and (short_macd_cross or macd_hist < 0): s_ts += 5
+    if trend_confluence_short and (long_macd_cross or macd_hist > 0): l_ts -= 5
+    if trend_confluence_long and (short_macd_cross or macd_hist < 0): s_ts -= 5
+    if last_two_candles_long: l_ts += 3
+    if last_two_candles_short: s_ts += 3
+
+    raw_long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100) + l_ts + (5.0 if long_macd_cross else 0.0)
+    raw_short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100) + s_ts + (5.0 if short_macd_cross else 0.0)
+    if rsi >= 80.0: raw_short_str = 15.0 + ((rsi - 80.0) / 2.0)
+    if rsi <= 20.0: raw_long_str = 15.0 + ((20.0 - rsi) / 2.0)
+
+    print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 預估強度(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # 💥 極端反轉路線 (Extreme Reversal)
     # 當市場極端超買/超賣時，鎖定反向開倉，並給予極高強度交由 is_entry_allowed 結構過濾把關
@@ -3594,43 +3680,26 @@ async def check_entries():
         if sma200_15m == 0 or vol_ma20 == 0:
             continue
 
-        # Exhaustion_Entry（量能衰竭）是反轉策略，允許在趨勢反向位置進場，不受長線趨勢與動能限制
-        if route != "Exhaustion_Entry":
-            # --- 【修改處：加入強勢訊號 Override 邏輯】 ---
-            if strength > 15.0:
-                print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 SMA200/EMA50 趨勢過濾直接允許進場")
-            else:
-                # 只有在強度不足時，才執行嚴格的趨勢過濾
-                if side == "buy":
-                    if sma200_15m > 0 and cp < sma200_15m:
-                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 下方 (大趨勢向下，拒絕做多)")
-                        continue
-                    if ema50_1h > 0 and cp < ema50_1h:
-                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 下方 (中線趨勢向下，拒絕做多)")
-                        continue
-                else: # sell
-                    if sma200_15m > 0 and cp > sma200_15m:
-                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 SMA200 上方 (大趨勢向上，拒絕做空)")
-                        continue
-                    if ema50_1h > 0 and cp > ema50_1h:
-                        print(f"🛑 [CONFLUENCE_FAIL] {sym}: 價格在 1H EMA50 上方 (中線趨勢向上，拒絕做空)")
-                        continue
+        # Exhaustion_Entry 與 Extreme_Reversal 是反轉策略，不受一般動能與 RSI 限制
+        if route not in ["Exhaustion_Entry", "Extreme_Reversal"]:
+            # --- 趨勢過濾已由 compute_signal_strength 的 trend_score 扣分機制取代 ---
+            # 這裡移除 SMA200/EMA50 的硬性攔截，讓分數(強度)決定一切
             
-            # C. 動能共振過濾 (Momentum Confluence)
+            # C. 動能共振過濾 (Momentum Confluence) - 已放寬
             if side == "buy":
-                # 做多要求：RSI > 35 且 MACD 柱狀圖為正
-                if rsi <= 35 or macd_hist <= 0:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} <= 35 或 MACD {macd_hist:.6f} <= 0)")
+                # 做多要求放寬：RSI > 30 (原本 35) 且 MACD 柱狀圖為正
+                if rsi <= 30 or macd_hist <= 0:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} <= 30 或 MACD {macd_hist:.6f} <= 0)")
                     continue
             else: # sell
-                # 做空要求：RSI < 65 且 MACD 柱狀圖為負
-                if rsi >= 65 or macd_hist >= 0:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} >= 65 或 MACD {macd_hist:.6f} >= 0)")
+                # 做空要求放寬：RSI < 70 (原本 65) 且 MACD 柱狀圖為負
+                if rsi >= 70 or macd_hist >= 0:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} >= 70 或 MACD {macd_hist:.6f} >= 0)")
                     continue
 
-        # D. 真實性驗證 (Volume Confirmation) - 適用於所有策略
-        if volume < (vol_ma20 * 0.3):
-            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * 0.3)")
+        # D. 真實性驗證 (Volume Confirmation) - 已放寬
+        if volume < (vol_ma20 * 0.2):
+            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * 0.2)")
             continue
 
         # E. 參與度過濾 (Participation Filter)
