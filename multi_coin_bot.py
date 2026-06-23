@@ -1089,6 +1089,8 @@ def reset_coin_state(sym):
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
     s["has_partial_closed"] = False
+    s["is_breakeven_locked"] = False
+    s["stop_loss"] = 0.0
     s["pending_side"] = None
     s["pending_time"] = 0
     s["pending_confirm_high"] = 0
@@ -1901,14 +1903,38 @@ async def check_exits(sym):
     tp = avg + tp_dist if is_long else avg - tp_dist
 
     # ── 動態保本防護 (Dynamic Breakeven) ──
-    # 只要利潤達到 1 倍 ATR (或至少 0.2%)，就將停損永久上移至保本點 (+0.15% 確保夠付手續費)
+    # 只要利潤達到 0.6 倍 ATR (或至少 0.15%)，就將停損鎖定至保本點
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     breakeven_threshold = max(entry_atr_pct * 0.6, 0.0015)
+    
+    # 1. 根據交易模式動態決定保本緩衝
+    slippage_buffer = 0.0 if PAPER_TRADING else 0.0005
+
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
-        atr_half = s.get("current_atr", atr_val) * 0.5
-        sl = avg + atr_half + avg * 0.001 if is_long else avg - atr_half - avg * 0.001
-    else:
-        sl = avg - sl_dist if is_long else avg + sl_dist
+        # 2. 計算移動保本線
+        if is_long:
+            breakeven_price = avg * (1 + slippage_buffer)
+            # 做多時：如果算出新的保本價比原本的止損價還高，才往上鎖定
+            if breakeven_price > s.get('stop_loss', 0):
+                s['stop_loss'] = breakeven_price
+                if not s.get('is_breakeven_locked'):
+                    s['is_breakeven_locked'] = True
+                    print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+        else:
+            breakeven_price = avg * (1 - slippage_buffer)
+            # 做空時：如果算出新的保本價比原本的止損價還低，才往下鎖定
+            if s.get('stop_loss', float('inf')) > breakeven_price:
+                s['stop_loss'] = breakeven_price
+                if not s.get('is_breakeven_locked'):
+                    s['is_breakeven_locked'] = True
+                    print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+                    
+    # 如果還沒鎖定保本，設定為預設的 sl_dist
+    if not s.get("is_breakeven_locked"):
+        s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
+
+    # 使用狀態變數的 stop_loss
+    sl = s.get("stop_loss", avg)
 
     # --- 停損同步 (Trailing SL Sync) - Philosophy B+ ---
     if s.get("entry_count", 0) > 0:
