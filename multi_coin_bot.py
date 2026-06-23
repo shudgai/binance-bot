@@ -2849,8 +2849,8 @@ def is_entry_volume_confirmed(sym, side):
     # [新增] 大盤量能過濾：環境感知
     market_dynamic_factor = get_dynamic_volume_factor(STATES)
     if market_dynamic_factor == 1.0:
-        vol_factor = 0.3
-        print(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 0.3x")
+        vol_factor = 0.15
+        print(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 0.15x")
     else:
         # [新增] RSI 強勢放寬量能門檻 vs 極端狂熱提高門檻
         rsi = s.get("current_rsi", 50.0)
@@ -2858,8 +2858,8 @@ def is_entry_volume_confirmed(sym, side):
             vol_factor = vol_factor * 1.2
             print(f"@@COIN_DEBUG@@ ⚠️ {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) 處於狂熱頂點，強制提高量能門檻至 {vol_factor:.2f}x 防追高")
         elif rsi > 70 or rsi < 30:
-            vol_factor = 0.4
-            print(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 0.4x")
+            vol_factor = 0.15
+            print(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 0.15x")
         else:
             # [新增] 根據 ATR 高低自動動態調整倍數
             atr_24h_avg = s.get("atr_24h_avg", 0.0)
@@ -3141,9 +3141,9 @@ def compute_signal_strength(sym):
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
-    # 放寬 RSI 門檻（做多 > 35，做空 < 65，且 MACD 確認時再放寬）
-    rsi_ok_long  = rsi > 35.0 or (rsi >= 30.0 and (long_macd_cross  or macd_hist > 0))
-    rsi_ok_short = rsi < 65.0 or (rsi <= 70.0 and (short_macd_cross or macd_hist < 0))
+    # 放寬 RSI 門檻（做多 > 32，做空 < 68，且 MACD 確認時再放寬至 25/75）
+    rsi_ok_long  = rsi > 32.0 or (rsi >= 25.0 and (long_macd_cross  or macd_hist > 0))
+    rsi_ok_short = rsi < 68.0 or (rsi <= 75.0 and (short_macd_cross or macd_hist < 0))
 
     # --- 加分機制：SMA200 加分、連2根K線加分、EMA50 順向加分 ---
     trend_score = 0
@@ -3476,8 +3476,8 @@ async def check_entries():
                     # 判斷盤整區間
                     is_consolidation = (atr_ma20 > 0 and current_atr < atr_ma20 * 0.8) and range_width_pct < 0.02
                     
-                    if is_strong_trend:
-                        space_multiplier = 0.0  # 強勢突破時，完全不看空間（允許追價）
+                    if is_strong_trend or route == "Automatic_Reverse":
+                        space_multiplier = 0.0  # 強勢突破或反手時，完全不看空間（允許追價）
                     elif is_consolidation:
                         space_multiplier = 0.5
                     
