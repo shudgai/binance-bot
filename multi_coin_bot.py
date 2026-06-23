@@ -1179,11 +1179,11 @@ async def update_market_wind(exchange):
         else:
             eth_change_15m = 0.0
             
-        # 1. 瀑布防護 (極端風暴：2% 震幅)
-        if btc_change_15m < -0.02 or eth_change_15m < -0.02:
+        # 1. 瀑布防護 (極端風暴：2.5% 震幅，避免 ETH 正常回調誤觸)
+        if btc_change_15m < -0.025 or eth_change_15m < -0.025:
             MARKET_WIND["allow_long"] = False
             print(f"⚠️ [大盤瀑布風控] BTC 15m變動 {btc_change_15m*100:.2f}% | ETH 15m變動 {eth_change_15m*100:.2f}% | 🚫 暫停所有小幣多單開倉！")
-        elif btc_change_15m > 0.02 or eth_change_15m > 0.02:
+        elif btc_change_15m > 0.025 or eth_change_15m > 0.025:
             MARKET_WIND["allow_short"] = False
             print(f"⚠️ [大盤暴漲風控] BTC 15m變動 {btc_change_15m*100:.2f}% | ETH 15m變動 {eth_change_15m*100:.2f}% | 🚫 暫停所有小幣空單開倉！")
             
@@ -3599,12 +3599,21 @@ async def check_entries():
                     print(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
 
         # F. 極端區域防禦 (Extreme Zone Defense)
-        if route != "Exhaustion_Entry":
+        # 強勢訊號 (strength > 15) 可突破極端 RSI 限制，捕捉極端行情反轉
+        if route != "Exhaustion_Entry" and strength <= 15.0:
             if side == "buy" and rsi > 80:
                 print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超買，拒絕追高做多")
                 continue
-            if side == "sell" and rsi < 30:
+            if side == "sell" and rsi < 25:
                 print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超賣，拒絕殺低做空")
+                continue
+        elif route != "Exhaustion_Entry" and strength > 15.0:
+            # 強勢訊號仍保留最極端的保護層 (超買 >88, 超賣 <12)
+            if side == "buy" and rsi > 88:
+                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超買頂部")
+                continue
+            if side == "sell" and rsi < 12:
+                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
                 continue
 
         print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
