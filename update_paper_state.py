@@ -40,7 +40,26 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
                 # Update the position's realized pnl
                 current_pnl = pos.get("realized_pnl", 0.0)
                 pos["realized_pnl"] = current_pnl + pnl
-                pos["qty"] = 0.0
+                
+                # FIFO entry removal for paper state
+                if "entries" in pos:
+                    qty_to_remove = qty_abs
+                    while qty_to_remove > 0.000001 and len(pos["entries"]) > 0:
+                        first_entry = pos["entries"][0]
+                        if first_entry["qty"] <= qty_to_remove + 0.000001:
+                            qty_to_remove -= first_entry["qty"]
+                            pos["entries"].pop(0)
+                        else:
+                            first_entry["qty"] -= qty_to_remove
+                            qty_to_remove = 0
+                            
+                # If absolute qty drops to 0, ensure it is fully closed
+                if abs(pos.get("qty", 0.0)) - qty_abs <= 0.000001:
+                    pos["qty"] = 0.0
+                    pos["entries"] = []
+                else:
+                    signed_qty = -qty_abs if pos.get("qty", 0.0) > 0 else qty_abs
+                    pos["qty"] += signed_qty
             
             # Add to trades list
             trade_entry = {
@@ -72,17 +91,22 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
                     # If hedging or reversing, we don't update avg price simply here, but usually it's closed first.
                     new_avg = price if abs(new_qty) > 0.000001 else 0.0
                 
+                entries = old_pos.get("entries", [])
+                entries.append({"price": price, "qty": qty_abs, "time": int(time.time() * 1000), "side": side})
+                
                 positions[paper_key] = {
                     "qty": new_qty,
                     "avg_price": new_avg,
-                    "realized_pnl": old_pos.get("realized_pnl", 0.0)
+                    "realized_pnl": old_pos.get("realized_pnl", 0.0),
+                    "entries": entries
                 }
             else:
                 # New position
                 positions[paper_key] = {
                     "qty": signed_qty,
                     "avg_price": price,
-                    "realized_pnl": positions.get(paper_key, {}).get("realized_pnl", 0.0)
+                    "realized_pnl": positions.get(paper_key, {}).get("realized_pnl", 0.0),
+                    "entries": [{"price": price, "qty": qty_abs, "time": int(time.time() * 1000), "side": side}]
                 }
             
             # Add to trades list

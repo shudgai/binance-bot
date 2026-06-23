@@ -2237,6 +2237,10 @@ async def check_exits(sym):
             atr_ma20 = s.get("atr_ma20", 0)
             trail_trigger = 0.80 if atr_val > atr_ma20 else 0.85
             
+            # 多層放寬回撤門檻 (Trailing Stop Flexibility)
+            if len(s.get("entries", [])) > 1:
+                trail_trigger -= 0.05  # 給大多頭趨勢更多的呼吸空間
+            
             # 當前回落超過動態觸發點
             if profit_pct <= s["highest_profit_pct"] * trail_trigger:
                 cs = 'sell' if is_long else 'buy'
@@ -2256,8 +2260,11 @@ async def check_exits(sym):
         bb_width = s.get("bb_up", 0) - s.get("bb_low", 0)
         is_range_tight = (bb_width / p) < 0.003 if p > 0 else False
         
-        # 絕對時間衰減出局 (Time-Decay Exit): 持倉超過 15 分鐘 (900秒) 且有微利，無視盤整狀態直接出局
-        if hold_sec > 900 and profit_pct >= 0.0015:
+        # 絕對時間衰減出局 (Time-Decay Exit)
+        entry_layers = len(s.get("entries", []))
+        time_decay_limit = 900 if entry_layers <= 1 else 2700  # 單層15分鐘，多層放寬至45分鐘
+        
+        if hold_sec > time_decay_limit and profit_pct >= 0.0015:
             cs = 'sell' if is_long else 'buy'
             print(f"⏳ [時間衰減] {sym} 持倉已達 {hold_sec//60} 分鐘且有微利，不想浪費時間，直接全平！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Decay_Exit]")
@@ -2629,6 +2636,12 @@ async def execute_order(sym, side, price):
             s["last_entry_time"] = now
             s["last_entry_price"] = price
             s["entry_count"] += 1
+            
+            # 加碼後強制重設保本與利潤高點基準 (Auto-Breakeven Reset)
+            s["is_breakeven_locked"] = False
+            # 計算新的 profit_pct 基準，防止舊的高點觸發 Trailing Stop
+            new_profit_pct = (price - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - price) / s["avg_price"]
+            s["highest_profit_pct"] = new_profit_pct
             direction = "做多" if side == 'buy' else "做空"
             print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT)")
         except Exception as e:
@@ -2668,6 +2681,11 @@ async def execute_order(sym, side, price):
             s["last_entry_time"] = now
             s["last_entry_price"] = price
             s["entry_count"] += 1
+            
+            # 加碼後強制重設保本與利潤高點基準 (Auto-Breakeven Reset)
+            s["is_breakeven_locked"] = False
+            new_profit_pct = (fill_price - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - fill_price) / s["avg_price"]
+            s["highest_profit_pct"] = new_profit_pct
             s["last_flip_time"] = now
             
             # --- 混合停損: 交易所掛單 (Stop Market) ---
