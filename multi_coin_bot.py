@@ -3293,7 +3293,7 @@ async def check_entries():
             price_change = cp - s["ohlcv"][-1][1]
             
             # 1. RVOL 檢查 (爆發力)
-            rvol_check = current_vol > (vol_ma20 * 1.5)
+            rvol_check = current_vol > (vol_ma20 * 0.5)
             
             # 2. 流動性底線 (估算 24H 交易額 > 1,000,000 USD)
             # 以 5 分鐘 K 線為例，一天有 288 根 K 線，用 vol_ma20 * cp * 288 粗估
@@ -3312,11 +3312,10 @@ async def check_entries():
                     print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
                     continue
                 if not rvol_check:
-                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 1.5倍)")
+                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 0.5倍)")
                     continue
                 if not volume_price_sync:
-                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})")
-                    continue
+                    print(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry":
