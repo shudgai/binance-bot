@@ -1314,6 +1314,30 @@ async def fetch_all_ema50_1h(exchange):
         if not isinstance(results[i], Exception):
             STATES[sym]["ema50_1h"] = results[i]
 
+
+async def fetch_bb_4h(exchange, sym):
+    try:
+        async with request_semaphore:
+            ohlcv = await exchange.fetch_ohlcv(sym, '4h', limit=50)
+        if not ohlcv or len(ohlcv) == 0:
+            return None, None
+        closes = np.array([x[4] for x in ohlcv])
+        mbb, upper, lower = calculate_bollinger_bands(closes, 20, 2)
+        return float(upper[-1]), float(lower[-1])
+    except Exception as e:
+        print(f"⚠️ [4H BB獲取失敗] {sym}: {e}")
+        return None, None
+
+async def fetch_all_bb_4h(exchange):
+    tasks = [fetch_bb_4h(exchange, sym) for sym in ALL_SYMBOLS]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for i, sym in enumerate(ALL_SYMBOLS):
+        if not isinstance(results[i], Exception):
+            upper, lower = results[i]
+            if upper is not None and lower is not None:
+                STATES[sym]["bb_upper_4h"] = upper
+                STATES[sym]["bb_lower_4h"] = lower
+
 async def load_open_positions():
     if not PAPER_TRADING:
         return
@@ -2216,6 +2240,22 @@ async def execute_order(sym, side, price):
     lev = get_symbol_leverage(sym)
     s["leverage"] = lev
     print(f"@@LEVERAGE@@{lev}")
+    
+    # [新增] Order Book Disbalance
+    try:
+        orderbook = await exchange_futures.fetch_order_book(sym, limit=20)
+        bids = sum(x[1] for x in orderbook.get('bids', []))
+        asks = sum(x[1] for x in orderbook.get('asks', []))
+        if side == 'buy':
+            if asks == 0 or bids / asks < 1.5:
+                print(f"🛑 [OrderFlow過濾] {sym} 買盤掛單未達賣盤 1.5 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假突破，拒絕做多！")
+                return
+        else:
+            if bids == 0 or asks / bids < 1.5:
+                print(f"🛑 [OrderFlow過濾] {sym} 賣盤掛單未達買盤 1.5 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假跌破，拒絕做空！")
+                return
+    except Exception as e:
+        print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:
         try:
             await exchange_futures.set_leverage(lev, convert_to_ccxt_symbol(sym))
@@ -2699,6 +2739,21 @@ def is_entry_volume_confirmed(sym, side):
 
 
 def is_entry_allowed(sym, side, route="a"):
+    s = STATES[sym]
+    cp = s["close_price"]
+    
+    # [新增] MTF Correlation Lock (4H)
+    upper_4h = s.get("bb_upper_4h")
+    lower_4h = s.get("bb_lower_4h")
+    atr = s.get("current_atr", 0.0)
+    if upper_4h is not None and lower_4h is not None and atr > 0:
+        if side == 'buy' and (upper_4h - cp) < atr * 0.5:
+            print(f"🛑 觸發 [MTF 4H 強壓力位] {sym} 現價 {cp} 距離 4H 布林上軌 {upper_4h:.4f} 過近，禁止多單開倉防接刀")
+            return False
+        if side == 'sell' and (cp - lower_4h) < atr * 0.5:
+            print(f"🛑 觸發 [MTF 4H 強壓力位] {sym} 現價 {cp} 距離 4H 布林下軌 {lower_4h:.4f} 過近，禁止空單開倉防地板空")
+            return False
+
     is_trend = route == "a"
     if side == 'buy' and not MARKET_WIND.get("allow_long", True) and is_trend:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止開多")
@@ -2713,9 +2768,6 @@ def is_entry_allowed(sym, side, route="a"):
         if side == 'buy' and btc_1h == "BEAR":
             print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
             # return False
-
-    s = STATES[sym]
-    cp = s["close_price"]
 
     # --- [RSI 底部反彈防禦] ---
     if side == 'sell' and s.get("current_rsi", 50.0) < 30:
@@ -3132,7 +3184,20 @@ async def check_entries():
                         is_valid = True
                         
                 if is_valid:
-                    print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉)")
+                    # [新增] Second-Bar Confirmation
+                    current_price = s["close_price"]
+                    trigger_high = prev_candle[2]
+                    trigger_low = prev_candle[3]
+                    
+                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.99:
+                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 99% ({trigger_high*0.99:.4f}) 以上，疑似插針假突破，取消多單。")
+                        is_valid = False
+                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.01:
+                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 101% ({trigger_low*1.01:.4f}) 以下，疑似插針假跌破，取消空單。")
+                        is_valid = False
+
+                if is_valid:
+                    print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
                     side = s["pending_side"]
                     strength = s.get("pending_strength", 5.0)
                     route = s.get("pending_route", "confirmed")
