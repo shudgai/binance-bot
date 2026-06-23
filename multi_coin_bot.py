@@ -2809,7 +2809,7 @@ def is_entry_pin_safe(sym, side):
     if side == 'sell':
         # Doji 辨別：實體越小於 0.05% 價格時，用 ATR 絕對値替代比例判斷
         atr_val = s.get("current_atr", 0.0)
-        min_body = max(atr_val * 0.05, close * 0.0005) if atr_val > 0 else close * 0.0005
+        min_body = max(atr_val * 0.05, close_price * 0.0005) if atr_val > 0 else close_price * 0.0005
         if body < min_body:
             # Doji 蔓燭，跳過影線過濾直接送出
             return True
