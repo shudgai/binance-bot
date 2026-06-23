@@ -1030,13 +1030,13 @@ def get_balance():
     except:
         return 150.0
 
-def compute_per_coin_margin(sym=None):
+def compute_per_coin_margin(sym=None, allocation_pct=0.33):
     balance = get_balance()
     if balance <= 0 or not sym:
         return 0
 
-    # 用戶要求：每次持倉3個幣種，資金均分 (各拿 33%)
-    return balance * 0.33 * 0.95
+    # 動態資金分配 (預設 33%)
+    return balance * allocation_pct * 0.95
 
 # ── 幣種狀態更新 ──────────────────────────────────────────────
 
@@ -2356,7 +2356,7 @@ async def check_exits(sym):
 
 # ── 進場邏輯 ──────────────────────────────────────────────────
 
-async def execute_order(sym, side, price):
+async def execute_order(sym, side, price, allocation_pct=0.33):
     s = STATES[sym]
     pk = paper_key(sym)
     lev = get_symbol_leverage(sym)
@@ -2384,7 +2384,7 @@ async def execute_order(sym, side, price):
         except Exception as e:
             print(f"⚠️ [槓桿設定失敗] {sym}: {e}")
             
-    margin = compute_per_coin_margin(sym)
+    margin = compute_per_coin_margin(sym, allocation_pct)
     
 
 
@@ -3882,13 +3882,27 @@ async def check_entries():
         if not s.get("is_ordering"):
             s["is_ordering"] = True
             
-            async def _entry_task(sym, side, price):
+            # --- 動態權重分配 (Dynamic Position Sizing) ---
+            # 根據絕對訊號強度分配資金比例
+            if strength >= 20.0:
+                allocation_pct = 0.40  # 狂牛訊號：重倉 40%
+                weight_label = "重倉(40%)"
+            elif strength >= 15.0:
+                allocation_pct = 0.30  # 標準訊號：常規 30%
+                weight_label = "常規(30%)"
+            else:
+                allocation_pct = 0.20  # 微弱訊號：輕倉 20%
+                weight_label = "輕倉(20%)"
+                
+            print(f"⚖️ [動態權重] {sym} 強度 {strength:.1f}，分配資金權重: {weight_label}")
+            
+            async def _entry_task(sym, side, price, alloc_pct):
                 try:
-                    await execute_order(sym, side, price)
+                    await execute_order(sym, side, price, alloc_pct)
                 finally:
                     STATES[sym]["is_ordering"] = False
             
-            asyncio.create_task(_entry_task(sym, side, s["close_price"]))
+            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct))
             
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
