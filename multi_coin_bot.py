@@ -3020,8 +3020,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         return False
         
     # 量能確認過濾器 (衰竭進場策略 Exhaustion_Entry 允許低量能)
-    if route != "Exhaustion_Entry" and not is_entry_volume_confirmed(sym, side):
+    # 強勢訊號 (strength > 15.0) 豁免此量能過濾，避免崩跌時縮量的高品質訊號被二次攔截
+    if route != "Exhaustion_Entry" and strength <= 15.0 and not is_entry_volume_confirmed(sym, side):
         return False
+    elif route != "Exhaustion_Entry" and strength > 15.0:
+        # 強勢訊號只保留最低限度的量能要求 (5% 均量)
+        if s["current_vol"] < s["vol_ma20"] * 0.05:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 強勢訊號但量能極度枯竭 (當前 {s['current_vol']:.0f} < 均量 5%)，攔截")
+            return False
         
     # 移除 ADX 過濾，讓 Exhaustion_Entry 在盤整時也能高空低多
 
