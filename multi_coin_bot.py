@@ -2361,12 +2361,12 @@ async def execute_order(sym, side, price):
         bids = sum(x[1] for x in orderbook.get('bids', []))
         asks = sum(x[1] for x in orderbook.get('asks', []))
         if side == 'buy':
-            if asks == 0 or bids / asks < 1.5:
-                print(f"🛑 [OrderFlow過濾] {sym} 買盤掛單未達賣盤 1.5 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假突破，拒絕做多！")
+            if asks == 0 or bids / asks < 1.1:
+                print(f"🛑 [OrderFlow過濾] {sym} 買盤掛單未達賣盤 1.1 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假突破，拒絕做多！")
                 return
         else:
-            if bids == 0 or asks / bids < 1.5:
-                print(f"🛑 [OrderFlow過濾] {sym} 賣盤掛單未達買盤 1.5 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假跌破，拒絕做空！")
+            if bids == 0 or asks / bids < 1.1:
+                print(f"🛑 [OrderFlow過濾] {sym} 賣盤掛單未達買盤 1.1 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假跌破，拒絕做空！")
                 return
     except Exception as e:
         print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
@@ -3050,10 +3050,16 @@ def compute_signal_strength(sym):
     rsi_extreme_high = s.get("rsi_extreme_high", 75)
 
     if rsi < rsi_extreme_low:
-        # 場景 A：防止「接跌刀」
+        # 場景 A：防止「接跌刀」- 僅在 MACD 不確認下行趨勢時攔截
+        # 若 MACD 向下，代表趨勢持續下跌，應允許空單訊號繼續生成
+        macd_line_v = s.get("macd_line", 0.0)
+        macd_sig_v = s.get("macd_signal", 0.0)
+        macd_trending_down = (macd_line_v - macd_sig_v) < 0
         rsi_history = s.get("rsi_history", [])
         is_hooking_up = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
-        if not is_hooking_up:
+        # MACD 向下且 RSI 未轉折 → 可能是空單訊號，允許繼續
+        # MACD 非向下且 RSI 未轉折 → 可能買多假訊號，攔截
+        if not macd_trending_down and not is_hooking_up:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) < {rsi_extreme_low} 且未見轉折向上，拒絕進場防接刀")
             return (None, 0)
 
