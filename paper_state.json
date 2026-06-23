@@ -9,8 +9,8 @@
         },
         "SUI:USDT": {
             "qty": 0.0,
-            "avg_price": 0.7255,
-            "realized_pnl": -0.687769999999991
+            "avg_price": 0.7212,
+            "realized_pnl": -0.46384999999999493
         },
         "TIA:USDT": {
             "qty": 0.0,
@@ -38,9 +38,9 @@
             "realized_pnl": -0.27121999999999863
         },
         "LAB:USDT": {
-            "qty": -3.0,
+            "qty": 0.0,
             "avg_price": 16.871,
-            "realized_pnl": -0.0719999999999974
+            "realized_pnl": 0.2129999999999992
         },
         "SOL:USDT": {
             "qty": 0.0,
@@ -1336,6 +1336,33 @@
             "time": 1782175506766,
             "isBuyer": true,
             "realized_pnl": -0.22679999999999964,
+            "is_close": true
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.7212,
+            "qty": 62.2,
+            "time": 1782178523982,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "is_close": false
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.7176,
+            "qty": 62.2,
+            "time": 1782178878340,
+            "isBuyer": true,
+            "realized_pnl": 0.22391999999999607,
+            "is_close": true
+        },
+        {
+            "symbol": "LAB:USDT",
+            "price": 16.776,
+            "qty": 3.0,
+            "time": 1782179465165,
+            "isBuyer": true,
+            "realized_pnl": 0.2849999999999966,
             "is_close": true
         }
     ]

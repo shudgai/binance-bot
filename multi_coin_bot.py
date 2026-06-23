@@ -2099,7 +2099,7 @@ async def check_exits(sym):
         if s["highest_profit_pct"] >= tier1_target:
             atr_val = s.get("current_atr", 0)
             atr_ma20 = s.get("atr_ma20", 0)
-            trail_trigger = 0.65 if atr_val > atr_ma20 else 0.70
+            trail_trigger = 0.80 if atr_val > atr_ma20 else 0.85
             
             # 當前回落超過動態觸發點
             if profit_pct <= s["highest_profit_pct"] * trail_trigger:
@@ -2173,11 +2173,15 @@ async def check_exits(sym):
     else:
         # ── 強勢路徑完全交給 ATR 移動停損 (Trailing Stop) 接管，讓利潤盡情奔跑
 
-        # 強勢動態停利：高點回撤 0.5%
-        if s["highest_profit_pct"] >= 0.01:
-            if (is_long and p <= s["trailing_highest"] * 0.990) or (not is_long and p >= s["trailing_lowest"] * 1.010):
+        # 強勢動態停利：依據利潤給予不同的回撤保護
+        if s["highest_profit_pct"] >= 0.005:
+            retrace_limit = 0.005 if s["highest_profit_pct"] >= 0.01 else 0.0025
+            limit_up = 1.0 + retrace_limit
+            limit_down = 1.0 - retrace_limit
+            
+            if (is_long and p <= s["trailing_highest"] * limit_down) or (not is_long and p >= s["trailing_lowest"] * limit_up):
                 cs = 'sell' if is_long else 'buy'
-                print(f"🏃 [動態停利] {sym} 強勢回撤0.5%")
+                print(f"🏃 [動態停利] {sym} 利潤達標後回撤 {retrace_limit*100:.2f}%")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]")
                 s["highest_profit_pct"] = 0.0
                 return

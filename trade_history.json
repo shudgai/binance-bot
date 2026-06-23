@@ -2309,5 +2309,25 @@
         "friction_rate": 0.0,
         "theoretical_profit": 0.005,
         "ai_summary": "[小虧] SOLUSDT 透過 [小虧] [Trend_Follow] 出場。獲利 -0.50%，摩擦力 0.00%。"
+    },
+    {
+        "timestamp": "2026-06-23 01:41:18",
+        "symbol": "SUIUSDT",
+        "entry_reason": "UNKNOWN",
+        "exit_reason": "[微利] [Time_Decay_Exit]",
+        "profit_pct": 0.005,
+        "max_profit_reached": 0.0,
+        "atr_at_exit": 0.00235,
+        "market_mode": "Low_Vol",
+        "expected_entry": 0.7212,
+        "expected_exit": 0.7176,
+        "actual_entry": 0.7212,
+        "actual_exit": 0.7176,
+        "fees": 0.0,
+        "qty": 62.2,
+        "slippage": 0.0,
+        "friction_rate": 0.0,
+        "theoretical_profit": -0.005,
+        "ai_summary": "[微利] SUIUSDT 透過 [微利] [Time_Decay_Exit] 出場。獲利 0.50%，摩擦力 0.00%。"
     }
 ]
