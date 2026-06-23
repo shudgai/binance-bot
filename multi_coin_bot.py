@@ -1813,6 +1813,47 @@ async def check_exits(sym):
     is_long = s["qty"] > 0
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
+    # --- A. 自動反手偵測邏輯 (Global Reverse Engine) ---
+    bb_upper = s.get('bb_up', 0)
+    bb_lower = s.get('bb_low', 0)
+    vol_ma20 = s.get('vol_ma20', 0)
+    current_vol = s.get('current_vol', 0)
+
+    # Debug 模式輸出 (每分鐘)
+    if not s.get("debug_start_time"):
+        s["debug_start_time"] = time.time()
+        
+    if time.time() - s["debug_start_time"] < 600:
+        if time.time() - s.get('last_debug_pressure_time', 0) > 60:
+            print(f"🔍 [DEBUG_PRESSURE] {sym}: Upper={bb_upper:.4f}, Lower={bb_lower:.4f}, Vol_MA={vol_ma20:.2f}")
+            s['last_debug_pressure_time'] = time.time()
+
+    is_breakout_up = (not is_long and bb_upper > 0 and p > bb_upper and current_vol > (vol_ma20 * 1.1))
+    is_breakout_down = (is_long and bb_lower > 0 and p < bb_lower and current_vol > (vol_ma20 * 1.1))
+
+    if is_breakout_up or is_breakout_down:
+        last_reverse = s.get('last_reverse_time', 0)
+        if time.time() - last_reverse > 1800:
+            print(f"⚠️ [INITIATING_REVERSE] 偵測到 {sym} 強力突破！準備執行反手...")
+            new_direction = "buy" if is_breakout_up else "sell"
+            
+            # 1. 平倉現有倉位
+            cs = "sell" if is_long else "buy"
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[AUTOMATIC_REVERSE]")
+            
+            # 2. 安全性強制校準
+            await asyncio.sleep(1)
+            
+            # 3. 反手開倉
+            s['last_reverse_time'] = time.time()
+            await create_orders(sym, new_direction, p)
+            print(f"⚡⚡ [AUTOMATIC_REVERSE] ⚡⚡ | Sym: {sym} | Action: {'buy' if is_long else 'sell'} -> {new_direction}")
+            return
+        else:
+            if time.time() - s.get('last_reverse_denied_log', 0) > 60:
+                print(f"⏳ [REVERSE_DENIED] {sym} 處於冷卻期中... (距離上次反手不足 30 分鐘)")
+                s['last_reverse_denied_log'] = time.time()
+
 
     # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
     sl_base_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
@@ -3469,6 +3510,7 @@ async def main_loop(exchange):
             for sym in ALL_SYMBOLS:
                 STATES[sym]["adjusted_this_tick"] = False
             # await update_market_wind(exchange)  # 已移至獨立 Task
+            print_multi_status()
             await fetch_all_klines(exchange)
             for sym in ALL_SYMBOLS:
                 if STATES[sym].get("status") == "COOLDOWN":
@@ -3572,15 +3614,50 @@ async def periodic_htf_update(exchange):
         await fetch_all_ema20_15m(exchange)
         print("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20")
 
+def print_multi_status():
+    """
+    優化後的狀態輸出：將進行中的持倉置頂，並增加視覺分隔。
+    """
+    from datetime import datetime
+    now = datetime.now().strftime("%H:%M:%S")
+    
+    # 1. 篩選出所有正在持倉的幣種
+    active_positions = []
+    for sym, s in STATES.items():
+        if abs(s.get('qty', 0)) > 0.000001:
+            # 取得當前獲利百分比，若無則顯示 0.0
+            pnl = round(s.get('pnl_pct', 0.0), 2)
+            direction = "多" if s.get('qty', 0) > 0 else "空"
+            avg_price = s.get('avg_price', 0)
+            active_positions.append(f"  🔥 持倉] {sym} | 方向:{direction} | 入場:{avg_price} | 獲利:{pnl}%")
+
+    # 2. 開始輸出整體的儀表板
+    print(f"[{now}] [__multi__] 📊 [現況]")
+    
+    # 如果有持倉，優先列出在最上方
+    if active_positions:
+        for pos in active_positions:
+            print(pos)
+    else:
+        print("  ✨ 持倉] 目前無持倉")
+
+    # 3. 輸出統計數據 (監控池、冷卻、禁賽、持倉數)
+    total_monitored = len(STATES)
+    active_count = len(active_positions)
+    # 計算冷卻中數量
+    cooldown_count = sum(1 for s in STATES.values() if s.get('status') == 'COOLDOWN')
+    banned_count = sum(1 for s in STATES.values() if s.get('status') == 'BANNED')
+
+    print(f"  📊 統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
+    
+    # 4. 使用分隔線區隔，讓每一輪掃描的開始更清晰
+    print("-" * 60)
+
 async def periodic_status_log():
     while True:
         await asyncio.sleep(60)
-        active = sum(1 for s in STATES.values() if s["status"] == "ACTIVE")
-        cooldown = sum(1 for s in STATES.values() if s["status"] == "COOLDOWN")
-        banned = sum(1 for s in STATES.values() if s["status"] == "BANNED")
-        open_syms = get_open_symbols()
-        open_str = ', '.join(f"{sym}({'多' if STATES[sym]['qty']>0 else '空'})" for sym in open_syms) if open_syms else "無"
-        print(f"📊 [狀態] 監控池={active} 冷卻={cooldown} 禁賽={banned} | 當前持倉({len(open_syms)}/{MAX_POSITIONS}): {open_str}")
+        # 狀態列印已移至 main_loop 的 print_multi_status
+        # 保留 periodic_status_log 來定時儲存快取
         
         # 定期儲存 ATR 快取
         import json

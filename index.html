@@ -893,8 +893,16 @@ createApp({
         const activeTab = ref('chart');  // mobile tab: 'chart' | 'trade' | 'history' | 'settings'
         const consoleRef = ref(null);
         const isPlacingOrder = ref(false);
-        const trades = ref([]);
         const liveTrades = ref([]);
+        const rawTrades = ref([]);
+        const trades = computed(() => {
+            return [...rawTrades.value].sort((a, b) => {
+                const aOpen = (!a.is_close && canCloseTrade(a)) ? 1 : 0;
+                const bOpen = (!b.is_close && canCloseTrade(b)) ? 1 : 0;
+                if (aOpen !== bOpen) return bOpen - aOpen;
+                return b.time - a.time;
+            });
+        });
         const tempTradeAmount = computed(() => parseFloat((bot.value.balance_quote || 0).toFixed(4)));
         const limitPrice = ref('');
         const openOrders = ref([]);
@@ -1406,7 +1414,7 @@ createApp({
                 const res = await fetch(`${API_BASE}/trades/ALL`);
                 if (res.ok) {
                     const data = await res.json();
-                    trades.value = data.sort((a, b) => b.time - a.time);
+                    rawTrades.value = data;
                 }
             } catch(e) {}
         };
@@ -1475,7 +1483,7 @@ createApp({
         const cancelAllOrders = async () => {
             try {
                 const res = await fetch(`${API_BASE}/trades/ALL`);
-                if (res.ok) trades.value = await res.json();
+                if (res.ok) rawTrades.value = await res.json();
             } catch(e) {}
         };
 
