@@ -2807,7 +2807,12 @@ def is_entry_pin_safe(sym, side):
         return True
 
     if side == 'sell':
-        # 移除嚴格的 prev_close 比較，允許提早進場摸頂
+        # Doji 辨別：實體越小於 0.05% 價格時，用 ATR 絕對値替代比例判斷
+        atr_val = s.get("current_atr", 0.0)
+        min_body = max(atr_val * 0.05, close * 0.0005) if atr_val > 0 else close * 0.0005
+        if body < min_body:
+            # Doji 蔓燭，跳過影線過濾直接送出
+            return True
         if lower_wick > body * pin_threshold:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
             return False
@@ -2931,7 +2936,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             # return False
 
     # --- [RSI 底部反彈防禦] ---
-    if side == 'sell' and s.get("current_rsi", 50.0) < 30:
+    # 強勢訊號 (strength > 15.0) 可突破此限制，因為崩跌中 RSI < 30 仍可能持續下行
+    if side == 'sell' and s.get("current_rsi", 50.0) < 30 and strength <= 15.0:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI 底部反彈防禦] 空單 RSI ({s.get('current_rsi', 50.0):.1f}) < 30 極度超賣，攔截開空訊號防接刀")
         return False
 
