@@ -3605,7 +3605,7 @@ async def check_entries():
                     rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
                     
                     if expected_rr < rr_thresh:
-                        print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
+                        print(f"🛑 [Filter_Reason] [RR_Check] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
                         continue
                         
                     expected_profit_pct = tp_dist / p if p > 0 else 0
@@ -3844,7 +3844,7 @@ async def check_entries():
         rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
         
         if route != "Automatic_Reverse" and expected_rr < rr_thresh:
-            print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
+            print(f"🛑 [Filter_Reason] [RR_Check] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
             continue
             
         expected_profit_pct = tp_dist / p if p > 0 else 0
@@ -3873,6 +3873,9 @@ async def check_entries():
     candidates.sort(key=lambda x: -x[2])
     print(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
+    # 計算當前批次的總權重
+    total_weight = sum(strength for _, _, strength, _ in candidates)
+
     for sym, side, strength, route in candidates:
         s = STATES[sym]
         has_pos = abs(s["qty"]) > 0.000001
@@ -3888,10 +3891,12 @@ async def check_entries():
         if not s.get("is_ordering"):
             s["is_ordering"] = True
             
-            # --- 固定權重分配 (100% 滿倉) ---
-            allocation_pct = 1.0
-            weight_label = "滿倉(100%)"
-            print(f"⚖️ [權重分配] {sym} 強度 {strength:.1f}，分配資金權重: {weight_label}")
+            # --- 動態權重分配 (Dynamic Position Sizing) ---
+            raw_ratio = strength / total_weight if total_weight > 0 else 1.0
+            allocation_pct = min(raw_ratio, 0.6) # 最高封頂 60%
+            
+            weight_label = f"{allocation_pct*100:.1f}%"
+            print(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%)，實際分配資金封頂為: {weight_label}")
             
             async def _entry_task(sym, side, price, alloc_pct):
                 try:
