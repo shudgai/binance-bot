@@ -3011,15 +3011,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大趨勢向下 (現價 {cp:.4f} <= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做多")
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向下 (現價 {cp:.4f} <= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做多")
                 return False
             # 空單 MTF 1H EMA50 過濾：Exhaustion_Entry 不受限（反轉策略）
             if side == 'sell' and route != "Exhaustion_Entry":
                 if cp >= ema50_1h:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 1H大趨勢向上 (現價 {cp:.4f} >= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做空")
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向上 (現價 {cp:.4f} >= 1H_EMA50 {ema50_1h:.4f})，禁止逆勢做空")
                     return False
                 if sma200_15m > 0 and cp >= sma200_15m:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [MTF過濾] 15m趨勢向上 (現價 {cp:.4f} >= 15m_SMA200 {sma200_15m:.4f})，禁止逆勢做空")
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 15m趨勢向上 (現價 {cp:.4f} >= 15m_SMA200 {sma200_15m:.4f})，禁止逆勢做空")
                     return False
             
     # --- 盤整/低波動過濾 (Choppiness) ---
@@ -3605,7 +3605,7 @@ async def check_entries():
                     rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
                     
                     if expected_rr < rr_thresh:
-                        print(f"🛑 [Filter_Reason] [RR_Check] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
+                        print(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
                         continue
                         
                     expected_profit_pct = tp_dist / p if p > 0 else 0
@@ -3808,7 +3808,7 @@ async def check_entries():
                 min_flip = 1800
             
             if flip_elapsed < min_flip:
-                print(f"⏳ [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
+                print(f"⏳ [Filter:Cooldown] [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
@@ -3844,7 +3844,7 @@ async def check_entries():
         rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
         
         if route != "Automatic_Reverse" and expected_rr < rr_thresh:
-            print(f"🛑 [Filter_Reason] [RR_Check] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
+            print(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
             continue
             
         expected_profit_pct = tp_dist / p if p > 0 else 0
