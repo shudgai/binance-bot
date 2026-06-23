@@ -2899,6 +2899,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = STATES[sym]
     cp = s["close_price"]
     
+    if route == "Automatic_Reverse":
+        print(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
+        return True
+    
     # [新增] MTF Correlation Lock (4H)
     upper_4h = s.get("bb_upper_4h")
     lower_4h = s.get("bb_lower_4h")
@@ -3609,11 +3613,16 @@ async def check_entries():
         if has_position:
             if side != current_direction:
                 if await is_eligible_for_reverse(sym, strength):
-                    print(f"⚡ [AUTOMATIC_REVERSE] {sym} 觸發強勢反轉，執行平倉並反手建立 {side} 倉位")
+                    print(f"⚡ [AUTOMATIC_REVERSE] {sym} 觸發強勢反轉，執行平倉並準備反手建立 {side} 倉位")
                     await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
                     await asyncio.sleep(1)
-                    await create_orders(sym, side, s["close_price"])
-                    continue
+                    reset_coin_state(sym)
+                    
+                    # 繼承強勢反手權重，改變 route 進入 pending 系統
+                    route = "Automatic_Reverse"
+                    s["entry_count"] = 0
+                    s["pending_strength"] = strength
+                    s["trade_signal_strength"] = strength
                 else:
                     continue
             else:
@@ -3628,7 +3637,7 @@ async def check_entries():
 
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
         last_trade_side = s.get("last_trade_side", "")
-        if last_trade_side != "" and side != last_trade_side:
+        if last_trade_side != "" and side != last_trade_side and route != "Automatic_Reverse":
             flip_elapsed = time.time() - s.get("last_trade_time", 0)
             # 動態冷卻：如果上次是停損出場，代表趨勢已逆轉，允許更快的反手 (縮短為 60 秒)
             last_exit = s.get("last_exit_reason", "")
@@ -3672,7 +3681,7 @@ async def check_entries():
         # 注意：因為你之前已經把 base_rr_thresh 改成 1.3，所以這裡設為 1.2 即可。
         rr_thresh = 1.2 if strength > 15.0 else base_rr_thresh
         
-        if expected_rr < rr_thresh:
+        if route != "Automatic_Reverse" and expected_rr < rr_thresh:
             print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
             continue
             
