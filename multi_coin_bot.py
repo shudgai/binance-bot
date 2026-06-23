@@ -2646,14 +2646,14 @@ def is_entry_volume_confirmed(sym, side):
         return False
     
     # [Layer 3] 動態量能門檻 (根據幣種性格動態調整)
-    base_vol_factor = s.get("volume_threshold_factor", 1.2)
+    base_vol_factor = s.get("volume_threshold_factor", 0.5)
     vol_factor = base_vol_factor
     
     # [新增] 大盤量能過濾：環境感知
     market_dynamic_factor = get_dynamic_volume_factor(STATES)
     if market_dynamic_factor == 1.0:
-        vol_factor = 1.0
-        print(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 1.0x")
+        vol_factor = 0.5
+        print(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 0.5x")
     else:
         # [新增] RSI 強勢放寬量能門檻 vs 極端狂熱提高門檻
         rsi = s.get("current_rsi", 50.0)
@@ -2661,8 +2661,8 @@ def is_entry_volume_confirmed(sym, side):
             vol_factor = vol_factor * 1.2
             print(f"@@COIN_DEBUG@@ ⚠️ {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) 處於狂熱頂點，強制提高量能門檻至 {vol_factor:.2f}x 防追高")
         elif rsi > 70 or rsi < 30:
-            vol_factor = 1.0
-            print(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 1.0x")
+            vol_factor = 0.5
+            print(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 0.5x")
         else:
             # [新增] 根據 ATR 高低自動動態調整倍數
             atr_24h_avg = s.get("atr_24h_avg", 0.0)
