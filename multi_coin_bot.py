@@ -2637,11 +2637,22 @@ async def execute_order(sym, side, price):
             s["last_entry_price"] = price
             s["entry_count"] += 1
             
-            # 加碼後強制重設保本與利潤高點基準 (Auto-Breakeven Reset)
-            s["is_breakeven_locked"] = False
-            # 計算新的 profit_pct 基準，防止舊的高點觸發 Trailing Stop
-            new_profit_pct = (price - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - price) / s["avg_price"]
-            s["highest_profit_pct"] = new_profit_pct
+            if s["entry_count"] == 1:
+                s["is_breakeven_locked"] = False
+                s["highest_profit_pct"] = 0.0
+            
+            # 強制校準 trailing stop
+            update_trailing_stop(sym, price, side == 'buy')
+            
+            # 保本鎖定
+            if s["entry_count"] >= 2:
+                first_entry_price = s["entries"][0]["price"]
+                if side == 'buy':
+                    s["trailing_stop_price"] = max(s["trailing_stop_price"], first_entry_price)
+                else:
+                    s["trailing_stop_price"] = min(s["trailing_stop_price"], first_entry_price) if s["trailing_stop_price"] > 0 else first_entry_price
+                s["is_breakeven_locked"] = True
+                
             direction = "做多" if side == 'buy' else "做空"
             print(f"🟢 [{direction}] {sym} {base_amt:.4f} @ {price} (保證金:{margin:.2f} USDT)")
         except Exception as e:
@@ -2682,10 +2693,22 @@ async def execute_order(sym, side, price):
             s["last_entry_price"] = price
             s["entry_count"] += 1
             
-            # 加碼後強制重設保本與利潤高點基準 (Auto-Breakeven Reset)
-            s["is_breakeven_locked"] = False
-            new_profit_pct = (fill_price - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - fill_price) / s["avg_price"]
-            s["highest_profit_pct"] = new_profit_pct
+            if s["entry_count"] == 1:
+                s["is_breakeven_locked"] = False
+                s["highest_profit_pct"] = 0.0
+                
+            # 強制校準 trailing stop
+            update_trailing_stop(sym, fill_price, side == 'buy')
+            
+            # 保本鎖定
+            if s["entry_count"] >= 2:
+                first_entry_price = s["entries"][0]["price"]
+                if side == 'buy':
+                    s["trailing_stop_price"] = max(s["trailing_stop_price"], first_entry_price)
+                else:
+                    s["trailing_stop_price"] = min(s["trailing_stop_price"], first_entry_price) if s["trailing_stop_price"] > 0 else first_entry_price
+                s["is_breakeven_locked"] = True
+                
             s["last_flip_time"] = now
             
             # --- 混合停損: 交易所掛單 (Stop Market) ---
