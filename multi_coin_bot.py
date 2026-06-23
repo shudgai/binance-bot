@@ -2369,12 +2369,12 @@ async def execute_order(sym, side, price):
         bids = sum(x[1] for x in orderbook.get('bids', []))
         asks = sum(x[1] for x in orderbook.get('asks', []))
         if side == 'buy':
-            if asks == 0 or bids / asks < 1.1:
-                print(f"🛑 [OrderFlow過濾] {sym} 買盤掛單未達賣盤 1.1 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假突破，拒絕做多！")
+            if asks == 0 or bids / asks < 1.05:
+                print(f"🛑 [OrderFlow過濾] {sym} 買盤掛單未達賣盤 1.05 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假突破，拒絕做多！")
                 return
         else:
-            if bids == 0 or asks / bids < 1.1:
-                print(f"🛑 [OrderFlow過濾] {sym} 賣盤掛單未達買盤 1.1 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假跌破，拒絕做空！")
+            if bids == 0 or asks / bids < 1.05:
+                print(f"🛑 [OrderFlow過濾] {sym} 賣盤掛單未達買盤 1.05 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假跌破，拒絕做空！")
                 return
     except Exception as e:
         print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
@@ -2951,7 +2951,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     # --- [15m EMA 趨勢過濾] ---
     if is_trend:
-        if strength > 15.0:
+        if strength >= 10.0:
             pass # 強勢 Override，跳過 15m EMA 過濾
         else:
             ema20_15m = s.get("ema20_15m", 0.0)
