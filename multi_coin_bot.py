@@ -2872,7 +2872,7 @@ def is_entry_volume_confirmed(sym, side):
     return True
 
 
-def is_entry_allowed(sym, side, route="a"):
+def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = STATES[sym]
     cp = s["close_price"]
     
@@ -2910,14 +2910,17 @@ def is_entry_allowed(sym, side, route="a"):
 
     # --- [15m EMA 趨勢過濾] ---
     if is_trend:
-        ema20_15m = s.get("ema20_15m", 0.0)
-        if ema20_15m > 0:
-            if side == 'buy' and cp < ema20_15m:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做多，但 15m EMA 向下 (現價 {cp:.4f} < 15m_EMA20 {ema20_15m:.4f})")
-                return False
-            if side == 'sell' and cp > ema20_15m:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做空，但 15m EMA 向上 (現價 {cp:.4f} > 15m_EMA20 {ema20_15m:.4f})")
-                return False
+        if strength > 15.0:
+            pass # 強勢 Override，跳過 15m EMA 過濾
+        else:
+            ema20_15m = s.get("ema20_15m", 0.0)
+            if ema20_15m > 0:
+                if side == 'buy' and cp < ema20_15m:
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做多，但 15m EMA 向下 (現價 {cp:.4f} < 15m_EMA20 {ema20_15m:.4f})")
+                    return False
+                if side == 'sell' and cp > ema20_15m:
+                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做空，但 15m EMA 向上 (現價 {cp:.4f} > 15m_EMA20 {ema20_15m:.4f})")
+                    return False
 
     # --- [BTC 4H 趨勢過濾] ---
     # None = 中立（資料尚未取得），視為允許雙向進場
@@ -3593,7 +3596,7 @@ async def check_entries():
                     print(f"⏳ [加碼防禦] {sym} 欲順勢加倉 {side}，但未達動態冷卻 ({cooldown_mins}m) 或已達上限，攔截加碼")
                     continue
 
-        if not is_entry_allowed(sym, side, route):
+        if not is_entry_allowed(sym, side, route, strength):
             continue
 
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
