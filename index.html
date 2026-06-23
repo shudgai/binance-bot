@@ -897,8 +897,8 @@ createApp({
         const rawTrades = ref([]);
         const trades = computed(() => {
             return [...rawTrades.value].sort((a, b) => {
-                const aOpen = (!a.is_close) ? 1 : 0;
-                const bOpen = (!b.is_close) ? 1 : 0;
+                const aOpen = (!a.is_close && canCloseTrade(a)) ? 1 : 0;
+                const bOpen = (!b.is_close && canCloseTrade(b)) ? 1 : 0;
                 if (aOpen !== bOpen) return bOpen - aOpen;
                 return b.time - a.time;
             });
