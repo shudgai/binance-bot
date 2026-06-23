@@ -3408,7 +3408,10 @@ async def check_entries():
                     tp_dist = max(atr_val * tp_multiplier, p * 0.015)
                     
                     expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-                    rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
+                    base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
+                    # 如果訊號強度極高 (> 15.0)，允許 RR 降到 1.2，否則維持原本的 1.3 (或 base_rr_thresh)
+                    rr_thresh = 1.2 if strength > 15.0 else base_rr_thresh
+                    
                     if expected_rr < rr_thresh:
                         print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
                         continue
@@ -3641,7 +3644,9 @@ async def check_entries():
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
         base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
         
-        # 動態 RR：如果訊號強度極高 (> 15.0)，允許 RR 降到 1.2，否則維持原本的 1.3 (base_rr_thresh)
+        # 【第二步修改：放寬 RR 門檻】
+        # 如果訊號強度極高 (> 15.0)，允許 RR 降到 1.2，否則維持原本的 1.3 (或 base_rr_thresh)
+        # 注意：因為你之前已經把 base_rr_thresh 改成 1.3，所以這裡設為 1.2 即可。
         rr_thresh = 1.2 if strength > 15.0 else base_rr_thresh
         
         if expected_rr < rr_thresh:
