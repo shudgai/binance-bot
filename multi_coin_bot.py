@@ -3111,9 +3111,9 @@ def compute_signal_strength(sym):
 
     print(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
-    # 放寬 RSI 門檻（做多 > 38，做空 < 62，且 MACD 確認時再放寬）
-    rsi_ok_long  = rsi > 38.0 or (rsi >= 33.0 and (long_macd_cross  or macd_hist > 0))
-    rsi_ok_short = rsi < 62.0 or (rsi <= 67.0 and (short_macd_cross or macd_hist < 0))
+    # 放寬 RSI 門檻（做多 > 35，做空 < 65，且 MACD 確認時再放寬）
+    rsi_ok_long  = rsi > 35.0 or (rsi >= 30.0 and (long_macd_cross  or macd_hist > 0))
+    rsi_ok_short = rsi < 65.0 or (rsi <= 70.0 and (short_macd_cross or macd_hist < 0))
 
     # --- 加分機制：SMA200 加分、連2根K線加分、EMA50 順向加分 ---
     trend_score = 0
@@ -3512,14 +3512,14 @@ async def check_entries():
             
             # C. 動能共振過濾 (Momentum Confluence)
             if side == "buy":
-                # 做多要求：RSI > 40 且 MACD 柱狀圖為正
-                if rsi <= 40 or macd_hist <= 0:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} <= 40 或 MACD {macd_hist:.6f} <= 0)")
+                # 做多要求：RSI > 35 且 MACD 柱狀圖為正
+                if rsi <= 35 or macd_hist <= 0:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} <= 35 或 MACD {macd_hist:.6f} <= 0)")
                     continue
             else: # sell
-                # 做空要求：RSI < 60 且 MACD 柱狀圖為負
-                if rsi >= 60 or macd_hist >= 0:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} >= 60 或 MACD {macd_hist:.6f} >= 0)")
+                # 做空要求：RSI < 65 且 MACD 柱狀圖為負
+                if rsi >= 65 or macd_hist >= 0:
+                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} >= 65 或 MACD {macd_hist:.6f} >= 0)")
                     continue
 
         # D. 真實性驗證 (Volume Confirmation) - 適用於所有策略
