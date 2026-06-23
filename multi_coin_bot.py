@@ -2268,65 +2268,65 @@ async def execute_order(sym, side, price):
                 print(f"🛑 [反轉過濾] {sym} 價格與上次加倉發生大幅反轉 ({reversal*100:.2f}% > 1%)，拒絕加倉！")
                 return
 
-        # [加倉防護 3] 動能一致性
-        current_vol = s.get("current_vol", 0.0)
-        vol_ma20 = s.get("vol_ma20", 1e-8)
-        if current_vol < vol_ma20 * 0.6:
-            print(f"🛑 [量能過濾] {sym} 當前量能低於均量 0.6 倍，動能不足拒絕加倉！")
-            return
-            
-        # 動能斜率判斷: 最近兩根K線的漲跌幅度是否縮小
-        if len(s.get("ohlcv", [])) >= 3:
-            c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
-            c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
-            body1 = abs(c1[4] - c1[1])
-            body2 = abs(c2[4] - c2[1])
-            vol1 = c1[5]
-            vol2 = c2[5]
-            
-            is_bull1 = c1[4] > c1[1]
-            is_bull2 = c2[4] > c2[1]
-            
-            # [新增] RSI 背離與強度權重
-            macd_hist = s.get("macd_hist", 0.0)
-            prev_macd_hist = 0.0
-            if len(s.get("ohlcv", [])) >= 34:
-                try:
-                    import numpy as np
-                    closes = np.array([x[4] for x in s["ohlcv"]])
-                    _, _, m_hist, p_line, p_sig = calculate_macd(closes)
-                    macd_hist = m_hist
-                    prev_macd_hist = p_line - p_sig
-                except:
-                    pass
-            
-            rsi = s.get("current_rsi", 50.0)
-            is_strong_long = rsi > 70 and macd_hist > 0 and macd_hist > prev_macd_hist
-            is_strong_short = rsi < 30 and macd_hist < 0 and macd_hist < prev_macd_hist
-            
-            if side == 'buy' and is_bull1 and is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
-                if is_strong_long:
-                    print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢突破中，忽略實體與量能衰減")
-                else:
-                    print(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
-                    return
-            if side == 'sell' and not is_bull1 and not is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
-                if is_strong_short:
-                    print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢跌破中，忽略實體與量能衰減")
-                else:
-                    print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
-                    return
-            
-        # [加倉防護 4] 方向確認 (確保不在逆勢接刀)
-        if len(s.get("ohlcv", [])) >= 2:
-            current_close = s["ohlcv"][-1][4]
-            prev_close = s["ohlcv"][-2][4]
-            if side == 'buy' and current_close <= prev_close:
-                print(f"🛑 [方向確認] {sym} 多單加倉失敗，當前收盤價未高於前K線，拒絕接刀！")
+            # [加倉防護 3] 動能一致性
+            current_vol = s.get("current_vol", 0.0)
+            vol_ma20 = s.get("vol_ma20", 1e-8)
+            if current_vol < vol_ma20 * 0.6:
+                print(f"🛑 [量能過濾] {sym} 當前量能低於均量 0.6 倍，動能不足拒絕加倉！")
                 return
-            if side == 'sell' and current_close >= prev_close:
-                print(f"🛑 [方向確認] {sym} 空單加倉失敗，當前收盤價未低於前K線，拒絕接刀！")
-                return
+            
+            # 動能斜率判斷: 最近兩根K線的漲跌幅度是否縮小
+            if len(s.get("ohlcv", [])) >= 3:
+                c1 = s["ohlcv"][-2]  # 最新已收盤 K 線
+                c2 = s["ohlcv"][-3]  # 前一根已收盤 K 線
+                body1 = abs(c1[4] - c1[1])
+                body2 = abs(c2[4] - c2[1])
+                vol1 = c1[5]
+                vol2 = c2[5]
+            
+                is_bull1 = c1[4] > c1[1]
+                is_bull2 = c2[4] > c2[1]
+            
+                # [新增] RSI 背離與強度權重
+                macd_hist = s.get("macd_hist", 0.0)
+                prev_macd_hist = 0.0
+                if len(s.get("ohlcv", [])) >= 34:
+                    try:
+                        import numpy as np
+                        closes = np.array([x[4] for x in s["ohlcv"]])
+                        _, _, m_hist, p_line, p_sig = calculate_macd(closes)
+                        macd_hist = m_hist
+                        prev_macd_hist = p_line - p_sig
+                    except:
+                        pass
+            
+                rsi = s.get("current_rsi", 50.0)
+                is_strong_long = rsi > 70 and macd_hist > 0 and macd_hist > prev_macd_hist
+                is_strong_short = rsi < 30 and macd_hist < 0 and macd_hist < prev_macd_hist
+            
+                if side == 'buy' and is_bull1 and is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
+                    if is_strong_long:
+                        print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢突破中，忽略實體與量能衰減")
+                    else:
+                        print(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                        return
+                if side == 'sell' and not is_bull1 and not is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
+                    if is_strong_short:
+                        print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢跌破中，忽略實體與量能衰減")
+                    else:
+                        print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                        return
+            
+            # [加倉防護 4] 方向確認 (確保不在逆勢接刀)
+            if len(s.get("ohlcv", [])) >= 2:
+                current_close = s["ohlcv"][-1][4]
+                prev_close = s["ohlcv"][-2][4]
+                if side == 'buy' and current_close <= prev_close:
+                    print(f"🛑 [方向確認] {sym} 多單加倉失敗，當前收盤價未高於前K線，拒絕接刀！")
+                    return
+                if side == 'sell' and current_close >= prev_close:
+                    print(f"🛑 [方向確認] {sym} 空單加倉失敗，當前收盤價未低於前K線，拒絕接刀！")
+                    return
 
         # 1. 空間關卡 (Space Check): 距離上一次加倉是否大於 1.0 * ATR
         current_atr = s.get("current_atr", 0.0)
