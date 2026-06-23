@@ -3628,8 +3628,8 @@ async def check_entries():
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
         base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.5)
         
-        # 動態 RR：如果訊號強度極高 (> 15.0)，允許 RR 降到 1.3
-        rr_thresh = 1.3 if strength > 15.0 else base_rr_thresh
+        # 動態 RR：如果訊號強度極高 (> 15.0)，允許 RR 降到 1.2，否則維持原本的 1.5 (base_rr_thresh)
+        rr_thresh = 1.2 if strength > 15.0 else base_rr_thresh
         
         if expected_rr < rr_thresh:
             print(f"⚠️ [盈虧比過濾] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
