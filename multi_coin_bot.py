@@ -3799,10 +3799,16 @@ async def check_entries():
             # 動態冷卻：如果上次是停損出場，代表趨勢已逆轉，允許更快的反手 (縮短為 60 秒)
             last_exit = s.get("last_exit_reason", "")
             is_stop_loss = "Stop" in last_exit or "Loss" in last_exit or "Trailing" in last_exit or "Momentum_Fade" in last_exit
-            min_flip = 60 if is_stop_loss else s.get("min_flip_time", 900)
+            
+            if is_stop_loss:
+                min_flip = 60
+            else:
+                # 前一單是獲利出場 (Take Profit)
+                # 使用者要求：將冷卻時間從 2 小時縮短為 30 分鐘 (1800秒)
+                min_flip = 1800
             
             if flip_elapsed < min_flip:
-                print(f"⏳ [方向鎖定] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (冷卻需 {min_flip}s, 原因:{last_exit})，禁止頻繁反手。")
+                print(f"⏳ [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
@@ -3882,19 +3888,10 @@ async def check_entries():
         if not s.get("is_ordering"):
             s["is_ordering"] = True
             
-            # --- 動態權重分配 (Dynamic Position Sizing) ---
-            # 根據絕對訊號強度分配資金比例
-            if strength >= 20.0:
-                allocation_pct = 0.40  # 狂牛訊號：重倉 40%
-                weight_label = "重倉(40%)"
-            elif strength >= 15.0:
-                allocation_pct = 0.30  # 標準訊號：常規 30%
-                weight_label = "常規(30%)"
-            else:
-                allocation_pct = 0.20  # 微弱訊號：輕倉 20%
-                weight_label = "輕倉(20%)"
-                
-            print(f"⚖️ [動態權重] {sym} 強度 {strength:.1f}，分配資金權重: {weight_label}")
+            # --- 固定權重分配 (100% 滿倉) ---
+            allocation_pct = 1.0
+            weight_label = "滿倉(100%)"
+            print(f"⚖️ [權重分配] {sym} 強度 {strength:.1f}，分配資金權重: {weight_label}")
             
             async def _entry_task(sym, side, price, alloc_pct):
                 try:
