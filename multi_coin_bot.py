@@ -612,8 +612,19 @@ def apply_symbol_profile(sym, profile):
 
 
 def apply_all_symbol_profiles():
+    default_profile = {
+        "sl_atr_multiplier": 3.0,
+        "tp_atr_multiplier": 6.0,
+        "min_rr": 2.0,
+        "min_profit_pct": 0.0015,
+        "trailing_activation_atr": 2.5,
+        "trailing_distance_atr": 1.5,
+        "profit_lock_atr": 4.0
+    }
     for sym in ALL_SYMBOLS:
         json_profile = SYMBOL_PROFILES.get(sym, {})
+        if not json_profile:
+            json_profile = default_profile.copy()
         py_profile = COIN_PROFILE_CONFIG.get(sym, {})
         merged_profile = {**json_profile, **py_profile}
         apply_symbol_profile(sym, merged_profile)
