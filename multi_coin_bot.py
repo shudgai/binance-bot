@@ -599,7 +599,8 @@ def apply_symbol_profile(sym, profile):
         "sl_atr_multiplier", "tp_atr_multiplier", "hard_stop_loss_pct",
         "volume_threshold_factor", "min_flip_time", "breakeven_trigger",
         "profile_type", "leverage", "mtf_filter",
-        "rsi_extreme_low", "rsi_extreme_high", "rsi_recovery_hook", "volatility_cap"
+        "rsi_extreme_low", "rsi_extreme_high", "rsi_recovery_hook", "volatility_cap",
+        "min_rr", "min_profit_pct"
     ]:
         if key in profile:
             state[key] = profile[key]
@@ -3596,8 +3597,30 @@ async def check_entries():
                     route = s.get("pending_route", "confirmed")
                     s["pending_side"] = None
                     
-                    # 再測一次大環境 (MTF & RR)，因為換線了可能改變
                     p = s["close_price"]
+                    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+                    sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
+                    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+                    
+                    # 套用相同的動態倍數邏輯
+                    sl_multiplier = get_dynamic_atr_multiplier(sym, sl_multiplier_raw)
+                    
+                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
+                    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
+
+                    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+                    min_rr = s.get("min_rr", 1.0)
+                    if expected_rr < min_rr:
+                        print(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
+                        continue
+                        
+                    expected_profit_pct = tp_dist / p
+                    min_profit_pct = s.get("min_profit_pct", 0.0)
+                    if expected_profit_pct < min_profit_pct:
+                        print(f"🛑 [Filter:MinProfit] {sym} 預期獲利空間過小 ({expected_profit_pct*100:.2f}% < {min_profit_pct*100:.2f}%)，利潤無法覆蓋手續費與摩擦成本，拒絕進場")
+                        continue
+                        
+                    # 再測一次大環境 (MTF & RR)，因為換線了可能改變
                     if s.get("mtf_filter", True):
                         if strength > 15.0:
                             print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
@@ -3884,19 +3907,23 @@ async def check_entries():
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
 
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
-        base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
+        base_rr_thresh = s.get("min_rr", 1.3)
         
         # 【第二步修改：放寬 RR 門檻】
         # 如果訊號強度極高 (> 20.0)，允許 RR 降到 1.1；(> 15.0) 降到 1.2，否則維持原本的 base_rr_thresh
         rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
+        # 不過，如果設定了非常嚴格的 min_rr (>= 2.0)，就不隨便放寬
+        if base_rr_thresh >= 2.0:
+            rr_thresh = base_rr_thresh
         
         if route != "Automatic_Reverse" and expected_rr < rr_thresh:
             print(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
             continue
             
         expected_profit_pct = tp_dist / p if p > 0 else 0
-        if expected_profit_pct < 0.005:  # Minimum 0.5% profit buffer
-            print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 0.5%)，無法覆蓋手續費與滑點，放棄暫存")
+        min_profit_pct = s.get("min_profit_pct", 0.005)
+        if expected_profit_pct < min_profit_pct:  # Minimum profit buffer
+            print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < {min_profit_pct*100:.2f}%)，無法覆蓋手續費與滑點，放棄暫存")
             continue
 
         # --- Flip Buffer: 防止快速反手 (在寫入 pending 之前判斷) ---
