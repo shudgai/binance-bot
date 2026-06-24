@@ -2046,10 +2046,76 @@ async def check_exits(sym):
             await create_orders(sym, new_direction, p)
             print(f"⚡⚡ [AUTOMATIC_REVERSE] ⚡⚡ | Sym: {sym} | Action: {'buy' if is_long else 'sell'} -> {new_direction}")
             return
+    # --- A.1 第一階段：動能獵殺 (Momentum Exit) ---
+    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+    profit_atr_mult = (p - avg) / atr_val if is_long else (avg - p) / atr_val
+    
+    if profit_atr_mult > 3.0:
+        macd_hist = s.get("macd_hist", 0.0)
+        prev_macd_hist = s.get("prev_macd_hist", 0.0)
+        rsi = s.get("current_rsi", 50.0)
+        prev_rsi = s.get("prev_rsi", rsi)
+        
+        momentum_failing = False
+        if is_long:
+            if macd_hist < prev_macd_hist or rsi <= prev_rsi:
+                momentum_failing = True
         else:
-            if time.time() - s.get('last_reverse_denied_log', 0) > 60:
-                print(f"⏳ [REVERSE_DENIED] {sym} 處於冷卻期中... (距離上次反手不足 30 分鐘)")
-                s['last_reverse_denied_log'] = time.time()
+            if macd_hist > prev_macd_hist or rsi >= prev_rsi:
+                momentum_failing = True
+                
+        if momentum_failing:
+            print(f"✅ [Momentum_Exit] {sym} 獲利達標 (3.0 ATR) 且動能衰竭，早期獲利平倉！")
+            cs = "sell" if is_long else "buy"
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
+            return
+
+    # --- 第三階段：主動觸發救援撤退 (Rescue DCA Trigger) ---
+    loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.005, is_long)
+    if profit_pct <= -loss_limit and s.get("entry_count", 0) == 0:
+        print(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 0.5%，啟動緊急救援加碼！")
+        cs = "buy" if is_long else "sell"
+        # 繞過常規防護
+        await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
+        return
+
+    # --- B. 救援式 DCA 速戰速決系統 (Rescue Mode) ---
+    if s.get("entry_count", 0) > 0:
+        time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
+        
+        # 1. 30分鐘強制撤離 (1800秒)
+        rescue_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 30, is_long)
+        if time_since_last_entry > rescue_timeout_min * 60:
+            print(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援模式逾時 {rescue_timeout_min} 分鐘未達標，強制平倉撤退！")
+            cs = "sell" if is_long else "buy"
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Timeout]", is_stop_loss=True)
+            return
+
+        # 2. 動態追蹤脫困邏輯 (Dynamic Trailing Rescue)
+        rescue_floor = get_effective_exit_setting(sym, "rescue_tp_floor_pct", 0.002, is_long)
+        rescue_trail_atr = get_effective_exit_setting(sym, "rescue_trailing_atr", 0.75, is_long)
+
+        if profit_pct >= rescue_floor:
+            # 追蹤最高/最低價
+            if is_long:
+                s["rescue_highest"] = max(s.get("rescue_highest", 0.0), p)
+                trail_sl = s["rescue_highest"] - (atr_val * rescue_trail_atr)
+                if p <= trail_sl:
+                    print(f"✅ [RESCUE_TRAIL] {sym} 救援模式動態追蹤觸發！(獲利 {profit_pct*100:.2f}%)，獲利入袋！")
+                    await close_position(sym, "sell", abs(s["qty"]), p, avg, reason="[Rescue_Trailing_Stop]")
+                    return
+            else:
+                s["rescue_lowest"] = min(s.get("rescue_lowest", float('inf')), p) if s.get("rescue_lowest", 0) > 0 else p
+                trail_sl = s["rescue_lowest"] + (atr_val * rescue_trail_atr)
+                if p >= trail_sl:
+                    print(f"✅ [RESCUE_TRAIL] {sym} 救援模式動態追蹤觸發！(獲利 {profit_pct*100:.2f}%)，獲利入袋！")
+                    await close_position(sym, "buy", abs(s["qty"]), p, avg, reason="[Rescue_Trailing_Stop]")
+                    return
+            
+            if time.time() - s.get("last_rescue_log_time", 0) > 60:
+                print(f"👀 [RESCUE_RUNNER] {sym} 救援模式啟動追蹤！目前獲利 {profit_pct*100:.2f}% (目標底線: {rescue_floor*100:.2f}%)")
+                s["last_rescue_log_time"] = time.time()
+            return
 
 
     # cooldown_limit 過後才進此函數，所以 120 秒邊界仍有意義（低波動情況下 60~120 秒區間）
