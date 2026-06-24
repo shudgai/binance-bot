@@ -1290,25 +1290,28 @@ async def fetch_all_sma200(exchange):
         if not isinstance(results[i], Exception):
             STATES[sym]["sma200_15m"] = results[i]
 
-async def fetch_ema20_15m(exchange, sym):
+async def fetch_ema_15m(exchange, sym):
     try:
         async with request_semaphore:
             ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=100)
         if not ohlcv or len(ohlcv) == 0:
-            return 0.0
+            return 0.0, 0.0
         closes = np.array([x[4] for x in ohlcv])
         ema20 = calculate_ema(closes, 20)
-        return float(ema20)
+        ema50 = calculate_ema(closes, 50)
+        return float(ema20), float(ema50)
     except Exception as e:
-        print(f"⚠️ [15m EMA20獲取失敗] {sym}: {e}")
-        return 0.0
+        print(f"⚠️ [15m EMA獲取失敗] {sym}: {e}")
+        return 0.0, 0.0
 
-async def fetch_all_ema20_15m(exchange):
-    tasks = [fetch_ema20_15m(exchange, sym) for sym in ALL_SYMBOLS]
+async def fetch_all_ema_15m(exchange):
+    tasks = [fetch_ema_15m(exchange, sym) for sym in ALL_SYMBOLS]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, sym in enumerate(ALL_SYMBOLS):
         if not isinstance(results[i], Exception):
-            STATES[sym]["ema20_15m"] = results[i]
+            ema20, ema50 = results[i]
+            STATES[sym]["ema20_15m"] = ema20
+            STATES[sym]["ema50_15m"] = ema50
 
 async def fetch_ema50_1h(exchange, sym):
     try:
@@ -2043,7 +2046,7 @@ async def check_exits(sym):
             
             # 3. 反手開倉
             s['last_reverse_time'] = time.time()
-            await create_orders(sym, new_direction, p)
+            await execute_order(sym, new_direction, p)
             print(f"⚡⚡ [AUTOMATIC_REVERSE] ⚡⚡ | Sym: {sym} | Action: {'buy' if is_long else 'sell'} -> {new_direction}")
             return
     # --- A.1 第一階段：動能獵殺 (Momentum Exit) ---
@@ -2071,9 +2074,9 @@ async def check_exits(sym):
             return
 
     # --- 第三階段：主動觸發救援撤退 (Rescue DCA Trigger) ---
-    loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.005, is_long)
-    if profit_pct <= -loss_limit and s.get("entry_count", 0) == 0:
-        print(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 0.5%，啟動緊急救援加碼！")
+    loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
+    if profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
+        print(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 {loss_limit*100:.4f}%，啟動緊急救援加碼！")
         cs = "buy" if is_long else "sell"
         # 繞過常規防護
         await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
@@ -2083,8 +2086,8 @@ async def check_exits(sym):
     if s.get("entry_count", 0) > 0:
         time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
         
-        # 1. 30分鐘強制撤離 (1800秒)
-        rescue_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 30, is_long)
+        # 1. 15分鐘強制撤離
+        rescue_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 15, is_long)
         if time_since_last_entry > rescue_timeout_min * 60:
             print(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援模式逾時 {rescue_timeout_min} 分鐘未達標，強制平倉撤退！")
             cs = "sell" if is_long else "buy"
@@ -2499,7 +2502,7 @@ async def check_exits(sym):
 
 # ── 進場邏輯 ──────────────────────────────────────────────────
 
-async def execute_order(sym, side, price, allocation_pct=0.33):
+async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False):
     s = STATES[sym]
     pk = paper_key(sym)
     lev = get_symbol_leverage(sym)
@@ -2507,20 +2510,21 @@ async def execute_order(sym, side, price, allocation_pct=0.33):
     print(f"@@LEVERAGE@@{lev}")
     
     # [新增] Order Book Disbalance
-    try:
-        orderbook = await exchange_futures.fetch_order_book(sym, limit=20)
-        bids = sum(x[1] for x in orderbook.get('bids', []))
-        asks = sum(x[1] for x in orderbook.get('asks', []))
-        if side == 'buy':
-            if asks == 0 or bids / asks < 0.95:
-                print(f"🛑 [Filter:OrderFlow] {sym} 買盤總量未達賣盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假突破，拒絕做多！")
-                return
-        else:
-            if bids == 0 or asks / bids < 0.95:
-                print(f"🛑 [Filter:OrderFlow] {sym} 賣盤總量未達買盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假跌破，拒絕做空！")
-                return
-    except Exception as e:
-        print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
+    if not is_rescue_dca:
+        try:
+            orderbook = await exchange_futures.fetch_order_book(sym, limit=20)
+            bids = sum(x[1] for x in orderbook.get('bids', []))
+            asks = sum(x[1] for x in orderbook.get('asks', []))
+            if side == 'buy':
+                if asks == 0 or bids / asks < 0.95:
+                    print(f"🛑 [Filter:OrderFlow] {sym} 買盤總量未達賣盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假突破，拒絕做多！")
+                    return
+            else:
+                if bids == 0 or asks / bids < 0.95:
+                    print(f"🛑 [Filter:OrderFlow] {sym} 賣盤總量未達買盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假跌破，拒絕做空！")
+                    return
+        except Exception as e:
+            print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:
         try:
             await exchange_futures.set_leverage(lev, convert_to_ccxt_symbol(sym))
@@ -2549,7 +2553,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33):
     # --------------------
 
     now = time.time()
-    if s["entry_count"] > 0:
+    if s["entry_count"] > 0 and not is_rescue_dca:
         if now - s["last_entry_time"] < s["entry_cooldown_sec"]:
             print(f"⏳ [加倉冷卻] {sym} 距離上次加倉不足 {s['entry_cooldown_sec']} 秒")
             return
@@ -3571,7 +3575,27 @@ def compute_signal_strength(sym):
                 print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                 return ("sell", 15.0, "Exhaustion_Entry")
 
-    return (None, 0, None)
+async def is_reversal_still_valid(sym, pending_side):
+    s = STATES.get(sym)
+    if not s or not s.get("ohlcv") or len(s["ohlcv"]) < 2:
+        return False
+    
+    current_price = s["close_price"]
+    prev_candle = s["ohlcv"][-2]
+    prev_close = prev_candle[4]
+    
+    # 做多反手：現價不能低於訊號 K 線收盤價的 0.5% (防止暴跌接刀)
+    if pending_side == "buy":
+        if current_price < prev_close * 0.995:
+            print(f"📉 [Reversal_Invalid] {sym} 做多反手失效：現價 {current_price} 低於訊訊號收盤價 {prev_close} 超過 0.5% (防止接刀)")
+            return False
+    # 做空反手：現價不能高於訊號 K 線收盤價的 0.5% (防止地板空)
+    elif pending_side == "sell":
+        if current_price > prev_close * 1.005:
+            print(f"📈 [Reversal_Invalid] {sym} 做空反手失效：現價 {current_price} 高於訊訊號收盤價 {prev_close} 超過 0.5% (防止地板空)")
+            return False
+            
+    return True
 
 async def is_eligible_for_reverse(sym, current_strength):
     s = STATES.get(sym)
@@ -3673,6 +3697,28 @@ async def check_entries():
             continue
 
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
+
+        # --- [新增] 自動反手訊號緩衝與 K 線收盤確認機制 ---
+        if s.get("pending_reverse_trigger"):
+            pending_rev_data = s["pending_reverse_trigger"]
+            if current_candle_time > pending_rev_data.get("time", 0):
+                print(f"⏳ [{sym}] 進入新 K 線，驗證自動反手趨勢持續性...")
+                if await is_reversal_still_valid(sym, pending_rev_data["side"]):
+                    print(f"⚡ [{sym}] [Reversal_Confirmed] 反手趨勢確認！執行平倉並反手建倉。")
+                    # 1. 平倉舊倉位
+                    await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
+                    await asyncio.sleep(1)
+                    reset_coin_state(sym)
+                    # 2. 反手建倉
+                    await execute_order(sym, pending_rev_data["side"], s["close_price"])
+                else:
+                    print(f"❌ [{sym}] [Reversal_Cancelled] 觀察期間趨勢失效，取消反手，保留原倉位。")
+                
+                s["pending_reverse_trigger"] = None
+                continue
+            else:
+                # 還在同一根 K 線，繼續觀察
+                continue
 
         # --- 新增：等待收盤確認機制 ---
         if s.get("pending_side"):
@@ -3937,16 +3983,14 @@ async def check_entries():
         if has_position:
             if side != current_direction:
                 if await is_eligible_for_reverse(sym, strength):
-                    print(f"⚡ [AUTOMATIC_REVERSE] {sym} 觸發強勢反轉，執行平倉並準備反手建立 {side} 倉位")
-                    await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
-                    await asyncio.sleep(1)
-                    reset_coin_state(sym)
-                    
-                    # 繼承強勢反手權重，改變 route 進入 pending 系統
-                    route = "Automatic_Reverse"
-                    s["entry_count"] = 0
-                    s["pending_strength"] = strength
-                    s["trade_signal_strength"] = strength
+                    if not s.get("pending_reverse_trigger"):
+                        s["pending_reverse_trigger"] = {
+                            "side": side,
+                            "time": current_candle_time,
+                            "strength": strength
+                        }
+                        print(f"⚡ [{sym}] [Pending_Reversal_Detected] 偵測到強勢反轉訊號 (強度: {strength:.2f})，進入觀察期，等待 K 線收盤確認...")
+                    continue
                 else:
                     continue
             else:
@@ -4254,7 +4298,7 @@ async def main_loop(exchange):
     await load_open_positions()
     await fetch_all_sma200(exchange)
     await fetch_all_ema50_1h(exchange)
-    await fetch_all_ema20_15m(exchange)
+    await fetch_all_ema_15m(exchange)
 
     last_balance_update = time.time()
 
@@ -4399,8 +4443,8 @@ async def periodic_htf_update(exchange):
         await asyncio.sleep(900)
         await fetch_all_sma200(exchange)
         await fetch_all_ema50_1h(exchange)
-        await fetch_all_ema20_15m(exchange)
-        print("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20")
+        await fetch_all_ema_15m(exchange)
+        print("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20 & EMA50")
 
 def print_multi_status():
     """

@@ -104,16 +104,18 @@ def get_bot_status():
         # Calculate total realized PNL from paper_state.json
         try:
             total_realized = 0.0
+            total_fees = 0.0
             state_path = os.path.join(os.path.dirname(__file__), "..", "paper_state.json")
             if os.path.exists(state_path):
                 with open(state_path, "r") as f:
                     state = json.load(f)
                 for t in state.get("trades", []):
+                    fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+                    total_fees += fee
                     if t.get("is_close"):
                         pnl = t.get("realized_pnl", 0.0)
-                        fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
-                        total_realized += (pnl - fee)
-            bot_status["total_realized_pnl"] = total_realized
+                        total_realized += pnl
+            bot_status["total_realized_pnl"] = total_realized - total_fees
         except Exception as e:
             bot_status["total_realized_pnl"] = 0.0
         
