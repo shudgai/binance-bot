@@ -600,7 +600,8 @@ def apply_symbol_profile(sym, profile):
         "volume_threshold_factor", "min_flip_time", "breakeven_trigger",
         "profile_type", "leverage", "mtf_filter",
         "rsi_extreme_low", "rsi_extreme_high", "rsi_recovery_hook", "volatility_cap",
-        "min_rr", "min_profit_pct"
+        "min_rr", "min_profit_pct",
+        "trailing_activation_atr", "trailing_distance_atr", "profit_lock_atr"
     ]:
         if key in profile:
             state[key] = profile[key]
@@ -1498,61 +1499,96 @@ def update_trailing_stop(sym, current_price, is_long):
     atr_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else atr_val
     safe_atr = min(atr_val, atr_avg * 3) if atr_avg > 0 else atr_val
 
-    trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
-    profit_pct = s.get("highest_profit_pct", 0.0)
-    if profit_pct > 0.03:
-        trailing_multiplier = 3.0
-    elif profit_pct < 0.01:
-        trailing_multiplier = 1.5
-    liq_price = s["avg_price"] * (1 - s["sl_atr_multiplier"] * (safe_atr / max(s["close_price"], 1e-8)))
+    # --- 3-Stage Trailing Logic ---
+    trailing_activation_atr = s.get("trailing_activation_atr", 0.0)
+    trailing_distance_atr = s.get("trailing_distance_atr", s.get("trailing_stop_multiplier", 2.0))
+    profit_lock_atr = s.get("profit_lock_atr", 0.0)
     
+    avg_price = s["avg_price"]
+    profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+    s["highest_profit_pct"] = max(s.get("highest_profit_pct", 0.0), profit_pct)
+    
+    profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
+
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
             s["trailing_highest"] = current_price
-            # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
-            trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
-            # --- 保本邏輯 ---
-            trigger_mult = s.get("breakeven_trigger")
-            if trigger_mult is None:
-                trigger_mult = s.get("sl_atr_multiplier", 1.5)
+        trail_sl = s["trailing_stop_price"] # default to current SL
+        
+        # Stage 3: Profit Lock
+        if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr:
+            locked_sl = avg_price * 1.001
+            trail_sl = max(trail_sl, locked_sl)
+        # Stage 2: Trailing Mode
+        elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr:
+            dynamic_sl = s["trailing_highest"] - (atr_val * trailing_distance_atr)
+            trail_sl = max(trail_sl, dynamic_sl)
+        # Fallback to standard logic if no custom Swing settings
+        elif trailing_activation_atr == 0:
+            trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
+            if s["highest_profit_pct"] > 0.03:
+                trailing_multiplier = 3.0
+            elif s["highest_profit_pct"] < 0.01:
+                trailing_multiplier = 1.5
+            dynamic_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
+            
+            # Legacy Breakeven
+            trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
             sl_dist_atr = trigger_mult * atr_val
-            breakeven_trigger = s["avg_price"] + sl_dist_atr
+            breakeven_trigger = avg_price + sl_dist_atr
             if current_price >= breakeven_trigger:
-                breakeven_sl = s["avg_price"]
-                trail_sl = max(trail_sl, breakeven_sl)
-            
-            safe_min_sl = liq_price * 1.2
-            new_sl = max(s["trailing_stop_price"], trail_sl) # 確保只往有利方向移動
-            if new_sl < safe_min_sl:
-                new_sl = safe_min_sl
-            
-            if new_sl > s["trailing_stop_price"]:
-                s["trailing_stop_price"] = new_sl
+                dynamic_sl = max(dynamic_sl, avg_price)
+                
+            trail_sl = max(trail_sl, dynamic_sl)
+
+        safe_min_sl = liq_price * 1.2
+        new_sl = max(trail_sl, safe_min_sl)
+        
+        if new_sl > s["trailing_stop_price"]:
+            s["trailing_stop_price"] = new_sl
+            print(f"🛡️ [Trailing_SL] {sym} 移動止損上移至 {new_sl:.4f} (獲利倍數: {profit_atr_multiple:.1f}x ATR)")
+
     else:
         if current_price < s.get("trailing_lowest", float('inf')):
             s["trailing_lowest"] = current_price
-            # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
-            trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
-            # --- 保本邏輯 ---
-            trigger_mult = s.get("breakeven_trigger")
-            if trigger_mult is None:
-                trigger_mult = s.get("sl_atr_multiplier", 1.5)
+        trail_sl = s["trailing_stop_price"]
+        if trail_sl == 0.0:
+            trail_sl = float('inf')
+            
+        # Stage 3: Profit Lock
+        if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr:
+            locked_sl = avg_price * 0.999
+            trail_sl = min(trail_sl, locked_sl)
+        # Stage 2: Trailing Mode
+        elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr:
+            dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_distance_atr)
+            trail_sl = min(trail_sl, dynamic_sl)
+        # Fallback to standard logic if no custom Swing settings
+        elif trailing_activation_atr == 0:
+            trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
+            if s["highest_profit_pct"] > 0.03:
+                trailing_multiplier = 3.0
+            elif s["highest_profit_pct"] < 0.01:
+                trailing_multiplier = 1.5
+            dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
+            
+            trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
             sl_dist_atr = trigger_mult * atr_val
-            breakeven_trigger = s["avg_price"] - sl_dist_atr
+            breakeven_trigger = avg_price - sl_dist_atr
             if current_price <= breakeven_trigger:
-                breakeven_sl = s["avg_price"]
-                trail_sl = min(trail_sl, breakeven_sl)
+                dynamic_sl = min(dynamic_sl, avg_price)
+                
+            trail_sl = min(trail_sl, dynamic_sl)
+
+        safe_max_sl = liq_price * 0.8
+        new_sl = min(trail_sl, safe_max_sl)
+        
+        if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
+            s["trailing_stop_price"] = new_sl
+            print(f"🛡️ [Trailing_SL] {sym} 移動止損下移至 {new_sl:.4f} (獲利倍數: {profit_atr_multiple:.1f}x ATR)")
             
-            safe_max_sl = liq_price * 0.8
-            new_sl = min(s["trailing_stop_price"], trail_sl)
-            if new_sl > safe_max_sl:
-                new_sl = safe_max_sl
-            
-            if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
-                s["trailing_stop_price"] = new_sl
-                    
     return False, s["trailing_stop_price"]
     
 def detect_market_regime(sym, current_price, avg_price, is_long):
