@@ -3075,11 +3075,19 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
     # =========================================================================
-    # 1. 量能門檻過濾
+    # 1. 動態量能門檻過濾 (Adaptive Volume Gate)
+    # 低波動模式下放寬至 70%，避免過度攔截安靜行情
     current_volume = s["ohlcv"][-1][5] if s.get("ohlcv") else 0
     volume_ma20 = s.get("vol_ma20", 0.0)
-    if current_volume <= volume_ma20:
-        print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能未達標 (當前: {current_volume:.1f} <= MA20均量: {volume_ma20:.1f})，判定為死水行情。")
+    atr_history_v = s.get("atr_history", [])
+    atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
+    current_atr_v = s.get("current_atr", 0.0)
+    is_low_vol_mode = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
+    vol_multiplier = 0.7 if is_low_vol_mode else 1.0
+    dynamic_vol_threshold = volume_ma20 * vol_multiplier
+    if current_volume <= dynamic_vol_threshold:
+        mode_label = "低波動模式(放寬至70%)" if is_low_vol_mode else "標準模式(100%)"
+        print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能未達標 (當前: {current_volume:.1f} <= 門檻: {dynamic_vol_threshold:.1f} | {mode_label})，判定為死水行情。")
         return False
         
     # 2. 空單 RSI 極限保護
