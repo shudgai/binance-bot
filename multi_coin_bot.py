@@ -2838,11 +2838,30 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             # 抳取盤口 Ask1/Bid1 作為限價，最大化成交機率
             try:
                 ob = await exchange_futures.fetch_order_book(sym, limit=5)
-                if side == 'buy':
-                    limit_price = float(ob['asks'][0][0]) if ob.get('asks') else price
+                asks = ob.get('asks', [])
+                bids = ob.get('bids', [])
+                ask1 = float(asks[0][0]) if asks else price
+                bid1 = float(bids[0][0]) if bids else price
+
+                # === 右側掛單策略 (Right-Side Limit Execution) ===
+                # 判斷是否為逆勢做多（熊市防禦模式下的 buy）
+                _btc_4h = MARKET_WIND.get("btc_trend_4h")
+                _btc_1h = MARKET_WIND.get("btc_trend_1h")
+                _is_counter_trend_long = (side == 'buy' and _btc_4h == "BEAR" and _btc_1h == "BEAR")
+
+                if _is_counter_trend_long:
+                    # 逆勢做多：嚴格掛在 Ask1（右側），只有價格反彈才成交，防止「接飛刀」
+                    limit_price = ask1
+                    print(f"📌 [Right-Side Limit] {sym} 逆勢多單，嚴格掛 Ask1: {limit_price:.6f} (信號價: {price:.6f})")
+                elif side == 'buy':
+                    # 順勢多單：掛在 Bid1 下方等被動成交（享 Maker 優勢）
+                    tick = (ask1 - bid1) if ask1 > bid1 else price * 0.0001
+                    limit_price = round(bid1 - tick * 0.5, 8)
+                    print(f"📌 [Passive Limit] {sym} 順勢多單，掛 Bid1 附近: {limit_price:.6f} (Bid1: {bid1:.6f})")
                 else:
-                    limit_price = float(ob['bids'][0][0]) if ob.get('bids') else price
-                print(f"📌 [Aggressive Limit] {sym} {side} 限價: {limit_price:.6f} (原信號價: {price:.6f})")
+                    # 做空（順勢 or 逆勢）：掛在 Bid1（右側），只有買盤接貨才成交
+                    limit_price = bid1
+                    print(f"📌 [Right-Side Limit] {sym} 空單，掛 Bid1: {limit_price:.6f} (信號價: {price:.6f})")
             except Exception:
                 limit_price = price  # Fallback to signal price
 
@@ -3179,10 +3198,29 @@ def is_entry_volume_confirmed(sym, side):
 def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = STATES[sym]
     cp = s["close_price"]
-    
+
     if route == "Automatic_Reverse":
         print(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
         return True
+
+    # =========================================================================
+    # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
+    # BTC 4H + 1H 雙熊 → 啟動「熊市防禦模式」，封鎖所有做多訊號
+    # 除非滿足「極端超賣 RSI < 32」或「底背離確認」
+    # =========================================================================
+    btc_4h = MARKET_WIND.get("btc_trend_4h")
+    btc_1h = MARKET_WIND.get("btc_trend_1h")
+    bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR")
+    if bear_defense_mode and side == 'buy':
+        current_rsi_macro = s.get("current_rsi", 50.0)
+        divergence_confirmed = (s.get("divergence", "none") == "bullish")
+        extreme_oversold    = (current_rsi_macro < 32.0)
+        if not extreme_oversold and not divergence_confirmed:
+            print(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式啟動！BTC 4H+1H 雙熊，做多訊號被封鎖。"
+                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離)")
+            return False
+        reason = "極端超賣" if extreme_oversold else "底背離確認"
+        print(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
