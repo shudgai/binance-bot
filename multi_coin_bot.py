@@ -1362,11 +1362,20 @@ async def load_open_positions():
             state = json.load(f)
             
         current_time = time.time()
-        for sym in ALL_SYMBOLS:
-            pk = paper_key(sym)
-            pos = state.get("positions", {}).get(pk, {})
+        
+        # 遍歷所有紀錄的倉位，如果不在此次監控清單但有持倉，自動將其加回監控清單
+        positions_dict = state.get("positions", {})
+        for pk, pos in positions_dict.items():
             qty = float(pos.get("qty", 0.0))
             if abs(qty) > 0.000001:
+                # 把 paper_key "BTC:USDT" 轉回 "BTCUSDT"
+                sym = pk.replace(":", "")
+                if sym not in ALL_SYMBOLS:
+                    print(f"⚠️ [發現未監控持倉] {sym} 仍有未平倉位，自動加回監控清單並在介面顯示！")
+                    ALL_SYMBOLS.append(sym)
+                    STATES[sym] = build_symbol_state(sym)
+                    apply_symbol_profile(sym, SYMBOL_PROFILES.get(sym, {}))
+                
                 STATES[sym]["qty"] = qty
                 STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
                 STATES[sym]["entries"] = pos.get("entries", [])
@@ -4123,12 +4132,19 @@ async def calibrate_with_exchange(exchange):
         # 從交易所抓取所有持倉
         positions = await exchange.fetch_positions()
         for pos in positions:
-            # 處理不同交易所的 symbol 格式 (如 BTC/USDT -> BTC)
-            raw_symbol = pos['symbol']
-            sym = raw_symbol.split('/')[0] if '/' in raw_symbol else raw_symbol
+            # 處理不同交易所的 symbol 格式 (如 BTC/USDT:USDT -> BTCUSDT)
+            raw_symbol = pos.get('symbol', '')
+            sym = raw_symbol.split(':')[0].replace('/', '')
+            
+            real_qty = float(pos.get('contracts', 0.0) or pos.get('info', {}).get('positionAmt', 0.0))
+            if abs(real_qty) > 0.000001:
+                if sym not in ALL_SYMBOLS:
+                    print(f"⚠️ [發現未監控持倉] 交易所內 {sym} 仍有實盤倉位，自動加回監控清單並在介面顯示！")
+                    ALL_SYMBOLS.append(sym)
+                    STATES[sym] = build_symbol_state(sym)
+                    apply_symbol_profile(sym, SYMBOL_PROFILES.get(sym, {}))
             
             if sym in STATES:
-                real_qty = float(pos.get('contracts', 0.0))
                 current_qty = STATES[sym].get("qty", 0.0)
 
                 # 設定容差 (例如 0.1% 以內視為一致，避免浮點數誤差)
