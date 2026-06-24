@@ -1528,6 +1528,13 @@ def update_trailing_stop(sym, current_price, is_long):
     profit_lock_atr = s.get("profit_lock_atr", 0.0)
     
     avg_price = s["avg_price"]
+    leverage = s.get("leverage", 8)
+    mm_ratio = 0.004
+    if is_long:
+        liq_price = avg_price * (1 - 1.0 / leverage) / (1 - mm_ratio) if leverage > 0 else 0.0
+    else:
+        liq_price = avg_price * (1 + 1.0 / leverage) / (1 + mm_ratio) if leverage > 0 else 0.0
+
     profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
     s["highest_profit_pct"] = max(s.get("highest_profit_pct", 0.0), profit_pct)
     
@@ -3064,6 +3071,22 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if route == "Automatic_Reverse":
         print(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
         return True
+
+    # =========================================================================
+    # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
+    # =========================================================================
+    # 1. 量能門檻過濾
+    current_volume = s["ohlcv"][-1][5] if s.get("ohlcv") else 0
+    volume_ma20 = s.get("vol_ma20", 0.0)
+    if current_volume <= volume_ma20:
+        print(f"🛑 [Filter:Volume] {sym} 量能未達標 (當前: {current_volume:.1f} <= MA20均量: {volume_ma20:.1f})，判定為死水行情。")
+        return False
+        
+    # 2. 空單 RSI 極限保護
+    current_rsi = s.get("current_rsi", 50.0)
+    if side == 'sell' and current_rsi < 30.0:
+        print(f"🛑 [Filter:RSI_Limit] {sym} 觸發RSI極限保護 (RSI: {current_rsi:.1f} < 30.0)，拒絕在極端超賣區追空。")
+        return False
     
     # [新增] MTF Correlation Lock (4H)
     upper_4h = s.get("bb_upper_4h")
@@ -3092,11 +3115,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
             # return False
 
-    # --- [RSI 底部反彈防禦] ---
-    # 強勢訊號 (strength > 15.0) 可突破此限制，因為崩跌中 RSI < 30 仍可能持續下行
-    if side == 'sell' and s.get("current_rsi", 50.0) < 30 and strength <= 15.0:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI 底部反彈防禦] 空單 RSI ({s.get('current_rsi', 50.0):.1f}) < 30 極度超賣，攔截開空訊號防接刀")
-        return False
+
 
     # --- [過熱噴發過濾 (Moving Average Deviation Filter)] ---
     if is_trend:
