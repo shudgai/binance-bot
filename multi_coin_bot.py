@@ -613,13 +613,13 @@ def apply_symbol_profile(sym, profile):
 
 def apply_all_symbol_profiles():
     default_profile = {
-        "sl_atr_multiplier": 3.0,
-        "tp_atr_multiplier": 6.0,
-        "min_rr": 2.0,
-        "min_profit_pct": 0.0015,
-        "trailing_activation_atr": 2.5,
-        "trailing_distance_atr": 1.5,
-        "profit_lock_atr": 4.0
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 3.0,
+        "min_rr": 1.2,
+        "min_profit_pct": 0.001,
+        "trailing_activation_atr": 1.0,
+        "trailing_distance_atr": 0.8,
+        "profit_lock_atr": 2.0
     }
     for sym in ALL_SYMBOLS:
         json_profile = SYMBOL_PROFILES.get(sym, {})

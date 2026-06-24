@@ -11,124 +11,116 @@
     "TAOUSDT",
     "SEIUSDT",
     "AVAXUSDT",
-    "DOGEUSDT",
-    "BTCUSDT",
-    "ETHUSDT",
-    "OPUSDT",
-    "APTUSDT",
-    "ARUSDT",
-    "PEPEUSDT",
-    "WIFUSDT",
-    "FLOKIUSDT"
+    "DOGEUSDT"
   ],
   "profiles": {
     "SOLUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 7.5,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 3.0,
-      "trailing_distance_atr": 2.0,
-      "profit_lock_atr": 5.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "AVAXUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 7.5,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 3.0,
-      "trailing_distance_atr": 2.0,
-      "profit_lock_atr": 5.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "RENDERUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 7.5,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 3.0,
-      "trailing_distance_atr": 2.0,
-      "profit_lock_atr": 5.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "INJUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 7.5,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 3.0,
-      "trailing_distance_atr": 2.0,
-      "profit_lock_atr": 5.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "TAOUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 7.5,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 3.0,
-      "trailing_distance_atr": 2.0,
-      "profit_lock_atr": 5.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "DOGEUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 7.5,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 3.0,
-      "trailing_distance_atr": 2.0,
-      "profit_lock_atr": 5.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "TIAUSDT": {
-      "sl_atr_multiplier": 3.0,
-      "tp_atr_multiplier": 6.0,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 2.5,
-      "trailing_distance_atr": 1.5,
-      "profit_lock_atr": 4.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "SUIUSDT": {
-      "sl_atr_multiplier": 3.0,
-      "tp_atr_multiplier": 6.0,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 2.5,
-      "trailing_distance_atr": 1.5,
-      "profit_lock_atr": 4.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "SEIUSDT": {
-      "sl_atr_multiplier": 3.0,
-      "tp_atr_multiplier": 6.0,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 2.5,
-      "trailing_distance_atr": 1.5,
-      "profit_lock_atr": 4.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "FETUSDT": {
-      "sl_atr_multiplier": 3.0,
-      "tp_atr_multiplier": 6.0,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 2.5,
-      "trailing_distance_atr": 1.5,
-      "profit_lock_atr": 4.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "LINKUSDT": {
-      "sl_atr_multiplier": 3.0,
-      "tp_atr_multiplier": 6.0,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 2.5,
-      "trailing_distance_atr": 1.5,
-      "profit_lock_atr": 4.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     },
     "NEARUSDT": {
-      "sl_atr_multiplier": 3.0,
-      "tp_atr_multiplier": 6.0,
-      "min_rr": 2.0,
-      "min_profit_pct": 0.0015,
-      "trailing_activation_atr": 2.5,
-      "trailing_distance_atr": 1.5,
-      "profit_lock_atr": 4.0
+      "sl_atr_multiplier": 1.5,
+      "tp_atr_multiplier": 3.0,
+      "min_rr": 1.2,
+      "min_profit_pct": 0.001,
+      "trailing_activation_atr": 1.0,
+      "trailing_distance_atr": 0.8,
+      "profit_lock_atr": 2.0
     }
   }
 }
