@@ -61,7 +61,6 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
                     signed_qty = -qty_abs if pos.get("qty", 0.0) > 0 else qty_abs
                     pos["qty"] += signed_qty
             
-            # Add to trades list
             trade_entry = {
                 "symbol": paper_key,
                 "price": price,
@@ -71,7 +70,13 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
                 "realized_pnl": pnl,
                 "is_close": True
             }
+            fee = price * qty_abs * 0.0005
+            trade_entry["fee"] = fee
             state["trades"].append(trade_entry)
+            
+            # Update overall balance
+            current_balance = state.get("balance_usdt", 150.0)
+            state["balance_usdt"] = current_balance + pnl - fee
         else:
             # Handle new entry
             signed_qty = qty_abs if side == "buy" else -qty_abs
@@ -110,6 +115,7 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
                 }
             
             # Add to trades list
+            fee = price * qty_abs * 0.0005
             state["trades"].append({
                 "symbol": paper_key,
                 "price": price,
@@ -117,8 +123,13 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
                 "time": int(time.time() * 1000),
                 "isBuyer": (side == "buy"),
                 "realized_pnl": 0.0,
+                "fee": fee,
                 "is_close": False
             })
+            
+            # Deduct fee from balance
+            current_balance = state.get("balance_usdt", 150.0)
+            state["balance_usdt"] = current_balance - fee
 
         with open(PAPER_STATE_FILE, "w") as f:
             json.dump(state, f, indent=4)
