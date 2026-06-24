@@ -1,0 +1,2 @@
+bash tighten_rsi.sh
+grep "pullback_rsi_long" multi_coin_bot.py

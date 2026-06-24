@@ -2074,7 +2074,7 @@ async def check_exits(sym):
     p = s["close_price"]
     avg = s["avg_price"]
     is_long = s["qty"] > 0
-    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    profit_pct = ((p - avg) / avg if is_long else (avg - p) / avg) if avg > 0 else 0.0
 
     # --- A. 自動反手偵測邏輯 (Global Reverse Engine) ---
     bb_upper = s.get('bb_up', 0)

@@ -166,7 +166,7 @@ DEFAULT_LEVERAGE = 5
 DUAL_SHOT_MAX_SLOTS = 2       # 重裝雙發：同時最大持倉上限
 DUAL_SHOT_LEVERAGE = 5        # 重裝雙發：統一固定 5 倍槓桿
 DUAL_SHOT_ORDER_TIMEOUT = 45  # 重裝雙發：限價單超時撤單秒數
-DUAL_SHOT_MIN_PROFIT_ROOM = 0.012  # 重裝雙發：1.7% 硬性獲利空間門檻 (安全補丁：對沖放寬量能帶來的風險)
+DUAL_SHOT_MIN_PROFIT_ROOM = 0.017  # 重裝雙發：1.7% 硬性獲利空間門檻 (安全補丁：對沖放寬量能帶來的風險)
 
 # 限價單監控表 (Pending Limit Orders)
 # 格式: { order_id: { "sym", "side", "qty", "price", "timestamp" } }
@@ -174,22 +174,23 @@ PENDING_LIMIT_ORDERS = {}
 
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) ---
-    "SOLUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 15.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
-    "XRPUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
-    "ADAUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
-    "LINKUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
-    "DOTUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
-    "ATOMUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
+    # [重裝雙發] 所有幣種槓桿統一改為 DUAL_SHOT_LEVERAGE=5x
+    "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 15.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 5, "rr_threshold": 1.3},
+    "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 5, "rr_threshold": 1.3},
+    "TIAUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 5, "rr_threshold": 1.3},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) ---
-    "SUIUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
-    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
-    "NEARUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
-    "WLDUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "RENDERUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "INJUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "FETUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "TAOUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "SEIUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) ---
-    "AVAXUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 1.3},
-    "DOGEUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 1.3}
+    "AVAXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Speculative_Risk", "leverage": 5, "rr_threshold": 1.3},
+    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk", "leverage": 5, "rr_threshold": 1.3}
 
 }
 
@@ -222,9 +223,9 @@ if USE_TESTNET:
     exchange_spot.urls['api']['private'] = 'https://testnet.binance.vision/api/v3'
 
 DEFAULT_SYMBOLS = [
-    "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT",
-    "LINKUSDT", "AVAXUSDT", "NEARUSDT", "INJUSDT",
-    "SUIUSDT", "DOTUSDT", "ATOMUSDT", "WLDUSDT"
+    "SOLUSDT", "LINKUSDT", "TRXUSDT", "TIAUSDT", "RENDERUSDT",
+    "SUIUSDT", "INJUSDT", "NEARUSDT", "VELVETUSDT", "LABUSDT",
+    "AVAXUSDT", "DOGEUSDT"
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
 
@@ -1826,12 +1827,6 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
     if qty < 0.000001:
         return
 
-    # ── 價格為 0 攔截 (防止紙交易/K線失敗導致以 0 價平倉) ──
-    if price <= 0:
-        print(f'⚠️ [平倉跳過] {sym} 價格為 0 (可能是 K 線獲取失敗)，跳過此次平倉動作')
-        s["adjusted_this_tick"] = False
-        return
-
     # 動態產生損益標籤 (Reason_Tag)
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
@@ -2079,7 +2074,7 @@ async def check_exits(sym):
     p = s["close_price"]
     avg = s["avg_price"]
     is_long = s["qty"] > 0
-    profit_pct = ((p - avg) / avg if is_long else (avg - p) / avg) if avg > 0 else 0.0
+    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
     # --- A. 自動反手偵測邏輯 (Global Reverse Engine) ---
     bb_upper = s.get('bb_up', 0)
@@ -2641,8 +2636,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         avg_price = s.get("avg_price", 0.0)
         if avg_price > 0:
             profit_pct = (price - avg_price) / avg_price if side == 'buy' else (avg_price - price) / avg_price
-            if profit_pct < 0.015:
-                print(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 1.5%，拒絕加倉以防拉高成本！")
+            if profit_pct < 0.008:
+                print(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 0.8%，拒絕加倉以防拉高成本！")
                 return
 
         # [加倉防護 2] 價格大幅反轉過濾
