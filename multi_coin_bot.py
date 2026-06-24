@@ -3079,24 +3079,38 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     current_volume = s["ohlcv"][-1][5] if s.get("ohlcv") else 0
     volume_ma20 = s.get("vol_ma20", 0.0)
     if current_volume <= volume_ma20:
-        print(f"🛑 [Filter:Volume] {sym} 量能未達標 (當前: {current_volume:.1f} <= MA20均量: {volume_ma20:.1f})，判定為死水行情。")
+        print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能未達標 (當前: {current_volume:.1f} <= MA20均量: {volume_ma20:.1f})，判定為死水行情。")
         return False
         
     # 2. 空單 RSI 極限保護
     current_rsi = s.get("current_rsi", 50.0)
     if side == 'sell' and current_rsi < 30.0:
-        print(f"🛑 [Filter:RSI_Limit] {sym} 觸發RSI極限保護 (RSI: {current_rsi:.1f} < 30.0)，拒絕在極端超賣區追空。")
+        print(f"🛑 [REJECT] [Filter:RSI_Limit] {sym} 觸發RSI極限保護 (RSI: {current_rsi:.1f} < 30.0)，拒絕在極端超賣區追空。")
         return False
         
     # 3. 15m 跨時框趨勢對齊 (Multi-Timeframe Alignment)
-    if side == 'sell':
-        ema20_15m = s.get("ema20_15m", 0.0)
-        ema50_15m = s.get("ema50_15m", 0.0)
-        if ema20_15m > 0 and ema50_15m > 0:
-            if ema20_15m > ema50_15m:
-                print(f"🛑 [Filter:MTF_Trend] {sym} 15m 大趨勢向上 (EMA20: {ema20_15m:.4f} > EMA50: {ema50_15m:.4f})，拒絕 5m 短線逆勢做空。")
-                return False
-    
+    ema20_15m = s.get("ema20_15m", 0.0)
+    ema50_15m = s.get("ema50_15m", 0.0)
+    if ema20_15m > 0 and ema50_15m > 0:
+        if side == 'sell' and ema20_15m > ema50_15m:
+            print(f"🛑 [REJECT] [Filter:MTF_Trend] {sym} 15m 大趨勢向上 (EMA20: {ema20_15m:.4f} > EMA50: {ema50_15m:.4f})，拒絕 5m 短線逆勢做空。")
+            return False
+        elif side == 'buy' and ema20_15m < ema50_15m:
+            print(f"🛑 [REJECT] [Filter:MTF_Trend] {sym} 15m 大趨勢向下 (EMA20: {ema20_15m:.4f} < EMA50: {ema50_15m:.4f})，拒絕 5m 短線逆勢做多。")
+            return False
+            
+    # 4. 收盤確認 (Candle Close Check)
+    if len(s["ohlcv"]) >= 2:
+        prev_close = s["ohlcv"][-2][4]
+        open_price = s["ohlcv"][-1][1]
+        close_price = s["ohlcv"][-1][4]
+        if side == 'buy' and not (close_price > prev_close or close_price > open_price):
+            print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} <= 前收: {prev_close:.4f} 且 <= 開盤: {open_price:.4f})。")
+            return False
+        elif side == 'sell' and not (close_price < prev_close or close_price < open_price):
+            print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})。")
+            return False
+
     # [新增] MTF Correlation Lock (4H)
     upper_4h = s.get("bb_upper_4h")
     lower_4h = s.get("bb_lower_4h")
@@ -3122,9 +3136,6 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if is_trend and btc_1h is not None:
         if side == 'buy' and btc_1h == "BEAR":
             print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
-            # return False
-
-
 
     # --- [過熱噴發過濾 (Moving Average Deviation Filter)] ---
     if is_trend:
@@ -3154,29 +3165,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                     return False
 
     # --- [BTC 4H 趨勢過濾] ---
-    # None = 中立（資料尚未取得），視為允許雙向進場
-    # 只有明確 BEAR 才禁止做多，只有明確 BULL 才禁止做空
     btc_4h = MARKET_WIND.get("btc_trend_4h")  # 可能值: "BULL", "BEAR", "NEUTRAL", None
     if is_trend and btc_4h is not None:
         if side == 'buy' and btc_4h == "BEAR":
             print(f"@@COIN_DEBUG@@ ⚠️ {sym} [4H大盤過濾] BTC 4H 確認熊市，但為提高開倉頻率已放行做多")
-            # return False
         if side == 'sell' and btc_4h == "BULL":
             print(f"@@COIN_DEBUG@@ ⚠️ {sym} [4H大盤過濾] BTC 4H 確認牛市，但為提高開倉頻率已放行做空")
-            # return False
-    # btc_4h == None 或 "NEUTRAL" 時：視為中立，放行個體訊號
 
-    s = STATES[sym]
-    cp = s["close_price"]
-    
-    # 均線過濾器已移除 - 寬鬆進場模式允許價格在SMA200上下開單
-    # if s.get("sma200_15m", 0) > 0:
-    #     ma200 = s["sma200_15m"]
-    #     if side == 'buy' and cp <= ma200:
-    #         return False
-    #     if side == 'sell' and cp >= ma200:
-    #         return False
-            
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
         return False
@@ -3209,10 +3204,6 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    # 動態空間過濾 (Adaptive Space Check) 已移至 check_conditions 內 (Layer 4)
-    # 此處不再進行硬性攔截，交由 Layer 4 根據強弱趨勢決定
-    
-
     if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.25: # 原 0.6，放寬至允許 25% 的極低波動
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
@@ -3224,7 +3215,6 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         return False
         
     # 量能確認過濾器 (衰竭進場策略 Exhaustion_Entry 允許低量能)
-    # 強勢訊號 (strength > 15.0) 豁免此量能過濾，避免崩跌時縮量的高品質訊號被二次攔截
     if route != "Exhaustion_Entry" and strength <= 15.0 and not is_entry_volume_confirmed(sym, side):
         return False
     elif route != "Exhaustion_Entry" and strength > 15.0:
@@ -3233,13 +3223,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 強勢訊號但量能極度枯竭 (當前 {s['current_vol']:.0f} < 均量 5%)，攔截")
             return False
             
-        # [修改點 1 & 3] 加入「量能背離」過濾 (強度 15~20 適用，>20 豁免)
+        # 加入「量能背離」過濾 (強度 15~20 適用，>20 豁免)
         if strength <= 20.0:
             if s["current_vol"] >= s["vol_ma20"] * 1.5:
                 print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能背離過濾] 強勢訊號({strength:.1f})但當前量 ({s['current_vol']:.0f}) 過大 (>= 1.5x均量 {s['vol_ma20']*1.5:.0f})，視為趨勢延續，攔截")
                 return False
 
-        # [修改點 2] 價格結構確認 (Price Action Confirmation)，擴大至過去 3 根 K 線
+        # 價格結構確認 (Price Action Confirmation)，擴大至過去 3 根 K 線
         if len(s["ohlcv"]) >= 2:
             current_close = s["ohlcv"][-1][4]
             lookback = min(3, len(s["ohlcv"]) - 1)
@@ -3314,21 +3304,82 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 if side == "sell":
                     highest_rsi = max(recent_rsis)
                     if highest_rsi < 68.0:
-                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< 68.0)，未經歷極度過熱，視為虛假轉折，攔截")
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< 68.0)，未經歷極度過熱，視為逆勢空單假突破，攔截")
                         return False
                 else:
                     lowest_rsi = min(recent_rsis)
                     if lowest_rsi > 32.0:
-                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> 32.0)，未經歷極度超賣，視為虛假轉折，攔截")
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> 32.0)，未經歷極度超賣，視為逆勢多單假突破，攔截")
                         return False
         
-    # 移除 ADX 過濾，讓 Exhaustion_Entry 在盤整時也能高空低多
-
     # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
     min_volume = s["vol_ma20"] * 0.05
     if s["current_vol"] < min_volume:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
         return False
+
+    # =========================================================================
+    # 🪙 STAGE 2 & 3: BONUS SYSTEM & EXECUTION THRESHOLD (加分系統與最終審查)
+    # =========================================================================
+    # 1. 基礎分 (Base Score)
+    macd_line = s.get("macd_line", 0.0)
+    macd_signal = s.get("macd_signal", 0.0)
+    prev_macd_line = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
+    macd_hist = macd_line - macd_signal
+    prev_macd_hist = prev_macd_line - prev_macd_signal
+
+    macd_score = 0.0
+    rsi_score = 0.0
+
+    if side == 'buy':
+        if prev_macd_line <= prev_macd_signal and macd_line > macd_signal:
+            macd_score = 5.0
+        elif macd_hist > prev_macd_hist:
+            macd_score = 3.0
+        if current_rsi > 48.0:
+            rsi_score = 4.0
+    else:
+        if prev_macd_line >= prev_macd_signal and macd_line < macd_signal:
+            macd_score = 5.0
+        elif macd_hist < prev_macd_hist:
+            macd_score = 3.0
+        if current_rsi < 52.0:
+            rsi_score = 4.0
+
+    base_score = 7.0 + macd_score + rsi_score
+
+    # 2. 加分項目 A (強勢訊號): signal_strength > 20.0, 給予 +5
+    bonus_a = 0.0
+    if strength > 20.0:
+        bonus_a = 5.0
+
+    # 3. 加分項目 B (量價協同): is_volume_price_aligned 為真, 給予 +3
+    is_volume_price_aligned = False
+    bonus_b = 0.0
+    if len(s["ohlcv"]) >= 2:
+        c_close = s["ohlcv"][-1][4]
+        c_open = s["ohlcv"][-1][1]
+        c_vol = s["ohlcv"][-1][5]
+        p_vol = s["ohlcv"][-2][5]
+        if side == 'buy':
+            if c_close > c_open and c_vol > p_vol:
+                is_volume_price_aligned = True
+        elif side == 'sell':
+            if c_close < c_open and c_vol > p_vol:
+                is_volume_price_aligned = True
+
+    if is_volume_price_aligned:
+        bonus_b = 3.0
+
+    total_score = base_score + bonus_a + bonus_b
+    MIN_ENTRY_SCORE = 15.0
+
+    if total_score < MIN_ENTRY_SCORE:
+        print(f"🛑 [REJECT] {sym}: 硬條件通過，但總分未達標 (綜合得分: {total_score:.1f} < 門檻: {MIN_ENTRY_SCORE:.1f})")
+        return False
+
+    print(f"💚 [PASS] {sym}: 完美通過全套風控，准予開倉！(總得分: {total_score:.1f}, 基礎分: {base_score:.1f}, 加分A: {bonus_a:.1f}, 加分B: {bonus_b:.1f})")
     return True
 
 def compute_signal_strength(sym):
