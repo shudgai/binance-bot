@@ -2389,12 +2389,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33):
         bids = sum(x[1] for x in orderbook.get('bids', []))
         asks = sum(x[1] for x in orderbook.get('asks', []))
         if side == 'buy':
-            if asks == 0 or bids / asks < 1.05:
-                print(f"🛑 [Filter:OrderFlow] {sym} 買盤總量未達賣盤 1.05 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假突破，拒絕做多！")
+            if asks == 0 or bids / asks < 0.95:
+                print(f"🛑 [Filter:OrderFlow] {sym} 買盤總量未達賣盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假突破，拒絕做多！")
                 return
         else:
-            if bids == 0 or asks / bids < 1.05:
-                print(f"🛑 [Filter:OrderFlow] {sym} 賣盤總量未達買盤 1.05 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假跌破，拒絕做空！")
+            if bids == 0 or asks / bids < 0.95:
+                print(f"🛑 [Filter:OrderFlow] {sym} 賣盤總量未達買盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假跌破，拒絕做空！")
                 return
     except Exception as e:
         print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
@@ -3564,16 +3564,16 @@ async def check_entries():
                 
                 is_valid = False
                 if s["pending_side"] == "buy":
-                    # [Layer 3] 嚴格K線：實體綠K且上影線 < 實體的 70%
+                    # [Layer 3] 嚴格K線：放寬容忍度至實體的 150%
                     body = prev_close - prev_open
                     upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 0.7:
+                    if body > 0 and upper_shadow < body * 1.5:
                         is_valid = True
                 elif s["pending_side"] == "sell":
-                    # [Layer 3] 嚴格K線：實體紅K且下影線 < 實體的 70%
+                    # [Layer 3] 嚴格K線：放寬容忍度至實體的 150%
                     body = prev_open - prev_close
                     lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 0.7:
+                    if body > 0 and lower_shadow < body * 1.5:
                         is_valid = True
                         
                 if is_valid:
