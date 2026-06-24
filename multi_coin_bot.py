@@ -3385,14 +3385,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 def compute_signal_strength(sym):
     s = STATES[sym]
     if len(s["closes"]) < 20:
-        return (None, 0)
+        return (None, 0, None)
 
     # --- 新增 C：動能/成交量過濾 ---
     # 確保當前 K 線成交量不要低得離譜 (放寬至 0.15 倍均量即可通過)
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
     if vol_ma10 > 0 and current_vol < vol_ma10 * 0.15:
-        return (None, 0)
+        return (None, 0, None)
 
     # --- 第三層防禦：極值檢查 (Extreme Value Defense) ---
     rsi = s.get("current_rsi", 50.0)
@@ -3653,6 +3653,9 @@ def compute_signal_strength(sym):
             if trend_ok and resistance_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                 return ("sell", 15.0, "Exhaustion_Entry")
+
+    # 所有路線均不符合，無訊號
+    return (None, 0, None)
 
 async def is_reversal_still_valid(sym, pending_side):
     s = STATES.get(sym)
@@ -3960,7 +3963,7 @@ async def check_entries():
 
         # 原本的計算邏輯
         side_strength = compute_signal_strength(sym)
-        if side_strength[0] is None:
+        if side_strength is None or side_strength[0] is None:
             continue
         side, strength, route = side_strength
         
@@ -4466,6 +4469,7 @@ async def main_loop(exchange):
                 await check_entries()
             except Exception as e:
                 print(f"⚠️ [進場檢查異常]: {e}")
+                traceback.print_exc()
 
             # 成功執行，重置連續錯誤計數器
             global CONSECUTIVE_ERRORS
