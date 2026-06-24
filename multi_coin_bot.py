@@ -2516,19 +2516,27 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     s["leverage"] = lev
     print(f"@@LEVERAGE@@{lev}")
     
-    # [新增] Order Book Disbalance
+    # [新增] Order Book Disbalance - 動態盤口門檻 (Adaptive OrderFlow)
     if not is_rescue_dca:
         try:
             orderbook = await exchange_futures.fetch_order_book(sym, limit=20)
             bids = sum(x[1] for x in orderbook.get('bids', []))
             asks = sum(x[1] for x in orderbook.get('asks', []))
+            # 依 VolMode 動態調整門檻：低波動 → 0.85，高波動 → 0.95
+            _s = STATES.get(sym, {})
+            _atr_hist_of = _s.get("atr_history", [])
+            _atr_avg_of = float(np.mean(_atr_hist_of)) if len(_atr_hist_of) > 0 else 0.0
+            _atr_cur_of = _s.get("current_atr", 0.0)
+            _is_low_vol_of = (_atr_avg_of > 0 and _atr_cur_of <= _atr_avg_of)
+            _flow_threshold = 0.85 if _is_low_vol_of else 0.95
+            _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if side == 'buy':
-                if asks == 0 or bids / asks < 0.95:
-                    print(f"🛑 [Filter:OrderFlow] {sym} 買盤總量未達賣盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假突破，拒絕做多！")
+                if asks == 0 or bids / asks < _flow_threshold:
+                    print(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
                     return
             else:
-                if bids == 0 or asks / bids < 0.95:
-                    print(f"🛑 [Filter:OrderFlow] {sym} 賣盤總量未達買盤 0.95 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假跌破，拒絕做空！")
+                if bids == 0 or asks / bids < _flow_threshold:
+                    print(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
                     return
         except Exception as e:
             print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
