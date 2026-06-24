@@ -2370,11 +2370,11 @@ async def execute_order(sym, side, price, allocation_pct=0.33):
         asks = sum(x[1] for x in orderbook.get('asks', []))
         if side == 'buy':
             if asks == 0 or bids / asks < 1.05:
-                print(f"🛑 [OrderFlow過濾] {sym} 買盤掛單未達賣盤 1.05 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假突破，拒絕做多！")
+                print(f"🛑 [Filter:OrderFlow] {sym} 買盤總量未達賣盤 1.05 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假突破，拒絕做多！")
                 return
         else:
             if bids == 0 or asks / bids < 1.05:
-                print(f"🛑 [OrderFlow過濾] {sym} 賣盤掛單未達買盤 1.05 倍 (Bid: {bids:.2f}, Ask: {asks:.2f})，疑似假跌破，拒絕做空！")
+                print(f"🛑 [Filter:OrderFlow] {sym} 賣盤總量未達買盤 1.05 倍 (買單總量 BidVol: {bids:.2f}, 賣單總量 AskVol: {asks:.2f})，疑似假跌破，拒絕做空！")
                 return
     except Exception as e:
         print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
@@ -2643,6 +2643,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33):
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["last_entry_price"] = price
+            s["last_entry_direction"] = side
             s["entry_count"] += 1
             
             if s["entry_count"] == 1:
@@ -2699,6 +2700,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33):
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["last_entry_price"] = price
+            s["last_entry_direction"] = side
             s["entry_count"] += 1
             
             if s["entry_count"] == 1:
@@ -3811,11 +3813,20 @@ async def check_entries():
                 print(f"⏳ [Filter:Cooldown] [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
                 continue
 
-        # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
+        # --- 同價位防雙巴鎖 (Price Zone Lock) ---
         p = s["close_price"]
+        last_entry_price = s.get("last_entry_price", 0.0)
+        last_entry_dir = s.get("last_entry_direction", "")
+        if last_entry_price > 0 and last_entry_dir != "" and route != "Automatic_Reverse":
+            price_diff_pct = abs(p - last_entry_price) / last_entry_price
+            if price_diff_pct < 0.003 and side != last_entry_dir:
+                print(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
+                continue
+
+        # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
-            if strength > 15.0:
-                print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
+            if strength > 15.0 or route == "Automatic_Reverse":
+                print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
                 if ema50_1h > 0:
