@@ -164,6 +164,10 @@ TRADE_HISTORY_FILE = "trade_history.json"
 MAX_GLOBAL_CONCURRENT_TRADES = 2
 DEFAULT_LEVERAGE = 5
 
+# 限價單監控表 (Pending Limit Orders)
+# 格式: { order_id: { "sym", "side", "qty", "price", "timestamp" } }
+PENDING_LIMIT_ORDERS = {}
+
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) - 穩健趨勢，較高槓桿 ---
     "SOLUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 15.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 8, "rr_threshold": 1.3},
@@ -2830,30 +2834,91 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             print(f"🛑 [模擬開倉失敗] {sym}: {e}")
     else:
         try:
-            order = await exchange_futures.create_order(sym, type='market', side=side, amount=base_amt,
-                                                params={'marginMode': 'isolated'})
-            fill_price = float(order.get('average') or order.get('price') or price)
-            if fill_price <= 0:
-                fill_price = price
-                
-            slippage = (fill_price - price) / price if price > 0 else 0
-            if side == 'sell':
-                slippage = (price - fill_price) / price if price > 0 else 0
-                
-            print(f"✅ [實盤開倉成功] {sym} {side} | 預期: {price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
-            
-            old_qty = s["qty"]
-            if side == 'buy':
-                s["qty"] += base_amt
+            # === 1. 對價限價單策略 (Aggressive Limit Order) ===
+            # 抳取盤口 Ask1/Bid1 作為限價，最大化成交機率
+            try:
+                ob = await exchange_futures.fetch_order_book(sym, limit=5)
+                if side == 'buy':
+                    limit_price = float(ob['asks'][0][0]) if ob.get('asks') else price
+                else:
+                    limit_price = float(ob['bids'][0][0]) if ob.get('bids') else price
+                print(f"📌 [Aggressive Limit] {sym} {side} 限價: {limit_price:.6f} (原信號價: {price:.6f})")
+            except Exception:
+                limit_price = price  # Fallback to signal price
+
+            order = await exchange_futures.create_order(
+                sym, type='limit', side=side, amount=base_amt, price=limit_price,
+                params={'marginMode': 'isolated', 'timeInForce': 'GTC'}
+            )
+            order_id = order['id']
+            order_ts = time.time()
+
+            # 記錄挂單到監控表
+            PENDING_LIMIT_ORDERS[order_id] = {
+                "sym": sym, "side": side, "qty": base_amt,
+                "price": limit_price, "timestamp": order_ts
+            }
+            print(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price:.6f} (ID: {order_id})")
+
+            # === 2. 等待成交 (3 秒內快速確認) ===
+            await asyncio.sleep(3)
+            try:
+                fetched = await exchange_futures.fetch_order(order_id, sym)
+                status = fetched.get('status', '')
+                filled_qty = float(fetched.get('filled', 0.0))
+            except Exception:
+                status = 'unknown'
+                filled_qty = 0.0
+
+            if status == 'closed' or filled_qty >= base_amt * 0.99:
+                # 完全成交：移出監控表
+                PENDING_LIMIT_ORDERS.pop(order_id, None)
+                fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
+                print(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
+            elif filled_qty > 0:
+                # 部分成交：留在監控表，以實際成交量計算
+                fill_price = float(fetched.get('average') or limit_price)
+                base_amt = filled_qty  # 更正為實際成交量
+                print(f"⚠️ [部分成交] {sym} 實際成交: {filled_qty:.4f} (OK率: {filled_qty/base_amt*100:.1f}%)")
             else:
-                s["qty"] -= base_amt
-                
+                # 尚未成交：已在監控表，等待止單機制處理
+                print(f"⏳ [等待成交] {sym} 限價單 {order_id} 尚未成交，由逃期止單機制接管")
+                return  # 不更新狀態，等逐期止單後再同步
+
+            # === 3. 實體持倉同步 (Actual Position Sync) ===
+            try:
+                positions = await exchange_futures.fetch_positions([sym])
+                actual_pos = next((p for p in positions if p.get('symbol') == sym and abs(float(p.get('contracts', 0) or 0)) > 0), None)
+                if actual_pos:
+                    actual_qty = float(actual_pos.get('contracts', 0) or 0)
+                    actual_side_sign = 1 if side == 'buy' else -1
+                    s["qty"] = actual_qty * actual_side_sign
+                    print(f"📊 [持倉同步] {sym} 交易所實際持倉: {s['qty']:.4f}")
+                else:
+                    # Fallback: 用內對計算量
+                    old_qty = s["qty"]
+                    if side == 'buy':
+                        s["qty"] += base_amt
+                    else:
+                        s["qty"] -= base_amt
+            except Exception as pe:
+                print(f"⚠️ [持倉同步失敗] {sym}: {pe}")
+                old_qty = s["qty"]
+                if side == 'buy':
+                    s["qty"] += base_amt
+                else:
+                    s["qty"] -= base_amt
+
+            slippage = abs(fill_price - price) / price if price > 0 else 0
+            print(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
+
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
-                s["entry_atr"] = max(s.get("current_atr", 0.0), fill_price * 0.005 if "fill_price" in locals() else price * 0.005)
+                s["entry_atr"] = max(s.get("current_atr", 0.0), fill_price * 0.005)
             else:
-                s["avg_price"] = ((s["avg_price"] * abs(old_qty)) + (fill_price * base_amt)) / abs(s["qty"])
-                
+                old_abs_qty = abs(old_qty) if 'old_qty' in locals() else 0.0
+                s["avg_price"] = ((s["avg_price"] * old_abs_qty) + (fill_price * base_amt)) / abs(s["qty"])
+
             if "entries" not in s:
                 s["entries"] = []
             s["entries"].append({"price": fill_price, "qty": base_amt, "time": now, "side": side})
@@ -2861,17 +2926,17 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             s["open_time"] = now
             s["last_buy_time"] = now
             s["last_entry_time"] = now
-            s["last_entry_price"] = price
+            s["last_entry_price"] = fill_price
             s["last_entry_direction"] = side
             s["entry_count"] += 1
-            
+
             if s["entry_count"] == 1:
                 s["is_breakeven_locked"] = False
                 s["highest_profit_pct"] = 0.0
-                
+
             # 強制校準 trailing stop
             update_trailing_stop(sym, fill_price, side == 'buy')
-            
+
             # 保本鎖定
             if s["entry_count"] >= 2:
                 first_entry_price = s["entries"][0]["price"]
@@ -2880,37 +2945,76 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 else:
                     s["trailing_stop_price"] = min(s["trailing_stop_price"], first_entry_price) if s["trailing_stop_price"] > 0 else first_entry_price
                 s["is_breakeven_locked"] = True
-                
+
             s["last_flip_time"] = now
-            
-            # --- 混合停損: 交易所掛單 (Stop Market) ---
+
+            # --- 混合停損: 交易所挂單 (Stop Market) ---
             try:
                 stop_side = 'sell' if s["qty"] > 0 else 'buy'
                 hard_sl_pct = s.get("hard_stop_loss_pct", 0.02)
                 stop_price = s["avg_price"] * (1 - hard_sl_pct) if s["qty"] > 0 else s["avg_price"] * (1 + hard_sl_pct)
                 prec = await get_contract_precision(sym)
                 stop_price = round_step(stop_price, prec['tick_size'])
-                
+
                 if s.get("exchange_stop_order_id"):
                     try:
                         await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
                     except Exception as ce:
                         print(f"⚠️ [取消舊止損單失敗] {sym}: {ce}")
-                
+
                 stop_order = await exchange_futures.create_order(
                     sym, type='STOP_MARKET', side=stop_side, amount=abs(s["qty"]),
                     params={'stopPrice': stop_price, 'reduceOnly': True}
                 )
                 s["exchange_stop_order_id"] = stop_order['id']
-                print(f"🛡️ [交易所掛單] {sym} 成功掛出 Stop Market 止損單 @ {stop_price} (數量: {abs(s['qty'])})")
+                print(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {abs(s['qty'])})")
             except Exception as se:
-                print(f"🚨 [交易所止損掛單失敗] {sym}: {se}")
+                print(f"🚨 [交易所止損挂單失敗] {sym}: {se}")
             # ----------------------------------------
-            
+
         except Exception as e:
             print(f"🚨 [開倉錯誤] {sym}: {e}")
 
-def is_entry_pin_safe(sym, side):
+async def check_stale_limit_orders():
+    """
+    逆期止單機制 (Stale Order Cancellation)
+    每 30 秒檢查一次 PENDING_LIMIT_ORDERS，
+    超過 60 秒尚未成交的限價單自動撤銷。
+    """
+    while True:
+        await asyncio.sleep(30)
+        if PAPER_TRADING:
+            continue
+        for order_id in list(PENDING_LIMIT_ORDERS.keys()):
+            info = PENDING_LIMIT_ORDERS.get(order_id)
+            if not info:
+                continue
+            elapsed = time.time() - info["timestamp"]
+            if elapsed > 60:
+                sym = info["sym"]
+                try:
+                    await exchange_futures.cancel_order(order_id, sym)
+                    print(f"⏰ [逆期止單] {sym} 限價單 {order_id} 還未成交且已超 60 秒，自動撤銷。")
+                except Exception as ce:
+                    print(f"⚠️ [撤銷失敗] {sym} {order_id}: {ce}")
+                PENDING_LIMIT_ORDERS.pop(order_id, None)
+                # 撤銷後同步實際持倉
+                try:
+                    positions = await exchange_futures.fetch_positions([sym])
+                    actual_pos = next((p for p in positions if p.get('symbol') == sym and abs(float(p.get('contracts', 0) or 0)) > 0), None)
+                    s = STATES.get(sym)
+                    if s and actual_pos:
+                        actual_qty = float(actual_pos.get('contracts', 0) or 0)
+                        side_sign = 1 if actual_pos.get('side', '') == 'long' else -1
+                        s["qty"] = actual_qty * side_sign
+                        print(f"📊 [持倉同步] {sym} 撤銷後實際持倉: {s['qty']:.4f}")
+                    elif s:
+                        # 撤銷成功且無持倉，重置狀態
+                        if s.get('qty', 0) != 0 and s.get('entry_count', 0) > 0:
+                            print(f"⚠️ [撤銷同步] {sym} 限價單完全未成交，持倉為零")
+                except Exception as pe:
+                    print(f"⚠️ [持倉同步失敗] {sym}: {pe}")
+
     s = STATES[sym]
     if len(s["ohlcv"]) < 2:
         return True
@@ -4629,6 +4733,7 @@ async def main():
     asyncio.create_task(sync_paper_state())
     asyncio.create_task(periodic_htf_update(exchange_futures))
     asyncio.create_task(periodic_status_log())
+    asyncio.create_task(check_stale_limit_orders())  # 逆期限價單止單機制
     
     while True:
         try:
