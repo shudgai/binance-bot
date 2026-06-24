@@ -3076,17 +3076,17 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
     # =========================================================================
     # 1. 動態量能門檻過濾 (Adaptive Volume Gate)
-    # 低波動模式下放寬至 70%，避免過度攔截安靜行情
+    # 低波動模式下放寬至 60%，避免過度攔截安靜行情
     current_volume = s["ohlcv"][-1][5] if s.get("ohlcv") else 0
     volume_ma20 = s.get("vol_ma20", 0.0)
     atr_history_v = s.get("atr_history", [])
     atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
     current_atr_v = s.get("current_atr", 0.0)
     is_low_vol_mode = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
-    vol_multiplier = 0.7 if is_low_vol_mode else 1.0
+    vol_multiplier = 0.6 if is_low_vol_mode else 1.0
     dynamic_vol_threshold = volume_ma20 * vol_multiplier
     if current_volume <= dynamic_vol_threshold:
-        mode_label = "低波動模式(放寬至70%)" if is_low_vol_mode else "標準模式(100%)"
+        mode_label = "低波動放寬模式 60%" if is_low_vol_mode else "高波動嚴格模式 100%"
         print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能未達標 (當前: {current_volume:.1f} <= 門檻: {dynamic_vol_threshold:.1f} | {mode_label})，判定為死水行情。")
         return False
         
@@ -4013,9 +4013,14 @@ async def check_entries():
                     print(f"🛑 [CONFLUENCE_FAIL] {sym}: 動能不共振 (RSI {rsi:.1f} >= 70 或 MACD {macd_hist:.6f} >= 0)")
                     continue
 
-        # D. 真實性驗證 (Volume Confirmation) - 已放寬
-        if volume < (vol_ma20 * 0.2):
-            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * 0.2)")
+        # D. 真實性驗證 (Volume Confirmation) - 動態門檻
+        _atr_hist_ce = s.get("atr_history", [])
+        _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
+        _atr_cur_ce = s.get("current_atr", 0.0)
+        _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
+        _d_multiplier = 0.15 if _is_low_vol_ce else 0.2
+        if volume < (vol_ma20 * _d_multiplier):
+            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             continue
 
         # E. 參與度過濾 (Participation Filter)
@@ -4024,8 +4029,9 @@ async def check_entries():
             prev_vol = s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-1][1]
             
-            # 1. RVOL 檢查 (爆發力)
-            rvol_check = current_vol > (vol_ma20 * 0.3)
+            # 1. RVOL 檢查 (爆發力) - 動態門檻
+            _rvol_multiplier = 0.15 if _is_low_vol_ce else 0.3
+            rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
             
             # 2. 流動性底線 (估算 24H 交易額 > 1,000,000 USD)
             # 以 5 分鐘 K 線為例，一天有 288 根 K 線，用 vol_ma20 * cp * 288 粗估
@@ -4044,7 +4050,8 @@ async def check_entries():
                     print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
                     continue
                 if not rvol_check:
-                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 0.3倍)")
+                    _rvol_pct = int(_rvol_multiplier * 100)
+                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     continue
                 if not volume_price_sync:
                     print(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
