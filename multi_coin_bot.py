@@ -1460,6 +1460,26 @@ def compute_indicators(sym):
         s["bb_mid"] = mid
         s["bb_low"] = low
 
+    # --- Divergence Detection ---
+    s["divergence"] = "none"
+    if len(closes) >= 15 and len(s.get("rsi_history", [])) >= 10:
+        window_closes = closes[-15:]
+        window_rsi = s["rsi_history"][-10:]
+        
+        c_min = np.min(window_closes)
+        c_max = np.max(window_closes)
+        r_min = np.min(window_rsi)
+        r_max = np.max(window_rsi)
+        
+        curr_c = closes[-1]
+        curr_r = s["current_rsi"]
+        prev_r = s["rsi_history"][-2] if len(s["rsi_history"]) >= 2 else curr_r
+        
+        if curr_c <= c_min and curr_r > r_min and curr_r > prev_r:
+            s["divergence"] = "bullish"
+        elif curr_c >= c_max and curr_r < r_max and curr_r < prev_r:
+            s["divergence"] = "bearish"
+
 # ── 出場邏輯 ──────────────────────────────────────────────────
 
 def update_trailing_stop(sym, current_price, is_long):
@@ -3821,6 +3841,22 @@ async def check_entries():
             price_diff_pct = abs(p - last_entry_price) / last_entry_price
             if price_diff_pct < 0.003 and side != last_entry_dir:
                 print(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
+                continue
+
+        # --- 動能背離過濾 (Divergence Filter) ---
+        divergence_type = s.get("divergence", "none")
+        if route == "Automatic_Reverse":
+            if (side == "buy" and divergence_type == "bullish") or (side == "sell" and divergence_type == "bearish"):
+                strength *= 1.5
+                print(f"🌟 [Divergence_Boost] {sym} 偵測到強烈背離，權重提升至 {strength:.2f}")
+            else:
+                strength *= 0.9
+        else:
+            if divergence_type == "bearish" and side == "buy":
+                print(f"🛑 [Filter:Divergence_Block] {sym} 趨勢多單偵測到看跌背離 (頂背離)，防範接刀追高！")
+                continue
+            if divergence_type == "bullish" and side == "sell":
+                print(f"🛑 [Filter:Divergence_Block] {sym} 趨勢空單偵測到看漲背離 (底背離)，防範地板空！")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
