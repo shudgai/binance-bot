@@ -3087,6 +3087,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if side == 'sell' and current_rsi < 30.0:
         print(f"🛑 [Filter:RSI_Limit] {sym} 觸發RSI極限保護 (RSI: {current_rsi:.1f} < 30.0)，拒絕在極端超賣區追空。")
         return False
+        
+    # 3. 15m 跨時框趨勢對齊 (Multi-Timeframe Alignment)
+    if side == 'sell':
+        ema20_15m = s.get("ema20_15m", 0.0)
+        ema50_15m = s.get("ema50_15m", 0.0)
+        if ema20_15m > 0 and ema50_15m > 0:
+            if ema20_15m > ema50_15m:
+                print(f"🛑 [Filter:MTF_Trend] {sym} 15m 大趨勢向上 (EMA20: {ema20_15m:.4f} > EMA50: {ema50_15m:.4f})，拒絕 5m 短線逆勢做空。")
+                return False
     
     # [新增] MTF Correlation Lock (4H)
     upper_4h = s.get("bb_upper_4h")
