@@ -661,9 +661,12 @@
             <!-- Trade history restored -->
             <div class="card" style="margin-top: 15px;">
                 
-                <h3 style="margin-top:0;margin-bottom:10px;font-size:12px;color:var(--text-muted);text-transform:uppercase; display: flex; justify-content: space-between;">
-                    近期交易紀錄 (Trade History)
-                    <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showAllTradesModal = true; fetchAllTradesHistory()">查看完整歷史紀錄</span>
+                <h3 style="margin-top:0;margin-bottom:10px;font-size:12px;color:var(--text-muted);text-transform:uppercase; display: flex; justify-content: space-between; align-items: center;">
+                    <span>近期交易紀錄 (Trade History) <span style="color:var(--text-muted);font-weight:400;">{{ trades.length }} 筆</span></span>
+                    <span style="display:flex;gap:10px;">
+                        <span style="color:var(--danger);cursor:pointer;font-size:10px;" @click="clearTradesCache()">清除快取</span>
+                        <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showAllTradesModal = true; fetchAllTradesHistory()">查看完整歷史紀錄</span>
+                    </span>
                 </h3>
 
                 <div style="overflow-x:auto; max-height: 250px; overflow-y: auto;">
@@ -895,13 +898,41 @@ createApp({
         const isPlacingOrder = ref(false);
         const liveTrades = ref([]);
         const rawTrades = ref([]);
+        // 持久化的已平倉交易快取 — 平倉後不消失，存入 localStorage
+        const closedTradesCache = ref(JSON.parse(localStorage.getItem('closedTradesCache') || '[]'));
+
         const trades = computed(() => {
-            return [...rawTrades.value].sort((a, b) => {
-                const aOpen = (!a.is_close && canCloseTrade(a)) ? 1 : 0;
-                const bOpen = (!b.is_close && canCloseTrade(b)) ? 1 : 0;
-                if (aOpen !== bOpen) return bOpen - aOpen;
-                return b.time - a.time;
+            // 1. 找出目前有持倉的幣種
+            const activeSyms = new Set();
+            for (let sym in allPositions.value) {
+                if (Math.abs(allPositions.value[sym].qty) > 1e-6) activeSyms.add(sym);
+            }
+
+            // 2. 把 rawTrades 分為：仍在倉中 vs 已平倉
+            const activeTrades = rawTrades.value.filter(t => activeSyms.has(t.symbol));
+            const closedFromRaw = rawTrades.value.filter(t => !activeSyms.has(t.symbol));
+
+            // 3. 把剛平倉的記錄合併進持久快取，並去重
+            if (closedFromRaw.length > 0) {
+                const cacheIds = new Set(closedTradesCache.value.map(t => t.id));
+                const newClosed = closedFromRaw.filter(t => !cacheIds.has(t.id));
+                if (newClosed.length > 0) {
+                    closedTradesCache.value = [...closedTradesCache.value, ...newClosed]
+                        .sort((a, b) => b.time - a.time)
+                        .slice(0, 200); // 最多保留 200 筆
+                    localStorage.setItem('closedTradesCache', JSON.stringify(closedTradesCache.value));
+                }
+            }
+
+            // 4. 合併：在倉中交易 + 持久快取中的已平倉交易，去重後排序
+            const allIds = new Set();
+            const merged = [...activeTrades, ...closedTradesCache.value].filter(t => {
+                if (allIds.has(t.id)) return false;
+                allIds.add(t.id);
+                return true;
             });
+
+            return merged.sort((a, b) => b.time - a.time);
         });
         const tempTradeAmount = computed(() => parseFloat((bot.value.balance_quote || 0).toFixed(4)));
         const limitPrice = ref('');
@@ -1591,6 +1622,12 @@ createApp({
             finally { isPlacingOrder.value = false; limitPrice.value = ''; }
         };
 
+        const clearTradesCache = () => {
+            closedTradesCache.value = [];
+            localStorage.removeItem('closedTradesCache');
+            addLog('🗑️ 已清除近期交易紀錄快取');
+        };
+
         const closeAllPositions = async () => {
             isPlacingOrder.value = true;
             addLog(`🔴 準備強制平倉所有持有部位...`);
@@ -1889,7 +1926,7 @@ createApp({
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, liveTrades, error,
             toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
-            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
+            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs, clearTradesCache,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
