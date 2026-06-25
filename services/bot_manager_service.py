@@ -22,7 +22,7 @@ bot_status = {
 bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
 DEFAULT_SYMBOLS = [
-    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
+    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "RENDERUSDT", "LINKUSDT", "AVAXUSDT",
     "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
 ]
 
