@@ -119,6 +119,14 @@ def get_bot_status():
         except Exception as e:
             bot_status["total_realized_pnl"] = 0.0
         
+    # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
+    try:
+        actual_symbols = load_symbol_config()
+        if actual_symbols:
+            bot_status["watch_symbols"] = actual_symbols
+    except Exception:
+        pass
+
     return bot_status
 
 def set_bot_balance_quote(balance: float):

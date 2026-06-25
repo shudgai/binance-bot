@@ -1218,8 +1218,15 @@ createApp({
                 bot.value = data;
                 
                 // 動態更新界面上的監控幣種
-                if (data.active_symbols && data.active_symbols.length > 0) {
-                    const newCoins = data.active_symbols.map(sym => {
+                // 優先用 watch_symbols（Bot 實際監控），再 fallback 到 active_symbols
+                const symbolList = (data.watch_symbols && data.watch_symbols.length > 0)
+                    ? data.watch_symbols
+                    : (data.active_symbols && data.active_symbols.length > 0 ? data.active_symbols : null);
+
+                if (symbolList) {
+                    // 過濾掉 BTCUSDT/ETHUSDT（大盤指標，不顯示）
+                    const filteredSymbols = symbolList.filter(s => s !== 'BTCUSDT' && s !== 'ETHUSDT');
+                    const newCoins = filteredSymbols.map(sym => {
                         const existing = coins.value.find(c => c.symbol === sym);
                         if (existing) return existing;
                         const name = sym.replace('USDT', '');
@@ -1230,6 +1237,7 @@ createApp({
                     const newSyms = newCoins.map(c => c.symbol).join(',');
                     if (oldSyms !== newSyms) {
                         coins.value = newCoins;
+                        localStorage.setItem('coins', JSON.stringify(newCoins));
                         if (!newCoins.some(c => c.symbol === activeSymbol.value)) {
                             setActiveCoin(newCoins[0].symbol);
                         }
@@ -1632,16 +1640,21 @@ createApp({
 
             if (coins.value.length === 0) return;
 
+            // 若 5 秒後仍無任何價格，啟用 HTTP Fallback
             wsFallbackTimeout = setTimeout(() => {
                 const hasAnyPrice = coins.value.some(c => c.price > 0);
-                if (!hasAnyPrice) startHTTPFallback();
-            }, 8000);
+                if (!hasAnyPrice) {
+                    addLog('⚠️ WS 5秒無資料，切換 HTTP 輪詢', 'warning');
+                    startHTTPFallback();
+                }
+            }, 5000);
 
             const url = `wss://fstream.binance.com/ws/!ticker@arr`;
             const w = new WebSocket(url);
+            addLog('🔌 WebSocket 連線中...');
             
-            w.onopen = () => { /* connection success */ };
-            w.onerror = () => { /* connection error */ };
+            w.onopen = () => { addLog('⚡ WebSocket 已連線 (Binance Futures)', 'success'); };
+            w.onerror = (e) => { addLog('❌ WebSocket 連線錯誤，嘗試重連...', 'danger'); };
             w.onmessage = (event) => {
                 try {
                     const raw = JSON.parse(event.data);
