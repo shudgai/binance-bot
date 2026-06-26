@@ -1595,11 +1595,12 @@ createApp({
             return (trade.price - currentPrice) * trade.qty;
         };
 
-        // 全倉即時未實現損益 — 直接加總表格開倉行的 getTradeUnrealizedPnl，與表格欄位共用同一價格來源
+        // 全倉即時未實現損益 — 只計算每個幣種最新一筆未平倉，避免舊幽靈紀錄重複計算
         const totalUnrealizedPnl = computed(() => {
             let total = 0;
             for (const t of trades.value) {
                 if (t.is_close) continue;
+                if (!isOpenTrade(t)) continue;
                 total += getTradeUnrealizedPnl(t);
             }
             return total;
