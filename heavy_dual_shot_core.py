@@ -2062,7 +2062,9 @@ async def execute_panic_sell_all_positions():
         if abs(s["qty"]) > 0.000001:
             is_long = s["qty"] > 0
             cs = 'sell' if is_long else 'buy'
-            p = s.get("close_price", s["avg_price"])
+            p = s.get("close_price", 0.0)
+            if p <= 0:
+                p = s.get("avg_price", 0.0)  # K線未初始化，用進場價（不計獲利，只出場）
             print(f"🚨 [緊急清倉] 正在平倉 {sym}...")
             try:
                 await close_position(sym, cs, abs(s["qty"]), p, s["avg_price"], reason="[GLOBAL_MELTDOWN]", is_stop_loss=True)
@@ -2071,19 +2073,14 @@ async def execute_panic_sell_all_positions():
 
 def get_total_wallet_balance():
     if PAPER_TRADING:
-        # Paper trading assumption: basic capital + sum of all PnL
         try:
             with open(PAPER_STATE_FILE, 'r') as f:
                 st = json.load(f)
-                realized = sum(v.get('realized_pnl', 0.0) for v in st.get('positions', {}).values())
-                return 1500.0 + realized # Assuming 1500 base paper capital
+                return float(st.get("balance_usdt", 150.0))
         except:
-            return 1500.0
+            return 150.0
     else:
-        # Live balance is not tracked locally as a single float reliably in states, 
-        # but we can fallback to a fixed estimation or fetch it.
-        # Assuming we have REAL_WALLET_BALANCE if we fetched it, or we use a fixed 1500
-        return 1500.0 # Modify as per actual logic if available
+        return REAL_BALANCE if REAL_BALANCE > 0 else 150.0
 
 def check_total_equity_protection():
     total_unrealized_pnl = 0.0
@@ -2094,8 +2091,12 @@ def check_total_equity_protection():
         qty = s.get("qty", 0.0)
         if abs(qty) > 0.000001:
             has_positions = True
-            p = s.get("close_price", s.get("avg_price", 0.0))
             avg = s.get("avg_price", 0.0)
+            p = s.get("close_price", 0.0)
+            if p <= 0:
+                p = avg  # K線尚未 fetch，用進場價（= 0% 未實現損益）避免誤熔斷
+            if avg <= 0:
+                continue
             if qty > 0:
                 pnl = (p - avg) * abs(qty)
             else:
