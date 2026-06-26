@@ -1590,16 +1590,12 @@ createApp({
             return (trade.price - currentPrice) * trade.qty;
         };
 
-        // 全倉即時未實現損益（不依賴 activeSymbol，從 allPositions + 即時幣價計算）
+        // 全倉即時未實現損益 — 直接加總表格開倉行的 getTradeUnrealizedPnl，與表格欄位共用同一價格來源
         const totalUnrealizedPnl = computed(() => {
             let total = 0;
-            for (const [sym, pos] of Object.entries(allPositions.value)) {
-                if (Math.abs(pos.qty) < 0.001) continue;
-                const cleanSym = sym.replace(':USDT', 'USDT').replace(':', '');
-                const coin = coins.value.find(c => c.symbol === cleanSym);
-                const livePrice = (coin && coin.price > 0) ? coin.price : pos.avg_price;
-                if (pos.qty > 0) total += (livePrice - pos.avg_price) * pos.qty;
-                else             total += (pos.avg_price - livePrice) * Math.abs(pos.qty);
+            for (const t of trades.value) {
+                if (t.is_close) continue;
+                total += getTradeUnrealizedPnl(t);
             }
             return total;
         });
