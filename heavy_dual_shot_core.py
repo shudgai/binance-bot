@@ -4351,18 +4351,22 @@ def compute_signal_strength(sym):
 
         # RSI 極端超賣/超買 直觸發（不需等量縮K線型態）
         rsi_now = s.get("current_rsi", 50)
+        macd_hist_now  = s.get("macd_hist", 0.0)
+        macd_hist_prev = s.get("prev_macd_hist", macd_hist_now)
         if rsi_now < 26:
             bb_low_v = s.get("bb_low", 0)
             near_sup = (bb_low_v > 0 and c1[3] <= bb_low_v * 1.02) or (recent_low_50 > 0 and c1[3] <= recent_low_50 * 1.02)
             bullish_signal = c1[4] >= c2[4] or c1[4] >= c1[1]  # 止跌（收盤 >= 前收）或當根收陽
-            if near_sup and bullish_signal:
+            macd_recovering = macd_hist_now >= macd_hist_prev  # MACD 柱狀必須止跌回升
+            if near_sup and bullish_signal and macd_recovering:
                 print(f"🆘 [RSI超賣直觸發] {sym} RSI {rsi_now:.1f} < 26，支撐區有止跌跡象，觸發 Exhaustion_Entry")
                 return ("buy", 15.0, "Exhaustion_Entry")
         if rsi_now > 74:
             bb_up_v = s.get("bb_up", 0)
             near_res = (bb_up_v > 0 and c1[2] >= bb_up_v * 0.98) or (recent_high_50 > 0 and c1[2] >= recent_high_50 * 0.99)
             bearish_signal = c1[4] <= c2[4] or c1[4] <= c1[1]  # 見頂（收盤 <= 前收）或當根收陰
-            if near_res and bearish_signal:
+            macd_declining = macd_hist_now <= macd_hist_prev  # MACD 柱狀必須見頂轉弱
+            if near_res and bearish_signal and macd_declining:
                 print(f"🆘 [RSI超買直觸發] {sym} RSI {rsi_now:.1f} > 74，阻力區有見頂跡象，觸發 Exhaustion_Entry")
                 return ("sell", 15.0, "Exhaustion_Entry")
         sma200 = s.get("sma200_15m", 0)
@@ -4384,7 +4388,8 @@ def compute_signal_strength(sym):
             pa_ok = price_rebound and has_lower_wick and crossed_midpoint
             bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
-            trend_ok = True
+            # 多單：MACD 柱狀必須止跌回升（動能確認，避免接飛刀）
+            trend_ok = macd_hist_now >= macd_hist_prev
 
             if trend_ok and support_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
@@ -4406,7 +4411,8 @@ def compute_signal_strength(sym):
             pa_ok = price_rebound and has_upper_wick and crossed_midpoint
             bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
-            trend_ok = True
+            # 空單：MACD 柱狀必須見頂轉弱（動能確認，避免追空過早）
+            trend_ok = macd_hist_now <= macd_hist_prev
 
             if trend_ok and resistance_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
