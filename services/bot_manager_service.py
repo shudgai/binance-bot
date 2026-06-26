@@ -202,7 +202,19 @@ def read_bot_output(proc, sym):
             elif line.startswith("@@COIN_DEBUG@@"):
                 add_system_log(line.replace("@@COIN_DEBUG@@", "").strip(), "info")
             else:
-                add_system_log(f"[{sym}] {line}", "info")
+                # 過濾掉每輪掃描的 debug 雜訊（🔍 條件檢測），只保留有意義的事件
+                _skip_prefixes = ("🔍", "[__multi__] 🔍", "----")
+                if any(line.startswith(p) for p in _skip_prefixes):
+                    pass  # 靜默丟棄，不送 web log
+                else:
+                    level = "info"
+                    if any(k in line for k in ("❌", "🛑", "⚠️", "停損", "REJECT", "Error", "error")):
+                        level = "danger"
+                    elif any(k in line for k in ("✅", "🚀", "⚡", "開倉", "平倉", "獲利")):
+                        level = "success"
+                    elif any(k in line for k in ("🛡️", "📊", "🔄", "冷卻")):
+                        level = "warning"
+                    add_system_log(f"[{sym}] {line}", level)
     proc.stdout.close()
     proc.wait()
     
