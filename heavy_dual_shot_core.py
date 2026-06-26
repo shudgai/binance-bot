@@ -1720,11 +1720,9 @@ def has_strong_momentum(sym, is_long):
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
-
-    try:
-        await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
-    finally:
-        s["adjusted_this_tick"] = False
+    # 不在 finally 裡歸零 adjusted_this_tick：讓旗標保持到本 tick 結束
+    # 主迴圈在每個 tick 開頭 (line ~4941) 統一歸零，避免同 tick 內重複進入 check_exits
+    await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
 
 
 import os
@@ -2037,6 +2035,10 @@ def _fill_paper_order(sym, fill_price):
     pk = paper_key(sym)
     order = s.get("pending_paper_order")
     if not order:
+        return
+    if not fill_price or fill_price <= 0:
+        print(f"[REJECT_PAPER] {sym} _fill_paper_order fill_price=0，已攔截撤單")
+        s["pending_paper_order"] = None
         return
     side = order["side"]
     base_amt = order["qty"]
@@ -2694,6 +2696,14 @@ async def check_exits(sym):
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False):
     import numpy as np  # 強制防禦局部變量失效漏洞
     s = STATES[sym]
+    # 第一道防線：price=0 直接攔截，防止 0 元下單
+    if not price or price <= 0:
+        fallback = s.get("close_price", 0.0) or s.get("avg_price", 0.0)
+        if fallback <= 0:
+            print(f"[REJECT_ZERO_PRICE] {sym} execute_order price=0 且無法補救，已攔截！")
+            return
+        print(f"[WARN_ZERO_PRICE] {sym} execute_order price=0，補救為 {fallback:.6f}")
+        price = fallback
     pk = paper_key(sym)
     lev = get_symbol_leverage(sym)
     s["leverage"] = lev

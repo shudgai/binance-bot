@@ -14,6 +14,9 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
     qty passed in should be absolute (positive).
     """
     qty_abs = abs(qty)
+    if price <= 0 or qty_abs <= 0:
+        print(f"[REJECT_PAPER] {symbol} price={price}, qty={qty_abs} — 拒絕 0 元交易！")
+        return
     with _lock:
         if not os.path.exists(PAPER_STATE_FILE):
             state = {
@@ -36,6 +39,10 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
         if is_close:
             # Handle closing a position
             pos = positions.get(paper_key)
+            # 重複平倉防護：若倉位已為 0（或不存在），拒絕再次記錄平倉
+            if not pos or abs(pos.get("qty", 0.0)) < 0.000001:
+                print(f"[REJECT_DUP_CLOSE] {symbol} 倉位已平 (qty≈0)，忽略重複平倉記錄！")
+                return
             if pos:
                 # Update the position's realized pnl
                 current_pnl = pos.get("realized_pnl", 0.0)
