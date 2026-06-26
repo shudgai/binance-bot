@@ -149,7 +149,7 @@ MAX_GLOBAL_CONCURRENT_TRADES = 2
 DEFAULT_LEVERAGE = 5
 DUAL_SHOT_MAX_SLOTS = 2       # 重裝雙發：同時最大持倉上限
 DUAL_SHOT_LEVERAGE = 5        # 重裝雙發：統一固定 5 倍槓桿
-DUAL_SHOT_ORDER_TIMEOUT = 45  # 重裝雙發：限價單超時撤單秒數
+DUAL_SHOT_ORDER_TIMEOUT = 300  # 重裝雙發：限價單超時撤單秒數（5分K需等下一根收盤）
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012  # 收緊至 1.2%
 
 # 限價單監控表 (Pending Limit Orders)
