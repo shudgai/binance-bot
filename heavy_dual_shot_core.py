@@ -4533,7 +4533,9 @@ async def check_entries():
         rsi = s.get("current_rsi", 50)
         macd_hist = s.get("macd_hist", 0.0)
         vol_ma20 = s.get("vol_ma20", 0.0)
-        volume = s["ohlcv"][-1][5] if len(s["ohlcv"]) > 0 else 0
+        # 使用最後一根「完成」的 K 線量能 (ohlcv[-2]) 而非仍在累積的當前 K 線 (ohlcv[-1])
+        # 當前 K 線開盤後幾秒成交量極低，與 vol_ma20（已完成均量）比較會永遠不足
+        volume = s["ohlcv"][-2][5] if len(s["ohlcv"]) > 1 else (s["ohlcv"][-1][5] if len(s["ohlcv"]) > 0 else 0)
 
         # A. 數據完整性檢查 (防止啟動初期報錯)
         if sma200_15m == 0 or vol_ma20 == 0:
@@ -4576,9 +4578,9 @@ async def check_entries():
 
         # E. 參與度過濾 (Participation Filter)
         if len(s["ohlcv"]) > 1:
-            current_vol = volume
-            prev_vol = s["ohlcv"][-2][5]
-            price_change = cp - s["ohlcv"][-1][1]
+            current_vol = volume  # 已是 ohlcv[-2]（最後完成 K 線）
+            prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
+            price_change = cp - s["ohlcv"][-2][1]  # 使用完成 K 線的開盤價計算
             
             # 1. [放寬] RVOL 門檻與 D 塊對齊：0.15/0.2 → 0.08/0.1
             _rvol_multiplier = 0.05 if _is_low_vol_ce else 0.07
