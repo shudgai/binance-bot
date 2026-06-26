@@ -2405,7 +2405,7 @@ async def check_exits(sym):
     # 避免 0.15% 微利就觸發保本，導致價格彈回後立即出場（手續費白白損失）
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.003)
+    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.002)
     
     # 保本緩衝 0.1% = 來回手續費（各 0.05%），紙倉和實盤都套用
     slippage_buffer = 0.001
