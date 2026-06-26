@@ -247,6 +247,7 @@
             white-space: nowrap;
         }
         .coin-chip:hover { border-color: rgba(0,0,0,0.2); background: #f3f4f6; transform: translateY(-1px); }
+        .coin-chip.coin-disabled { opacity: 0.45; filter: grayscale(60%); }
         .coin-chip.active {
             border-color: var(--primary); background: rgba(240,185,11,0.08); color: #92700a;
             box-shadow: 0 2px 8px var(--glow-primary);
@@ -493,24 +494,60 @@
         <div :class="['left-panel', activeTab === 'chart' || activeTab === 'history' ? 'tab-active' : '']">
 
             <!-- Coin chip strip -->
-            <div class="coin-strip">
-                <div
-                    v-for="coin in sortedCoins" :key="coin.symbol"
-                    :class="['coin-chip', activeSymbol === coin.symbol ? 'active' : '']"
-                    @click="setActiveCoin(coin.symbol)"
-                >
-                    <span>{{ coin.name }}</span>
-                    <span :class="['coin-chip-price', coin.priceClass]">
-                        {{ formatMiniPrice(coin.price) }}
-                    </span>
-                    <button 
-                        v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0"
-                        @click.stop="closePositionBySymbol(coin.symbol)"
-                        class="btn btn-danger"
-                        style="padding: 2px 6px; font-size: 10px; margin-top: 4px; border-radius: 4px; width: 100%;"
-                    >平倉</button>
+            <div style="display:flex; align-items:flex-start; gap:6px;">
+                <div class="coin-strip" style="flex:1;">
+                    <div
+                        v-for="coin in sortedCoins" :key="coin.symbol"
+                        :class="['coin-chip', activeSymbol === coin.symbol ? 'active' : '', disabledSymbols.includes(coin.symbol) ? 'coin-disabled' : '']"
+                        @click="setActiveCoin(coin.symbol)"
+                    >
+                        <span>{{ coin.name }}<span v-if="disabledSymbols.includes(coin.symbol)" style="font-size:9px;color:#f44;margin-left:3px;">停</span></span>
+                        <span :class="['coin-chip-price', coin.priceClass]">
+                            {{ formatMiniPrice(coin.price) }}
+                        </span>
+                        <button
+                            v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0"
+                            @click.stop="closePositionBySymbol(coin.symbol)"
+                            class="btn btn-danger"
+                            style="padding: 2px 6px; font-size: 10px; margin-top: 4px; border-radius: 4px; width: 100%;"
+                        >平倉</button>
+                    </div>
                 </div>
+                <button @click="openCoinManager()" style="flex-shrink:0; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; color:var(--text-muted); font-size:11px; padding:6px 10px; cursor:pointer; margin-top:10px;">⚙️ 管理</button>
+            </div>
 
+            <!-- 幣種管理 Modal -->
+            <div v-if="showCoinManager" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;" @click.self="showCoinManager=false">
+                <div style="background:var(--card-bg);border-radius:12px;padding:20px;width:min(95vw,560px);max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                        <h3 style="margin:0;font-size:14px;">⚙️ 幣種管理</h3>
+                        <span @click="showCoinManager=false" style="cursor:pointer;font-size:18px;color:var(--text-muted);">✕</span>
+                    </div>
+                    <div v-for="coin in coins" :key="coin.symbol" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <div style="flex:1;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-weight:700;font-size:14px;">{{ coin.name }}</span>
+                                <span :class="coin.priceClass" style="font-size:12px;font-family:monospace;">{{ formatMiniPrice(coin.price) }}</span>
+                                <span v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0" style="font-size:10px;background:var(--trade-down);color:#fff;border-radius:4px;padding:1px 5px;">持倉中</span>
+                            </div>
+                            <div v-if="coinProfiles[coin.symbol]" style="margin-top:4px;font-size:10px;color:var(--text-muted);display:flex;gap:12px;flex-wrap:wrap;">
+                                <span>SL <b>{{ coinProfiles[coin.symbol].sl_atr_multiplier }}x</b></span>
+                                <span>TP <b>{{ coinProfiles[coin.symbol].tp_atr_multiplier }}x</b></span>
+                                <span>量能 <b>{{ coinProfiles[coin.symbol].volume_threshold_factor }}x</b></span>
+                                <span v-if="coinProfiles[coin.symbol].min_signal_strength">信號 ≥ <b>{{ coinProfiles[coin.symbol].min_signal_strength }}</b></span>
+                                <span>RR ≥ <b>{{ coinProfiles[coin.symbol].rr_threshold }}</b></span>
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;margin-left:12px;">
+                            <span style="font-size:11px;color:var(--text-muted);">{{ disabledSymbols.includes(coin.symbol) ? '已停用' : '運行中' }}</span>
+                            <div @click="toggleCoinDisabled(coin.symbol)"
+                                :style="`cursor:pointer;width:40px;height:22px;border-radius:11px;background:${disabledSymbols.includes(coin.symbol) ? '#555' : 'var(--trade-up)'};position:relative;transition:background 0.2s;`">
+                                <div :style="`position:absolute;top:3px;${disabledSymbols.includes(coin.symbol) ? 'left:3px' : 'left:21px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left 0.2s;`"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="margin-top:12px;font-size:11px;color:var(--text-muted);">停用的幣種不會開新倉，但現有持倉仍正常管理（停損/停利）</p>
+                </div>
             </div>
 
             <!-- Trade history restored -->
@@ -529,6 +566,7 @@
                                 <th>幣種</th>
                                 <th>方向</th>
                                 <th>成交價</th>
+                                <th>現價</th>
                                 <th>數量</th>
                                 <th>總金額(USDT)</th>
                                 <th>手續費(USDT)</th>
@@ -548,6 +586,12 @@
                                     <span v-else-if="t.isBuyer && t.is_close" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
                                 </td>
                                 <td>{{ t.price }}</td>
+                                <td>
+                                    <span v-if="isOpenTrade(t)" :class="getTradeCurrentPrice(t) > t.price ? (t.isBuyer ? 'up' : 'down') : (getTradeCurrentPrice(t) < t.price ? (t.isBuyer ? 'down' : 'up') : '')" style="font-weight:600;">
+                                        {{ getTradeCurrentPrice(t) > 0 ? getTradeCurrentPrice(t).toFixed(4) : '-' }}
+                                    </span>
+                                    <span v-else style="color:var(--text-muted);">-</span>
+                                </td>
                                 <td>{{ t.qty }}</td>
                                 <td>{{ (t.price * Math.abs(t.qty)).toFixed(2) }}</td>
                                 <td style="color:#000000; font-size:70%;">{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }}</td>
@@ -612,11 +656,8 @@
                 </div>
                 <div class="info-card">
                     <div class="info-title">未實現損益</div>
-                    <div :class="['info-val mono', position.pnl > 0 ? 'up' : (position.pnl < 0 ? 'down' : '')]" style="font-size:15px;">
-                        {{ position.pnl > 0 ? '+' : '' }}{{ formatCurrencyVal(position.pnl) }} USDT
-                        <span v-if="position.qty" style="font-size:10px; opacity:0.7; margin-left:4px;">
-                            ({{ position.pnl_percent.toFixed(2) }}%)
-                        </span>
+                    <div :class="['info-val mono', totalUnrealizedPnl > 0 ? 'up' : (totalUnrealizedPnl < 0 ? 'down' : '')]" style="font-size:15px;">
+                        {{ totalUnrealizedPnl > 0 ? '+' : '' }}{{ formatCurrencyVal(totalUnrealizedPnl) }} USDT
                     </div>
                 </div>
                 <div class="info-card">
@@ -772,6 +813,9 @@ createApp({
         
         const showHistoryNotebook = ref(false);
         const historySummaries = ref([]);
+        const showCoinManager = ref(false);
+        const coinProfiles = ref({});
+        const disabledSymbols = ref([]);
 
         // Limit order panel state
         const loSide = ref('long');
@@ -809,19 +853,9 @@ createApp({
             setActiveCoin(s);
             customSymbol.value = '';
         };
-        const savedCoins = localStorage.getItem('coins');
-        const coins = ref(savedCoins ? JSON.parse(savedCoins) : [
-            { symbol: 'XRPUSDT', name: 'XRP', label: 'XRP', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'DOGEUSDT', name: 'DOGE', label: 'DOGE', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'ADAUSDT', name: 'ADA', label: 'ADA', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'LINKUSDT', name: 'LINK', label: 'LINK', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'AVAXUSDT', name: 'AVAX', label: 'AVAX', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'DOTUSDT', name: 'DOT', label: 'DOT', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'UNIUSDT', name: 'UNI', label: 'UNI', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'NEARUSDT', name: 'NEAR', label: 'NEAR', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'FETUSDT', name: 'FET', label: 'FET', price: 0, prevPrice: 0, priceClass: '' },
-            { symbol: 'SUIUSDT', name: 'SUI', label: 'SUI', price: 0, prevPrice: 0, priceClass: '' }
-        ]);
+        // 不使用 localStorage 初始化幣種，改為全部由 fetchBotStatus() 從 bot_symbols.json 動態載入
+        // 避免舊快取導致幣種清單不一致
+        const coins = ref([]);
         const activeSymbol = ref(localStorage.getItem('activeSymbol') || (coins.value.length > 0 ? coins.value[0].symbol : 'SUIUSDT'));
 
         watch(() => coins.value.map(c => c.symbol), () => {
@@ -1216,7 +1250,8 @@ createApp({
                 if (bot.value.is_running !== data.is_running && bot.value.strategy !== '-')
                     addLog(`機器人狀態: ${data.is_running ? '🚀 啟動' : '⏹️ 停止'}`);
                 bot.value = data;
-                
+                if (Array.isArray(data.disabled_symbols)) disabledSymbols.value = data.disabled_symbols;
+
                 // 動態更新界面上的監控幣種
                 // 優先用 watch_symbols（Bot 實際監控），再 fallback 到 active_symbols
                 const symbolList = (data.watch_symbols && data.watch_symbols.length > 0)
@@ -1550,6 +1585,20 @@ createApp({
             return (trade.price - currentPrice) * trade.qty;
         };
 
+        // 全倉即時未實現損益（不依賴 activeSymbol，從 allPositions + 即時幣價計算）
+        const totalUnrealizedPnl = computed(() => {
+            let total = 0;
+            for (const [sym, pos] of Object.entries(allPositions.value)) {
+                if (Math.abs(pos.qty) < 0.001) continue;
+                const cleanSym = sym.replace(':USDT', 'USDT').replace(':', '');
+                const coin = coins.value.find(c => c.symbol === cleanSym);
+                const livePrice = (coin && coin.price > 0) ? coin.price : pos.avg_price;
+                if (pos.qty > 0) total += (livePrice - pos.avg_price) * pos.qty;
+                else             total += (pos.avg_price - livePrice) * Math.abs(pos.qty);
+            }
+            return total;
+        });
+
         const getTradeUnrealizedPnlDisplay = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
             if (pnl === 0) return '-';
@@ -1572,14 +1621,20 @@ createApp({
             if (trade.is_close) return false;
             const pos = getPositionInfo(trade.symbol);
             if (!pos || Math.abs(pos.qty) === 0) return false;
-            // Find the most recent opening trade for this symbol
+            // trades.value 已按 time 降序排列，取第一筆即為最新未平倉交易
+            // 用物件參考比對，避免 paper_state 交易沒有 id 欄位時 undefined===undefined 全部通過
             const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
-            return latestOpenTrade && latestOpenTrade.id === trade.id;
+            return latestOpenTrade === trade;
         };
 
         const canCloseTrade = (trade) => {
+            // 與 isOpenTrade 邏輯一致，只有「最新的未平倉」才算可平倉
+            // 避免同幣種舊入場記錄因新倉開啟而被誤判為可平倉並排到最頂端
+            if (trade.is_close) return false;
             const pos = getPositionInfo(trade.symbol);
-            return pos && Math.abs(pos.qty) > 0;
+            if (!pos || Math.abs(pos.qty) === 0) return false;
+            const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
+            return latestOpenTrade === trade;
         };
 
         const closeTradePosition = async (trade) => {
@@ -1726,6 +1781,25 @@ createApp({
             // Implementation logic
         };
 
+        const openCoinManager = async () => {
+            showCoinManager.value = true;
+            try {
+                const res = await fetch(`${API_BASE}/coin-profiles`);
+                if (res.ok) coinProfiles.value = await res.json();
+            } catch(e) {}
+        };
+
+        const toggleCoinDisabled = async (symbol) => {
+            try {
+                const res = await fetch(`${API_BASE}/coin/${symbol}/toggle`, { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    disabledSymbols.value = data.all_disabled || [];
+                    showToast(`${symbol.replace('USDT','')} ${data.disabled ? '已停用' : '已恢復'}`, data.disabled ? 'warning' : 'success');
+                }
+            } catch(e) {}
+        };
+
         onMounted(() => {
             addLog('🚀 Dashboard 初始化...');
             initChart();
@@ -1794,7 +1868,7 @@ createApp({
             toggleCurrency, setActiveCoin,
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, sortedTrades, liveTrades, error,
-            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, limitPrice,
+            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeCurrentPrice, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, totalUnrealizedPnl, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
@@ -1802,6 +1876,7 @@ createApp({
             allPositions, getPositionInfo, openOrders,
             showLogs,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
+            showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
             activeTab,

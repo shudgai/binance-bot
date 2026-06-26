@@ -21,6 +21,7 @@ bot_status = {
 
 bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
+BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_running_state.json")
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "RENDERUSDT", "LINKUSDT", "AVAXUSDT",
     "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
@@ -80,15 +81,54 @@ def load_symbol_profiles():
         return {}
 
 
+def load_disabled_symbols():
+    try:
+        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return [normalize_symbol(s) for s in data.get("disabled", [])]
+        return []
+    except Exception:
+        return []
+
+
 def save_symbol_config(symbols):
     normalized = normalize_symbol_list(symbols)
     profiles = load_symbol_profiles()
+    disabled = load_disabled_symbols()
     payload = {"symbols": normalized}
     if profiles:
         payload["profiles"] = profiles
+    if disabled:
+        payload["disabled"] = disabled
     with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     return normalized
+
+
+def toggle_coin_disabled(symbol: str) -> dict:
+    sym = normalize_symbol(symbol)
+    try:
+        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {"symbols": data}
+    disabled = [normalize_symbol(s) for s in data.get("disabled", [])]
+    if sym in disabled:
+        disabled.remove(sym)
+        is_disabled = False
+    else:
+        disabled.append(sym)
+        is_disabled = True
+    data["disabled"] = disabled
+    with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    bot_status["disabled_symbols"] = disabled
+    action = "暫停" if is_disabled else "恢復"
+    add_system_log(f"🔧 [{sym}] 已{action}交易", "info")
+    return {"symbol": sym, "disabled": is_disabled, "all_disabled": disabled}
 
 
 def get_bot_status():
@@ -124,6 +164,8 @@ def get_bot_status():
         actual_symbols = load_symbol_config()
         if actual_symbols:
             bot_status["watch_symbols"] = actual_symbols
+            bot_status["active_symbols"] = actual_symbols
+        bot_status["disabled_symbols"] = load_disabled_symbols()
     except Exception:
         pass
 
@@ -178,17 +220,21 @@ def read_bot_output(proc, sym):
         from services.radar_service import auto_radar_switch
         threading.Thread(target=auto_radar_switch, daemon=True).start()
     elif bot_status["is_running"] and sym in bot_processes and bot_processes[sym] == proc:
-        # 非預期停止（使用者未手動關閉），啟動守護重啟機制
-        add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止，將在 5 秒後自動重啟...", "danger")
-        def daemon_restart():
-            time.sleep(5)
-            if not bot_status["is_running"]:
-                return
-            if sym == "__multi__":
-                _start_multi_coin_bot(bot_status["trade_amount"])
-            else:
-                _start_single_bot(sym, bot_status["trade_amount"])
-        threading.Thread(target=daemon_restart, daemon=True).start()
+        # 退出碼 0 = 防禦分流正常退出，不重啟
+        # 退出碼 1+ = 真正崩潰，才重啟
+        if proc.returncode == 0:
+            add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，守護不重啟。", "info")
+        else:
+            add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止 (exit {proc.returncode})，將在 5 秒後自動重啟...", "danger")
+            def daemon_restart():
+                time.sleep(5)
+                if not bot_status["is_running"]:
+                    return
+                if sym == "__multi__":
+                    _start_multi_coin_bot(bot_status["trade_amount"])
+                else:
+                    _start_single_bot(sym, bot_status["trade_amount"])
+            threading.Thread(target=daemon_restart, daemon=True).start()
 
 
 def _start_single_bot(symbol: str, trade_amt: float):
@@ -203,7 +249,7 @@ def _start_single_bot(symbol: str, trade_amt: float):
 
 def _start_multi_coin_bot(trade_amt: float):
     global bot_processes
-    cmd = [sys.executable, "-u", "multi_coin_bot.py"]
+    cmd = [sys.executable, "-u", "heavy_dual_shot_core.py"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
@@ -252,7 +298,14 @@ def start_bot(symbols=None, trade_amt: float = None):
     bot_status["is_running"] = True
     bot_status["active_symbols"] = symbols
     bot_status["trade_amount"] = trade_amt
-    
+
+    # 持久化：後端重啟後可自動恢復
+    try:
+        with open(BOT_STATE_PATH, "w") as f:
+            json.dump({"is_running": True, "trade_amount": trade_amt}, f)
+    except Exception:
+        pass
+
     # 啟動單一多幣行程
     _start_multi_coin_bot(trade_amt)
 
@@ -272,6 +325,14 @@ def _kill_single_bot(symbol: str):
 def kill_bot():
     global bot_processes
     bot_status["is_running"] = False
+
+    # 清除持久化狀態，避免下次後端重啟誤以為要繼續運行
+    try:
+        with open(BOT_STATE_PATH, "w") as f:
+            json.dump({"is_running": False}, f)
+    except Exception:
+        pass
+
     symbols = list(bot_processes.keys())
     for s in symbols:
         _kill_single_bot(s)
@@ -295,6 +356,27 @@ def kill_bot():
 def restart_bot():
     kill_bot()
     start_bot()
+
+
+def auto_restore_bot_on_startup():
+    """後端重啟後，若之前機器人在運行中，自動重新啟動"""
+    try:
+        if not os.path.exists(BOT_STATE_PATH):
+            return
+        with open(BOT_STATE_PATH, "r") as f:
+            state = json.load(f)
+        if not state.get("is_running", False):
+            return
+        trade_amt = state.get("trade_amount", bot_status.get("trade_amount", 150.0))
+        add_system_log("♻️ [自動恢復] 偵測到後端重啟，正在自動重新啟動機器人...", "warning")
+
+        def _delayed_restore():
+            time.sleep(3)  # 等待 API 完全就緒
+            start_bot(trade_amt=trade_amt)
+
+        threading.Thread(target=_delayed_restore, daemon=True).start()
+    except Exception as e:
+        add_system_log(f"⚠️ [自動恢復] 讀取狀態失敗: {e}", "warning")
 
 def toggle_bot():
     is_running = not bot_status["is_running"]
