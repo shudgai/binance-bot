@@ -165,6 +165,10 @@ def api_set_bot_amount(amount: float):
 def api_get_logs():
     return get_system_logs()
 
+@app.get("/api/sl-states")
+def api_sl_states():
+    return bot_status.get("sl_states", {})
+
 @app.get("/api/radar/scan")
 def api_radar_scan():
     try:

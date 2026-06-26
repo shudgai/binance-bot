@@ -5276,7 +5276,24 @@ def print_multi_status():
     banned_count = sum(1 for s in STATES.values() if s.get('status') == 'BANNED')
 
     print(f"  📊 統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
-    
+
+    # 輸出各持倉的即時止損價（供網頁顯示）
+    sl_data = {}
+    for sym in ALL_SYMBOLS:
+        s = STATES.get(sym, {})
+        if abs(s.get("qty", 0.0)) > 0.000001:
+            raw_sl   = s.get("stop_loss", 0.0)
+            raw_trail = s.get("trailing_stop_price", 0.0)
+            is_long  = s.get("qty", 0.0) > 0
+            if is_long:
+                effective_sl = max(raw_sl, raw_trail) if raw_trail > 0 else raw_sl
+            else:
+                effective_sl = min(raw_sl, raw_trail) if raw_trail > 0 else raw_sl
+            sl_data[sym] = round(effective_sl, 6)
+    if sl_data:
+        import json as _json
+        print(f"@@SL_STATE@@{_json.dumps(sl_data)}")
+
     # 4. 使用分隔線區隔，讓每一輪掃描的開始更清晰
     print("-" * 60)
 

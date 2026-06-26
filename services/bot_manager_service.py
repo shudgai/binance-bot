@@ -199,6 +199,12 @@ def read_bot_output(proc, sym):
                     bot_status["leverage"] = int(line.replace("@@LEVERAGE@@", "").strip())
                 except:
                     pass
+            elif line.startswith("@@SL_STATE@@"):
+                try:
+                    import json as _json
+                    bot_status["sl_states"] = _json.loads(line.replace("@@SL_STATE@@", "").strip())
+                except Exception:
+                    pass
             elif line.startswith("@@COIN_DEBUG@@"):
                 add_system_log(line.replace("@@COIN_DEBUG@@", "").strip(), "info")
             else:

@@ -505,12 +505,16 @@
                         <span :class="['coin-chip-price', coin.priceClass]">
                             {{ formatMiniPrice(coin.price) }}
                         </span>
-                        <button
-                            v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0"
-                            @click.stop="closePositionBySymbol(coin.symbol)"
-                            class="btn btn-danger"
-                            style="padding: 2px 6px; font-size: 10px; margin-top: 4px; border-radius: 4px; width: 100%;"
-                        >平倉</button>
+                        <template v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0">
+                            <div v-if="slStates[coin.symbol]" style="font-size:9px; color:#e74c3c; margin-top:2px; font-family:monospace; text-align:center;">
+                                SL {{ slStates[coin.symbol] }}
+                            </div>
+                            <button
+                                @click.stop="closePositionBySymbol(coin.symbol)"
+                                class="btn btn-danger"
+                                style="padding: 2px 6px; font-size: 10px; margin-top: 2px; border-radius: 4px; width: 100%;"
+                            >平倉</button>
+                        </template>
                     </div>
                 </div>
                 <button @click="openCoinManager()" style="flex-shrink:0; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; color:var(--text-muted); font-size:11px; padding:6px 10px; cursor:pointer; margin-top:10px;">⚙️ 管理</button>
@@ -796,6 +800,7 @@ createApp({
         const currentCurrency = ref('USD');
         const twdRate = ref(32.5);
         const logs = ref([]);
+        const slStates = ref({});
         const activeTab = ref('chart');  // mobile tab: 'chart' | 'trade' | 'history' | 'settings'
         const consoleRef = ref(null);
         const isPlacingOrder = ref(false);
@@ -1662,7 +1667,7 @@ createApp({
         // ── WebSocket ─────────────────────────────────────────────
         let wsFallbackTimeout, reconnectTimer, fallbackInterval;
         let isUsingFallback = false, lastLogTime = 0;
-        let statusInterval, rateInterval, positionInterval, tradesInterval, logsInterval, klineInterval, allPositionsInterval, openOrdersInterval;
+        let statusInterval, rateInterval, positionInterval, tradesInterval, logsInterval, klineInterval, allPositionsInterval, openOrdersInterval, slInterval;
 
         const startHTTPFallback = () => {
             if (isUsingFallback) return;
@@ -1778,6 +1783,13 @@ createApp({
             } catch(e) {}
         };
 
+        const fetchSlStates = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/sl-states`);
+                if (res.ok) slStates.value = await res.json();
+            } catch(e) {}
+        };
+
         const fetchAllTradesHistory = async () => {
             // Implementation logic
         };
@@ -1824,6 +1836,8 @@ createApp({
             logsInterval         = setInterval(fetchBackendLogs, 2000);
             klineInterval        = setInterval(loadKlines, 60000);
             openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
+            slInterval           = setInterval(fetchSlStates, 3000);
+            fetchSlStates();
         });
 
         onUnmounted(() => {
@@ -1834,7 +1848,7 @@ createApp({
             clearInterval(statusInterval); clearInterval(positionInterval);
             clearInterval(tradesInterval); clearInterval(rateInterval);
             clearInterval(logsInterval);   clearInterval(klineInterval);
-            clearInterval(allPositionsInterval); clearInterval(openOrdersInterval);
+            clearInterval(allPositionsInterval); clearInterval(openOrdersInterval); clearInterval(slInterval);
         });
 
         // ── Submit limit / market order from the new panel ──────────
@@ -1874,7 +1888,7 @@ createApp({
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
-            allPositions, getPositionInfo, openOrders,
+            allPositions, getPositionInfo, openOrders, slStates,
             showLogs,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,
