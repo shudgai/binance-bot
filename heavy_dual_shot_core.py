@@ -3856,6 +3856,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     # 1. 基礎分 (Base Score)
     macd_hist, prev_macd_hist = _macd_vals(s)
+    macd_line = s.get("macd_line", 0.0)
+    macd_signal = s.get("macd_signal", 0.0)
+    prev_macd_line = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
 
     macd_score = 0.0
     rsi_score = 0.0
