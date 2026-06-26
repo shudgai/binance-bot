@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from ai_manager import ai_engine
@@ -1836,15 +1837,20 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "ai_summary": summary  # <--- 這是給 AI 看的核心欄位
     }
 
-    # 讀取並寫回檔案
+    # 讀取、清理 30 分鐘前舊紀錄，再寫回
+    history = []
     if os.path.exists(history_file):
         with open(history_file, 'r', encoding='utf-8') as f:
             try:
                 history = json.load(f)
                 if not isinstance(history, list): history = []
             except: history = []
-    else:
-        history = []
+
+    now_ts = time.time()
+    history = [
+        e for e in history
+        if now_ts - datetime.strptime(e["timestamp"], "%Y-%m-%d %H:%M:%S").timestamp() < 1800
+    ]
 
     history.append(trade_data)
 
