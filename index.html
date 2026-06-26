@@ -1670,26 +1670,36 @@ createApp({
         let isUsingFallback = false, lastLogTime = 0;
         let statusInterval, rateInterval, positionInterval, tradesInterval, logsInterval, klineInterval, allPositionsInterval, openOrdersInterval, slInterval;
 
+        const applyPricesBatch = (prices) => {
+            for (let coin of coins.value) {
+                const newPrice = prices[coin.symbol];
+                if (newPrice) {
+                    coin.prevPrice = coin.price;
+                    coin.price = parseFloat(newPrice);
+                    if (coin.prevPrice > 0 && coin.price !== coin.prevPrice) {
+                        coin.priceClass = coin.price > coin.prevPrice ? 'up' : coin.price < coin.prevPrice ? 'down' : '';
+                        setTimeout(() => { coin.priceClass = ''; }, 400);
+                    }
+                    if (coin.symbol === activeSymbol.value) updateLatestCandle(coin.symbol, coin.price);
+                }
+            }
+        };
+
+        const fetchPricesBatch = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/prices`);
+                if (res.ok) {
+                    const resp = await res.json();
+                    applyPricesBatch(resp.data || resp);
+                }
+            } catch(e) {}
+        };
+
         const startHTTPFallback = () => {
             if (isUsingFallback) return;
             isUsingFallback = true;
             addLog('⚠️ WS 無回應，啟用 HTTP 輪詢...', 'warning');
-            fallbackInterval = setInterval(async () => {
-                for (let coin of coins.value) {
-                    try {
-                        const res = await fetch(`${API_BASE}/price/${coin.symbol}`);
-                        if (res.ok) {
-                            const d = await res.json();
-                            coin.prevPrice = coin.price; coin.price = d.price;
-                            if (coin.prevPrice > 0) {
-                                coin.priceClass = coin.price > coin.prevPrice ? 'up' : coin.price < coin.prevPrice ? 'down' : '';
-                                setTimeout(() => { coin.priceClass = ''; }, 400);
-                            }
-                            if (coin.symbol === activeSymbol.value) updateLatestCandle(coin.symbol, coin.price);
-                        }
-                    } catch(e) {}
-                }
-            }, 3000);
+            fallbackInterval = setInterval(fetchPricesBatch, 2000);
         };
 
         const wsConnections = [];
@@ -1838,6 +1848,7 @@ createApp({
             klineInterval        = setInterval(loadKlines, 60000);
             openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
             slInterval           = setInterval(fetchSlStates, 3000);
+            setInterval(fetchPricesBatch, 5000);
             fetchSlStates();
         });
 
