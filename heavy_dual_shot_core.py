@@ -2742,8 +2742,15 @@ async def check_exits(sym):
             # 當前回落超過動態觸發點
             if profit_pct <= s["highest_profit_pct"] * trail_trigger:
                 cs = 'sell' if is_long else 'buy'
-                print(f"🛡️ [動態移動停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.3f}% 回吐 (觸發點 {trail_trigger:.2f})，於 {profit_pct*100:.3f}% 鎖定利潤出場")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=f"[Trailing_Stop_{trail_trigger}]")
+                # 紙倉：用追蹤止損觸發價（峰值獲利 × 觸發比例）模擬 Stop 單，不用 K 線收盤價
+                if PAPER_TRADING:
+                    _trail_stop_pct = s["highest_profit_pct"] * trail_trigger
+                    _trail_stop_price = avg * (1 + _trail_stop_pct) if is_long else avg * (1 - _trail_stop_pct)
+                    _exit_p = max(p, _trail_stop_price) if is_long else min(p, _trail_stop_price)
+                else:
+                    _exit_p = p
+                print(f"🛡️ [動態移動停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.3f}% 回吐 (觸發點 {trail_trigger:.2f})，鎖利出場 @ {_exit_p:.4f}")
+                await close_position(sym, cs, abs(s["qty"]), _exit_p, avg, reason=f"[Trailing_Stop_{trail_trigger}]")
                 s["highest_profit_pct"] = 0.0
                 return
 
