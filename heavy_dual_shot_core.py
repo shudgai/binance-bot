@@ -3766,11 +3766,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         adx_val = s.get("adx", 0.0)
         if adx_val > 0:  # adx 資料存在才過濾（避免初始化前誤攔截）
             # 強訊號（strength >= 20）放寬至 ADX > 15，其餘硬性要求 ADX > 18
-            adx_min = 15.0 if strength >= 20.0 else 18.0
+            adx_min = 18.0 if strength >= 20.0 else 20.0
             if adx_val < adx_min:
                 print(f"🛑 [REJECT] [Filter:ADX_Ranging] {sym} ADX {adx_val:.1f} < {adx_min:.0f}，市場處於盤整區間，假突破風險高，拒絕 {side} 訊號（強度: {strength:.1f}）")
                 return False
-            elif adx_val < 22.0:
+            elif adx_val < 25.0:
                 print(f"⚠️ [WARN] [Filter:ADX_Weak] {sym} ADX {adx_val:.1f}（弱趨勢），通過但需謹慎（強度: {strength:.1f}）")
 
     # 4. 15m 跨時框趨勢對齊 (Multi-Timeframe Alignment)
@@ -3830,8 +3830,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if ema20 > 0:
             deviation = (cp - ema20) / ema20
             if strength <= 20.0:
-                if side == "buy" and cp <= s["ohlcv"][-2][4] and deviation > 0.08:
-                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做多但價格偏離 EMA20 已達 {deviation*100:.2f}% (> 8%)，視為過熱噴發，拒絕進場防接刀")
+                if side == "buy" and deviation > 0.08:
+                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做多但價格偏離 EMA20 已達 {deviation*100:.2f}% (> 8%)，視為過熱追高，拒絕進場防接刀")
                     return False
                 if side == "sell" and deviation < -0.08:
                     print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做空但價格偏離 EMA20 已達 {abs(deviation)*100:.2f}% (> 8%)，視為過熱下挫，拒絕進場防地板空")
@@ -4741,6 +4741,14 @@ async def check_entries():
                     elif s["pending_side"] == "sell" and current_price > prev_close:
                         print(f"❌ [方向衰竭] {sym} 確認K線收盤 {current_price:.4f} > 訊號K線收盤 {prev_close:.4f}，動能未持續，取消空單")
                         is_valid = False
+
+                    # [修正 4] 第二根K線實體大小：確認K線實體 >= 訊號K線實體的 50%（排除十字星/縮量橫盤）
+                    if is_valid and len(s.get("ohlcv", [])) >= 1:
+                        _body_prev = abs(prev_close - prev_open)
+                        _body_now = abs(current_price - s["ohlcv"][-1][1])
+                        if _body_prev > 0 and _body_now < _body_prev * 0.5:
+                            print(f"❌ [動能萎縮] {sym} 確認K線實體 {_body_now:.4f} < 訊號K線實體 {_body_prev:.4f} × 50%，縮量十字星，動能不足")
+                            is_valid = False
 
                     if is_valid:
                         if s["pending_side"] == "buy" and current_price < trigger_high * 0.98:
