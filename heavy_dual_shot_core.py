@@ -1643,13 +1643,14 @@ def update_trailing_stop(sym, current_price, is_long):
         elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr:
             dynamic_sl = s["trailing_highest"] - (atr_val * trailing_distance_atr)
             trail_sl = max(trail_sl, dynamic_sl)
-        # Fallback to standard logic if no custom Swing settings
-        elif trailing_activation_atr == 0:
-            trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
-            if s["highest_profit_pct"] > 0.03:
-                trailing_multiplier = 3.0
-            elif s["highest_profit_pct"] < 0.01:
+        # Fallback: always active when Stage 2/3 not triggered (includes coins with activation_atr set but not yet reached)
+        else:
+            if s["highest_profit_pct"] > 0.02:      # >2%: 有空間讓趨勢跑
                 trailing_multiplier = 1.5
+            elif s["highest_profit_pct"] > 0.008:   # 0.8-2%: 鎖住大部分獲利
+                trailing_multiplier = 0.8
+            else:                                    # <0.8%: 緊追，一有獲利就保護
+                trailing_multiplier = 0.5
             dynamic_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
             # Legacy Breakeven：鎖定在進場價 +0.1%，覆蓋來回手續費，避免滑點造成虧損出場
@@ -1684,13 +1685,14 @@ def update_trailing_stop(sym, current_price, is_long):
         elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr:
             dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_distance_atr)
             trail_sl = min(trail_sl, dynamic_sl)
-        # Fallback to standard logic if no custom Swing settings
-        elif trailing_activation_atr == 0:
-            trailing_multiplier = s.get("trailing_stop_multiplier", 2.0)
-            if s["highest_profit_pct"] > 0.03:
-                trailing_multiplier = 3.0
-            elif s["highest_profit_pct"] < 0.01:
+        # Fallback: always active when Stage 2/3 not triggered
+        else:
+            if s["highest_profit_pct"] > 0.02:
                 trailing_multiplier = 1.5
+            elif s["highest_profit_pct"] > 0.008:
+                trailing_multiplier = 0.8
+            else:
+                trailing_multiplier = 0.5
             dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
             # Legacy Breakeven (SHORT)：鎖定在進場價 -0.1%，覆蓋來回手續費
@@ -4562,8 +4564,8 @@ async def check_entries():
                         else:
                             ema50_1h = s.get("ema50_1h", 0.0)
                             if ema50_1h > 0:
-                                if side == "buy" and p <= s["ohlcv"][-2][4] and p < ema50_1h:
-                                    print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
+                                if side == "buy" and p < ema50_1h:
+                                    print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下 (價 {p:.4f} < EMA50 {ema50_1h:.4f})，捨棄訊號")
                                     continue
                                 if side == "sell" and p > ema50_1h:
                                     print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
@@ -4847,7 +4849,7 @@ async def check_entries():
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
                 if ema50_1h > 0:
-                    if side == "buy" and cp <= s["ohlcv"][-2][4] and p < ema50_1h:
+                    if side == "buy" and p < ema50_1h:
                         print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
                         continue
                     if side == "sell" and p > ema50_1h:
