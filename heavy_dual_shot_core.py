@@ -4433,6 +4433,18 @@ async def check_entries():
                                     print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
                                     continue
 
+                    # RSI 過熱/過冷保護：趨勢型訊號確認時，禁止追高做多或追低做空
+                    if route == "a":
+                        rsi_conf = s.get("rsi", 50.0)
+                        if side == "buy" and rsi_conf > 68.0:
+                            print(f"🛑 [RSI過熱] {sym} 確認階段 RSI={rsi_conf:.1f}>68，趨勢多單追高風險過高，放棄")
+                            s["pending_side"] = None
+                            continue
+                        if side == "sell" and rsi_conf < 32.0:
+                            print(f"🛑 [RSI過冷] {sym} 確認階段 RSI={rsi_conf:.1f}<32，趨勢空單追低風險過高，放棄")
+                            s["pending_side"] = None
+                            continue
+
                     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
                     sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
                     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
@@ -4574,7 +4586,7 @@ async def check_entries():
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        _d_multiplier = 0.05 if _is_low_vol_ce else 0.07
+        _d_multiplier = 0.03 if _is_low_vol_ce else 0.04
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             continue
@@ -4585,8 +4597,8 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]  # 使用完成 K 線的開盤價計算
             
-            # 1. [放寬] RVOL 門檻與 D 塊對齊：0.15/0.2 → 0.08/0.1
-            _rvol_multiplier = 0.05 if _is_low_vol_ce else 0.07
+            # 1. [放寬] RVOL 門檻與 D 塊對齊
+            _rvol_multiplier = 0.03 if _is_low_vol_ce else 0.04
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
             
             # 2. 流動性底線 (估算 24H 交易額 > 1,000,000 USD)
