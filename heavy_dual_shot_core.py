@@ -168,8 +168,8 @@ COIN_PROFILE_CONFIG = {
     "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) ---
-    "SUIUSDT":  {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 0.9, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
-    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 11.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True},
+    "SUIUSDT":  {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 0.9, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
+    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 11.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
     "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3, "disable_rescue_dca": True},
     "APTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 0.9, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
     "ARBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 0.9, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
@@ -1678,12 +1678,12 @@ def update_trailing_stop(sym, current_price, is_long):
             trail_sl = max(trail_sl, dynamic_sl)
         # Fallback: always active when Stage 2/3 not triggered (includes coins with activation_atr set but not yet reached)
         else:
-            if s["highest_profit_pct"] > 0.02:      # >2%: 有空間讓趨勢跑
-                trailing_multiplier = 1.5
-            elif s["highest_profit_pct"] > 0.008:   # 0.8-2%: 鎖住大部分獲利
-                trailing_multiplier = 0.8
-            else:                                    # <0.8%: 緊追，一有獲利就保護
-                trailing_multiplier = 0.5
+            if s["highest_profit_pct"] > 0.02:      # >2%: 縮緊至 1.2x ATR
+                trailing_multiplier = 1.2
+            elif s["highest_profit_pct"] > 0.008:   # 0.8-2%: 縮緊至 0.6x ATR
+                trailing_multiplier = 0.6
+            else:                                    # <0.8%: 緊追 0.4x ATR
+                trailing_multiplier = 0.4
             dynamic_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
             # Legacy Breakeven：鎖定在進場價 +0.1%，覆蓋來回手續費，避免滑點造成虧損出場
@@ -1721,11 +1721,11 @@ def update_trailing_stop(sym, current_price, is_long):
         # Fallback: always active when Stage 2/3 not triggered
         else:
             if s["highest_profit_pct"] > 0.02:
-                trailing_multiplier = 1.5
+                trailing_multiplier = 1.2
             elif s["highest_profit_pct"] > 0.008:
-                trailing_multiplier = 0.8
+                trailing_multiplier = 0.6
             else:
-                trailing_multiplier = 0.5
+                trailing_multiplier = 0.4
             dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
             # Legacy Breakeven (SHORT)：鎖定在進場價 -0.1%，覆蓋來回手續費
@@ -2407,8 +2407,8 @@ async def check_exits(sym):
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     breakeven_threshold = max(entry_atr_pct * _be_mult, 0.003)
     
-    # 保本緩衝 0.2% = 手續費(0.1%) + 淨利 0.1%，確保保本出場有實質獲利
-    slippage_buffer = 0.002
+    # 保本緩衝 0.15% = 手續費(0.1%) + 淨利 0.05%
+    slippage_buffer = 0.0015
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         # 2. 計算移動保本線
@@ -2519,19 +2519,31 @@ async def check_exits(sym):
             _c_prev = s["ohlcv"][-3][4]
             _trending_to_sl = (_c_last < _c_prev) if is_long else (_c_last > _c_prev)
 
-        if _drawdown_from_peak >= 0.5 and _sl_dist_atr < 1.5 and _trending_to_sl:
+        if _drawdown_from_peak >= 0.3 and _sl_dist_atr < 1.5 and _trending_to_sl:
             cs = 'sell' if is_long else 'buy'
             print(f"💰 [入袋為安] {sym} 峰值 {_peak*100:.2f}%→現 {profit_pct*100:.2f}%，距SL {_sl_dist_atr:.1f}x ATR，方向向損，先落袋")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[SafePocket_Exit]")
             s["highest_profit_pct"] = 0.0
             return
 
+    # ── 量能高潮偵測 (Volume Climax Exit) ──
+    # 當量能爆發 (3× 均量) 且收盤轉弱 → 頂點訊號，不等回撤直接落袋
+    _vc_vol = s.get("current_vol", 0)
+    _vc_vol_ma = s.get("vol_ma20", 1)
+    _vc_prev_close = s.get("prev_close", p)
+    if (_vc_vol > _vc_vol_ma * 3.0 and profit_pct >= 0.003 and p < _vc_prev_close):
+        cs = 'sell' if is_long else 'buy'
+        print(f"🚀 [量能高潮] {sym} 爆量 {_vc_vol/_vc_vol_ma:.1f}x 均量且收盤轉弱，獲利 {profit_pct*100:.2f}%，見好就收")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Volume_Climax_Exit]")
+        s["highest_profit_pct"] = 0.0
+        return
+
     # ── Trailing TP：ATR 自適應高點停利 ──
-    # 啟動門檻 = max(0.8%, 1.0x ATR)；回撤門檻 = max(0.3%, 0.6x ATR)
+    # 啟動門檻 = max(0.5%, 0.8x ATR)；回撤門檻 = max(0.2%, 0.5x ATR)
     # 追蹤真實最高價（多單）/ 最低價（空單），不依賴百分比，更能「停在高點」
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    ts_activation_pct = max(0.008, atr_pct * 1.0)
-    ts_retracement_pct = max(0.003, atr_pct * 0.6)
+    ts_activation_pct = max(0.005, atr_pct * 0.8)
+    ts_retracement_pct = max(0.002, atr_pct * 0.5)
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
@@ -2856,20 +2868,20 @@ async def check_exits(sym):
             )
 
             if _vol_expanding:
-                # 趨勢停利：量能仍在擴張，給更多空間跟上趨勢
+                # 趨勢停利：量能擴張時給空間，但獲利越高越快鎖定
                 if s["highest_profit_pct"] >= 0.05:
-                    retrace_limit = 0.015  # 獲利>5%: 容許回撤 1.5%
+                    retrace_limit = 0.010  # 獲利>5%: 縮緊至 1.0%（見好就收）
                 elif s["highest_profit_pct"] >= 0.03:
-                    retrace_limit = 0.012  # 獲利3-5%: 容許回撤 1.2%
+                    retrace_limit = 0.010  # 獲利3-5%: 縮緊至 1.0%
                 else:
-                    retrace_limit = 0.008  # 獲利1.5-3%: 容許回撤 0.8%
+                    retrace_limit = 0.008  # 獲利1.5-3%: 維持 0.8%
                 _tp_mode = "趨勢停利(量擴)"
             else:
                 # 停在高點：量能收縮，縮緊追蹤，不讓利潤回吐
                 if s["highest_profit_pct"] >= 0.03:
-                    retrace_limit = 0.007  # 獲利>3%: 容許回撤 0.7%
+                    retrace_limit = 0.006  # 獲利>3%: 縮緊至 0.6%
                 else:
-                    retrace_limit = 0.004  # 獲利1.5-3%: 容許回撤 0.4%
+                    retrace_limit = 0.004  # 獲利1.5-3%: 維持 0.4%
                 _tp_mode = "停在高點(量縮)"
 
             limit_down = 1.0 - retrace_limit
