@@ -2405,10 +2405,10 @@ async def check_exits(sym):
     # 避免 0.15% 微利就觸發保本，導致價格彈回後立即出場（手續費白白損失）
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.002)
+    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.003)
     
-    # 保本緩衝 0.1% = 來回手續費（各 0.05%），紙倉和實盤都套用
-    slippage_buffer = 0.001
+    # 保本緩衝 0.2% = 手續費(0.1%) + 淨利 0.1%，確保保本出場有實質獲利
+    slippage_buffer = 0.002
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         # 2. 計算移動保本線
@@ -3886,11 +3886,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
     
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.25: # 原 0.6，放寬至允許 25% 的極低波動
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.5:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，盤整中 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
-    if bb_width_pct > 0 and bb_width_pct < 0.0015: # 原 0.005，放寬至布林帶寬度 0.15%
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
+    if bb_width_pct > 0 and bb_width_pct < 0.003:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶收斂盤整 (寬度={bb_width_pct*100:.2f}%<0.3%)，禁止開倉")
         return False
     if not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
