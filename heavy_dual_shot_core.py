@@ -158,7 +158,7 @@ PENDING_LIMIT_ORDERS = {}
 
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) ---
-    "SOLUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.5, "min_signal_strength": 12.0},
+    "SOLUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.5, "min_signal_strength": 10.0},
     "ETHUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.3},
     "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
     "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
@@ -169,7 +169,7 @@ COIN_PROFILE_CONFIG = {
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) ---
     "SUIUSDT":  {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
-    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 13.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True},
+    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 11.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True},
     "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
     "APTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
     "ARBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
@@ -3936,7 +3936,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         bonus_b = 3.0
 
     total_score = base_score + bonus_a + bonus_b
-    MIN_ENTRY_SCORE = 11.0  # 從 13 降至 11，放寬綜合得分門檻增加開倉次數
+    MIN_ENTRY_SCORE = 9.0  # 從 11 降至 9，進一步放寬綜合得分門檻
 
     if total_score < MIN_ENTRY_SCORE:
         print(f"🛑 [REJECT] {sym}: 硬條件通過，但總分未達標 (綜合得分: {total_score:.1f} < 門檻: {MIN_ENTRY_SCORE:.1f})")
@@ -4720,7 +4720,7 @@ async def check_entries():
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        _d_multiplier = 0.03 if _is_low_vol_ce else 0.04
+        _d_multiplier = 0.02 if _is_low_vol_ce else 0.03
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             continue
