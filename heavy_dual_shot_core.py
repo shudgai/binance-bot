@@ -2546,7 +2546,7 @@ async def check_exits(sym):
     # 啟動門檻 = max(0.5%, 0.8x ATR)；回撤門檻 = max(0.2%, 0.5x ATR)
     # 追蹤真實最高價（多單）/ 最低價（空單），不依賴百分比，更能「停在高點」
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    ts_activation_pct = max(0.008, atr_pct * 0.8)
+    ts_activation_pct = max(0.006, atr_pct * 0.8)
     ts_retracement_pct = max(0.002, atr_pct * 0.5)
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
