@@ -3522,7 +3522,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     # 1. 動態量能門檻過濾 (Adaptive Volume Gate)
     # 低波動模式下放寬至 60%，避免過度攔截安靜行情
-    current_volume = s["ohlcv"][-1][5] if s.get("ohlcv") else 0
+    # 使用最後「完成」的 K 線量能，避免當前部分 K 線量能極低導致永遠被攔
+    _ohlcv_v = s.get("ohlcv", [])
+    current_volume = _ohlcv_v[-2][5] if len(_ohlcv_v) > 1 else (_ohlcv_v[-1][5] if _ohlcv_v else 0)
     volume_ma20 = s.get("vol_ma20", 0.0)
     atr_history_v = s.get("atr_history", [])
     atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
@@ -4566,13 +4568,13 @@ async def check_entries():
                     continue
 
         # D. 真實性驗證 (Volume Confirmation) - 動態門檻
+        # Exhaustion_Entry/Extreme_Reversal 是量能衰竭反轉策略，量縮是信號本身，不需量能確認
         _atr_hist_ce = s.get("atr_history", [])
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        # [放寬] 量能真實性 D 門檻：0.15/0.2 → 0.08/0.1
         _d_multiplier = 0.05 if _is_low_vol_ce else 0.07
-        if volume < (vol_ma20 * _d_multiplier):
+        if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             continue
 
