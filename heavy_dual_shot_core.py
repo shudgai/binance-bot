@@ -947,7 +947,7 @@ def _calc_sl_tp(sym, side, s, p):
     sl_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
-    sl_dist = max(atr_val * sl_mult, p * 0.005)
+    sl_dist = max(atr_val * sl_mult, p * 0.003)
     tp_dist = max(atr_val * tp_mult, p * 0.015)
     expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
     return atr_val, sl_dist, tp_dist, expected_rr
@@ -2535,7 +2535,7 @@ async def check_exits(sym):
     _vc_vol = s.get("current_vol", 0)
     _vc_vol_ma = s.get("vol_ma20", 1)
     _vc_prev_close = s.get("prev_close", p)
-    if (_vc_vol > _vc_vol_ma * 3.0 and profit_pct >= 0.005 and p < _vc_prev_close):
+    if (_vc_vol > _vc_vol_ma * 3.0 and profit_pct >= 0.008 and p < _vc_prev_close):
         cs = 'sell' if is_long else 'buy'
         print(f"🚀 [量能高潮] {sym} 爆量 {_vc_vol/_vc_vol_ma:.1f}x 均量且收盤轉弱，獲利 {profit_pct*100:.2f}%，見好就收")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Volume_Climax_Exit]")
@@ -2546,7 +2546,7 @@ async def check_exits(sym):
     # 啟動門檻 = max(0.5%, 0.8x ATR)；回撤門檻 = max(0.2%, 0.5x ATR)
     # 追蹤真實最高價（多單）/ 最低價（空單），不依賴百分比，更能「停在高點」
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    ts_activation_pct = max(0.005, atr_pct * 0.8)
+    ts_activation_pct = max(0.008, atr_pct * 0.8)
     ts_retracement_pct = max(0.002, atr_pct * 0.5)
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
