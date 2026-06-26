@@ -1116,7 +1116,10 @@ def update_trade_signal(sym, trade):
         # 即時保本鎖定：達到 0.3% 利潤門檻立刻移動 SL 到成本
         if rt_profit >= 0.003 and not s.get("is_breakeven_locked", False):
             _buf = 0.001
-            _be = avg_p * (1 + _buf) if _is_long else avg_p * (1 - _buf)
+            # 多空保本線都設在進場價上方 avg*(1+buf)：
+            # 多單：SL 往上移到 avg*1.001（若反轉跌回此位即平倉）
+            # 空單：SL 也在 avg*1.001（若反轉漲回此位即平倉），而非錯誤的 avg*(1-buf)
+            _be = avg_p * (1 + _buf)
             _sl_now = s.get("stop_loss", 0)
             if _is_long and (_sl_now == 0 or _be > _sl_now):
                 s["stop_loss"] = _be
@@ -2211,8 +2214,8 @@ async def check_exits(sym):
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
-    # 高波動期縮短保護盲區到 20 秒，低波動維持 60 秒
-    cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
+    # 統一最小持倉保護 60 秒，防止高波動時仍被噪音快速掃出場
+    cooldown_limit = 60.0
     if hold_sec < cooldown_limit:
         # 防插針量能檢查
         current_vol = s.get("current_vol", 0.0)
@@ -2421,8 +2424,9 @@ async def check_exits(sym):
                     s['is_breakeven_locked'] = True
                     print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
         else:
-            breakeven_price = avg * (1 - slippage_buffer)
-            # 做空時：如果算出新的保本價比原本的止損價還低，才往下鎖定
+            # 做空保本線在進場價「上方」avg*(1+buf)：若價格反彈到此才出場（不虧超過手續費）
+            breakeven_price = avg * (1 + slippage_buffer)
+            # 做空 SL 從 avg+sl_dist（上方遠）往下縮到 avg*(1+buf)（上方近進場價）
             if s.get('stop_loss', float('inf')) > breakeven_price:
                 s['stop_loss'] = breakeven_price
                 if not s.get('is_breakeven_locked'):
@@ -2531,7 +2535,7 @@ async def check_exits(sym):
     _vc_vol = s.get("current_vol", 0)
     _vc_vol_ma = s.get("vol_ma20", 1)
     _vc_prev_close = s.get("prev_close", p)
-    if (_vc_vol > _vc_vol_ma * 3.0 and profit_pct >= 0.003 and p < _vc_prev_close):
+    if (_vc_vol > _vc_vol_ma * 3.0 and profit_pct >= 0.005 and p < _vc_prev_close):
         cs = 'sell' if is_long else 'buy'
         print(f"🚀 [量能高潮] {sym} 爆量 {_vc_vol/_vc_vol_ma:.1f}x 均量且收盤轉弱，獲利 {profit_pct*100:.2f}%，見好就收")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Volume_Climax_Exit]")
