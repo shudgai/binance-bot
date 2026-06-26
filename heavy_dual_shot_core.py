@@ -164,20 +164,20 @@ COIN_PROFILE_CONFIG = {
     "ADAUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
     "DOTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
     "LTCUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
-    "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
+    "LINKUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.3},
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) ---
     "SUIUSDT":  {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
     "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 13.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True},
-    "NEARUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
-    "APTUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
-    "ARBUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
-    "OPUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
-    "HYPEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
-    "AAVEUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "APTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
+    "ARBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
+    "OPUSDT":   {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
+    "HYPEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
+    "AAVEUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3, "trailing_activation_atr": 1.5, "trailing_distance_atr": 1.0},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) ---
-    "AVAXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 1.3},
+    "AVAXUSDT": {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 1.3},
     "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 1.3},
 
 }
@@ -1652,13 +1652,13 @@ def update_trailing_stop(sym, current_price, is_long):
                 trailing_multiplier = 1.5
             dynamic_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
             
-            # Legacy Breakeven
+            # Legacy Breakeven：鎖定在進場價 +0.1%，覆蓋來回手續費，避免滑點造成虧損出場
             trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
             sl_dist_atr = trigger_mult * atr_val
             breakeven_trigger = avg_price + sl_dist_atr
             if current_price >= breakeven_trigger:
-                dynamic_sl = max(dynamic_sl, avg_price)
-                
+                dynamic_sl = max(dynamic_sl, avg_price * 1.001)
+
             trail_sl = max(trail_sl, dynamic_sl)
 
         safe_min_sl = liq_price * 1.2
@@ -1693,12 +1693,13 @@ def update_trailing_stop(sym, current_price, is_long):
                 trailing_multiplier = 1.5
             dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
             
+            # Legacy Breakeven (SHORT)：鎖定在進場價 -0.1%，覆蓋來回手續費
             trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
             sl_dist_atr = trigger_mult * atr_val
             breakeven_trigger = avg_price - sl_dist_atr
             if current_price <= breakeven_trigger:
-                dynamic_sl = min(dynamic_sl, avg_price)
-                
+                dynamic_sl = min(dynamic_sl, avg_price * 0.999)  # -0.1% 覆蓋手續費
+
             trail_sl = min(trail_sl, dynamic_sl)
 
         safe_max_sl = liq_price * 0.8
@@ -2365,8 +2366,8 @@ async def check_exits(sym):
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.005)
     
-    # 1. 根據交易模式動態決定保本緩衝
-    slippage_buffer = 0.0 if PAPER_TRADING else 0.0005
+    # 保本緩衝 0.1% = 來回手續費（各 0.05%），紙倉和實盤都套用
+    slippage_buffer = 0.001
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         # 2. 計算移動保本線
