@@ -3800,10 +3800,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                         return False
         
     # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
-    min_volume = s["vol_ma20"] * 0.05
-    if s["current_vol"] < min_volume:
-        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
-        return False
+    if route not in ("Exhaustion_Entry", "Extreme_Reversal"):
+        min_volume = s["vol_ma20"] * 0.05
+        if s["current_vol"] < min_volume:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")
+            return False
 
     # =========================================================================
     # 🪙 STAGE 2 & 3: BONUS SYSTEM & EXECUTION THRESHOLD (加分系統與最終審查)
