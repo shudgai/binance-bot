@@ -1264,8 +1264,8 @@ createApp({
                     : (data.active_symbols && data.active_symbols.length > 0 ? data.active_symbols : null);
 
                 if (symbolList) {
-                    // 過濾掉 BTCUSDT/ETHUSDT（大盤指標，不顯示）
-                    const filteredSymbols = symbolList.filter(s => s !== 'BTCUSDT' && s !== 'ETHUSDT');
+                    // BTCUSDT 不是交易幣，過濾掉；ETHUSDT 現在是交易幣，保留
+                    const filteredSymbols = symbolList.filter(s => s !== 'BTCUSDT');
                     const newCoins = filteredSymbols.map(sym => {
                         const existing = coins.value.find(c => c.symbol === sym);
                         if (existing) return existing;
