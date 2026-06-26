@@ -158,7 +158,7 @@ PENDING_LIMIT_ORDERS = {}
 COIN_PROFILE_CONFIG = {
     # --- 第一類：核心趨勢層 (Core Trend) ---
     # SOL 加強版：縮短 SL/TP、提高量能門檻、提前保本、提高 RR 要求，減少虧損
-    "SOLUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 4, "rr_threshold": 1.5, "min_signal_strength": 12.0},
+    "SOLUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 4, "rr_threshold": 1.5, "min_signal_strength": 12.0},
     "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 5, "rr_threshold": 1.3},
     "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 5, "rr_threshold": 1.3},
     "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "Core_Trend", "leverage": 5, "rr_threshold": 1.3},
@@ -166,7 +166,7 @@ COIN_PROFILE_CONFIG = {
     # --- 第二類：高彈性動能層 (High-Beta Momentum) ---
     "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
     "INJUSDT":   {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 13.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True},
-    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
     "TAOUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
     "HYPEUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
     "AAVEUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
@@ -709,8 +709,8 @@ def update_all_dynamic_personalities():
 
 _, SYMBOL_PROFILES = load_symbol_config()
 
-MAX_POSITIONS = 2
-COOLDOWN_SEC = 1800
+MAX_POSITIONS = 3
+COOLDOWN_SEC = 900
 
 # -- 每日虧損熔斷 (Daily Loss Circuit Breaker) -------------------
 # 當日累計已實現虧損超過 DAILY_LOSS_LIMIT_PCT 時，封鎖所有新進場
@@ -3628,7 +3628,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # --- [BTC 4H 趨勢過濾] 硬性方向限制，避免逆勢開倉 ---
     btc_4h = MARKET_WIND.get("btc_trend_4h")  # 可能值: "BULL", "BEAR", "NEUTRAL", None
     if is_trend and btc_4h is not None:
-        _btc4h_override = 17.0  # 訊號極強才允許逆勢
+        _btc4h_override = 14.0  # 訊號強（>=14）才允許逆勢，原 17 太嚴
         if side == 'buy' and btc_4h == "BEAR":
             if strength >= _btc4h_override:
                 print(f"@@COIN_DEBUG@@ ⚡ {sym} [4H逆勢覆蓋] 熊市但訊號強度 {strength:.1f} >= {_btc4h_override}，允許做多")
@@ -3651,7 +3651,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        _mtf_override_threshold = 13.0  # 訊號強度超過此値可繞過 MTF 趨勢複覆
+        _mtf_override_threshold = 11.0  # 訊號強度超過此値可繞過 MTF 趨勢複覆（原 13 太嚴）
         
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
