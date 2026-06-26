@@ -2546,12 +2546,15 @@ async def check_exits(sym):
     # 啟動門檻 = max(0.5%, 0.8x ATR)；回撤門檻 = max(0.2%, 0.5x ATR)
     # 追蹤真實最高價（多單）/ 最低價（空單），不依賴百分比，更能「停在高點」
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    ts_activation_pct = max(0.006, atr_pct * 0.8)
+    ts_activation_pct = max(0.005, atr_pct * 0.8)
     ts_retracement_pct = max(0.002, atr_pct * 0.5)
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
             trail_sl_price = peak_price * (1 - ts_retracement_pct)
+            # 把追蹤SL寫入 stop_loss，讓 Fast_SL (每3秒) 接手，不靠25秒主循環
+            if trail_sl_price > s.get("stop_loss", 0):
+                s["stop_loss"] = trail_sl_price
             if p <= trail_sl_price:
                 cs = 'sell'
                 lock_pnl = (peak_price - avg) / avg * 100
@@ -2563,6 +2566,9 @@ async def check_exits(sym):
         else:
             trough_price = s.get("trailing_lowest", avg)
             trail_sl_price = trough_price * (1 + ts_retracement_pct)
+            # 空單：追蹤SL寫入 stop_loss（從上方往下接近，取較小值）
+            if s.get("stop_loss", float('inf')) > trail_sl_price:
+                s["stop_loss"] = trail_sl_price
             if p >= trail_sl_price:
                 cs = 'buy'
                 lock_pnl = (avg - trough_price) / avg * 100
