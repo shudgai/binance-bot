@@ -601,11 +601,16 @@
                                         ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
                                     </span>
                                 </td>
-                                <td :class="t.realized_pnl > 0 ? 'up' : (t.realized_pnl < 0 ? 'down' : '')">
-                                    {{ t.realized_pnl > 0 ? '+' : '' }}{{ t.realized_pnl === 0 ? '-' : t.realized_pnl.toFixed(4) }}
-                                    <span v-if="t.realized_pnl !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                        ({{ (t.realized_pnl / (t.price * t.qty) * 100 * (bot.leverage || 20)).toFixed(2) }}% / 實: {{ (t.realized_pnl / (t.price * t.qty) * 100).toFixed(2) }}%)
-                                    </span>
+                                <td :class="(() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const netPnl = t.is_close ? t.realized_pnl - fee : -(fee); return netPnl > 0 ? 'up' : (netPnl < 0 ? 'down' : '') })()">
+                                    <template v-if="t.is_close">
+                                        {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; return (net > 0 ? '+' : '') + net.toFixed(4) })() }}
+                                        <span style="font-size:10px; opacity:0.8; margin-left:4px;">
+                                            {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; const base = t.price * Math.abs(t.qty); const lev = bot.leverage || 20; return '(' + (net / base * 100 * lev).toFixed(2) + '% / 實: ' + (net / base * 100).toFixed(2) + '%)' })() }}
+                                        </span>
+                                    </template>
+                                    <template v-else>
+                                        <span style="color:#888; font-size:10px;">-{{ (t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005)).toFixed(4) }} 手續費</span>
+                                    </template>
                                 </td>
                                 <td>
                                     <button v-if="isOpenTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>

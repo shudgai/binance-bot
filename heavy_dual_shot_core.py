@@ -2303,9 +2303,11 @@ async def check_exits(sym):
     tp = avg + tp_dist if is_long else avg - tp_dist
 
     # ── 動態保本防護 (Dynamic Breakeven) ──
-    # 只要利潤達到 0.6 倍 ATR (或至少 0.15%)，就將停損鎖定至保本點
+    # 使用幣種 profile 的 breakeven_trigger 倍數，且至少達 min_tp_pct 的 30% 或 0.5%
+    # 避免 0.15% 微利就觸發保本，導致價格彈回後立即出場（手續費白白損失）
+    _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * 0.6, 0.0015)
+    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.005)
     
     # 1. 根據交易模式動態決定保本緩衝
     slippage_buffer = 0.0 if PAPER_TRADING else 0.0005
