@@ -720,7 +720,7 @@ COOLDOWN_SEC = 900
 
 # -- 每日虧損熔斷 (Daily Loss Circuit Breaker) -------------------
 # 當日累計已實現虧損超過 DAILY_LOSS_LIMIT_PCT 時，封鎖所有新進場
-DAILY_LOSS_LIMIT_PCT = 0.03        # 3% 帳戶資金上限
+DAILY_LOSS_LIMIT_PCT = 0.10        # 10% 帳戶資金上限
 _DAILY_REALIZED_LOSS = 0.0        # 當日累計實現虧損 (負數)
 _DAILY_LOSS_DATE     = ""          # "YYYY-MM-DD"，跨日自動重置
 _DAILY_LOSS_HALTED   = False       # 是否已觸發熔斷
