@@ -3877,6 +3877,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     # 1. 基礎分 (Base Score)
     macd_hist, prev_macd_hist = _macd_vals(s)
+    macd_line       = s.get("macd_line", 0.0)
+    macd_signal     = s.get("macd_signal", 0.0)
+    prev_macd_line  = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
+    current_rsi     = s.get("current_rsi", 50.0)
 
     macd_score = 0.0
     rsi_score = 0.0
@@ -3922,7 +3927,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         bonus_b = 3.0
 
     total_score = base_score + bonus_a + bonus_b
-    MIN_ENTRY_SCORE = 13.0
+    MIN_ENTRY_SCORE = 11.0  # 從 13 降至 11，放寬綜合得分門檻增加開倉次數
 
     if total_score < MIN_ENTRY_SCORE:
         print(f"🛑 [REJECT] {sym}: 硬條件通過，但總分未達標 (綜合得分: {total_score:.1f} < 門檻: {MIN_ENTRY_SCORE:.1f})")
@@ -4108,70 +4113,112 @@ def compute_signal_strength(sym):
         short_trend_score += 3
 
     # =========================================================================
-    # Route A (Trend Following) — 方向硬性關口（防錯向開倉核心修正）
-    # 原因：LINK 開空/BNB 開多後立即停損，是因為以下三個核心判斷全部缺失：
-    #   1. 大趨勢方向（EMA50）完全沒有檢查
-    #   2. SMA200 只加分不攔截
-    #   3. MACD 一根微小翻轉就觸發，噪音太大
-    # 修正後三道硬性方向關口：
-    #   Gate 1: 順勢做多須 close > EMA50；順勢做空須 close < EMA50
-    #   Gate 2: MACD 強度確認（crossover 或 hist 連續2根同向）
-    #   Gate 3: RSI 方向區間確認（多不追高 < 68；空不追低 > 32）
+    # Route A / B  (Trend Following + EMA20 Pullback)
+    # ─────────────────────────────────────────────────────────────────────────
+    # 設計原則：「方向一定要對，條件可以靈活」
+    #
+    # Gate 1 [EMA50 方向 — 唯一硬性閘]：
+    #   做多：close > EMA50（順勢多）
+    #   做空：close < EMA50（順勢空）
+    #   → 防止 BNB/LINK 類錯向開倉
+    #
+    # Gate 2 [RSI 方向區間 — 輕量閘]：
+    #   做多：RSI > 35（有一定上漲動能）
+    #   做空：RSI < 65（有一定下跌動能）
+    #
+    # Gate 3 [MACD — 方向正確即可，不要求加速]：
+    #   做多：macd_hist > 0 或 crossover
+    #   做空：macd_hist < 0 或 crossover
+    #   SMA200 改為純加分（EMA50 已守門，不再雙重硬擋）
+    #
+    # Route B [EMA20 回測彈跳 — 趨勢中途回踩補進]：
+    #   在 EMA50 上方回測 EMA20 後出現反彈（多頭），或
+    #   在 EMA50 下方回測 EMA20 後出現下跌（空頭）
     # =========================================================================
 
-    # Gate 1: EMA50 趨勢方向（硬性）
-    ema50_gate_long  = ema50 <= 0 or close > ema50  # 多倉：價格必須在 EMA50 之上
-    ema50_gate_short = ema50 <= 0 or close < ema50  # 空倉：價格必須在 EMA50 之下
+    # Gate 1: EMA50 方向（硬性 — 不可動）
+    ema50_gate_long  = ema50 <= 0 or close > ema50
+    ema50_gate_short = ema50 <= 0 or close < ema50
 
-    # Gate 2: SMA200 方向確認（若 SMA200 有效，逆向必須有 MACD crossover 才能進）
-    sma200_gate_long  = sma200_neutral or is_above_sma200 or long_macd_cross
-    sma200_gate_short = sma200_neutral or is_below_sma200 or short_macd_cross
+    # Gate 2: RSI 方向區間（放寬至 35/65，給更多動能空間）
+    rsi_direction_long  = rsi > 35.0
+    rsi_direction_short = rsi < 65.0
 
-    # Gate 3: RSI 方向區間（多：RSI > 38 代表有上漲動能；空：RSI < 62 代表有下跌動能）
-    rsi_direction_long  = rsi > 38.0   # RSI 太低時不要開多，等反彈確認再進
-    rsi_direction_short = rsi < 62.0   # RSI 太高時不要開空，等反彈確認再進
+    # Gate 3: MACD 方向一致即可（不要求加速，但 EMA50 已保護方向）
+    macd_ok_long  = long_macd_cross  or macd_hist > 0
+    macd_ok_short = short_macd_cross or macd_hist < 0
 
+    # SMA200 純加分（不再作為硬性關口，EMA50 已守住方向）
+    sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
+    sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
+
+    # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
-        (long_macd_cross or (macd_hist > 0 and macd_hist > prev_macd_hist)) and  # MACD 強勢確認（crossover 或連續加速）
+        macd_ok_long and
         last_candle_long and
         rsi_ok_long and
         rsi_direction_long and
-        ema50_gate_long and       # [新增] EMA50 方向硬性關口
-        sma200_gate_long and      # [新增] SMA200 方向確認
+        ema50_gate_long and
         close_near_ema20_long
     )
 
     route_a_short = (
-        (short_macd_cross or (macd_hist < 0 and macd_hist < prev_macd_hist)) and  # MACD 強勢確認
+        macd_ok_short and
         last_candle_short and
         rsi_ok_short and
         rsi_direction_short and
-        ema50_gate_short and      # [新增] EMA50 方向硬性關口
-        sma200_gate_short and     # [新增] SMA200 方向確認
+        ema50_gate_short and
         close_near_ema20_short
     )
 
-    long_base_ok = route_a_long
-    short_base_ok = route_a_short
+    # ── Route B: EMA20 回測彈跳（趨勢延續中途補進）─────────────────────────
+    # 場景：EMA50 方向確認，價格曾回測 EMA20 附近（±1.5%），現在反彈/繼續原方向
+    near_ema20_pullback = ema20 > 0 and abs(close - ema20) / ema20 <= 0.015  # 在 EMA20 ±1.5% 內
+    ema20_above_ema50   = ema20 > 0 and ema50 > 0 and ema20 > ema50  # EMA20 > EMA50 → 多頭排列
+    ema20_below_ema50   = ema20 > 0 and ema50 > 0 and ema20 < ema50  # EMA20 < EMA50 → 空頭排列
+
+    route_b_long = (
+        ema50_gate_long and
+        ema20_above_ema50 and        # EMA20 > EMA50（多頭趨勢確認）
+        near_ema20_pullback and      # 現價在 EMA20 附近（回測）
+        macd_ok_long and             # MACD 方向支持
+        rsi_direction_long and       # RSI 不在超買
+        rsi_ok_long and
+        last_candle_long             # 當根收紅（反彈確認）
+    )
+
+    route_b_short = (
+        ema50_gate_short and
+        ema20_below_ema50 and        # EMA20 < EMA50（空頭趨勢確認）
+        near_ema20_pullback and      # 現價在 EMA20 附近（反彈高點）
+        macd_ok_short and
+        rsi_direction_short and
+        rsi_ok_short and
+        last_candle_short            # 當根收黑（繼續下跌確認）
+    )
+
+    long_base_ok  = route_a_long or route_b_long
+    short_base_ok = route_a_short or route_b_short
+    route_tag     = "b" if (route_b_long or route_b_short) else "a"
 
     if long_base_ok:
-        route = "a"
+        route = route_tag
         strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
-        if is_above_sma200:
-            strength += 3.0   # SMA200 順向加分
-        strength += long_trend_score
+        if route_tag == "b":
+            strength += 2.0  # EMA20 回測彈跳加分（位置精準）
+        strength += long_trend_score + sma200_bonus_long
         return ("buy", strength if strength >= 10.0 else 0.0, route)
 
     if short_base_ok:
-        route = "a"
+        route = route_tag
         strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
-        if is_below_sma200:
-            strength += 3.0   # SMA200 順向加分
-        strength += short_trend_score
+        if route_tag == "b":
+            strength += 2.0
+        strength += short_trend_score + sma200_bonus_short
         return ("sell", strength if strength >= 10.0 else 0.0, route)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
