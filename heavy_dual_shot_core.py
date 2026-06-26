@@ -3710,10 +3710,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         # 【理由】Extreme_Reversal = RSI 極端 + BB 邊界。此時高量 = 量能高潮(Volume Climax) = 反轉確認。
         # 若用「高量 = 趨勢延續」的邏輯攔截，恰好把最有效的反轉訊號過濾掉，是致命的邏輯矛盾。
         if strength <= 20.0 and route != "Extreme_Reversal":
-            if s["current_vol"] >= s["vol_ma20"] * 1.5:
-                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能背離過濾] 強勢訊號({strength:.1f})但當前量 ({s['current_vol']:.0f}) 過大 (>= 1.5x均量 {s['vol_ma20']*1.5:.0f})，視為趨勢延續，攔截")
+            if s["current_vol"] >= s["vol_ma20"] * 3.0:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能背離過濾] 強勢訊號({strength:.1f})但當前量 ({s['current_vol']:.0f}) 過大 (>= 3.0x均量 {s['vol_ma20']*3.0:.0f})，視為趨勢延續，攔截")
                 return False
-        elif strength <= 20.0 and route == "Extreme_Reversal" and s["current_vol"] >= s["vol_ma20"] * 1.5:
+        elif strength <= 20.0 and route == "Extreme_Reversal" and s["current_vol"] >= s["vol_ma20"] * 3.0:
             print(f"@@COIN_DEBUG@@ ⚡ {sym} [Extreme_Reversal 豁免] 高量={s['current_vol']:.0f} (>= 1.5x均量) 視為量能高潮，反轉確認加分！")
 
         # 價格結構確認 (Price Action Confirmation)，擴大至過去 3 根 K 線
@@ -3790,13 +3790,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 recent_rsis = s["rsi_history"][-10:] # 取最近 10 根 RSI (最多 10 根)
                 if side == "sell":
                     highest_rsi = max(recent_rsis)
-                    if highest_rsi < 68.0:
-                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< 68.0)，未經歷極度過熱，視為逆勢空單假突破，攔截")
+                    if highest_rsi < 45.0:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< 45.0)，未經歷過熱，視為逆勢空單假突破，攔截")
                         return False
                 else:
                     lowest_rsi = min(recent_rsis)
-                    if lowest_rsi > 32.0:
-                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> 32.0)，未經歷極度超賣，視為逆勢多單假突破，攔截")
+                    if lowest_rsi > 55.0:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> 55.0)，未見明顯回撤，視為逆勢多單假突破，攔截")
                         return False
         
     # 實盤最小量限制 (移除 1000 絕對門檻，改用動態 10% 均量)
