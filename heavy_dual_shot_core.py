@@ -904,6 +904,32 @@ def get_dynamic_stagnation_limit(current_atr, atr_ma20):
         return 300
     return 480
 
+# ── 共用 helper，消除重複程式碼 ──────────────────────────────────────────────
+
+def _get_atr(s, p):
+    """安全取得 ATR 值；若為零則以價格 1% 代替。"""
+    atr = s.get("current_atr", 0.0)
+    return atr if atr > 0 else (p * 0.01)
+
+def _macd_vals(s):
+    """從 state 取出 macd_hist 與 prev_macd_hist。"""
+    macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+    prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+    return macd_hist, prev_macd_hist
+
+def _calc_sl_tp(sym, side, s, p):
+    """計算 ATR、SL 距離、TP 距離、預期盈虧比。"""
+    atr_val = _get_atr(s, p)
+    sl_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
+    tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
+    sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
+    sl_dist = max(atr_val * sl_mult, p * 0.005)
+    tp_dist = max(atr_val * tp_mult, p * 0.015)
+    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+    return atr_val, sl_dist, tp_dist, expected_rr
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def check_binance_weight():
     try:
         headers = getattr(exchange_futures, 'last_response_headers', {})
@@ -1671,7 +1697,7 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
     recent_low = float(np.min(lows))
     range_width_pct = (recent_high - recent_low) / recent_low if recent_low > 0 else 0
 
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
+    atr_val = _get_atr(s, current_price)
     atr_pct = atr_val / current_price if current_price > 0 else 0
 
     # 1) 即時成交流監聽：大額異常成交 + 明顯逆向價格跳動才判定為突破反轉
@@ -1687,8 +1713,6 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
             return "BREAKOUT_REVERSAL", f"即時大額成交異常 {s['trade_signal_reason']}"
 
     # 2) 簡化的大單/突發行情判斷：必須是與持倉方向相反的急速價格跳動
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
     volume_surge = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
     if prev_close:
         price_jump = (prev_close - current_price) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2) if is_long else \
@@ -1948,7 +1972,7 @@ def should_recover_from_reversal(sym, is_long):
     if not macd_reversal or not s.get("prev_close") or len(s["ohlcv"]) < 2:
         return False
     current_price = s["close_price"]
-    atr_val = s["current_atr"] if s["current_atr"] > 0 else (current_price * 0.01)
+    atr_val = _get_atr(s, current_price)
     prev_bar_high = s["ohlcv"][-2][2]
     prev_bar_low = s["ohlcv"][-2][3]
     breakout_confirmed = False
@@ -1956,8 +1980,6 @@ def should_recover_from_reversal(sym, is_long):
         breakout_confirmed = current_price < prev_bar_low and prev_bar_low - current_price > max(atr_val * 0.25, 0.001)
     else:
         breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
     volume_confirmed = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
     trade_signal = s.get("trade_signal_strength", 0.0)
     trade_confirmed = trade_signal >= reversal_settings["trade_signal_threshold"]
@@ -2186,7 +2208,7 @@ async def check_exits(sym):
             }
             print(f"⚠️ [REVERSE_PENDING] {sym} BB 突破偵測 → 等待下一根 K 收盤確認再反手 ({new_direction})")
     # --- A.1 第一階段：動能獵殺 (Momentum Exit) ---
-    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+    atr_val = _get_atr(s, p)
     profit_atr_mult = (p - avg) / atr_val if is_long else (avg - p) / atr_val
     
     if profit_atr_mult > 6.0:
@@ -2283,7 +2305,7 @@ async def check_exits(sym):
     sl_base = get_dynamic_atr_multiplier(sym, sl_base_raw)
 
     # [修正] 低波動市場縮緊 SL，避免設 3~4x ATR 停損卻只收 0.15% 微利
-    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
+    atr_val = _get_atr(s, p)
     atr_ma20 = s.get("atr_ma20", atr_val)
     is_low_vol = (atr_ma20 > 0 and atr_val < atr_ma20)
     if is_low_vol:
@@ -2908,12 +2930,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 return
                 
         # 2. 動能關卡 (Momentum Check): 量能與 MACD 雙重確認
-        macd_line = s.get("macd_line", 0.0)
-        macd_signal = s.get("macd_signal", 0.0)
-        prev_macd_line = s.get("prev_macd_line", 0.0)
-        prev_macd_signal = s.get("prev_macd_signal", 0.0)
-        macd_hist = macd_line - macd_signal
-        prev_macd_hist = prev_macd_line - prev_macd_signal
+        macd_hist, prev_macd_hist = _macd_vals(s)
         
         # [新增] 強勢行情豁免邏輯 (High Momentum Exemption)
         rsi = s.get("current_rsi", 50.0)
@@ -3810,12 +3827,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 🪙 STAGE 2 & 3: BONUS SYSTEM & EXECUTION THRESHOLD (加分系統與最終審查)
     # =========================================================================
     # 1. 基礎分 (Base Score)
-    macd_line = s.get("macd_line", 0.0)
-    macd_signal = s.get("macd_signal", 0.0)
-    prev_macd_line = s.get("prev_macd_line", 0.0)
-    prev_macd_signal = s.get("prev_macd_signal", 0.0)
-    macd_hist = macd_line - macd_signal
-    prev_macd_hist = prev_macd_line - prev_macd_signal
+    macd_hist, prev_macd_hist = _macd_vals(s)
 
     macd_score = 0.0
     rsi_score = 0.0
@@ -4397,17 +4409,7 @@ async def check_entries():
                     s["pending_side"] = None
                     
                     p = s["close_price"]
-                    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-                    sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-                    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-                    
-                    # 套用相同的動態倍數邏輯
-                    sl_multiplier = get_dynamic_atr_multiplier(sym, sl_multiplier_raw)
-                    
-                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-                    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-
-                    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+                    atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p)
                     min_rr = s.get("min_rr", 1.0)
                     if expected_rr < min_rr:
                         print(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
@@ -4445,17 +4447,7 @@ async def check_entries():
                             s["pending_side"] = None
                             continue
 
-                    atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-                    sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-                    tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-                    
-                    # 套用相同的動態倍數邏輯
-                    sl_multiplier = get_dynamic_atr_multiplier(sym, sl_multiplier_raw)
-                    
-                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-                    tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-                    
-                    expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+                    # atr_val, sl_dist, tp_dist, expected_rr 已在進場前計算，此處直接使用
                     base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.1)
                     # 訊號強度極高 (> 20.0) 封頂 RR 降至 0.9；(> 15.0) 降至 1.0，否則用 base_rr_thresh
                     rr_thresh = 0.9 if strength > 20.0 else (1.0 if strength > 15.0 else base_rr_thresh)
@@ -4729,16 +4721,7 @@ async def check_entries():
                         continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
-        atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
-        sl_multiplier_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
-        tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
-        
-        sl_multiplier = get_dynamic_atr_multiplier(sym, sl_multiplier_raw)
-
-        sl_dist = max(atr_val * sl_multiplier, p * 0.005)
-        tp_dist = max(atr_val * tp_multiplier, p * 0.015)
-
-        expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
+        atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p)
         base_rr_thresh = s.get("min_rr", 1.3)
         
         # 【第二步修改：放寬 RR 門檻】
