@@ -3732,6 +3732,31 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"🛑 [REJECT] [Filter:BB_Overextend] {sym} 趨勢空單：價格 {cp:.4f} 低於 BB 下軌 {bb_low:.4f}，假跌破風險高，拒絕。")
             return False
 
+    # =========================================================================
+    # 4. ADX 趨勢強度門檻（防假突破核心機制）
+    # =========================================================================
+    # 問題：開倉一開始是綠色，很快轉負數 → 「假突破」
+    # 根本原因：市場在「盤整區間（ADX 低）」時，MACD/RSI 訊號大量觸發，
+    #           但市場根本沒有方向性，一開倉就被反向吞回。
+    #
+    # ADX（Average Directional Index）衡量趨勢強度（不看方向，只看強弱）：
+    #   ADX < 18 → 市場盤整，突破十之八九是假的，禁止趨勢進場
+    #   ADX 18~25 → 弱趨勢，允許進場但需要更高訊號強度
+    #   ADX > 25 → 趨勢明確，正常開倉
+    #
+    # 豁免：Exhaustion_Entry / Extreme_Reversal 本來就是在盤整/極端區間操作，不受 ADX 限制
+    # =========================================================================
+    if is_trend_route:
+        adx_val = s.get("adx", 0.0)
+        if adx_val > 0:  # adx 資料存在才過濾（避免初始化前誤攔截）
+            # 強訊號（strength >= 20）放寬至 ADX > 15，其餘硬性要求 ADX > 18
+            adx_min = 15.0 if strength >= 20.0 else 18.0
+            if adx_val < adx_min:
+                print(f"🛑 [REJECT] [Filter:ADX_Ranging] {sym} ADX {adx_val:.1f} < {adx_min:.0f}，市場處於盤整區間，假突破風險高，拒絕 {side} 訊號（強度: {strength:.1f}）")
+                return False
+            elif adx_val < 22.0:
+                print(f"⚠️ [WARN] [Filter:ADX_Weak] {sym} ADX {adx_val:.1f}（弱趨勢），通過但需謹慎（強度: {strength:.1f}）")
+
     # 4. 15m 跨時框趨勢對齊 (Multi-Timeframe Alignment)
     # Extreme_Reversal 豁免：反轉策略本質上就是逆勢進場，MTF趨勢對齊反而是錯誤的限制
     ema20_15m = s.get("ema20_15m", 0.0)
