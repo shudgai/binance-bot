@@ -755,6 +755,24 @@ SL_ATR_MULTIPLIER = 2.5
 TP_ATR_MULTIPLIER = 3.0
 HARD_STOP_LOSS_PCT = 0.025  # 調整至 2.5%，控制單筆最大虧損
 
+# ──────────────────────────────────────────────────────────────
+# 手續費意識（Fee-Aware）參數
+# Binance 合約 Taker fee = 0.05%（有 BNB 折扣約 0.04%）
+# 5 倍槓桿下，保證金有效費用：0.05% × 5 = 0.25%（單程）
+# 來回（開 + 平）= 0.50%，這是每筆交易必須克服的「結構性成本」
+# ──────────────────────────────────────────────────────────────
+TAKER_FEE_RATE = 0.0005          # Binance Taker 0.05%
+ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2  # 開+平倉來回，佔名義價值的比例
+
+def get_fee_overhead(leverage: float = 5.0) -> float:
+    """
+    回傳以保證金為基準的來回手續費比例。
+    例：leverage=5 → 0.05% * 2 * 5 = 0.50%
+    這就是為什麼開倉後立即看到約 -0.3~-0.5% 浮虧：
+    費用已被交易所扣走，但 avg_price 沒有把費用加進去。
+    """
+    return ROUND_TRIP_FEE_PCT * leverage
+
 def build_symbol_state(sym):
     conf = COIN_PROFILE_CONFIG.get(sym, {})
     return {
@@ -3477,19 +3495,34 @@ def is_entry_volume_confirmed(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能過濾] 當前量 {current_vol:.2f} < 門檻 {min_volume:.2f} (均量:{vol_ma20:.2f} * {vol_factor})")
         return False
 
-    # --- R:R (盈虧比) 過濾 ---
+    # --- R:R (盈虧比) 過濾 + 手續費最小獲利空間 ---
     is_long = (side == 'buy')
     sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     
-    expected_profit = tp_multiplier * s.get("current_atr", 0.0)
-    expected_risk = sl_multiplier * s.get("current_atr", 0.0)
+    current_atr = s.get("current_atr", 0.0)
+    cp_rr = s.get("close_price", 0.0)
+    leverage_rr = s.get("leverage", 5)
+    
+    expected_profit = tp_multiplier * current_atr
+    expected_risk = sl_multiplier * current_atr
     
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
     rr_threshold = s.get("rr_threshold", 1.3)
     if rr_ratio < rr_threshold:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < {rr_threshold} (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
+
+    # --- 手續費最小獲利空間：預期利潤必須 > 來回手續費（以名義值比例換算）---
+    # 說明：開倉後立即出現 -0.3%~-0.5% 是「結構性成本」，不是真虧損。
+    # 但如果 ATR 太小、預期利潤不足以覆蓋手續費，就不應該進場。
+    if cp_rr > 0 and current_atr > 0:
+        fee_overhead_pct = get_fee_overhead(float(leverage_rr))  # 保證金基準的來回費用
+        expected_profit_pct = expected_profit / cp_rr            # 預期利潤佔現價的比例
+        min_profit_pct = fee_overhead_pct * 2.0                  # 至少要賺到手續費的 2 倍才值得進
+        if expected_profit_pct < min_profit_pct:
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [手續費門檻] 預期利潤 {expected_profit_pct*100:.3f}% < 最低門檻 {min_profit_pct*100:.3f}% (ATR 太小，手續費吃掉獲利)")
+            return False
 
     return True
 
@@ -3703,24 +3736,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                     else:
                         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向上 (EMA50 {ema50_1h:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold} 不足，拒絕進場")
                         return False
-
-        # --- 15m EMA 雙線中期趨勢確認（反轉策略豁免）---
-        # 只有兩條 EMA 都在現價同側（明確趨勢反向）才封鎖，避免過度過濾震盪行情
-        ema20_15m = s.get("ema20_15m", 0.0)
-        ema50_15m = s.get("ema50_15m", 0.0)
-        if ema20_15m > 0 and ema50_15m > 0 and route not in ("Exhaustion_Entry", "Extreme_Reversal"):
-            if side == "buy" and cp < ema20_15m and cp < ema50_15m:
-                if strength >= _mtf_override_threshold:
-                    print(f"@@COIN_DEBUG@@ ⚠️ {sym} [15m警告放行] 雙EMA在現價上方 (EMA20:{ema20_15m:.4f} EMA50:{ema50_15m:.4f})，強度 {strength:.1f} 覆蓋")
-                else:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:15m_EMA] 15m雙EMA向下，多單偏離趨勢 (EMA20:{ema20_15m:.4f} EMA50:{ema50_15m:.4f})")
-                    return False
-            if side == "sell" and cp > ema20_15m and cp > ema50_15m:
-                if strength >= _mtf_override_threshold:
-                    print(f"@@COIN_DEBUG@@ ⚠️ {sym} [15m警告放行] 雙EMA在現價下方 (EMA20:{ema20_15m:.4f} EMA50:{ema50_15m:.4f})，強度 {strength:.1f} 覆蓋")
-                else:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:15m_EMA] 15m雙EMA向上，空單偏離趨勢 (EMA20:{ema20_15m:.4f} EMA50:{ema50_15m:.4f})")
-                    return False
+                if sma200_15m > 0 and cp >= sma200_15m:
+                    if strength >= _mtf_override_threshold:
+                        print(f"@@COIN_DEBUG@@ ⚠️ {sym} [MTF警告放行] 15m趨勢向上 (SMA200 {sma200_15m:.4f})，強勢覆蓋，允許進場")
+                    else:
+                        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 15m趨勢向上 (SMA200 {sma200_15m:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold}，拒絕進場")
+                        return False
 
     # --- 盤整/低波動過濾 (Choppiness) ---
     atr_history = s.get("atr_history", [])
@@ -3856,10 +3877,6 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     # 1. 基礎分 (Base Score)
     macd_hist, prev_macd_hist = _macd_vals(s)
-    macd_line = s.get("macd_line", 0.0)
-    macd_signal = s.get("macd_signal", 0.0)
-    prev_macd_line = s.get("prev_macd_line", 0.0)
-    prev_macd_signal = s.get("prev_macd_signal", 0.0)
 
     macd_score = 0.0
     rsi_score = 0.0
@@ -4090,18 +4107,47 @@ def compute_signal_strength(sym):
     if last_two_candles_short:
         short_trend_score += 3
 
-    # Route A (Trend Following): SMA200 改為加分而非硬性要求
+    # =========================================================================
+    # Route A (Trend Following) — 方向硬性關口（防錯向開倉核心修正）
+    # 原因：LINK 開空/BNB 開多後立即停損，是因為以下三個核心判斷全部缺失：
+    #   1. 大趨勢方向（EMA50）完全沒有檢查
+    #   2. SMA200 只加分不攔截
+    #   3. MACD 一根微小翻轉就觸發，噪音太大
+    # 修正後三道硬性方向關口：
+    #   Gate 1: 順勢做多須 close > EMA50；順勢做空須 close < EMA50
+    #   Gate 2: MACD 強度確認（crossover 或 hist 連續2根同向）
+    #   Gate 3: RSI 方向區間確認（多不追高 < 68；空不追低 > 32）
+    # =========================================================================
+
+    # Gate 1: EMA50 趨勢方向（硬性）
+    ema50_gate_long  = ema50 <= 0 or close > ema50  # 多倉：價格必須在 EMA50 之上
+    ema50_gate_short = ema50 <= 0 or close < ema50  # 空倉：價格必須在 EMA50 之下
+
+    # Gate 2: SMA200 方向確認（若 SMA200 有效，逆向必須有 MACD crossover 才能進）
+    sma200_gate_long  = sma200_neutral or is_above_sma200 or long_macd_cross
+    sma200_gate_short = sma200_neutral or is_below_sma200 or short_macd_cross
+
+    # Gate 3: RSI 方向區間（多：RSI > 38 代表有上漲動能；空：RSI < 62 代表有下跌動能）
+    rsi_direction_long  = rsi > 38.0   # RSI 太低時不要開多，等反彈確認再進
+    rsi_direction_short = rsi < 62.0   # RSI 太高時不要開空，等反彈確認再進
+
     route_a_long = (
-        (long_macd_cross or macd_hist > 0) and
-        last_candle_long and                      # 放寬：只需1根
+        (long_macd_cross or (macd_hist > 0 and macd_hist > prev_macd_hist)) and  # MACD 強勢確認（crossover 或連續加速）
+        last_candle_long and
         rsi_ok_long and
+        rsi_direction_long and
+        ema50_gate_long and       # [新增] EMA50 方向硬性關口
+        sma200_gate_long and      # [新增] SMA200 方向確認
         close_near_ema20_long
     )
 
     route_a_short = (
-        (short_macd_cross or macd_hist < 0) and
-        last_candle_short and                     # 放寬：只需1根
+        (short_macd_cross or (macd_hist < 0 and macd_hist < prev_macd_hist)) and  # MACD 強勢確認
+        last_candle_short and
         rsi_ok_short and
+        rsi_direction_short and
+        ema50_gate_short and      # [新增] EMA50 方向硬性關口
+        sma200_gate_short and     # [新增] SMA200 方向確認
         close_near_ema20_short
     )
 
@@ -4113,16 +4159,20 @@ def compute_signal_strength(sym):
         strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
+        if is_above_sma200:
+            strength += 3.0   # SMA200 順向加分
         strength += long_trend_score
-        return ("buy", strength if strength >= 10.0 else 0.0, route)  # 門檻 12→10，放寬 ~20% 訊號
+        return ("buy", strength if strength >= 10.0 else 0.0, route)
 
     if short_base_ok:
         route = "a"
         strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
+        if is_below_sma200:
+            strength += 3.0   # SMA200 順向加分
         strength += short_trend_score
-        return ("sell", strength if strength >= 10.0 else 0.0, route)  # 門檻 12→10
+        return ("sell", strength if strength >= 10.0 else 0.0, route)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
     # 專門抓大趨勢回檔時的「價跌量縮」潛在底部
