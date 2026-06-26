@@ -2139,6 +2139,19 @@ async def check_exits(sym):
     is_long = s["qty"] > 0
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
+    # ── R:R 最低獲利門檻 ────────────────────────────────────────────
+    # 確保每筆獲利 ≥ 預期停損 × rr_threshold，防止「多贏抵不過一虧」
+    _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
+    _sl_mult   = COIN_PROFILE_CONFIG.get(sym, {}).get("sl_atr_multiplier", 2.0)
+    _rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.3)
+    _hard_sl   = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", 0.0)
+    _atr_sl_pct = (_sl_mult * _entry_atr / avg) if avg > 0 else 0.006
+    # 預期每筆虧損（取 hard_sl 與 ATR-SL 的較大值，保守估計）
+    expected_loss_pct = max(_hard_sl, _atr_sl_pct, 0.005)
+    # 最低獲利門檻 = 預期停損 × RR（確保 R:R ≥ rr_threshold）
+    min_tp_pct = expected_loss_pct * _rr_thresh
+    # ────────────────────────────────────────────────────────────────
+
     # --- A. 自動反手偵測邏輯 (Global Reverse Engine) ---
     bb_upper = s.get('bb_up', 0)
     bb_lower = s.get('bb_low', 0)
@@ -2447,7 +2460,7 @@ async def check_exits(sym):
     if len(s["pnl_history"]) > 8:
         s["pnl_history"].pop(0)
         
-    if profit_pct > 0.015 and s["highest_profit_pct"] > 0.015:
+    if profit_pct > min_tp_pct and s["highest_profit_pct"] > min_tp_pct:
         drawdown = (s["highest_profit_pct"] - profit_pct) / s["highest_profit_pct"]
         if drawdown >= 0.25:
             macd_hist_expanding = False
@@ -2505,7 +2518,8 @@ async def check_exits(sym):
         
     tier3_target = max(atr_pct * 4.0 * tier_mult, 0.012 * tier_mult, 0.008)
     tier2_target = max(atr_pct * 2.5 * tier_mult, 0.006 * tier_mult, 0.006)
-    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.003 * tier_mult, 0.003)
+    # tier1 = Trailing Stop 啟動門檻，至少 = min_tp_pct × 0.8（確保追蹤在獲利夠大時才啟動）
+    tier1_target = max(atr_pct * 1.5 * tier_mult, 0.003 * tier_mult, 0.003, min_tp_pct * 0.8)
     # ── 動能竭盡 (量價背離) 頂部逃頂機制 (升級版) ──
     # 結合了「爆發後衰竭」、「位移停滯」、「位置過濾」三大核心
     if len(s["ohlcv"]) >= 5:
@@ -2549,7 +2563,7 @@ async def check_exits(sym):
             elif not is_long and c1[4] < c2[4] and c1[5] < c2[5] * vol_threshold:
                 divergence_exit = True
             
-        if divergence_exit and profit_pct >= 0.0015:
+        if divergence_exit and profit_pct >= min_tp_pct * 0.6:
             cs = 'sell' if is_long else 'buy'
             print(f"📉 [量價背離] {sym} 抵達關鍵區位且量縮停滯 (V:{c1[5]:.0f} < {vol_threshold:.2f}x)，動能竭盡提前平倉！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Divergence]")
@@ -2609,30 +2623,30 @@ async def check_exits(sym):
 
         if hold_sec > time_decay_limit:
             cs = 'sell' if is_long else 'buy'
-            # [修正] 提高獲利門檻至 0.4%，避免只收 0.15% 的微利卻承擔 1%+ 的停損風險
-            if profit_pct >= 0.004:
-                print(f"⏳ [時間衰減獲利] {sym} 持倉已達 {hold_sec//60} 分鐘，獲利 {profit_pct*100:.2f}% 達標，出場！")
+            # 時間衰減獲利出場：需達 min_tp_pct 才退出，確保 R:R 合理
+            if profit_pct >= min_tp_pct:
+                print(f"⏳ [時間衰減獲利] {sym} 持倉已達 {hold_sec//60} 分鐘，獲利 {profit_pct*100:.2f}% >= {min_tp_pct*100:.2f}%，出場！")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Decay_Exit]")
                 s["highest_profit_pct"] = 0.0
                 return
-            # [新增] 時間對稱停損：超時且虧損 > 0.3%，切損防止繼續擴大
+            # 時間對稱停損：超時且虧損 > 0.3%，切損防止繼續擴大（停損不受 min_tp 限制）
             elif profit_pct <= -0.003:
                 print(f"⏳ [時間衰減停損] {sym} 持倉已達 {hold_sec//60} 分鐘但虧損 {profit_pct*100:.2f}%，切損出場！")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Decay_Stop]")
                 s["highest_profit_pct"] = 0.0
                 return
-            # [新增] 超時微利保護：利潤在 0~0.4% 之間，鎖定保本線繼續等
-            elif 0 < profit_pct < 0.004 and not s.get("is_breakeven_locked"):
+            # 超時微利：利潤 > 0 但未達 min_tp_pct，鎖定保本繼續等
+            elif 0 < profit_pct < min_tp_pct and not s.get("is_breakeven_locked"):
                 s["is_breakeven_locked"] = True
                 s["stop_loss"] = avg  # 鎖定保本，不讓小贏變輸
-                print(f"⏳ [時間衰減保本] {sym} 超時但利潤 {profit_pct*100:.2f}% 未達 0.4%，鎖定保本繼續等")
-        
+                print(f"⏳ [時間衰減保本] {sym} 超時但利潤 {profit_pct*100:.2f}% 未達目標 {min_tp_pct*100:.2f}%，鎖定保本繼續等")
+
         stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
-        if hold_sec > stagnation_limit and profit_pct >= 0.004:  # 門檻同步提升至 0.4%
+        if hold_sec > stagnation_limit and profit_pct >= min_tp_pct * 0.8:  # 量縮橫盤出場也需接近 min_tp
             if is_vol_stagnant and is_range_tight:
                 if not s["has_partial_closed"]:
-                    # 若利潤大於 0.6% 則先平 50% 鎖定部分利潤
-                    if 0.006 <= profit_pct < 0.008:
+                    # 第一部分：利潤在 min_tp 70~100% 之間，先平 50% 鎖定
+                    if min_tp_pct * 0.7 <= profit_pct < min_tp_pct:
                         half = abs(s["qty"]) * 0.5
                         cs = 'sell' if is_long else 'buy'
                         print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，平50%")
@@ -2641,13 +2655,13 @@ async def check_exits(sym):
                         return
                     else:
                         cs = 'sell' if is_long else 'buy'
-                        reason = "[Vol_Stagnation_Exit]" if profit_pct >= 0.008 else "[Stagnation_BreakEven]"
+                        reason = "[Vol_Stagnation_Exit]" if profit_pct >= min_tp_pct else "[Stagnation_BreakEven]"
                         print(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，全平釋放資金")
                         await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason)
                         s["highest_profit_pct"] = 0.0
                         return
-        # 僵局二階：平過50% + 8分仍未突破1% → 全平
-        if s["has_partial_closed"] and hold_sec > 480 and 0.004 <= profit_pct < 0.01:
+        # 僵局二階：平過50% + 8分仍未突破 min_tp_pct → 全平
+        if s["has_partial_closed"] and hold_sec > 480 and min_tp_pct * 0.5 <= profit_pct < min_tp_pct:
             if is_vol_stagnant and is_range_tight:
                 cs = 'sell' if is_long else 'buy'
                 print(f"⏳ [量能僵局] {sym} 剩餘50%持倉8分仍未突破1%且量縮橫盤，全平")
