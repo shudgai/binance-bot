@@ -175,7 +175,7 @@ COIN_PROFILE_CONFIG = {
     "ARBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 0.9, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
     "OPUSDT":   {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
     "HYPEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
-    "AAVEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3, "trailing_activation_atr": 1.5, "trailing_distance_atr": 1.0},
+    "AAVEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3, "trailing_activation_atr": 1.5, "trailing_distance_atr": 1.0, "disable_rescue_dca": True},
 
     # --- 第三類：投機與特定風險層 (Speculative_Risk) ---
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 1.3},
