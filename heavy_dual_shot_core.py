@@ -4425,7 +4425,7 @@ async def check_entries():
                         else:
                             ema50_1h = s.get("ema50_1h", 0.0)
                             if ema50_1h > 0:
-                                if side == "buy" and cp <= s["ohlcv"][-2][4] and p < ema50_1h:
+                                if side == "buy" and p <= s["ohlcv"][-2][4] and p < ema50_1h:
                                     print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
                                     continue
                                 if side == "sell" and p > ema50_1h:
@@ -4478,7 +4478,7 @@ async def check_entries():
                     
                     # 判斷強勢趨勢 (動能擴張且突破)
                     is_strong_trend = abs(macd_hist) > abs(prev_macd_hist) and (
-                        (side == "buy" and cp <= s["ohlcv"][-2][4] and rsi > 60.0) or (side == "sell" and rsi < 40.0)
+                        (side == "buy" and p <= s["ohlcv"][-2][4] and rsi > 60.0) or (side == "sell" and rsi < 40.0)
                     )
                     
                     # 判斷盤整區間
@@ -4490,7 +4490,7 @@ async def check_entries():
                         space_multiplier = 0.5
                     
                     if not is_strong_trend:  # 只有非強勢突破時，才受到空間過濾限制
-                        if side == "buy" and cp <= s["ohlcv"][-2][4] and s.get("bb_up", 0) > 0 and p < s.get("bb_up", 0):
+                        if side == "buy" and p <= s["ohlcv"][-2][4] and s.get("bb_up", 0) > 0 and p < s.get("bb_up", 0):
                             space = s["bb_up"] - p
                             if space < sl_dist * space_multiplier:
                                 print(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
