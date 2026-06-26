@@ -165,7 +165,7 @@ COIN_PROFILE_CONFIG = {
 
     # --- 第二類：高彈性動能層 (High-Beta Momentum) ---
     "SUIUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 1.3},
-    "INJUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
+    "INJUSDT":   {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.5, "min_signal_strength": 13.0, "hard_sl_pct": 0.012, "disable_rescue_dca": True},
     "NEARUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.4, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 1.3},
     "TAOUSDT":   {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
     "HYPEUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 1.3},
@@ -2196,14 +2196,33 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
             return
 
-    # --- 第三階段：主動觸發救援撤退 (Rescue DCA Trigger) ---
+    # --- 第三階段：硬止損 (Hard SL) + Rescue DCA ---
+    # 硬止損先行：若幣種設定了 hard_sl_pct，虧損超過時直接出場，不進行 DCA
+    _hard_sl = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", 0.0)
+    if _hard_sl > 0 and profit_pct <= -_hard_sl:
+        cs = 'sell' if is_long else 'buy'
+        print(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
+        # 硬止損後若逆勢突破明顯，設置反手信號
+        if abs(profit_pct) > 0.015:
+            last_reverse = s.get("last_reverse_time", 0)
+            if time.time() - last_reverse > 1800:
+                s["pending_reverse"] = "buy" if not is_long else "sell"
+                s["pending_reverse_time"] = time.time()
+                s["last_reverse_time"] = time.time()
+                print(f"🔄 [Hard_SL_Reverse] {sym} 硬止損後設置反手信號 → {s['pending_reverse']}")
+        return
+
     loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
-    if profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
+    _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
+    if not _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
         print(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 {loss_limit*100:.4f}%，啟動緊急救援加碼！")
         cs = "buy" if is_long else "sell"
         # 繞過常規防護
         await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
         return
+    elif _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
+        print(f"ℹ️ [DCA_Disabled] {sym} 虧損 {profit_pct*100:.2f}% 但此幣種已停用 Rescue DCA，等待 ATR-SL 出場")
 
     # --- B. 救援式 DCA 速戰速決系統 (Rescue Mode) ---
     if s.get("entry_count", 0) > 0:
@@ -2686,6 +2705,15 @@ async def check_exits(sym):
             reason_str = "[Breakeven_Stop]" if sl == avg else "[Trend_Follow]"
             print(f"🛑 [{reason_str}] {sym} -{sl_pct:.1f}%")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
+            # SL 觸發且損失 > 1.5%：逆勢動能明顯，設置反手信號
+            if abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]":
+                last_reverse = s.get("last_reverse_time", 0)
+                if time.time() - last_reverse > 1800:
+                    rev_side = "buy" if not is_long else "sell"
+                    s["pending_reverse"] = rev_side
+                    s["pending_reverse_time"] = time.time()
+                    s["last_reverse_time"] = time.time()
+                    print(f"🔄 [SL_Reverse] {sym} SL 後偵測到強勢逆向突破，設置反手 → {rev_side}")
             return
 
 
@@ -3581,13 +3609,22 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做空，但 15m EMA 向上 (現價 {cp:.4f} > 15m_EMA20 {ema20_15m:.4f})")
                     return False
 
-    # --- [BTC 4H 趨勢過濾] ---
+    # --- [BTC 4H 趨勢過濾] 硬性方向限制，避免逆勢開倉 ---
     btc_4h = MARKET_WIND.get("btc_trend_4h")  # 可能值: "BULL", "BEAR", "NEUTRAL", None
     if is_trend and btc_4h is not None:
+        _btc4h_override = 17.0  # 訊號極強才允許逆勢
         if side == 'buy' and btc_4h == "BEAR":
-            print(f"@@COIN_DEBUG@@ ⚠️ {sym} [4H大盤過濾] BTC 4H 確認熊市，但為提高開倉頻率已放行做多")
+            if strength >= _btc4h_override:
+                print(f"@@COIN_DEBUG@@ ⚡ {sym} [4H逆勢覆蓋] 熊市但訊號強度 {strength:.1f} >= {_btc4h_override}，允許做多")
+            else:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} [4H大盤過濾] BTC 4H 熊市，禁止做多 (強度 {strength:.1f} < {_btc4h_override})")
+                return False
         if side == 'sell' and btc_4h == "BULL":
-            print(f"@@COIN_DEBUG@@ ⚠️ {sym} [4H大盤過濾] BTC 4H 確認牛市，但為提高開倉頻率已放行做空")
+            if strength >= _btc4h_override:
+                print(f"@@COIN_DEBUG@@ ⚡ {sym} [4H逆勢覆蓋] 牛市但訊號強度 {strength:.1f} >= {_btc4h_override}，允許做空")
+            else:
+                print(f"@@COIN_DEBUG@@ 🛑 {sym} [4H大盤過濾] BTC 4H 牛市，禁止做空 (強度 {strength:.1f} < {_btc4h_override})")
+                return False
 
     if len(s["ohlcv"]) < 20:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
