@@ -3872,7 +3872,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
-                if strength >= _mtf_override_threshold:
+                if route == "a":
+                    # [修正 3] 趨勢型多單：MTF 1H 為硬性攔截，強度不可繞過
+                    print(f"🛑 [MTF_Hard] {sym} 趨勢多單：1H EMA50向下 ({cp:.4f}<{ema50_1h:.4f})，強制拒絕進場")
+                    return False
+                elif strength >= _mtf_override_threshold:
                     print(f"@@COIN_DEBUG@@ ⚠️ {sym} [MTF警告放行] 1H大趨勢向下，但訊號強度 {strength:.1f} >= {_mtf_override_threshold}，強勢覆蓋趨勢過濾，允許進場")
                 else:
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向下 (EMA50 {ema50_1h:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold} 不足，拒絕進場")
@@ -3880,7 +3884,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             # 空單 MTF 1H EMA50 過濾：Exhaustion_Entry 不受限（反轉策略）
             if side == 'sell' and route != "Exhaustion_Entry":
                 if cp >= ema50_1h:
-                    if strength >= _mtf_override_threshold:
+                    if route == "a":
+                        # [修正 3] 趨勢型空單：MTF 1H 為硬性攔截
+                        print(f"🛑 [MTF_Hard] {sym} 趨勢空單：1H EMA50向上 ({cp:.4f}>{ema50_1h:.4f})，強制拒絕進場")
+                        return False
+                    elif strength >= _mtf_override_threshold:
                         print(f"@@COIN_DEBUG@@ ⚠️ {sym} [MTF警告放行] 1H大趨勢向上，但訊號強度 {strength:.1f} >= {_mtf_override_threshold}，允許進場")
                     else:
                         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向上 (EMA50 {ema50_1h:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold} 不足，拒絕進場")
@@ -3904,6 +3912,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     
     if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.5:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，盤整中 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
+        return False
+    # [修正 4] 趨勢型進場額外要求：ATR 需在擴張或接近均值（不能在萎縮中）
+    if route == "a" and atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.85:
+        print(f"🛑 [Volatility_Shrink] {sym} ATR萎縮 ({current_atr:.5f} < 24H均{atr_24h_avg:.5f}×85%)，市場進入盤整，拒絕趨勢進場")
         return False
     if bb_width_pct > 0 and bb_width_pct < 0.003:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶收斂盤整 (寬度={bb_width_pct*100:.2f}%<0.3%)，禁止開倉")
@@ -4691,7 +4703,17 @@ async def check_entries():
                 prev_candle = s["ohlcv"][-2]
                 prev_open = prev_candle[1]
                 prev_close = prev_candle[4]
-                
+
+                # [修正 2] VPA 量價協同：訊號K線的量必須 >= 1.2x 均量（排除反轉路由）
+                _pending_route = s.get("pending_route", "a")
+                if _pending_route not in ("Exhaustion_Entry", "Extreme_Reversal"):
+                    _sig_vol = prev_candle[5]
+                    _vol_ma = s.get("vol_ma20", 0.0)
+                    if _vol_ma > 0 and _sig_vol < _vol_ma * 1.2:
+                        print(f"🛑 [VPA] {sym} 訊號K線量能不足 ({_sig_vol:.0f} < 1.2x均量 {_vol_ma*1.2:.0f})，無量突破，取消進場")
+                        s["pending_side"] = None
+                        continue
+
                 is_valid = False
                 if s["pending_side"] == "buy":
                     # [Layer 3] 嚴格K線：放寬容忍度至實體的 150%
@@ -4711,13 +4733,22 @@ async def check_entries():
                     current_price = s["close_price"]
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
-                    
-                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.98:
-                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98% ({trigger_high*0.98:.4f}) 以上，疑似插針假突破，取消多單。")
+
+                    # [修正 1] 第二根K線方向一致性：確認K線的動能必須延續訊號K線
+                    if s["pending_side"] == "buy" and current_price < prev_close:
+                        print(f"❌ [方向衰竭] {sym} 確認K線收盤 {current_price:.4f} < 訊號K線收盤 {prev_close:.4f}，動能未持續，取消多單")
                         is_valid = False
-                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.02:
-                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 102% ({trigger_low*1.02:.4f}) 以下，疑似插針假跌破，取消空單。")
+                    elif s["pending_side"] == "sell" and current_price > prev_close:
+                        print(f"❌ [方向衰竭] {sym} 確認K線收盤 {current_price:.4f} > 訊號K線收盤 {prev_close:.4f}，動能未持續，取消空單")
                         is_valid = False
+
+                    if is_valid:
+                        if s["pending_side"] == "buy" and current_price < trigger_high * 0.98:
+                            print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98% ({trigger_high*0.98:.4f}) 以上，疑似插針假突破，取消多單。")
+                            is_valid = False
+                        elif s["pending_side"] == "sell" and current_price > trigger_low * 1.02:
+                            print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 102% ({trigger_low*1.02:.4f}) 以下，疑似插針假跌破，取消空單。")
+                            is_valid = False
 
                 if is_valid:
                     print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
