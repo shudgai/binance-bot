@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/home/shudgai999/project/binance-bot/heavy_dual_shot_core.py'\\).read\\(\\)\\); print\\('✅ 語法正確'\\)\")",
+      "Bash(awk '{print $NF, $5}')",
+      "Bash(awk '{printf \"%6d  %s\\\\n\", $5, $NF}')",
+      "Bash(gh pr create --base main --head 20260625_0330 --title 'feat: 全面優化 — 風控、幣種擴充、15m 確認、程式清理' --body ' *)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git merge 20260625_0330 --no-ff -m ' *)",
+      "Bash(git stash *)"
+    ]
+  }
+}

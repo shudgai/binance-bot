@@ -546,6 +546,30 @@ def api_history_download(date: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/coin/{symbol}/toggle")
+def api_toggle_coin(symbol: str):
+    from services.bot_manager_service import toggle_coin_disabled
+    return toggle_coin_disabled(symbol)
+
+
+@app.get("/api/coin-profiles")
+def api_get_coin_profiles():
+    try:
+        import ast, re
+        src_path = os.path.join(os.path.dirname(__file__), "heavy_dual_shot_core.py")
+        with open(src_path, "r", encoding="utf-8") as f:
+            src = f.read()
+        # 找 COIN_PROFILE_CONFIG = { ... \n} 區塊，支援尾隨逗號
+        m = re.search(r'COIN_PROFILE_CONFIG\s*=\s*\{(.*?)\n\}', src, re.DOTALL)
+        if m:
+            # 用 ast.literal_eval 解析，補上括號
+            config = ast.literal_eval('{' + m.group(1) + '}')
+            return config
+        return {}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/open-orders")
 def get_open_orders(symbol: str):
     try:

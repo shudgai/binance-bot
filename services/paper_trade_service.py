@@ -111,8 +111,7 @@ def market_buy(symbol: str, amount: float):
     
     bot_status = get_bot_status()
     if bot_status.get("is_running"):
-        add_system_log("♻️ 已手動加倉並自動重啟機器人...", "warning")
-        restart_bot()
+        add_system_log("♻️ 已手動加倉...", "warning")
         
     return {"orderId": "manual_paper", "executedQty": str(qty)}
 
@@ -127,8 +126,7 @@ def market_short(symbol: str, amount: float):
     
     bot_status = get_bot_status()
     if bot_status.get("is_running"):
-        add_system_log("♻️ 已手動加倉並自動重啟機器人...", "warning")
-        restart_bot()
+        add_system_log("♻️ 已手動加倉...", "warning")
         
     return {"orderId": "manual_paper", "executedQty": str(qty)}
 
@@ -162,8 +160,7 @@ def market_sell(symbol: str, paper_key: str):
             
             bot_status = get_bot_status()
             if bot_status.get("is_running"):
-                add_system_log("♻️ 已重置虛擬倉位並自動重啟機器人...", "warning")
-                restart_bot()
+                add_system_log("♻️ 已重置虛擬倉位...", "warning")
                 
             return f"模擬平倉成功！獲利 {pnl:.2f} USDT"
         else:
@@ -231,8 +228,7 @@ def reset_paper_state(starting_balance: float = 150.0):
     add_system_log(f"🧹 紙交易狀態已重置為 {starting_balance} USDT，持倉與交易紀錄已清空。", "success")
 
     if bot_status.get("is_running"):
-        add_system_log("♻️ 已重置紙交易狀態，將重新啟動機器人以套用初始資金。", "warning")
-        restart_bot()
+        add_system_log("♻️ 已重置紙交易狀態，將自動同步初始資金。", "warning")
 
     return state
 

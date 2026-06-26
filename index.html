@@ -510,7 +510,41 @@
                         style="padding: 2px 6px; font-size: 10px; margin-top: 4px; border-radius: 4px; width: 100%;"
                     >平倉</button>
                 </div>
+                <button @click="openCoinManager()" style="flex-shrink:0; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; color:var(--text-muted); font-size:11px; padding:6px 10px; cursor:pointer; margin-top:10px;">⚙️ 管理</button>
+            </div>
 
+            <!-- 幣種管理 Modal -->
+            <div v-if="showCoinManager" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;" @click.self="showCoinManager=false">
+                <div style="background:var(--card-bg);border-radius:12px;padding:20px;width:min(95vw,560px);max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                        <h3 style="margin:0;font-size:14px;">⚙️ 幣種管理</h3>
+                        <span @click="showCoinManager=false" style="cursor:pointer;font-size:18px;color:var(--text-muted);">✕</span>
+                    </div>
+                    <div v-for="coin in coins" :key="coin.symbol" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <div style="flex:1;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-weight:700;font-size:14px;">{{ coin.name }}</span>
+                                <span :class="coin.priceClass" style="font-size:12px;font-family:monospace;">{{ formatMiniPrice(coin.price) }}</span>
+                                <span v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0" style="font-size:10px;background:var(--trade-down);color:#fff;border-radius:4px;padding:1px 5px;">持倉中</span>
+                            </div>
+                            <div v-if="coinProfiles[coin.symbol]" style="margin-top:4px;font-size:10px;color:var(--text-muted);display:flex;gap:12px;flex-wrap:wrap;">
+                                <span>SL <b>{{ coinProfiles[coin.symbol].sl_atr_multiplier }}x</b></span>
+                                <span>TP <b>{{ coinProfiles[coin.symbol].tp_atr_multiplier }}x</b></span>
+                                <span>量能 <b>{{ coinProfiles[coin.symbol].volume_threshold_factor }}x</b></span>
+                                <span v-if="coinProfiles[coin.symbol].min_signal_strength">信號 ≥ <b>{{ coinProfiles[coin.symbol].min_signal_strength }}</b></span>
+                                <span>RR ≥ <b>{{ coinProfiles[coin.symbol].rr_threshold }}</b></span>
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;margin-left:12px;">
+                            <span style="font-size:11px;color:var(--text-muted);">{{ disabledSymbols.includes(coin.symbol) ? '已停用' : '運行中' }}</span>
+                            <div @click="toggleCoinDisabled(coin.symbol)"
+                                :style="`cursor:pointer;width:40px;height:22px;border-radius:11px;background:${disabledSymbols.includes(coin.symbol) ? '#555' : 'var(--trade-up)'};position:relative;transition:background 0.2s;`">
+                                <div :style="`position:absolute;top:3px;${disabledSymbols.includes(coin.symbol) ? 'left:3px' : 'left:21px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left 0.2s;`"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="margin-top:12px;font-size:11px;color:var(--text-muted);">停用的幣種不會開新倉，但現有持倉仍正常管理（停損/停利）</p>
+                </div>
             </div>
 
             <!-- Trade history restored -->
@@ -548,6 +582,12 @@
                                     <span v-else-if="t.isBuyer && t.is_close" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
                                 </td>
                                 <td>{{ t.price }}</td>
+                                <td>
+                                    <span v-if="isOpenTrade(t)" :class="getTradeCurrentPrice(t) > t.price ? (t.isBuyer ? 'up' : 'down') : (getTradeCurrentPrice(t) < t.price ? (t.isBuyer ? 'down' : 'up') : '')" style="font-weight:600;">
+                                        {{ getTradeCurrentPrice(t) > 0 ? getTradeCurrentPrice(t).toFixed(4) : '-' }}
+                                    </span>
+                                    <span v-else style="color:var(--text-muted);">-</span>
+                                </td>
                                 <td>{{ t.qty }}</td>
                                 <td>{{ (t.price * Math.abs(t.qty)).toFixed(2) }}</td>
                                 <td style="color:#000000; font-size:70%;">{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }}</td>
@@ -557,11 +597,16 @@
                                         ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
                                     </span>
                                 </td>
-                                <td :class="t.realized_pnl > 0 ? 'up' : (t.realized_pnl < 0 ? 'down' : '')">
-                                    {{ t.realized_pnl > 0 ? '+' : '' }}{{ t.realized_pnl === 0 ? '-' : t.realized_pnl.toFixed(4) }}
-                                    <span v-if="t.realized_pnl !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                        ({{ (t.realized_pnl / (t.price * t.qty) * 100 * (bot.leverage || 20)).toFixed(2) }}% / 實: {{ (t.realized_pnl / (t.price * t.qty) * 100).toFixed(2) }}%)
-                                    </span>
+                                <td :class="(() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const netPnl = t.is_close ? t.realized_pnl - fee : -(fee); return netPnl > 0 ? 'up' : (netPnl < 0 ? 'down' : '') })()">
+                                    <template v-if="t.is_close">
+                                        {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; return (net > 0 ? '+' : '') + net.toFixed(4) })() }}
+                                        <span style="font-size:10px; opacity:0.8; margin-left:4px;">
+                                            {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; const base = t.price * Math.abs(t.qty); const lev = bot.leverage || 20; return '(' + (net / base * 100 * lev).toFixed(2) + '% / 實: ' + (net / base * 100).toFixed(2) + '%)' })() }}
+                                        </span>
+                                    </template>
+                                    <template v-else>
+                                        <span style="color:#888; font-size:10px;">-{{ (t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005)).toFixed(4) }} 手續費</span>
+                                    </template>
                                 </td>
                                 <td>
                                     <button v-if="isOpenTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
@@ -612,11 +657,8 @@
                 </div>
                 <div class="info-card">
                     <div class="info-title">未實現損益</div>
-                    <div :class="['info-val mono', position.pnl > 0 ? 'up' : (position.pnl < 0 ? 'down' : '')]" style="font-size:15px;">
-                        {{ position.pnl > 0 ? '+' : '' }}{{ formatCurrencyVal(position.pnl) }} USDT
-                        <span v-if="position.qty" style="font-size:10px; opacity:0.7; margin-left:4px;">
-                            ({{ position.pnl_percent.toFixed(2) }}%)
-                        </span>
+                    <div :class="['info-val mono', totalUnrealizedPnl > 0 ? 'up' : (totalUnrealizedPnl < 0 ? 'down' : '')]" style="font-size:15px;">
+                        {{ totalUnrealizedPnl > 0 ? '+' : '' }}{{ formatCurrencyVal(totalUnrealizedPnl) }} USDT
                     </div>
                 </div>
                 <div class="info-card">
@@ -772,6 +814,9 @@ createApp({
         
         const showHistoryNotebook = ref(false);
         const historySummaries = ref([]);
+        const showCoinManager = ref(false);
+        const coinProfiles = ref({});
+        const disabledSymbols = ref([]);
 
         // Limit order panel state
         const loSide = ref('long');
@@ -1216,10 +1261,18 @@ createApp({
                 if (bot.value.is_running !== data.is_running && bot.value.strategy !== '-')
                     addLog(`機器人狀態: ${data.is_running ? '🚀 啟動' : '⏹️ 停止'}`);
                 bot.value = data;
-                
+                if (Array.isArray(data.disabled_symbols)) disabledSymbols.value = data.disabled_symbols;
+
                 // 動態更新界面上的監控幣種
-                if (data.active_symbols && data.active_symbols.length > 0) {
-                    const newCoins = data.active_symbols.map(sym => {
+                // 優先用 watch_symbols（Bot 實際監控），再 fallback 到 active_symbols
+                const symbolList = (data.watch_symbols && data.watch_symbols.length > 0)
+                    ? data.watch_symbols
+                    : (data.active_symbols && data.active_symbols.length > 0 ? data.active_symbols : null);
+
+                if (symbolList) {
+                    // BTCUSDT 不是交易幣，過濾掉；ETHUSDT 現在是交易幣，保留
+                    const filteredSymbols = symbolList.filter(s => s !== 'BTCUSDT');
+                    const newCoins = filteredSymbols.map(sym => {
                         const existing = coins.value.find(c => c.symbol === sym);
                         if (existing) return existing;
                         const name = sym.replace('USDT', '');
@@ -1230,6 +1283,7 @@ createApp({
                     const newSyms = newCoins.map(c => c.symbol).join(',');
                     if (oldSyms !== newSyms) {
                         coins.value = newCoins;
+                        localStorage.setItem('coins', JSON.stringify(newCoins));
                         if (!newCoins.some(c => c.symbol === activeSymbol.value)) {
                             setActiveCoin(newCoins[0].symbol);
                         }
@@ -1542,6 +1596,16 @@ createApp({
             return (trade.price - currentPrice) * trade.qty;
         };
 
+        // 全倉即時未實現損益 — 直接加總表格開倉行的 getTradeUnrealizedPnl，與表格欄位共用同一價格來源
+        const totalUnrealizedPnl = computed(() => {
+            let total = 0;
+            for (const t of trades.value) {
+                if (t.is_close) continue;
+                total += getTradeUnrealizedPnl(t);
+            }
+            return total;
+        });
+
         const getTradeUnrealizedPnlDisplay = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
             if (pnl === 0) return '-';
@@ -1634,8 +1698,11 @@ createApp({
 
             wsFallbackTimeout = setTimeout(() => {
                 const hasAnyPrice = coins.value.some(c => c.price > 0);
-                if (!hasAnyPrice) startHTTPFallback();
-            }, 8000);
+                if (!hasAnyPrice) {
+                    addLog('⚠️ WS 5秒無資料，切換 HTTP 輪詢', 'warning');
+                    startHTTPFallback();
+                }
+            }, 5000);
 
             const url = `wss://fstream.binance.com/ws/!ticker@arr`;
             const w = new WebSocket(url);
@@ -1711,6 +1778,25 @@ createApp({
 
         const fetchAllTradesHistory = async () => {
             // Implementation logic
+        };
+
+        const openCoinManager = async () => {
+            showCoinManager.value = true;
+            try {
+                const res = await fetch(`${API_BASE}/coin-profiles`);
+                if (res.ok) coinProfiles.value = await res.json();
+            } catch(e) {}
+        };
+
+        const toggleCoinDisabled = async (symbol) => {
+            try {
+                const res = await fetch(`${API_BASE}/coin/${symbol}/toggle`, { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    disabledSymbols.value = data.all_disabled || [];
+                    showToast(`${symbol.replace('USDT','')} ${data.disabled ? '已停用' : '已恢復'}`, data.disabled ? 'warning' : 'success');
+                }
+            } catch(e) {}
         };
 
         onMounted(() => {
@@ -1789,6 +1875,7 @@ createApp({
             allPositions, getPositionInfo, openOrders,
             showLogs,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
+            showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
             activeTab,
