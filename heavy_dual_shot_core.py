@@ -1130,15 +1130,18 @@ def update_states():
             s["first_stop_time"] = 0
             print(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
 
-def mark_exit(sym, is_stop_loss=False, reason=""):
+def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
     s = STATES[sym]
     now = time.time()
     s["status"] = "COOLDOWN"
-    
-    # 動態靜默期：一般平倉 5 分鐘，停損 30 分鐘
+
+    # 動態靜默期：停損 30 分，一般平倉 60 分；大虧 ≥2% 再加 60 分（防止在同幣種連虧）
     actual_cooldown = 1800 if is_stop_loss else 3600
+    if abs(loss_pct) >= 0.02:
+        actual_cooldown += 3600
+        print(f"⚠️ [大虧延罰] {sym} 虧損 {loss_pct*100:.2f}% ≥ 2%，冷卻額外延長 60 分鐘")
     s["next_status_time"] = now + actual_cooldown
-    
+
     cd_min = actual_cooldown // 60
     s["status_reason"] = f"冷卻中 ({cd_min}分鐘) - {reason}"
     print(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN {cd_min}分鐘")
@@ -1926,7 +1929,7 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
             except Exception as ce:
                 print(f"⚠️ [取消止損單失敗] {sym}: {ce}")
                 
-        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason)
+        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=profit_pct)
         reset_coin_state(sym)
     else:
         prec = await get_contract_precision(sym)
@@ -2313,13 +2316,21 @@ async def check_exits(sym):
     else:
         sl_mult = sl_base
 
+    # 逆勢交易緊縮止損：BTC 4H 趨勢反向時，SL 縮緊 30%，快速認錯
+    btc_4h = MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
+    _is_counter_trend = (is_long and btc_4h == "BEAR") or (not is_long and btc_4h == "BULL")
+    _sl_floor_pct = 0.004
+    if _is_counter_trend:
+        sl_mult *= 0.7
+        _sl_floor_pct = 0.0025  # 0.25%（原 0.4%），逆勢時縮小最低保護距離
+
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     # [修正] 低波動市場縮短 TP 目標至 4~6x ATR，讓停利有機會實際觸及
     if is_low_vol:
         tp_base = min(tp_base, 5.0)
 
     # ── 加入最低距離保護 (Minimum Distance Floor) ──
-    sl_dist = max(sl_mult * atr_val, avg * 0.004)   # 最低 0.4%（原 0.5%，略縮）
+    sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)   # 最低 1.2%（原 1.5%，更易觸及）
     
     tp = avg + tp_dist if is_long else avg - tp_dist
@@ -2835,12 +2846,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             print(f"⚠️ [加倉上限] {sym} 已達絕對層數上限 (3層)")
             return
             
-        # [加倉防護 1] 虧損加倉防護
+        # [加倉防護 1] 虧損加倉防護：必須已在獲利狀態才允許加倉
         avg_price = s.get("avg_price", 0.0)
         if avg_price > 0:
             profit_pct = (price - avg_price) / avg_price if side == 'buy' else (avg_price - price) / avg_price
-            if profit_pct < 0.008:
-                print(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 0.8%，拒絕加倉以防拉高成本！")
+            if profit_pct < 0.015:
+                print(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 1.5%，拒絕加倉以防拉高成本！")
                 return
 
         # [加倉防護 2] 價格大幅反轉過濾
@@ -4122,34 +4133,38 @@ def compute_signal_strength(sym):
             support_ok = (bb_low > 0 and c1[3] <= bb_low * 1.005) or is_near_sma or is_near_low
             
             # 2. 價格結構確認 (Price Action)
-            # 收盤價回升且有下影線 (Hammer)
+            # 收盤價回升且有下影線 (Hammer)，且須穿越前根中點（確認真實反轉）
+            c2_mid = (c2[1] + c2[4]) / 2
             price_rebound = c1[4] > c2[4]
             has_lower_wick = (min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 0.5
-            pa_ok = price_rebound and has_lower_wick
-            bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2)
-            
+            crossed_midpoint = c1[4] > c2_mid  # 反轉蠟燭收盤須高於前根中點
+            pa_ok = price_rebound and has_lower_wick and crossed_midpoint
+            bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
+
             trend_ok = True
-            
+
             if trend_ok and support_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                 return ("buy", 15.0, "Exhaustion_Entry")
-                
+
         # 空單：抓反彈頂部
         if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
             bb_up = s.get("bb_up", 0)
             is_near_sma_res = (sma200 > 0) and (abs(c1[2] - sma200) / sma200 < 0.005)
             is_near_high = (recent_high_50 > 0) and (c1[2] >= recent_high_50 * 0.995)
             resistance_ok = (bb_up > 0 and c1[2] >= bb_up * 0.995) or is_near_sma_res or is_near_high
-            
+
             # 2. 價格結構確認 (Price Action)
-            # 收盤價回落且有上影線 (Shooting Star)
+            # 收盤價回落且有上影線 (Shooting Star)，且須穿越前根中點（確認真實反轉）
+            c2_mid = (c2[1] + c2[4]) / 2
             price_rebound = c1[4] < c2[4]
             has_upper_wick = (c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 0.5
-            pa_ok = price_rebound and has_upper_wick
-            bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2)
-            
+            crossed_midpoint = c1[4] < c2_mid  # 反轉蠟燭收盤須低於前根中點
+            pa_ok = price_rebound and has_upper_wick and crossed_midpoint
+            bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
+
             trend_ok = True
-            
+
             if trend_ok and resistance_ok and (pa_ok or bounce_ok):
                 print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                 return ("sell", 15.0, "Exhaustion_Entry")
