@@ -1,60 +1,6 @@
 {
-    "balance_usdt": 149.253561645653,
+    "balance_usdt": 150.0,
     "session_start_balance": 150.0,
-    "positions": {
-        "AVAX:USDT": {
-            "qty": 0.0,
-            "avg_price": 6.3078918,
-            "realized_pnl": 0.0,
-            "entries": []
-        },
-        "LTC:USDT": {
-            "qty": 0.0,
-            "avg_price": 41.342399,
-            "realized_pnl": 0.0,
-            "entries": []
-        }
-    },
-    "trades": [
-        {
-            "symbol": "AVAX:USDT",
-            "price": 6.3078918,
-            "qty": 59.0,
-            "time": 1782487995743,
-            "isBuyer": true,
-            "realized_pnl": 0.0,
-            "fee": 0.1860828081,
-            "is_close": false
-        },
-        {
-            "symbol": "LTC:USDT",
-            "price": 41.342399,
-            "qty": 9.053,
-            "time": 1782488128202,
-            "isBuyer": true,
-            "realized_pnl": 0.0,
-            "fee": 0.18713636907350004,
-            "is_close": false
-        },
-        {
-            "symbol": "LTC:USDT",
-            "price": 41.342399,
-            "qty": 9.053,
-            "time": 1782488332549,
-            "isBuyer": false,
-            "realized_pnl": 0.0,
-            "is_close": true,
-            "fee": 0.18713636907350004
-        },
-        {
-            "symbol": "AVAX:USDT",
-            "price": 6.3078918,
-            "qty": 59.0,
-            "time": 1782488332554,
-            "isBuyer": false,
-            "realized_pnl": 0.0,
-            "is_close": true,
-            "fee": 0.1860828081
-        }
-    ]
+    "positions": {},
+    "trades": []
 }
