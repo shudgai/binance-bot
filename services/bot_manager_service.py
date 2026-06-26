@@ -349,21 +349,20 @@ def kill_bot():
     for s in symbols:
         _kill_single_bot(s)
     
-    # 確保所有遺留的 bot 行程都被清除，防止 API 重啟後產生孤兒行程
-    # 使用精確字串匹配，避免誤殺 multi_coin_bot_v2.py（其名稱包含 multi_coin_bot.py 作為子字串）
+    # 確保所有遺留的 bot 行程都被清除（包含 manage_bot.sh 直接啟動的進程）
     try:
-        os.system("pkill -f 'multi_coin_bot_v2\\.py'")
-        os.system("pkill -f '[^2]multi_coin_bot\\.py'")
+        os.system("pkill -f 'heavy_dual_shot_core\\.py'")
     except:
         pass
 
     # 移除單例鎖定檔，避免已終止程序遺留鎖定導致新進程啟動失敗
-    try:
-        os.remove("/tmp/binance_bot_single_instance.lock")
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+    for _lf in ("/tmp/binance_bot_32f2e2ed.lock", "/tmp/binance_bot_single_instance.lock"):
+        try:
+            os.remove(_lf)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
 
 def restart_bot():
     kill_bot()
