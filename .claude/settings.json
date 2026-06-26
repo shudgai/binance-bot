@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/home/shudgai999/project/binance-bot/heavy_dual_shot_core.py'\\).read\\(\\)\\); print\\('✅ 語法正確'\\)\")",
+      "Bash(awk '{print $NF, $5}')"
+    ]
+  }
+}
