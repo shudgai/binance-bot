@@ -1771,12 +1771,18 @@ def update_trailing_stop(sym, current_price, is_long):
             # --- 【修改 1】獲利區間動態縮緊 Trailing Stop (Profit-Tier Dynamic Tightening) ---
             # 獲利越高，追蹤網越緊；獲利初期給對價格呼吸空間
             _hp_f = s["highest_profit_pct"]
-            if _hp_f > 0.05:        # > 5%：極度縮緊
-                trailing_multiplier = 0.4
-            elif _hp_f > 0.02:      # 2% ~ 5%：縮緊
-                trailing_multiplier = 0.7
-            else:                   # < 2%：較寬，防雜訊洗出場
-                trailing_multiplier = 1.0
+            personality = s.get("personality", "balanced")
+            profile_type = s.get("profile_type", "")
+            
+            if personality == "aggressive" or "High_Beta" in profile_type:
+                if _hp_f > 0.05:        trailing_multiplier = 0.6  # 放寬以擴大利潤
+                elif _hp_f > 0.02:      trailing_multiplier = 0.9
+                else:                   trailing_multiplier = 1.3  # 給予更多呼吸空間
+            else:
+                if _hp_f > 0.05:        trailing_multiplier = 0.4
+                elif _hp_f > 0.02:      trailing_multiplier = 0.7
+                else:                   trailing_multiplier = 1.0
+                
             # 最小距離防護：確保至少 0.25% 緩衝
             _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
             dynamic_sl = s["trailing_highest"] - _min_gap_l
@@ -1817,12 +1823,18 @@ def update_trailing_stop(sym, current_price, is_long):
         else:
             # --- 【修改 1】獲利區間動態縮緊 Trailing Stop (空單) ---
             _hp_fs = s["highest_profit_pct"]
-            if _hp_fs > 0.05:       # > 5%：極度縮緊
-                trailing_multiplier = 0.4
-            elif _hp_fs > 0.02:     # 2% ~ 5%：縮緊
-                trailing_multiplier = 0.7
-            else:                   # < 2%：較寬，防雜訊洗出場
-                trailing_multiplier = 1.0
+            personality = s.get("personality", "balanced")
+            profile_type = s.get("profile_type", "")
+            
+            if personality == "aggressive" or "High_Beta" in profile_type:
+                if _hp_fs > 0.05:       trailing_multiplier = 0.6
+                elif _hp_fs > 0.02:     trailing_multiplier = 0.9
+                else:                   trailing_multiplier = 1.3
+            else:
+                if _hp_fs > 0.05:       trailing_multiplier = 0.4
+                elif _hp_fs > 0.02:     trailing_multiplier = 0.7
+                else:                   trailing_multiplier = 1.0
+                
             # 最小距離防護
             _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
             dynamic_sl = s["trailing_lowest"] + _min_gap_s
@@ -2618,7 +2630,8 @@ async def check_exits(sym):
     # --- 【修改建議 3】保本緩衝調升至 0.3% ---
     # 0.3% = 手續費來回(0.1%) + 滑點(0.1%) + 淨利緩衝(0.1%)
     # 確保鎖定的保本線能覆蓋來回手續費與滑點後仍有實質淨利
-    slippage_buffer = 0.003
+    # 確保保本線在手續費、滑點、以及一個微小的「波動緩衝」之上，減少微小波動洗出場
+    slippage_buffer = 0.005
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         # 2. 計算移動保本線
@@ -2812,14 +2825,18 @@ async def check_exits(sym):
                 # "volume decay + 70% of target" = early harvest
                 # "volume decay + small profit" = midgame pause, hold position
                 _vd_progress = profit_pct / min_tp_pct if min_tp_pct > 0 else 0.0
-                if _vd_progress >= 0.70:
+                # 若是強勢趨勢，將出場門檻提高到 0.85，讓利潤有機會擴大
+                is_strong = s.get("current_strength", 0.0) >= 15.0 or s.get("pending_route", "") == "a"
+                vd_threshold = 0.85 if is_strong else 0.70
+                
+                if _vd_progress >= vd_threshold:
                     cs = 'sell' if is_long else 'buy'
-                    print(f"[Vol_Decay_Harvest] {sym} vol decay, profit {profit_pct*100:.2f}% at {_vd_progress*100:.0f}% of target, early exit")
+                    print(f"[Vol_Decay_Harvest] {sym} vol decay, profit {profit_pct*100:.2f}% at {_vd_progress*100:.0f}% of target, early exit (Threshold: {vd_threshold*100:.0f}%)")
                     await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Decay_Exit]")
                     s["highest_profit_pct"] = 0.0
                     return
                 else:
-                    print(f"[Vol_Decay_Held] {sym} vol decay but profit only {profit_pct*100:.2f}% (progress {_vd_progress*100:.0f}%<70%), holding")
+                    print(f"[Vol_Decay_Held] {sym} vol decay but profit only {profit_pct*100:.2f}% (progress {_vd_progress*100:.0f}%<{vd_threshold*100:.0f}%), holding")
 
     # ── Trailing TP：槓桿自適應高點停利 ──
     # 啟動門檻 = max(1.2%顯示÷槓桿, 0.2x ATR)；ATR 高幣種不再推高門檻
@@ -4081,8 +4098,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         eval_vol = s.get("current_vol", current_volume)
         
         if avg_body_size > 0 and volume_ma20 > 0:
-            # 條件：實體大於平均 1.2 倍，且成交量大於平均 1.3 倍 (嚴格要求 AND)
-            if current_body_size <= avg_body_size * 1.2 or eval_vol <= volume_ma20 * 1.3:
+            # 條件：實體大於平均 1.3 倍，且成交量大於平均 1.4 倍 (嚴格要求 AND)
+            if current_body_size <= avg_body_size * 1.3 or eval_vol <= volume_ma20 * 1.4:
                 # 若訊號強度非常高 (e.g. > 20.0) 或反轉路線，給予豁免
                 if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
                     print(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢訊號({strength:.1f})或反手/枯竭路由，豁免實體/量能嚴格門檻")
