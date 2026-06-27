@@ -4477,25 +4477,37 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 print(f"🛑 [Profit_Erosion] {sym} 空單動能未擴張：MACD Histogram ({macd_hist_pe:.6f} >= {prev_macd_hist_pe:.6f})，趨勢斜率過緩易被洗，拒絕進場")
                 return False
 
-        # 4. 拒絕天花板追高過濾 (Micro-Pullback Entry Check)
+        # 4. [加強版] 微回調進場過濾 (Micro-Pullback Check)
         # 解決「不想買在最高點」的問題。強制要求現價必須從短線極端點回撤一定比例才能進場。
         if len(s.get("ohlcv", [])) >= 5 and atr_pe > 0:
             past_5_candles = s["ohlcv"][-5:]
             past_5_high = max([c[2] for c in past_5_candles])
             past_5_low = min([c[3] for c in past_5_candles])
             
-            if side == "buy":
-                # 如果現價距離 5K 最高點不到 0.25 個 ATR，視為「貼著天花板」，拒絕追高
-                dist_from_high = past_5_high - cp
-                if dist_from_high < atr_pe * 0.25:
-                    print(f"🛑 [Micro_Pullback] {sym} 多單：現價 ({cp:.4f}) 緊貼 5K 最高點 ({past_5_high:.4f})，拒絕在天花板追高，等待微回調")
-                    return False
-            elif side == "sell":
-                # 如果現價距離 5K 最低點不到 0.25 個 ATR，視為「貼著地板」，拒絕追空
-                dist_from_low = cp - past_5_low
-                if dist_from_low < atr_pe * 0.25:
-                    print(f"🛑 [Micro_Pullback] {sym} 空單：現價 ({cp:.4f}) 緊貼 5K 最低點 ({past_5_low:.4f})，拒絕在地板追空，等待微反彈")
-                    return False
+            # 判斷是否貼著天花板/地板 (距離 0.2% 以內)
+            is_too_close_to_high = (side == 'buy' and cp > (past_5_high * 0.998))
+            is_too_close_to_low = (side == 'sell' and cp < (past_5_low * 1.002))
+            
+            if is_too_close_to_high or is_too_close_to_low:
+                # 動態豁免條件：若強勢訊號或爆量，則放寬過濾 (防止錯失噴發大行情)
+                vol_ma20 = s.get("vol_ma20", 0.0)
+                current_vol = s.get("current_vol", 0.0)
+                is_momentum_super_strong = (strength >= 25.0) or (vol_ma20 > 0 and current_vol > vol_ma20 * 2.0)
+                
+                if not is_momentum_super_strong:
+                    # 檢查是否有足夠的回調空間 (距離 > 0.25 ATR)
+                    if side == 'buy':
+                        dist_from_high = past_5_high - cp
+                        if dist_from_high < atr_pe * 0.25:
+                            print(f"🛑 [Micro_Pullback] {sym} 多單：現價 ({cp:.4f}) 緊貼 5K 最高點 ({past_5_high:.4f})，需微回調 > {atr_pe*0.25:.4f}")
+                            return False
+                    elif side == 'sell':
+                        dist_from_low = cp - past_5_low
+                        if dist_from_low < atr_pe * 0.25:
+                            print(f"🛑 [Micro_Pullback] {sym} 空單：現價 ({cp:.4f}) 緊貼 5K 最低點 ({past_5_low:.4f})，需微回彈 > {atr_pe*0.25:.4f}")
+                            return False
+                else:
+                    print(f"⚡ [Momentum_Bypass] {sym} 雖貼近極端點但動能極強 (Strength: {strength:.1f}, Vol Ratio: {current_vol/max(vol_ma20,1):.1f}x)，豁免微回調過濾")
 
     print(f"💚 [PASS] {sym}: 完美通過全套風控，准予開倉！(總得分: {total_score:.1f}, 基礎分: {base_score:.1f}, 加分A: {bonus_a:.1f}, 加分B: {bonus_b:.1f})")
 
