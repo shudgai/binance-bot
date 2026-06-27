@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 :root {
   --bg-color: #f5f7fa;
@@ -227,6 +228,33 @@ td.down{color:var(--trade-down);font-weight:700;font-family:'JetBrains Mono';}
 .modal-head{display:flex;justify-content:space-between;align-items:center;
   padding:16px 20px;border-bottom:1px solid var(--border-color);}
 .modal-body{padding:20px;}
+
+/* ── CHART ── */
+.chart-wrap{background:var(--card-bg);border:1px solid var(--border-color);
+  border-radius:14px;overflow:hidden;margin:12px 0;box-shadow:0 1px 4px rgba(0,0,0,.05);}
+.chart-head{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px;border-bottom:1px solid var(--border-color);}
+.chart-head-title{font-size:12px;font-weight:700;color:var(--text-main);}
+.chart-tf-btn{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;
+  border:1px solid var(--border-color);background:none;cursor:pointer;color:var(--text-muted);}
+.chart-tf-btn.active{background:var(--primary);color:#000;border-color:var(--primary);}
+.chart-indicators{display:flex;gap:12px;padding:6px 12px;font-size:10px;
+  border-bottom:1px solid var(--border-color);background:#fafafa;}
+#spot-chart{height:200px;}
+
+/* ── SIGNAL RADAR ── */
+.signal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;}
+.signal-chip{background:var(--card-bg);border:1px solid var(--border-color);
+  border-radius:10px;padding:7px 8px;cursor:pointer;transition:all .15s;}
+.signal-chip:hover{border-color:var(--primary);}
+.signal-chip.sig-long{border-color:rgba(5,150,105,.4);background:rgba(5,150,105,.04);}
+.signal-chip.sig-short{border-color:rgba(220,38,38,.3);background:rgba(220,38,38,.03);}
+.signal-chip-name{font-size:11px;font-weight:800;color:var(--text-main);}
+.signal-chip-rsi{font-size:10px;font-family:'JetBrains Mono';color:var(--text-muted);}
+.signal-dir{font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;float:right;}
+.dir-long{background:rgba(5,150,105,.12);color:var(--success);}
+.dir-short{background:rgba(220,38,38,.1);color:var(--danger);}
+.dir-neutral{background:#f3f4f6;color:var(--text-muted);}
 </style>
 </head>
 <body>
@@ -277,6 +305,43 @@ td.down{color:var(--trade-down);font-weight:700;font-family:'JetBrains Mono';}
           持有 {{ fmtCoin(activeHolding, activeCoin) }} {{ activeCoin }}
         </span>
         <span v-else style="color:var(--text-muted)">未持有</span>
+      </div>
+    </div>
+
+    <!-- K-line chart -->
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <span class="chart-head-title">📈 {{ activeCoin }}/USDT K 線</span>
+        <div style="display:flex;gap:4px">
+          <button v-for="tf in ['1m','5m','15m','1h']" :key="tf"
+            :class="['chart-tf-btn', chartTf===tf ? 'active' : '']"
+            @click="chartTf=tf; loadChart()">{{ tf }}</button>
+        </div>
+      </div>
+      <div v-if="chartIndicators.rsi" class="chart-indicators">
+        <span>RSI <b :style="{color: chartIndicators.rsi>70?'var(--danger)':chartIndicators.rsi<30?'var(--success)':'var(--text-main)'}">{{ chartIndicators.rsi }}</b></span>
+        <span>MACD <b :style="{color: chartIndicators.macdBull?'var(--success)':'var(--danger)'}">{{ chartIndicators.macdBull ? '多' : '空' }}</b></span>
+        <span>趨勢 <b :style="{color: chartIndicators.trend==='long'?'var(--success)':chartIndicators.trend==='short'?'var(--danger)':'var(--text-muted)'}">
+          {{ chartIndicators.trend==='long' ? '↑多' : chartIndicators.trend==='short' ? '↓空' : '中性' }}
+        </b></span>
+        <span v-if="chartIndicators.bb">BB <b>{{ chartIndicators.bb }}</b></span>
+      </div>
+      <div id="spot-chart"></div>
+    </div>
+
+    <!-- Signal radar grid -->
+    <div class="section-title">📡 趨勢雷達</div>
+    <div class="signal-grid">
+      <div v-for="(sig, coin) in signals" :key="coin"
+        :class="['signal-chip', sig.trend==='long'?'sig-long':sig.trend==='short'?'sig-short':'']"
+        @click="activeCoin=coin; loadChart()">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="signal-chip-name">{{ coin }}</span>
+          <span :class="['signal-dir', sig.trend==='long'?'dir-long':sig.trend==='short'?'dir-short':'dir-neutral']">
+            {{ sig.trend==='long' ? '▲多' : sig.trend==='short' ? '▼空' : '─' }}
+          </span>
+        </div>
+        <div class="signal-chip-rsi">RSI {{ sig.rsi }} | {{ sig.macd_bull ? 'MACD↑' : 'MACD↓' }}</div>
       </div>
     </div>
 
@@ -638,11 +703,17 @@ createApp({
     const resetAmt   = ref(10000);
     const prevPrice  = ref({});
     const toast      = ref({ show:false, msg:'', type:'' });
+    const signals    = ref({});
+    const chartTf    = ref('5m');
+    const chartIndicators = ref({});
 
-    let refreshTimer = null;
-    let autoTimer    = null;
-    let cvTimer      = null;
-    let sltpTimer    = null;
+    let refreshTimer  = null;
+    let autoTimer     = null;
+    let cvTimer       = null;
+    let sltpTimer     = null;
+    let signalTimer   = null;
+    let chartInstance = null;
+    let candleSeries  = null;
 
     // ── computed ──
     const allCoinNames = computed(() => coinList.value.length ? coinList.value : Object.keys(COIN_COLORS));
@@ -759,6 +830,87 @@ createApp({
         const d = await (await fetch(B+'/api/spot/open-trades')).json();
         openTrades.value = d.open_trades || {};
       } catch {}
+    }
+    async function loadSignals() {
+      try {
+        const d = await (await fetch(B+'/api/spot/signals')).json();
+        if (d.success) signals.value = d.signals;
+      } catch {}
+    }
+    async function loadChart() {
+      const sym = activeCoin.value + 'USDT';
+      try {
+        const d = await (await fetch(`${B}/api/klines/${sym}?interval=${chartTf.value}&limit=120`)).json();
+        if (!d.data || !d.data.length) return;
+        const cData = d.data.map(k => ({
+          time: k.open_time,
+          open:  k.open,
+          high:  k.high,
+          low:   k.low,
+          close: k.close,
+        }));
+        // Compute RSI from closes
+        const closes = d.data.map(k => k.close);
+        const rsiVal = computeRSI(closes, 14);
+        const macdBull = computeMACDBull(closes);
+        const last = d.data[d.data.length-1];
+        const bbMid = computeSMA(closes, 20);
+        const bbBull = last.close > bbMid;
+        chartIndicators.value = {
+          rsi: rsiVal.toFixed(1),
+          macdBull,
+          trend: macdBull && rsiVal > 48 ? 'long' : (!macdBull && rsiVal < 52 ? 'short' : 'neutral'),
+          bb: bbBull ? '上方' : '下方',
+        };
+        if (!chartInstance) initChart();
+        candleSeries.setData(cData);
+      } catch {}
+    }
+    function initChart() {
+      const el = document.getElementById('spot-chart');
+      if (!el) return;
+      chartInstance = LightweightCharts.createChart(el, {
+        width: el.clientWidth, height: 200,
+        layout: { background:{color:'#fff'}, textColor:'#374151' },
+        grid: { vertLines:{color:'#f3f4f6'}, horzLines:{color:'#f3f4f6'} },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor:'#e5e7eb' },
+        timeScale: { borderColor:'#e5e7eb', timeVisible:true, secondsVisible:false },
+      });
+      candleSeries = chartInstance.addCandlestickSeries({
+        upColor:'#059669', downColor:'#dc2626',
+        borderUpColor:'#059669', borderDownColor:'#dc2626',
+        wickUpColor:'#059669', wickDownColor:'#dc2626',
+      });
+      const ro = new ResizeObserver(() => {
+        if (chartInstance) chartInstance.applyOptions({width: el.clientWidth});
+      });
+      ro.observe(el);
+    }
+    function computeRSI(closes, period=14) {
+      if (closes.length < period+1) return 50;
+      let gains=0, losses=0;
+      for (let i=closes.length-period; i<closes.length; i++) {
+        const d = closes[i]-closes[i-1];
+        if (d>=0) gains+=d; else losses-=d;
+      }
+      const rs = gains/Math.max(losses,1e-8);
+      return 100 - 100/(1+rs);
+    }
+    function computeMACDBull(closes) {
+      const ema = (arr, n) => {
+        let e=arr[0], k=2/(n+1);
+        for (let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k);
+        return e;
+      };
+      if (closes.length < 26) return true;
+      const fast=ema(closes,12), slow=ema(closes,26);
+      const fast2=ema(closes.slice(0,-1),12), slow2=ema(closes.slice(0,-1),26);
+      return (fast-slow) > (fast2-slow2);
+    }
+    function computeSMA(closes, n) {
+      if (closes.length < n) return closes[closes.length-1];
+      return closes.slice(-n).reduce((a,b)=>a+b,0)/n;
     }
 
     // ── actions ──
@@ -944,22 +1096,25 @@ createApp({
       }, 400);
     });
 
+    watch(activeCoin, () => { loadChart(); });
+
     onMounted(async () => {
       await loadCoins();
       await loadBalance();
       await loadHistory();
       await loadOpenTrades();
-      refreshTimer = setInterval(async () => {
-        await loadBalance();
-      }, 8000);
-      sltpTimer = setInterval(async () => {
-        await loadOpenTrades();
-      }, 10000);
+      await loadSignals();
+      await loadChart();
+      refreshTimer = setInterval(async () => { await loadBalance(); }, 8000);
+      sltpTimer    = setInterval(async () => { await loadOpenTrades(); }, 10000);
+      signalTimer  = setInterval(async () => { await loadSignals(); await loadChart(); }, 30000);
     });
     onUnmounted(() => {
       clearInterval(refreshTimer);
       clearInterval(autoTimer);
       clearInterval(sltpTimer);
+      clearInterval(signalTimer);
+      if (chartInstance) { chartInstance.remove(); chartInstance = null; }
     });
 
     return {
@@ -968,6 +1123,7 @@ createApp({
       buyUsdt, sellQty, cvFrom, cvTo, cvAmount, cvQuote,
       submitting, autoBot, autoPct, autoSl, autoTp, autoTrail, autoLogs,
       openTrades, manualSl, manualTp,
+      signals, chartTf, chartIndicators,
       showReset, resetAmt, toast,
       allCoins, allCoinNames, tradeableCoins,
       activePrice, activeHolding, activeAvgPrice, priceClass,
@@ -977,6 +1133,7 @@ createApp({
       setPct, setSellPct, quickSell,
       doBuy, doSell, doConvert, doReset,
       forceClose, onAutoBotChange, toggleAutoBot, showReset,
+      loadChart,
     };
   }
 }).mount('#app');

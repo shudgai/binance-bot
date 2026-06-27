@@ -700,6 +700,46 @@ def api_spot_reset(req: SpotResetRequest):
     return reset_spot(req.initial_usdt)
 
 
+SPOT_SIGNAL_COINS = [
+    "ETH","BNB","SOL","XRP","ADA","DOGE","DOT","LTC","LINK",
+    "SUI","AVAX","NEAR","APT","ARB","OP","INJ","HYPE","AAVE",
+]
+
+@app.get("/api/spot/signals")
+def api_spot_signals():
+    try:
+        from heavy_dual_shot_core import STATES
+        result = {}
+        for coin in SPOT_SIGNAL_COINS:
+            sym = coin + "USDT"
+            s = STATES.get(sym)
+            if not s:
+                continue
+            rsi = s.get("current_rsi", 0)
+            macd_line   = s.get("macd_line", 0)
+            macd_signal = s.get("macd_signal", 0)
+            macd_bull   = macd_line > macd_signal
+            bb_mid      = s.get("bb_mid", 0)
+            price       = s.get("close_price", 0)
+            above_bb    = price > bb_mid if bb_mid > 0 else None
+            if rsi > 52 and macd_bull:
+                trend = "long"
+            elif rsi < 48 and not macd_bull:
+                trend = "short"
+            else:
+                trend = "neutral"
+            result[coin] = {
+                "rsi":       round(float(rsi), 1),
+                "macd_bull": bool(macd_bull),
+                "trend":     trend,
+                "price":     float(price),
+                "above_bb":  above_bb,
+            }
+        return {"success": True, "signals": result}
+    except Exception as e:
+        return {"success": False, "error": str(e), "signals": {}}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8005)
