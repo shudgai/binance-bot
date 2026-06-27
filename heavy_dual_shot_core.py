@@ -4133,12 +4133,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         
         if avg_body_size > 0 and volume_ma20 > 0:
             # 條件：實體大於平均 1.3 倍，且成交量大於平均 1.4 倍 (嚴格要求 AND)
-            if current_body_size <= avg_body_size * 1.3 or eval_vol <= volume_ma20 * 1.4:
+            if current_body_size <= avg_body_size * 1.2 or eval_vol <= volume_ma20 * 1.3:
                 # 若訊號強度非常高 (e.g. > 20.0) 或反轉路線，給予豁免
                 if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
                     print(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢訊號({strength:.1f})或反手/枯竭路由，豁免實體/量能嚴格門檻")
                 else:
-                    print(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力(需實體>1.3x且量能>1.4x)，拒絕進場。(實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/volume_ma20:.2f}x)")
+                    print(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力(需實體>1.2x且量能>1.3x)，拒絕進場。(實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/volume_ma20:.2f}x)")
                     return False
                     
         # --- 趨勢斜率過濾 (Trend Slope Filter) ---
