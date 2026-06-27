@@ -252,7 +252,7 @@ async def check_entries():
                     s["pending_side"] = None
 
                     p = s["close_price"]
-                    atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p)
+                    atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
                     min_rr = s.get("min_rr", 1.0)
                     if expected_rr < min_rr:
                         print(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
@@ -530,7 +530,7 @@ async def check_entries():
                         continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
-        atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p)
+        atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
         base_rr_thresh = s.get("min_rr", 1.3)
 
         rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)

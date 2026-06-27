@@ -342,16 +342,35 @@ async def is_reversal_still_valid(sym, pending_side):
             print(f"📈 [Reversal_Invalid] {sym} 反手做空：現價已漲超 0.5%，放棄")
             return False
 
-    # 3. MACD 方向確認
+    # 3. MACD 動能擴張確認 (Momentum Expansion)
+    # 不只看方向轉折，還要確認 MACD 柱狀圖「正在加速擴張」才算有效反手動能
     macd_line = s.get("macd_line", 0.0)
-    macd_signal = s.get("macd_signal", 0.0)
-    macd_cross_up = macd_line > macd_signal
-    if pending_side == "buy" and not macd_cross_up:
-        print(f"📉 [Reversal_Invalid] {sym} 反手做多但 MACD 仍空頭，取消")
-        return False
-    if pending_side == "sell" and macd_cross_up:
-        print(f"📈 [Reversal_Invalid] {sym} 反手做空但 MACD 仍多頭，取消")
-        return False
+    macd_signal_val = s.get("macd_signal", 0.0)
+    prev_macd_line = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
+
+    macd_hist_now = macd_line - macd_signal_val
+    macd_hist_prev = prev_macd_line - prev_macd_signal
+
+    if pending_side == "buy":
+        if not (macd_hist_now > 0 and macd_hist_now > macd_hist_prev):
+            print(f"📉 [Reversal_Weak_Momentum] {sym} 反手做多：MACD 雖轉正但未擴張 ({macd_hist_now:.6f} <= {macd_hist_prev:.6f})，放棄反手")
+            return False
+    elif pending_side == "sell":
+        if not (macd_hist_now < 0 and macd_hist_now < macd_hist_prev):
+            print(f"📈 [Reversal_Weak_Momentum] {sym} 反手做空：MACD 雖轉負但未擴張 ({macd_hist_now:.6f} >= {macd_hist_prev:.6f})，放棄反手")
+            return False
+
+    # 4. 反手空間防護 (Space Buffer for Reverse)
+    # 確保進場點不是在「剛好轉折」的最高/最低點追價
+    if pending_side == "buy":
+        if current_price > prev_close:
+            print(f"🛑 [Reversal_Chase_High] {sym} 反手做多：現價 ({current_price:.4f}) > 前收 ({prev_close:.4f})，在轉折點過高處追價，拒絕")
+            return False
+    elif pending_side == "sell":
+        if current_price < prev_close:
+            print(f"🛑 [Reversal_Chase_Low] {sym} 反手做空：現價 ({current_price:.4f}) < 前收 ({prev_close:.4f})，在轉折點過低處追價，拒絕")
+            return False
 
     return True
 

@@ -58,12 +58,16 @@ def update_trailing_stop(sym, current_price, is_long):
             # 獲利區間動態縮緊 Trailing Stop (Profit-Tier Dynamic Tightening)
             # 獲利越高，追蹤網越緊；獲利初期給對價格呼吸空間
             _hp_f = s["highest_profit_pct"]
-            if _hp_f > 0.05:        # > 5%：極度縮緊
-                trailing_multiplier = 0.4
-            elif _hp_f > 0.02:      # 2% ~ 5%：縮緊
-                trailing_multiplier = 0.7
-            else:                   # < 2%：較寬，防雜訊洗出場
-                trailing_multiplier = 1.0
+            personality = s.get("personality", "balanced")
+            profile_type = s.get("profile_type", "")
+            if personality == "aggressive" or "High_Beta" in profile_type:
+                if _hp_f > 0.05:    trailing_multiplier = 0.6  # 放寬以擴大利潤
+                elif _hp_f > 0.02:  trailing_multiplier = 0.9
+                else:               trailing_multiplier = 1.3  # 給予更多呼吸空間
+            else:
+                if _hp_f > 0.05:    trailing_multiplier = 0.4
+                elif _hp_f > 0.02:  trailing_multiplier = 0.7
+                else:               trailing_multiplier = 1.0
             # 最小距離防護：確保至少 0.25% 緩衝
             _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
             dynamic_sl = s["trailing_highest"] - _min_gap_l
@@ -100,12 +104,16 @@ def update_trailing_stop(sym, current_price, is_long):
         elif trailing_activation_atr == 0:
             # 獲利區間動態縮緊 Trailing Stop (空單)
             _hp_fs = s["highest_profit_pct"]
-            if _hp_fs > 0.05:       # > 5%：極度縮緊
-                trailing_multiplier = 0.4
-            elif _hp_fs > 0.02:     # 2% ~ 5%：縮緊
-                trailing_multiplier = 0.7
-            else:                   # < 2%：較寬，防雜訊洗出場
-                trailing_multiplier = 1.0
+            personality = s.get("personality", "balanced")
+            profile_type = s.get("profile_type", "")
+            if personality == "aggressive" or "High_Beta" in profile_type:
+                if _hp_fs > 0.05:   trailing_multiplier = 0.6
+                elif _hp_fs > 0.02: trailing_multiplier = 0.9
+                else:               trailing_multiplier = 1.3
+            else:
+                if _hp_fs > 0.05:   trailing_multiplier = 0.4
+                elif _hp_fs > 0.02: trailing_multiplier = 0.7
+                else:               trailing_multiplier = 1.0
             # 最小距離防護
             _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
             dynamic_sl = s["trailing_lowest"] + _min_gap_s
@@ -285,6 +293,28 @@ async def check_exits(sym):
                 print(f"🔄 [Hard_SL_Reverse] {sym} 硬止損後設置反手信號 → {s['pending_reverse']}")
         return
 
+    # --- 進場後觀察期快速撤退 (Post-Entry Observation Exit) ---
+    # 首次進場（尚未DCA）後 1-10 分鐘：若虧損 > 0.3% 且 MACD+EMA20 雙重確認方向錯誤 → 快速撤退
+    # 目的：不等 SL 觸發，主動剪掉「沒力氣的訊號」，避免 LTC 式的持續套牢
+    if s.get("entry_count", 0) == 1 and abs(s.get("qty", 0.0)) > 0.000001:
+        _obs_time = time.time() - s.get("open_time", time.time())
+        if 60 < _obs_time < 600 and profit_pct < -0.003:
+            _macd_obs = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+            _prev_macd_obs = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+            _ema20_obs = s.get("ema20", 0.0)
+            _no_momentum = False
+            if is_long:
+                if (_macd_obs < 0 and _macd_obs < _prev_macd_obs) and (_ema20_obs > 0 and p < _ema20_obs):
+                    _no_momentum = True
+            else:
+                if (_macd_obs > 0 and _macd_obs > _prev_macd_obs) and (_ema20_obs > 0 and p > _ema20_obs):
+                    _no_momentum = True
+            if _no_momentum:
+                print(f"🚨 [Post_Entry_Early_Exit] {sym} 觀察期 {_obs_time:.0f}s：方向錯誤+無動能，快速撤退！(虧損:{profit_pct*100:.2f}%)")
+                cs = "sell" if is_long else "buy"
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Post_Entry_Early_Exit]", is_stop_loss=True)
+                return
+
     loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
     _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
     if not _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
@@ -298,12 +328,40 @@ async def check_exits(sym):
     if s.get("entry_count", 0) > 0:
         time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
 
-        rescue_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 15, is_long)
-        if time_since_last_entry > rescue_timeout_min * 60:
-            print(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援模式逾時 {rescue_timeout_min} 分鐘未達標，強制平倉撤退！")
+        # 第二道防線：動態逾時 = 基礎逾時 × (當前ATR ÷ 平均ATR)，波動大時給更多空間
+        base_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 10, is_long)
+        _atr_hist_r = s.get("atr_history", [])
+        _atr_ma20_r = float(np.mean(_atr_hist_r)) if len(_atr_hist_r) > 0 else atr_val
+        if _atr_ma20_r > 0:
+            dynamic_timeout = base_timeout_min * (atr_val / _atr_ma20_r)
+        else:
+            dynamic_timeout = base_timeout_min
+        dynamic_timeout = max(5.0, min(dynamic_timeout, 20.0))
+
+        if time_since_last_entry > dynamic_timeout * 60:
+            print(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援動態逾時 {dynamic_timeout:.1f}min (Base:{base_timeout_min}min)，強制平倉！")
             cs = "sell" if is_long else "buy"
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Timeout]", is_stop_loss=True)
             return
+
+        # 第三道防線：救援期間動能衰減提早止損
+        # 超過3分鐘且仍虧損，且 MACD 反向擴張或價格破 EMA20 → 立即出場，不等逾時
+        if time_since_last_entry > 180 and profit_pct < -0.001:
+            macd_hist_r = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+            prev_macd_hist_r = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+            ema20_r = s.get("ema20", 0.0)
+            is_momentum_dead = False
+            if is_long:
+                if (macd_hist_r < 0 and macd_hist_r < prev_macd_hist_r) or (ema20_r > 0 and p < ema20_r):
+                    is_momentum_dead = True
+            else:
+                if (macd_hist_r > 0 and macd_hist_r > prev_macd_hist_r) or (ema20_r > 0 and p > ema20_r):
+                    is_momentum_dead = True
+            if is_momentum_dead:
+                print(f"🚨 [RESCUE_MOMENTUM_DECAY] {sym} 救援期間動能已死(MACD反向或破EMA20)，提早止損！(套牢:{profit_pct*100:.2f}%)")
+                cs = "sell" if is_long else "buy"
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Momentum_Decay]", is_stop_loss=True)
+                return
 
         rescue_floor = get_effective_exit_setting(sym, "rescue_tp_floor_pct", 0.002, is_long)
         rescue_trail_atr = get_effective_exit_setting(sym, "rescue_trailing_atr", 0.75, is_long)
@@ -361,7 +419,7 @@ async def check_exits(sym):
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.005)
 
-    slippage_buffer = 0.0 if PAPER_TRADING else 0.0005
+    slippage_buffer = 0.005  # 0.5% 緩衝：覆蓋來回手續費(0.1%)＋滑點(0.1%)＋波動緩衝，避免微小波動洗出保本
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         if is_long:
@@ -513,11 +571,18 @@ async def check_exits(sym):
             if _vd_trend_intact:
                 print(f"⚡ [Vol_Decay_Vetoed] {sym} 量縮但 MACD 擴張且價格在 EMA20 {'上' if is_long else '下'}方，趨勢中場休息，抑制 Vol_Decay_Exit")
             else:
-                cs = 'sell' if is_long else 'buy'
-                print(f"📉 [量能衰竭] {sym} 量能高位後萎縮 ({_vd_vols[-2]:.0f}→{_vd_vols[-1]:.0f} / 均{_vd_vol_ma:.0f})，停止創新高，獲利 {profit_pct*100:.2f}% 落袋")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Decay_Exit]")
-                s["highest_profit_pct"] = 0.0
-                return
+                # 強勢趨勢要求利潤進度達 85% 才出場，防止大行情中途被量縮誤退
+                _vd_progress = profit_pct / min_tp_pct if min_tp_pct > 0 else 0.0
+                is_strong = s.get("current_strength", 0.0) >= 15.0 or s.get("pending_route", "") == "a"
+                vd_threshold = 0.85 if is_strong else 0.70
+                if _vd_progress >= vd_threshold:
+                    cs = 'sell' if is_long else 'buy'
+                    print(f"📉 [Vol_Decay_Harvest] {sym} 量能衰竭，獲利進度 {_vd_progress*100:.0f}% >= {vd_threshold*100:.0f}%，落袋 {profit_pct*100:.2f}%")
+                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Decay_Exit]")
+                    s["highest_profit_pct"] = 0.0
+                    return
+                else:
+                    print(f"[Vol_Decay_Held] {sym} 量能衰竭但獲利進度 {_vd_progress*100:.0f}% < {vd_threshold*100:.0f}%，繼續持倉")
 
     # ── 低流動性防禦 (Low Liquidity Defense) ──
     # 進場後量能持續萎縮 → 死水區，價格無力達TP，提前鎖利

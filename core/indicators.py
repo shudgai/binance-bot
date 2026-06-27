@@ -79,7 +79,7 @@ def _macd_vals(s):
     return macd_hist, prev_macd_hist
 
 
-def _calc_sl_tp(sym, side, s, p):
+def _calc_sl_tp(sym, side, s, p, route="a"):
     """計算 ATR、SL 距離、TP 距離、預期盈虧比。"""
     from core.symbol_profile import get_effective_exit_setting, get_dynamic_atr_multiplier
     from core.config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER
@@ -87,12 +87,34 @@ def _calc_sl_tp(sym, side, s, p):
     sl_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
-    sl_dist = max(atr_val * sl_mult, p * 0.004)
-    sl_dist += p * 0.0005  # 加入 0.05% 執行滑點緩衝（避免市場微結構噪音立即掃損）
-    tp_dist = max(atr_val * tp_mult, p * 0.015)
 
-    # 強制 R:R 保底 (Forced R:R Floor)
-    # 停利距離必須 >= 停損距離的 1.5 倍，防止「停損大於停利」
+    # Layer-S: 動態反手止損 (Dynamic Reverse SL)
+    if route == "Automatic_Reverse":
+        old_sl_mult = sl_mult
+        sl_mult *= 1.25
+        print(f"@@COIN_DEBUG@@ 🛡️ {sym} 反手進場，擴大止損空間 (sl_mult: {old_sl_mult:.2f} -> {sl_mult:.2f})")
+
+    # Layer-A: Low-Volatility Mode Switch
+    _atr_hist_sl = s.get("atr_history", [])
+    _atr_24h_avg_sl = float(np.mean(_atr_hist_sl)) if len(_atr_hist_sl) > 0 else 0.0
+    _is_low_vol_mode = (_atr_24h_avg_sl > 0 and atr_val < _atr_24h_avg_sl * 0.8)
+
+    if _is_low_vol_mode:
+        sl_dist = p * 0.010
+        tp_dist = p * 0.015
+        print(f"[LowVol_Mode] {sym} ATR low({atr_val:.5f} < avg{_atr_24h_avg_sl:.5f}x0.8), using fixed% SL=1.0% TP=1.5%")
+    else:
+        sl_dist = max(atr_val * sl_mult, p * 0.004)
+        sl_dist += p * 0.0005  # 0.05% 執行滑點緩衝
+        tp_dist = max(atr_val * tp_mult, p * 0.015)
+
+    # Layer-B: Absolute Distance Floor
+    _SL_FLOOR_PCT = 0.008
+    _TP_FLOOR_PCT = 0.005
+    sl_dist = max(sl_dist, p * _SL_FLOOR_PCT)
+    tp_dist = max(tp_dist, p * _TP_FLOOR_PCT)
+
+    # Layer-C: Forced R:R Floor
     MIN_RR_FLOOR = 1.5
     min_tp_dist = sl_dist * MIN_RR_FLOOR
     if tp_dist < min_tp_dist:

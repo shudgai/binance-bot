@@ -294,7 +294,24 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         elif side == 'buy' and ema20_15m < ema50_15m:
             print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — 由 RR/利潤門檻把關")
 
-    # 4. 收盤確認 (Candle Close Check)
+    # 4. Pre-Entry Quality Filter：實體 + 量能同步爆發（過濾弱訊號假突破）
+    _ohlcv_q = s.get("ohlcv", [])
+    if len(_ohlcv_q) >= 20:
+        past_20_candles = _ohlcv_q[-20:]
+        avg_body_size = float(np.mean([abs(c[4] - c[1]) for c in past_20_candles]))
+        current_body_size = abs(past_20_candles[-1][4] - past_20_candles[-1][1])
+        eval_vol = s.get("current_vol", _ohlcv_q[-2][5] if len(_ohlcv_q) > 1 else 0)
+        vol_ma20_q = s.get("vol_ma20", 0.0)
+        if avg_body_size > 0 and vol_ma20_q > 0:
+            # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
+            if current_body_size <= avg_body_size * 1.3 or eval_vol <= vol_ma20_q * 1.4:
+                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
+                    print(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能嚴格門檻")
+                else:
+                    print(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x)，拒絕進場")
+                    return False
+
+    # 5. 收盤確認 (Candle Close Check)
     if route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
@@ -304,6 +321,22 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             return False
         elif side == 'sell' and not (close_price < prev_close or close_price < open_price):
             print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})。")
+            return False
+
+    # --- 趨勢斜率過濾 (Trend Slope Filter) ---
+    # EMA20 斜率 < 0.05% (3根K線) → 平台盤整，拒絕上車
+    ema20_now = s.get("ema20", 0.0)
+    ema20_hist = s.get("ema20_history", [])
+    if ema20_now > 0 and len(ema20_hist) >= 3:
+        ema20_past = ema20_hist[-3]
+        slope_pct = (ema20_now - ema20_past) / ema20_past if ema20_past > 0 else 0
+        slope_threshold = 0.0005
+        _slope_exempt = strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal")
+        if side == "buy" and slope_pct < slope_threshold and not _slope_exempt:
+            print(f"🛑 [WEAK_SLOPE_SKIP] {sym} 做多但 EMA20 斜率太平緩 ({slope_pct*100:.4f}% < {slope_threshold*100:.4f}%)，拒絕上車")
+            return False
+        elif side == "sell" and slope_pct > -slope_threshold and not _slope_exempt:
+            print(f"🛑 [WEAK_SLOPE_SKIP] {sym} 做空但 EMA20 斜率太平緩 ({slope_pct*100:.4f}% > -{slope_threshold*100:.4f}%)，拒絕上車")
             return False
 
     # [新增] MTF Correlation Lock (4H)
