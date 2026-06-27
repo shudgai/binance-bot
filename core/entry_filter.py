@@ -284,6 +284,23 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能嚴重不足 (當前: {current_volume:.1f} <= 門檻: {dynamic_vol_threshold:.1f} | {mode_label})，判定為死水行情。")
             return False
 
+    # --- ATR 收縮 + BB 過伸過濾 (Volatility Shrink Filter) ---
+    # 最後一棒特徵：價格已到 BB 極端 + 近期波動在縮小 → 動能快耗盡
+    _atr_hist_vs = s.get("atr_history", [])
+    if len(_atr_hist_vs) >= 10:
+        _atr_recent = float(np.mean(_atr_hist_vs[-5:]))
+        _atr_prev   = float(np.mean(_atr_hist_vs[-10:-5]))
+        _atr_shrinking = _atr_prev > 0 and _atr_recent < _atr_prev * 0.80
+        if _atr_shrinking:
+            _bb_upper_vs = s.get("bb_upper", 0.0)
+            _bb_lower_vs = s.get("bb_lower", 0.0)
+            _near_bb_top = _bb_upper_vs > 0 and cp > _bb_upper_vs * 0.997
+            _near_bb_bot = _bb_lower_vs > 0 and cp < _bb_lower_vs * 1.003
+            _is_last_push = (side == "buy" and _near_bb_top) or (side == "sell" and _near_bb_bot)
+            if _is_last_push and strength < 25.0 and route not in ("Extreme_Reversal",):
+                print(f"🛑 [ATR_SHRINK] {sym} ATR收縮({_atr_recent:.5f} < {_atr_prev:.5f}×0.80) 且貼近BB極端，疑似最後一棒，拒絕進場")
+                return False
+
     # 2. 空單 RSI 極限保護：RSI > 75 才允許做空（超買區），RSI 太低反而不能追空
     current_rsi = s.get("current_rsi", 50.0)
     if side == 'sell' and current_rsi < 25.0:
