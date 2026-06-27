@@ -1734,7 +1734,9 @@ createApp({
         const initWebSocket = () => {
             if (wsFallbackTimeout) clearTimeout(wsFallbackTimeout);
             if (reconnectTimer) clearTimeout(reconnectTimer);
-            for (const w of wsConnections) { try { w.close(); } catch(e) {} }
+            for (const w of wsConnections) {
+                try { w.onopen = null; w.onerror = null; w.onclose = null; w.onmessage = null; w.close(); } catch(e) {}
+            }
             wsConnections.length = 0;
 
             if (coins.value.length === 0) return;
@@ -1753,7 +1755,7 @@ createApp({
             addLog('🔌 WebSocket 連線中...');
             
             w.onopen = () => { addLog('⚡ WebSocket 已連線 (Binance Futures)', 'success'); };
-            w.onerror = (e) => { addLog('❌ WebSocket 連線錯誤，嘗試重連...', 'danger'); };
+            w.onerror = () => { addLog('❌ WebSocket 連線錯誤，等待重連...', 'danger'); };
             w.onmessage = (event) => {
                 try {
                     const raw = JSON.parse(event.data);
@@ -1793,9 +1795,10 @@ createApp({
             w.onclose = () => {
                 setTimeout(() => {
                     if (!isUsingFallback) {
+                        addLog('🔌 WebSocket 重新連線中...', 'warning');
                         initWebSocket();
                     }
-                }, 10000);
+                }, 5000);
             };
             wsConnections.push(w);
         };
