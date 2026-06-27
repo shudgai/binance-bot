@@ -2531,16 +2531,28 @@ async def check_exits(sym):
             return
 
     # ── 量能高潮偵測 (Volume Climax Exit) ──
-    # 當量能爆發 (3× 均量) 且收盤轉弱 → 頂點訊號，不等回撤直接落袋
+    # 方案1+3：2x 爆量 + 收盤轉弱 + 未創新高 + MACD/RSI 至少一項衰竭 → 落袋
     _vc_vol = s.get("current_vol", 0)
     _vc_vol_ma = s.get("vol_ma20", 1)
     _vc_prev_close = s.get("prev_close", p)
-    if (_vc_vol > _vc_vol_ma * 2.0 and profit_pct >= 0.008 and p < _vc_prev_close):
-        cs = 'sell' if is_long else 'buy'
-        print(f"🚀 [量能高潮] {sym} 爆量 {_vc_vol/_vc_vol_ma:.1f}x 均量且收盤轉弱，獲利 {profit_pct*100:.2f}%，見好就收")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Volume_Climax_Exit]")
-        s["highest_profit_pct"] = 0.0
-        return
+    if _vc_vol > _vc_vol_ma * 2.0 and profit_pct >= 0.008 and p < _vc_prev_close:
+        # 方案1：現價仍在新高（0.1%緩衝）= 強勢擴張，不下車
+        _trail_ext = s.get("trailing_highest", 0) if is_long else s.get("trailing_lowest", float('inf'))
+        _at_new_extreme = (p >= _trail_ext * 0.999) if is_long else (p <= _trail_ext * 1.001)
+        if not _at_new_extreme:
+            # 方案3：MACD 或 RSI 至少一項開始衰竭才確認頂點
+            _macd_h, _prev_macd_h = _macd_vals(s)
+            _rsi_hist = s.get("rsi_history", [])
+            _prev_rsi = _rsi_hist[-2] if len(_rsi_hist) >= 2 else s.get("current_rsi", 50.0)
+            _curr_rsi = s.get("current_rsi", 50.0)
+            _macd_decay = (_macd_h < _prev_macd_h) if is_long else (_macd_h > _prev_macd_h)
+            _rsi_decay = (_curr_rsi < _prev_rsi) if is_long else (_curr_rsi > _prev_rsi)
+            if _macd_decay or _rsi_decay:
+                cs = 'sell' if is_long else 'buy'
+                print(f"🚀 [量能高潮] {sym} 爆量 {_vc_vol/_vc_vol_ma:.1f}x 均量+收盤轉弱+動能衰竭(MACD:{_macd_decay},RSI:{_rsi_decay})，獲利 {profit_pct*100:.2f}%，見好就收")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Volume_Climax_Exit]")
+                s["highest_profit_pct"] = 0.0
+                return
 
     # ── Trailing TP：ATR 自適應高點停利 ──
     # 啟動門檻 = max(0.5%, 0.8x ATR)；回撤門檻 = max(0.2%, 0.5x ATR)
