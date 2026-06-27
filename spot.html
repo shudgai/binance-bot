@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-TW" translate="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="google" content="notranslate">
+<title>現貨轉換 · Spot Convert</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<style>
+:root {
+  --bg: #f0f2f5;
+  --card: #ffffff;
+  --border: rgba(0,0,0,0.09);
+  --text: #111827;
+  --muted: #6b7280;
+  --primary: #f0b90b;
+  --primary-dark: #d4a008;
+  --success: #059669;
+  --danger: #dc2626;
+  --shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Outfit', sans-serif;
+  min-height: 100vh;
+}
+
+/* ── HEADER ── */
+.header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.header-logo { display: flex; align-items: center; gap: 10px; }
+.header-logo span { font-size: 20px; font-weight: 800; color: var(--primary); }
+.header-logo small { font-size: 13px; color: var(--muted); font-weight: 400; }
+.back-link {
+  font-size: 13px; color: var(--muted);
+  text-decoration: none; display: flex; align-items: center; gap: 5px;
+  transition: color .2s;
+}
+.back-link:hover { color: var(--text); }
+
+/* ── LAYOUT ── */
+.page { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+.grid { display: grid; grid-template-columns: 280px 1fr 280px; gap: 16px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+/* ── CARD ── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.card-header {
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-title {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1px;
+  color: var(--muted);
+}
+.card-body { padding: 16px 18px; }
+
+/* ── PORTFOLIO ── */
+.portfolio-total {
+  text-align: center;
+  padding: 16px 0 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.portfolio-total .label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+.portfolio-total .value { font-size: 26px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
+.portfolio-total .value span { font-size: 14px; font-weight: 400; color: var(--muted); }
+
+.coin-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer; transition: background .15s; border-radius: 6px;
+}
+.coin-row:last-child { border-bottom: none; }
+.coin-row:hover { background: rgba(240,185,11,.06); }
+.coin-row .coin-info { display: flex; align-items: center; gap: 10px; }
+.coin-icon {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 11px; color: #fff;
+  flex-shrink: 0;
+}
+.coin-name { font-weight: 700; font-size: 14px; }
+.coin-bal { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono'; }
+.coin-usdt { text-align: right; }
+.coin-usdt .val { font-weight: 700; font-size: 14px; font-family: 'JetBrains Mono'; }
+.coin-usdt .price { font-size: 11px; color: var(--muted); }
+
+.empty-hint { text-align: center; color: var(--muted); font-size: 13px; padding: 20px 0; }
+
+/* ── CONVERT WIDGET ── */
+.convert-card { position: relative; }
+.from-to-box {
+  background: #f8f9fb;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  transition: border-color .2s;
+}
+.from-to-box:focus-within { border-color: var(--primary); }
+.from-to-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+.from-to-row { display: flex; align-items: center; gap: 10px; }
+.coin-select {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 12px;
+  cursor: pointer; font-weight: 700; font-size: 15px;
+  user-select: none; transition: border-color .2s;
+  white-space: nowrap;
+}
+.coin-select:hover { border-color: var(--primary); }
+.coin-select .arrow { font-size: 10px; color: var(--muted); }
+.amount-input {
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: 22px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+  color: var(--text); text-align: right; min-width: 0;
+}
+.amount-input::placeholder { color: var(--border); }
+.amount-sub { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.max-btn {
+  background: rgba(240,185,11,.12); color: var(--primary-dark);
+  border: none; border-radius: 6px; padding: 2px 8px;
+  font-size: 11px; font-weight: 700; cursor: pointer; transition: background .2s;
+}
+.max-btn:hover { background: rgba(240,185,11,.25); }
+
+.swap-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--card); border: 1.5px solid var(--border);
+  cursor: pointer; font-size: 18px; margin: 4px auto;
+  transition: all .2s; user-select: none;
+}
+.swap-btn:hover { background: var(--primary); border-color: var(--primary); transform: rotate(180deg); }
+
+.rate-row {
+  text-align: center; font-size: 12px; color: var(--muted);
+  margin: 8px 0 14px; height: 18px;
+}
+.rate-row b { color: var(--text); }
+
+.convert-btn {
+  width: 100%; padding: 14px;
+  background: var(--primary); color: #000;
+  border: none; border-radius: 12px;
+  font-size: 16px; font-weight: 800;
+  cursor: pointer; transition: all .2s;
+  letter-spacing: .5px;
+}
+.convert-btn:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(240,185,11,.35); }
+.convert-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+.convert-btn.loading { opacity: .7; pointer-events: none; }
+
+.fee-note { text-align: center; font-size: 11px; color: var(--muted); margin-top: 10px; }
+
+/* Dropdown */
+.dropdown-overlay { position: fixed; inset: 0; z-index: 200; }
+.dropdown-panel {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  z-index: 300; overflow: hidden; margin-top: 4px;
+}
+.dropdown-search {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.dropdown-search input {
+  width: 100%; border: none; outline: none; font-size: 14px;
+  background: transparent; font-family: 'Outfit', sans-serif;
+  color: var(--text);
+}
+.dropdown-list { max-height: 240px; overflow-y: auto; }
+.dropdown-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; cursor: pointer;
+  transition: background .15s;
+}
+.dropdown-item:hover { background: rgba(240,185,11,.08); }
+.dropdown-item.selected { background: rgba(240,185,11,.12); }
+.dropdown-item .d-name { font-weight: 700; font-size: 14px; }
+.dropdown-item .d-bal { font-size: 11px; color: var(--muted); margin-left: auto; font-family: 'JetBrains Mono'; }
+
+/* ── HISTORY ── */
+.hist-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.hist-row:last-child { border-bottom: none; }
+.hist-arrow { font-size: 18px; color: var(--success); flex-shrink: 0; }
+.hist-info { flex: 1; min-width: 0; }
+.hist-pair { font-weight: 700; font-size: 13px; }
+.hist-time { font-size: 11px; color: var(--muted); }
+.hist-amounts { text-align: right; }
+.hist-from { font-size: 11px; color: var(--muted); }
+.hist-to { font-weight: 700; font-size: 13px; font-family: 'JetBrains Mono'; color: var(--success); }
+
+/* ── TOAST ── */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #1f2937; color: #fff;
+  padding: 12px 24px; border-radius: 12px;
+  font-size: 14px; font-weight: 600;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  z-index: 9999;
+  transition: all .3s;
+}
+.toast.success { background: var(--success); }
+.toast.error { background: var(--danger); }
+
+/* ── RESET BTN ── */
+.reset-btn {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px 10px; font-size: 11px; color: var(--muted);
+  cursor: pointer; transition: all .2s;
+}
+.reset-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Loading spinner */
+.spin { display: inline-block; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-logo">
+      <span>⇄</span>
+      <div>
+        <div style="font-size:15px;font-weight:800">現貨轉換</div>
+        <small>Spot Convert · Paper</small>
+      </div>
+    </div>
+    <a href="/" class="back-link">← 回主頁</a>
+  </div>
+
+  <div class="page">
+    <div class="grid">
+
+      <!-- LEFT: Portfolio -->
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">我的資產</span>
+            <button class="reset-btn" @click="showResetModal=true">重置</button>
+          </div>
+          <div class="card-body" style="padding:0 12px 12px">
+            <div class="portfolio-total">
+              <div class="label">總資產</div>
+              <div class="value">{{ fmt(totalUsdt) }}<span> USDT</span></div>
+            </div>
+            <div v-if="nonZeroBalances.length === 0" class="empty-hint">無持倉</div>
+            <div v-for="row in nonZeroBalances" :key="row.coin" class="coin-row" @click="useInFrom(row.coin)">
+              <div class="coin-info">
+                <div class="coin-icon" :style="{background: coinColor(row.coin)}">{{ row.coin.slice(0,3) }}</div>
+                <div>
+                  <div class="coin-name">{{ row.coin }}</div>
+                  <div class="coin-bal">{{ fmtCoin(row.balance, row.coin) }}</div>
+                </div>
+              </div>
+              <div class="coin-usdt">
+                <div class="val">{{ fmt(row.balance * row.price) }}</div>
+                <div class="price">≈ ${{ fmtPrice(row.price) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTER: Convert -->
+      <div>
+        <div class="card convert-card">
+          <div class="card-header">
+            <span class="card-title">即時轉換</span>
+            <span style="font-size:11px;color:var(--muted)">手續費 0.1%</span>
+          </div>
+          <div class="card-body">
+
+            <!-- FROM -->
+            <div class="from-to-box" style="position:relative">
+              <div class="from-to-label">從 · FROM</div>
+              <div class="from-to-row">
+                <div class="coin-select" @click.stop="toggleDrop('from')">
+                  <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(fromCoin)}">{{ fromCoin.slice(0,3) }}</div>
+                  {{ fromCoin }}
+                  <span class="arrow">▼</span>
+                </div>
+                <input class="amount-input" type="number" v-model="fromAmount"
+                  placeholder="0.00" min="0" @input="onFromInput" />
+              </div>
+              <div class="amount-sub">
+                <span>≈ {{ fromUsdt > 0 ? fmt(fromUsdt) + ' USDT' : '—' }}</span>
+                <span>
+                  可用 {{ fmtCoin(fromBalance, fromCoin) }}
+                  <button class="max-btn" @click="setMax">MAX</button>
+                </span>
+              </div>
+              <!-- Dropdown -->
+              <div v-if="dropOpen==='from'" class="dropdown-overlay" @click="dropOpen=null"></div>
+              <div v-if="dropOpen==='from'" class="dropdown-panel">
+                <div class="dropdown-search"><input v-model="dropSearch" placeholder="搜尋幣種..." autofocus /></div>
+                <div class="dropdown-list">
+                  <div v-for="c in filteredCoins('from')" :key="c"
+                    class="dropdown-item" :class="{selected: c===fromCoin}"
+                    @click.stop="selectCoin('from', c)">
+                    <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(c)}">{{ c.slice(0,3) }}</div>
+                    <span class="d-name">{{ c }}</span>
+                    <span class="d-bal">{{ fmtCoin(balances[c]||0, c) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SWAP button -->
+            <div class="swap-btn" @click="swapCoins">⇅</div>
+
+            <!-- TO -->
+            <div class="from-to-box" style="position:relative">
+              <div class="from-to-label">到 · TO</div>
+              <div class="from-to-row">
+                <div class="coin-select" @click.stop="toggleDrop('to')">
+                  <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(toCoin)}">{{ toCoin.slice(0,3) }}</div>
+                  {{ toCoin }}
+                  <span class="arrow">▼</span>
+                </div>
+                <input class="amount-input" type="number" v-model="toAmountDisp"
+                  placeholder="0.00" readonly style="color:var(--muted)" />
+              </div>
+              <div class="amount-sub">
+                <span>≈ {{ toUsdt > 0 ? fmt(toUsdt) + ' USDT' : '—' }}</span>
+                <span style="color:var(--muted)">手續費 {{ fee > 0 ? '~' + fmt(fee) + ' USDT' : '—' }}</span>
+              </div>
+              <!-- Dropdown -->
+              <div v-if="dropOpen==='to'" class="dropdown-overlay" @click="dropOpen=null"></div>
+              <div v-if="dropOpen==='to'" class="dropdown-panel">
+                <div class="dropdown-search"><input v-model="dropSearch" placeholder="搜尋幣種..." autofocus /></div>
+                <div class="dropdown-list">
+                  <div v-for="c in filteredCoins('to')" :key="c"
+                    class="dropdown-item" :class="{selected: c===toCoin}"
+                    @click.stop="selectCoin('to', c)">
+                    <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(c)}">{{ c.slice(0,3) }}</div>
+                    <span class="d-name">{{ c }}</span>
+                    <span class="d-bal">{{ fmtCoin(balances[c]||0, c) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rate -->
+            <div class="rate-row">
+              <span v-if="rate > 0">
+                1 {{ fromCoin }} = <b>{{ fmtRate(rate) }} {{ toCoin }}</b>
+              </span>
+              <span v-else class="spin" style="font-size:16px">⟳</span>
+            </div>
+
+            <button class="convert-btn" :class="{loading: converting}"
+              :disabled="!canConvert" @click="doConvert">
+              <span v-if="converting"><span class="spin">⟳</span> 轉換中...</span>
+              <span v-else>確認轉換</span>
+            </button>
+            <div class="fee-note">模擬現貨交易 · Paper Spot · 不消耗實際資金</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: History -->
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">轉換紀錄</span>
+            <span style="font-size:11px;color:var(--muted)">最近 {{ history.length }} 筆</span>
+          </div>
+          <div class="card-body" style="padding:0 12px 12px">
+            <div v-if="history.length===0" class="empty-hint" style="padding:24px 0">尚無紀錄</div>
+            <div v-for="h in history" :key="h.time" class="hist-row">
+              <span class="hist-arrow">⇄</span>
+              <div class="hist-info">
+                <div class="hist-pair">{{ h.from_coin }} → {{ h.to_coin }}</div>
+                <div class="hist-time">{{ fmtTime(h.time) }}</div>
+              </div>
+              <div class="hist-amounts">
+                <div class="hist-from">-{{ fmtCoin(h.from_amount, h.from_coin) }} {{ h.from_coin }}</div>
+                <div class="hist-to">+{{ fmtCoin(h.to_amount, h.to_coin) }} {{ h.to_coin }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <transition name="fade">
+    <div v-if="toast.show" class="toast" :class="toast.type">{{ toast.msg }}</div>
+  </transition>
+
+  <!-- Reset Modal -->
+  <div v-if="showResetModal" style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:500;display:flex;align-items:center;justify-content:center" @click.self="showResetModal=false">
+    <div class="card" style="width:320px;max-width:90vw">
+      <div class="card-header"><span class="card-title">重置資產</span></div>
+      <div class="card-body">
+        <p style="font-size:14px;color:var(--muted);margin-bottom:16px">設定初始 USDT 金額，所有持倉與紀錄將清空。</p>
+        <div style="margin-bottom:14px">
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">初始金額 (USDT)</label>
+          <input v-model.number="resetAmount" type="number" min="1"
+            style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:16px;font-family:inherit;outline:none;color:var(--text)">
+        </div>
+        <div style="display:flex;gap:10px">
+          <button @click="showResetModal=false" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:10px;background:none;cursor:pointer;font-size:14px">取消</button>
+          <button @click="doReset" style="flex:1;padding:10px;background:var(--danger);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">確認重置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+.fade-enter-active, .fade-leave-active { transition: opacity .3s, transform .3s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateX(-50%) translateY(10px); }
+</style>
+
+<script>
+const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+
+const COIN_COLORS = {
+  USDT:'#26a17b', BTC:'#f7931a', ETH:'#627eea', BNB:'#f0b90b',
+  SOL:'#9945ff', XRP:'#00aae4', ADA:'#0d1e2d', DOGE:'#c2a633',
+  DOT:'#e6007a', LTC:'#bfbbbb', LINK:'#2a5ada', SUI:'#6fbcf0',
+  AVAX:'#e84142', NEAR:'#00c08b', APT:'#2e5ce6', ARB:'#28a0f0',
+  OP:'#ff0420', INJ:'#00ade8', HYPE:'#7c5cfc', AAVE:'#b6509e',
+};
+
+createApp({
+  setup() {
+    const BASE = '';
+
+    const coins      = ref([]);
+    const balances   = ref({});
+    const prices     = ref({});
+    const history    = ref([]);
+
+    const fromCoin   = ref('USDT');
+    const toCoin     = ref('ETH');
+    const fromAmount = ref('');
+    const toAmountDisp = ref('');
+    const rate       = ref(0);
+    const fee        = ref(0);
+    const converting = ref(false);
+
+    const dropOpen   = ref(null);
+    const dropSearch = ref('');
+    const toast      = ref({ show: false, msg: '', type: '' });
+    const showResetModal = ref(false);
+    const resetAmount = ref(10000);
+
+    let quoteTimer = null;
+    let refreshTimer = null;
+
+    // ── computed ──
+    const fromBalance = computed(() => balances.value[fromCoin.value] || 0);
+    const fromPrice   = computed(() => prices.value[fromCoin.value] || (fromCoin.value==='USDT'?1:0));
+    const toPrice     = computed(() => prices.value[toCoin.value]   || (toCoin.value==='USDT'?1:0));
+    const fromUsdt    = computed(() => (parseFloat(fromAmount.value)||0) * fromPrice.value);
+    const toUsdt      = computed(() => (parseFloat(toAmountDisp.value)||0) * toPrice.value);
+    const canConvert  = computed(() => {
+      const a = parseFloat(fromAmount.value);
+      return a > 0 && fromCoin.value !== toCoin.value && a <= fromBalance.value && !converting.value;
+    });
+    const nonZeroBalances = computed(() => {
+      return Object.entries(balances.value)
+        .filter(([c,b]) => b > 0)
+        .map(([c,b]) => ({ coin:c, balance:b, price: prices.value[c]||(c==='USDT'?1:0) }))
+        .sort((a,b) => b.balance*b.price - a.balance*a.price);
+    });
+    const totalUsdt = computed(() => nonZeroBalances.value.reduce((s,r)=>s+r.balance*r.price, 0));
+
+    // ── helpers ──
+    function fmt(n) {
+      if (!n && n!==0) return '—';
+      return (+n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+    function fmtCoin(n, coin) {
+      if (!n && n!==0) return '0';
+      const v = parseFloat(n);
+      if (coin==='USDT') return v.toFixed(2);
+      if (coin==='BTC')  return v.toFixed(6);
+      if (['ETH','SOL','BNB','AVAX','INJ','AAVE','HYPE'].includes(coin)) return v.toFixed(4);
+      return v.toFixed(2);
+    }
+    function fmtPrice(p) {
+      if (!p) return '—';
+      if (p >= 1000) return (+p).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+      if (p >= 1)    return (+p).toFixed(4);
+      return (+p).toFixed(6);
+    }
+    function fmtRate(r) {
+      if (r >= 1)  return r.toFixed(4);
+      return r.toFixed(6);
+    }
+    function fmtTime(ms) {
+      const d = new Date(ms);
+      return d.toLocaleDateString('zh-TW') + ' ' + d.toTimeString().slice(0,5);
+    }
+    function coinColor(c) { return COIN_COLORS[c] || '#888'; }
+    function showToast(msg, type='success') {
+      toast.value = { show:true, msg, type };
+      setTimeout(() => toast.value.show = false, 3000);
+    }
+
+    // ── API calls ──
+    async function loadBalance() {
+      try {
+        const r = await fetch(BASE+'/api/spot/balance');
+        const d = await r.json();
+        balances.value = d.balances || {};
+        prices.value   = d.prices   || {};
+      } catch(e) {}
+    }
+    async function loadHistory() {
+      try {
+        const r = await fetch(BASE+'/api/spot/history');
+        const d = await r.json();
+        history.value = d.history || [];
+      } catch(e) {}
+    }
+    async function loadCoins() {
+      try {
+        const r = await fetch(BASE+'/api/spot/coins');
+        const d = await r.json();
+        coins.value = d.coins || [];
+      } catch(e) { coins.value = Object.keys(COIN_COLORS); }
+    }
+    async function fetchQuote() {
+      const a = parseFloat(fromAmount.value);
+      if (!a || a <= 0 || fromCoin.value === toCoin.value) {
+        toAmountDisp.value = '';
+        rate.value = 0; fee.value = 0;
+        return;
+      }
+      try {
+        const r = await fetch(`${BASE}/api/spot/quote?from_coin=${fromCoin.value}&to_coin=${toCoin.value}&amount=${a}`);
+        const d = await r.json();
+        if (d.success) {
+          toAmountDisp.value = fmtCoin(d.to_amount, toCoin.value);
+          rate.value = d.rate;
+          fee.value  = d.fee_usdt;
+          // update local price cache
+          prices.value[fromCoin.value] = d.from_price_usdt;
+          prices.value[toCoin.value]   = d.to_price_usdt;
+        }
+      } catch(e) {}
+    }
+
+    // ── actions ──
+    function onFromInput() {
+      clearTimeout(quoteTimer);
+      quoteTimer = setTimeout(fetchQuote, 400);
+    }
+    function setMax() {
+      fromAmount.value = String(fromBalance.value);
+      onFromInput();
+    }
+    function swapCoins() {
+      const tmp = fromCoin.value;
+      fromCoin.value = toCoin.value;
+      toCoin.value = tmp;
+      fromAmount.value = '';
+      toAmountDisp.value = '';
+      rate.value = 0; fee.value = 0;
+    }
+    function useInFrom(coin) {
+      fromCoin.value = coin;
+      fromAmount.value = '';
+      toAmountDisp.value = '';
+      rate.value = 0; fee.value = 0;
+    }
+    function toggleDrop(side) {
+      dropSearch.value = '';
+      dropOpen.value = dropOpen.value === side ? null : side;
+    }
+    function selectCoin(side, coin) {
+      if (side === 'from') {
+        if (coin === toCoin.value) toCoin.value = fromCoin.value;
+        fromCoin.value = coin;
+      } else {
+        if (coin === fromCoin.value) fromCoin.value = toCoin.value;
+        toCoin.value = coin;
+      }
+      dropOpen.value = null;
+      fromAmount.value = '';
+      toAmountDisp.value = '';
+      rate.value = 0; fee.value = 0;
+      fetchQuote();
+    }
+    function filteredCoins(side) {
+      const s = dropSearch.value.toLowerCase();
+      return (coins.value.length ? coins.value : Object.keys(COIN_COLORS))
+        .filter(c => !s || c.toLowerCase().includes(s));
+    }
+
+    async function doConvert() {
+      if (!canConvert.value) return;
+      converting.value = true;
+      try {
+        const r = await fetch(BASE+'/api/spot/convert', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            from_coin: fromCoin.value,
+            to_coin:   toCoin.value,
+            amount:    parseFloat(fromAmount.value),
+          })
+        });
+        const d = await r.json();
+        if (d.success) {
+          balances.value = d.balances;
+          fromAmount.value = '';
+          toAmountDisp.value = '';
+          rate.value = 0; fee.value = 0;
+          showToast(`✅ 成功轉換 ${fmtCoin(d.trade.from_amount, d.trade.from_coin)} ${d.trade.from_coin} → ${fmtCoin(d.trade.to_amount, d.trade.to_coin)} ${d.trade.to_coin}`);
+          await loadHistory();
+          await loadBalance();
+        } else {
+          showToast('❌ ' + d.error, 'error');
+        }
+      } catch(e) {
+        showToast('❌ 網路錯誤', 'error');
+      } finally {
+        converting.value = false;
+      }
+    }
+
+    async function doReset() {
+      try {
+        const r = await fetch(BASE+'/api/spot/reset', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ initial_usdt: resetAmount.value })
+        });
+        const d = await r.json();
+        balances.value = d.balances || {};
+        history.value  = [];
+        showResetModal.value = false;
+        fromAmount.value = ''; toAmountDisp.value = ''; rate.value = 0;
+        showToast(`✅ 已重置為 ${resetAmount.value} USDT`);
+        await loadBalance();
+      } catch(e) {
+        showToast('❌ 重置失敗', 'error');
+      }
+    }
+
+    onMounted(async () => {
+      await loadCoins();
+      await loadBalance();
+      await loadHistory();
+      // Auto-refresh every 10s
+      refreshTimer = setInterval(async () => {
+        await loadBalance();
+        if (parseFloat(fromAmount.value) > 0) fetchQuote();
+      }, 10000);
+    });
+    onUnmounted(() => clearInterval(refreshTimer));
+
+    return {
+      coins, balances, prices, history,
+      fromCoin, toCoin, fromAmount, toAmountDisp, rate, fee,
+      converting, dropOpen, dropSearch, toast,
+      showResetModal, resetAmount,
+      fromBalance, fromPrice, toPrice, fromUsdt, toUsdt,
+      canConvert, nonZeroBalances, totalUsdt,
+      fmt, fmtCoin, fmtPrice, fmtRate, fmtTime, coinColor,
+      onFromInput, setMax, swapCoins, useInFrom,
+      toggleDrop, selectCoin, filteredCoins,
+      doConvert, doReset,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

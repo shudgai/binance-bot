@@ -570,6 +570,61 @@ def get_open_orders(symbol: str):
         return {"status": "success", "data": orders}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────
+#  現貨轉換 (Spot Convert) API
+# ─────────────────────────────────────────────────────────────
+from services.spot_service import (
+    get_balances as spot_get_balances,
+    get_history  as spot_get_history,
+    get_spot_price, get_quote as spot_get_quote,
+    execute_convert as spot_execute_convert,
+    reset_spot, SUPPORTED_COINS,
+)
+
+@app.get("/spot")
+def spot_page():
+    return FileResponse("spot.html")
+
+@app.get("/api/spot/coins")
+def api_spot_coins():
+    return {"coins": SUPPORTED_COINS}
+
+@app.get("/api/spot/balance")
+def api_spot_balance():
+    balances = spot_get_balances()
+    prices = {}
+    for coin in balances:
+        p = get_spot_price(coin, client)
+        prices[coin] = p if p else 1.0
+    return {"balances": balances, "prices": prices}
+
+@app.get("/api/spot/quote")
+def api_spot_quote(from_coin: str, to_coin: str, amount: float):
+    return spot_get_quote(from_coin, to_coin, amount, client)
+
+class SpotConvertRequest(BaseModel):
+    from_coin: str
+    to_coin: str
+    amount: float
+
+@app.post("/api/spot/convert")
+def api_spot_convert(req: SpotConvertRequest):
+    return spot_execute_convert(req.from_coin, req.to_coin, req.amount, client)
+
+@app.get("/api/spot/history")
+def api_spot_history():
+    return {"history": spot_get_history()}
+
+class SpotResetRequest(BaseModel):
+    initial_usdt: float = 10000.0
+
+@app.post("/api/spot/reset")
+def api_spot_reset(req: SpotResetRequest):
+    return reset_spot(req.initial_usdt)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8005)
