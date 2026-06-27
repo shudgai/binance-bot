@@ -913,7 +913,7 @@ createApp({
           } else if (sig.direction === 'short' && sig.strength >= 15) {
             const holding = balances.value[coin] || 0;
             if (holding > 0) {
-              const sellAmt = holding * autoPct.value / 100;
+              const sellAmt = holding;
               const res = await fetch(B+'/api/spot/sell', {
                 method:'POST', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({coin, coin_amount: sellAmt})
