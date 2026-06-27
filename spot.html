@@ -1034,19 +1034,19 @@ createApp({
 
     async function runAutoBot() {
       try {
-        const r = await fetch(B + '/api/radar/scan');
-        const d = await r.json();
+        // 使用 /api/spot/signals 而非 /api/radar/scan，避免觸發合約機器人重啟
+        const d = await (await fetch(B + '/api/spot/signals')).json();
         if (!d || !d.signals) return;
         const usdt = balances.value['USDT'] || 0;
         const budget = usdt * autoPct.value / 100;
-        for (const sig of d.signals.slice(0, 2)) {
-          if (!sig.symbol || !sig.strength) continue;
-          const coin = sig.symbol.replace('USDT','');
-          if (!allCoinNames.value.includes(coin)) continue;
-          const ts = new Date().toLocaleTimeString('zh-TW');
+        const ts = new Date().toLocaleTimeString('zh-TW');
+        let acted = false;
 
-          if (sig.direction === 'long' && sig.strength >= 15 && budget >= 10) {
-            if (openTrades.value[coin]) continue; // already monitored
+        for (const [coin, sig] of Object.entries(d.signals)) {
+          if (!allCoinNames.value.includes(coin)) continue;
+
+          if (sig.trend === 'long' && budget >= 10) {
+            if (openTrades.value[coin]) continue;
             const res = await fetch(B+'/api/spot/buy', {
               method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify({
@@ -1058,11 +1058,13 @@ createApp({
             });
             const rd = await res.json();
             if (rd.success) {
-              autoLogs.value.unshift(`[${ts}] 🟢 買入 ${fmtCoin(rd.trade.to_amount, coin)} ${coin} SL:${autoSl.value}% TP:${autoTp.value}%`);
+              autoLogs.value.unshift(`[${ts}] 🟢 ${coin} RSI:${sig.rsi} SL:${autoSl.value}% TP:${autoTp.value}%`);
               balances.value = rd.balances;
+              acted = true;
               await loadOpenTrades();
+              break; // 每次最多買一個
             }
-          } else if (sig.direction === 'short' && sig.strength >= 15) {
+          } else if (sig.trend === 'short') {
             const holding = balances.value[coin] || 0;
             if (holding > 0) {
               const res = await fetch(B+'/api/spot/sell', {
@@ -1071,15 +1073,16 @@ createApp({
               });
               const rd = await res.json();
               if (rd.success) {
-                autoLogs.value.unshift(`[${ts}] 🔴 趨勢賣出 ${fmtCoin(holding, coin)} ${coin}`);
+                autoLogs.value.unshift(`[${ts}] 🔴 ${coin} 趨勢轉空，全賣`);
                 balances.value = rd.balances;
+                acted = true;
                 await loadOpenTrades();
               }
             }
           }
         }
         autoLogs.value = autoLogs.value.slice(0, 10);
-        await loadBalance(); await loadHistory();
+        if (acted) { await loadBalance(); await loadHistory(); }
       } catch {}
     }
 

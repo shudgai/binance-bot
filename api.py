@@ -705,23 +705,54 @@ SPOT_SIGNAL_COINS = [
     "SUI","AVAX","NEAR","APT","ARB","OP","INJ","HYPE","AAVE",
 ]
 
+# Simple in-memory cache to avoid hammering Binance every call
+_signals_cache = {"data": {}, "ts": 0}
+
+def _compute_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = 0.0, 0.0
+    for i in range(len(closes) - period, len(closes)):
+        d = closes[i] - closes[i-1]
+        if d >= 0: gains += d
+        else: losses -= d
+    rs = gains / max(losses, 1e-8)
+    return 100.0 - 100.0 / (1.0 + rs)
+
+def _compute_ema(closes, period):
+    k = 2.0 / (period + 1)
+    ema = closes[0]
+    for c in closes[1:]:
+        ema = c * k + ema * (1 - k)
+    return ema
+
+def _compute_macd_bull(closes):
+    if len(closes) < 26:
+        return True
+    fast = _compute_ema(closes, 12)
+    slow = _compute_ema(closes, 26)
+    fast2 = _compute_ema(closes[:-1], 12)
+    slow2 = _compute_ema(closes[:-1], 26)
+    return (fast - slow) > (fast2 - slow2)
+
 @app.get("/api/spot/signals")
 def api_spot_signals():
-    try:
-        from heavy_dual_shot_core import STATES
-        result = {}
-        for coin in SPOT_SIGNAL_COINS:
-            sym = coin + "USDT"
-            s = STATES.get(sym)
-            if not s:
+    global _signals_cache
+    now = time.time()
+    if now - _signals_cache["ts"] < 25:   # cache for 25s
+        return {"success": True, "signals": _signals_cache["data"], "cached": True}
+    result = {}
+    for coin in SPOT_SIGNAL_COINS:
+        sym = coin + "USDT"
+        try:
+            klines = get_klines(sym, "5m", 60)
+            if not klines or len(klines) < 20:
                 continue
-            rsi = s.get("current_rsi", 0)
-            macd_line   = s.get("macd_line", 0)
-            macd_signal = s.get("macd_signal", 0)
-            macd_bull   = macd_line > macd_signal
-            bb_mid      = s.get("bb_mid", 0)
-            price       = s.get("close_price", 0)
-            above_bb    = price > bb_mid if bb_mid > 0 else None
+            closes = [float(k["close"]) for k in klines]
+            rsi      = _compute_rsi(closes, 14)
+            macd_bull = _compute_macd_bull(closes)
+            price    = closes[-1]
+            sma20    = sum(closes[-20:]) / 20
             if rsi > 52 and macd_bull:
                 trend = "long"
             elif rsi < 48 and not macd_bull:
@@ -729,15 +760,16 @@ def api_spot_signals():
             else:
                 trend = "neutral"
             result[coin] = {
-                "rsi":       round(float(rsi), 1),
-                "macd_bull": bool(macd_bull),
+                "rsi":       round(rsi, 1),
+                "macd_bull": macd_bull,
                 "trend":     trend,
-                "price":     float(price),
-                "above_bb":  above_bb,
+                "price":     price,
+                "above_bb":  price > sma20,
             }
-        return {"success": True, "signals": result}
-    except Exception as e:
-        return {"success": False, "error": str(e), "signals": {}}
+        except Exception:
+            pass
+    _signals_cache = {"data": result, "ts": now}
+    return {"success": True, "signals": result, "cached": False}
 
 
 if __name__ == "__main__":
