@@ -1752,9 +1752,10 @@ def update_trailing_stop(sym, current_price, is_long):
     # 不等 25秒主循環，防止峰值在25秒空窗內出現後跌回
     if atr_val > 0 and current_price > 0:
         _ts_atr_pct = atr_val / current_price
-        _ts_act = max(0.005, _ts_atr_pct * 0.8)
-        _ts_ret = max(0.002, _ts_atr_pct * 0.5)
+        _lev_ts = s.get("leverage", 4)
         _hp = s.get("highest_profit_pct", 0.0)
+        _ts_act = max(0.012 / _lev_ts, _ts_atr_pct * 0.2)
+        _ts_ret = min(max(0.002, _ts_atr_pct * 0.25), _hp * 0.6) if _hp > 0 else 0.002
         if _hp >= _ts_act:
             if is_long:
                 _trail_tp_sl = s.get("trailing_highest", avg_price) * (1 - _ts_ret)
@@ -2573,12 +2574,14 @@ async def check_exits(sym):
                 s["highest_profit_pct"] = 0.0
                 return
 
-    # ── Trailing TP：ATR 自適應高點停利 ──
-    # 啟動門檻 = max(0.5%, 0.8x ATR)；回撤門檻 = max(0.2%, 0.5x ATR)
-    # 追蹤真實最高價（多單）/ 最低價（空單），不依賴百分比，更能「停在高點」
+    # ── Trailing TP：槓桿自適應高點停利 ──
+    # 啟動門檻 = max(1.2%顯示÷槓桿, 0.2x ATR)；ATR 高幣種不再推高門檻
+    # 回撤門檻 = max(0.2%, 0.25x ATR)，並上限為峰值獲利60%（防超過峰值）
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    ts_activation_pct = max(0.005, atr_pct * 0.8)
-    ts_retracement_pct = max(0.002, atr_pct * 0.5)
+    _lev = s.get("leverage", 4)
+    _hp = s.get("highest_profit_pct", 0.0)
+    ts_activation_pct = max(0.012 / _lev, atr_pct * 0.2)
+    ts_retracement_pct = min(max(0.002, atr_pct * 0.25), _hp * 0.6) if _hp > 0 else 0.002
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
