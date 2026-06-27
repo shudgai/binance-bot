@@ -1139,7 +1139,11 @@ def update_trade_signal(sym, trade):
             _lev_rt = s.get("leverage", 4)
             _hp_rt = s.get("highest_profit_pct", 0.0)
             _ts_act_rt = max(0.012 / _lev_rt, _ts_atr_pct_rt * 0.2)
-            _ts_ret_rt = min(max(0.002, _ts_atr_pct_rt * 0.25), _hp_rt * 0.6) if _hp_rt > 0 else 0.002
+            # 動態縮緊：利潤越大，防護網越緊（方案一）
+            if _hp_rt > 0.02:       _ts_ret_rt = 0.001
+            elif _hp_rt > 0.008:    _ts_ret_rt = 0.0015
+            elif _hp_rt > 0.004:    _ts_ret_rt = 0.002
+            else:                   _ts_ret_rt = min(max(0.0008, _hp_rt * 0.5), 0.002) if _hp_rt > 0 else 0.001
             if _hp_rt >= _ts_act_rt:
                 if _is_long:
                     _ttp_sl = s.get("trailing_highest", avg_p) * (1 - _ts_ret_rt)
@@ -1776,7 +1780,11 @@ def update_trailing_stop(sym, current_price, is_long):
         _lev_ts = s.get("leverage", 4)
         _hp = s.get("highest_profit_pct", 0.0)
         _ts_act = max(0.012 / _lev_ts, _ts_atr_pct * 0.2)
-        _ts_ret = min(max(0.002, _ts_atr_pct * 0.25), _hp * 0.6) if _hp > 0 else 0.002
+        # 動態縮緊：利潤越大，防護網越緊（方案一）
+        if _hp > 0.02:      _ts_ret = 0.001
+        elif _hp > 0.008:   _ts_ret = 0.0015
+        elif _hp > 0.004:   _ts_ret = 0.002
+        else:               _ts_ret = min(max(0.0008, _hp * 0.5), 0.002) if _hp > 0 else 0.001
         if _hp >= _ts_act:
             if is_long:
                 _trail_tp_sl = s.get("trailing_highest", avg_price) * (1 - _ts_ret)
@@ -2595,14 +2603,34 @@ async def check_exits(sym):
                 s["highest_profit_pct"] = 0.0
                 return
 
+    # ── 量能衰竭偵測 (Vol_Decay_Exit) ──
+    # 爆量後量縮 + 停止創新高 → 動能耗盡主動落袋（方案三）
+    if profit_pct >= 0.008 and len(s.get("ohlcv", [])) >= 3:
+        _vd_vols = [x[5] for x in s["ohlcv"][-3:]]
+        _vd_vol_ma = s.get("vol_ma20", 1)
+        _vd_was_high = _vd_vols[-2] > _vd_vol_ma * 1.5          # 前根量偏高（1.5x均量）
+        _vd_decaying = _vd_vols[-1] < _vd_vols[-2] * 0.85       # 本根量萎縮15%以上
+        _vd_not_new_ext = (p < s.get("trailing_highest", p) * 0.999) if is_long else \
+                          (p > s.get("trailing_lowest", p) * 1.001)
+        if _vd_was_high and _vd_decaying and _vd_not_new_ext:
+            cs = 'sell' if is_long else 'buy'
+            print(f"📉 [量能衰竭] {sym} 量能高位後萎縮 ({_vd_vols[-2]:.0f}→{_vd_vols[-1]:.0f} / 均{_vd_vol_ma:.0f})，停止創新高，獲利 {profit_pct*100:.2f}% 落袋")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Decay_Exit]")
+            s["highest_profit_pct"] = 0.0
+            return
+
     # ── Trailing TP：槓桿自適應高點停利 ──
     # 啟動門檻 = max(1.2%顯示÷槓桿, 0.2x ATR)；ATR 高幣種不再推高門檻
-    # 回撤門檻 = max(0.2%, 0.25x ATR)，並上限為峰值獲利60%（防超過峰值）
+    # 回撤門檻動態縮緊：利潤越大，防護越緊（方案一）
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
     ts_activation_pct = max(0.012 / _lev, atr_pct * 0.2)
-    ts_retracement_pct = min(max(0.002, atr_pct * 0.25), _hp * 0.6) if _hp > 0 else 0.002
+    # 動態縮緊：利潤越大，防護網越緊（方案一）
+    if _hp > 0.02:      ts_retracement_pct = 0.001
+    elif _hp > 0.008:   ts_retracement_pct = 0.0015
+    elif _hp > 0.004:   ts_retracement_pct = 0.002
+    else:               ts_retracement_pct = min(max(0.0008, _hp * 0.5), 0.002) if _hp > 0 else 0.001
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
