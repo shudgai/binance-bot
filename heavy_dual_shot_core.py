@@ -4427,6 +4427,56 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         print(f"🛑 [REJECT] {sym}: 硬條件通過，但總分未達標 (綜合得分: {total_score:.1f} < 門檻: {MIN_ENTRY_SCORE:.1f})")
         return False
 
+    # =========================================================================
+    # --- 【新增】修改建議：Profit Erosion Protection (預防獲利回吐被掃出場) ---
+    # 確保進場點不是在撞牆前、死水區、或是無動能的平坦區間
+    # 豁免：Extreme_Reversal / Exhaustion_Entry / Automatic_Reverse 本就逆勢操作
+    # =========================================================================
+    if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse"):
+        # 1. 波動率擴張過濾 (Volatility Expansion Filter)
+        # 如果 ATR 正在下降，代表市場進入盤整收斂，即使方向對了也會被頻繁震盪掃出
+        atr_hist_pe = s.get("atr_history", [])
+        if len(atr_hist_pe) >= 2:
+            current_atr_pe = atr_hist_pe[-1]
+            prev_atr_pe = atr_hist_pe[-2]
+            # 確保 ATR 在上升，或至少沒有明顯衰退 (給 5% 的寬容度)
+            if current_atr_pe < prev_atr_pe * 0.95:
+                print(f"🛑 [Profit_Erosion] {sym} ATR 正在萎縮 ({current_atr_pe:.5f} < {prev_atr_pe:.5f}*0.95)，市場進入盤整極易被掃損，拒絕進場")
+                return False
+
+        # 2. 空間餘裕檢查 (Room to Run Check)
+        # 確保上方(做多)或下方(做空)到 BB 軌道至少還有 1 個 ATR 的空間
+        bb_up_pe = s.get("bb_up", 0.0)
+        bb_low_pe = s.get("bb_low", 0.0)
+        atr_pe = s.get("current_atr", 0.0)
+        if atr_pe > 0:
+            if side == "buy" and bb_up_pe > 0:
+                dist_to_res = bb_up_pe - cp
+                if dist_to_res < atr_pe * 1.0:
+                    print(f"🛑 [Profit_Erosion] {sym} 多單空間不足：距離上方阻力 BB 上軌僅剩 {dist_to_res/atr_pe:.1f} ATR (< 1.0 ATR)，容易撞牆回落，拒絕進場")
+                    return False
+            elif side == "sell" and bb_low_pe > 0:
+                dist_to_sup = cp - bb_low_pe
+                if dist_to_sup < atr_pe * 1.0:
+                    print(f"🛑 [Profit_Erosion] {sym} 空單空間不足：距離下方支撐 BB 下軌僅剩 {dist_to_sup/atr_pe:.1f} ATR (< 1.0 ATR)，容易撞牆反彈，拒絕進場")
+                    return False
+
+        # 3. 趨勢強度過濾 (Trend Strength Filter) - 確保 MACD 柱狀圖在擴張
+        # MACD 柱狀圖代表動能，如果柱狀圖沒有擴張，說明趨勢坡度不夠，容易被洗盤
+        macd_hist_pe = s.get("macd_hist", 0.0)
+        prev_macd_hist_pe = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+        
+        if side == "buy":
+            # 多單動能：MACD 柱狀圖必須大於前一根 (動能向上擴張)
+            if macd_hist_pe <= prev_macd_hist_pe and strength < 15.0:
+                print(f"🛑 [Profit_Erosion] {sym} 多單動能未擴張：MACD Histogram ({macd_hist_pe:.6f} <= {prev_macd_hist_pe:.6f})，趨勢斜率過緩易被洗，拒絕進場")
+                return False
+        elif side == "sell":
+            # 空單動能：MACD 柱狀圖必須小於前一根 (動能向下擴張)
+            if macd_hist_pe >= prev_macd_hist_pe and strength < 15.0:
+                print(f"🛑 [Profit_Erosion] {sym} 空單動能未擴張：MACD Histogram ({macd_hist_pe:.6f} >= {prev_macd_hist_pe:.6f})，趨勢斜率過緩易被洗，拒絕進場")
+                return False
+
     print(f"💚 [PASS] {sym}: 完美通過全套風控，准予開倉！(總得分: {total_score:.1f}, 基礎分: {base_score:.1f}, 加分A: {bonus_a:.1f}, 加分B: {bonus_b:.1f})")
 
     # --- 【新增】修改建議 1：進場方向絕對一致性檢查 (Directional Consistency) ---
