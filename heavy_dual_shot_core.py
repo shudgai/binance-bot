@@ -1742,11 +1742,30 @@ def update_trailing_stop(sym, current_price, is_long):
 
         safe_max_sl = liq_price * 0.8
         new_sl = min(trail_sl, safe_max_sl)
-        
+
         if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
             s["trailing_stop_price"] = new_sl
             print(f"🛡️ [Trailing_SL] {sym} 移動止損下移至 {new_sl:.4f} (獲利倍數: {profit_atr_multiple:.1f}x ATR)")
-            
+
+    # ── TrailTP_Peak 即時同步至 stop_loss ──
+    # 每3秒將追蹤止損寫入 stop_loss，讓 Fast_SL 即時守住高點
+    # 不等 25秒主循環，防止峰值在25秒空窗內出現後跌回
+    if atr_val > 0 and current_price > 0:
+        _ts_atr_pct = atr_val / current_price
+        _ts_act = max(0.005, _ts_atr_pct * 0.8)
+        _ts_ret = max(0.002, _ts_atr_pct * 0.5)
+        _hp = s.get("highest_profit_pct", 0.0)
+        if _hp >= _ts_act:
+            if is_long:
+                _trail_tp_sl = s.get("trailing_highest", avg_price) * (1 - _ts_ret)
+                if _trail_tp_sl > s.get("stop_loss", 0):
+                    s["stop_loss"] = _trail_tp_sl
+            else:
+                _trail_tp_sl = s.get("trailing_lowest", avg_price) * (1 + _ts_ret)
+                _cur_sl = s.get("stop_loss", 0)
+                if _cur_sl == 0 or _trail_tp_sl < _cur_sl:
+                    s["stop_loss"] = _trail_tp_sl
+
     return False, s["trailing_stop_price"]
     
 def detect_market_regime(sym, current_price, avg_price, is_long):
