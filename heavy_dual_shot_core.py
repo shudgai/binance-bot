@@ -4477,6 +4477,26 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 print(f"🛑 [Profit_Erosion] {sym} 空單動能未擴張：MACD Histogram ({macd_hist_pe:.6f} >= {prev_macd_hist_pe:.6f})，趨勢斜率過緩易被洗，拒絕進場")
                 return False
 
+        # 4. 拒絕天花板追高過濾 (Micro-Pullback Entry Check)
+        # 解決「不想買在最高點」的問題。強制要求現價必須從短線極端點回撤一定比例才能進場。
+        if len(s.get("ohlcv", [])) >= 5 and atr_pe > 0:
+            past_5_candles = s["ohlcv"][-5:]
+            past_5_high = max([c[2] for c in past_5_candles])
+            past_5_low = min([c[3] for c in past_5_candles])
+            
+            if side == "buy":
+                # 如果現價距離 5K 最高點不到 0.25 個 ATR，視為「貼著天花板」，拒絕追高
+                dist_from_high = past_5_high - cp
+                if dist_from_high < atr_pe * 0.25:
+                    print(f"🛑 [Micro_Pullback] {sym} 多單：現價 ({cp:.4f}) 緊貼 5K 最高點 ({past_5_high:.4f})，拒絕在天花板追高，等待微回調")
+                    return False
+            elif side == "sell":
+                # 如果現價距離 5K 最低點不到 0.25 個 ATR，視為「貼著地板」，拒絕追空
+                dist_from_low = cp - past_5_low
+                if dist_from_low < atr_pe * 0.25:
+                    print(f"🛑 [Micro_Pullback] {sym} 空單：現價 ({cp:.4f}) 緊貼 5K 最低點 ({past_5_low:.4f})，拒絕在地板追空，等待微反彈")
+                    return False
+
     print(f"💚 [PASS] {sym}: 完美通過全套風控，准予開倉！(總得分: {total_score:.1f}, 基礎分: {base_score:.1f}, 加分A: {bonus_a:.1f}, 加分B: {bonus_b:.1f})")
 
     # --- 【新增】修改建議 1：進場方向絕對一致性檢查 (Directional Consistency) ---
