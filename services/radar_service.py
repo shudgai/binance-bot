@@ -13,6 +13,10 @@ radar_lock = threading.Lock()
 last_api_call = 0
 API_RATE_LIMIT = 1.0
 
+# 換倉重啟冷卻：5 分鐘內不重複重啟（避免雷達頻繁觸發）
+last_bot_restart = 0.0
+BOT_RESTART_COOLDOWN = 300.0  # 5 minutes
+
 # 熔斷黑名單 {symbol: expire_timestamp}
 BLACKLIST = {}
 
@@ -132,10 +136,19 @@ def auto_radar_switch(force_start=False):
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(all_preserved)}", "warning")
         bot_status["active_symbols"] = final_symbols
-        
+
+        # 換倉冷卻：5 分鐘內不重複重啟，避免雷達頻繁換倉
+        global last_bot_restart
+        since_restart = time.time() - last_bot_restart
+        if since_restart < BOT_RESTART_COOLDOWN:
+            remaining = int(BOT_RESTART_COOLDOWN - since_restart)
+            add_system_log(f"⏳ [雷達冷卻] 換倉冷卻中，剩餘 {remaining} 秒，暫不重啟", "warning")
+            return final_symbols
+
         if bot_status.get("is_running") or force_start:
+            last_bot_restart = time.time()
             start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
-            
+
         return final_symbols
     except Exception as e:
         add_system_log(f"🚨 [雷達掃描] 掃描失敗: {e}", "danger")
