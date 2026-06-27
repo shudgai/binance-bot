@@ -1729,6 +1729,24 @@ def compute_indicators(sym):
         elif curr_c >= c_max and curr_r < r_max and curr_r < prev_r:
             s["divergence"] = "bearish"
 
+    # ── 持倉中：用 K 線 High/Low 同步追蹤峰值（補 WS trade feed 的漏網之魚）──
+    # WS 成交流只抓到有成交的瞬間；K 線 high 才是真實最高點（含 maker 掛單成交）
+    if abs(s.get("qty", 0)) > 0.000001 and len(ohlcv) >= 1:
+        kline_high = float(ohlcv[-1][2])
+        kline_low  = float(ohlcv[-1][3])
+        if s["qty"] > 0:  # 多單：同步最高點
+            if kline_high > s.get("trailing_highest", 0):
+                prev_th = s.get("trailing_highest", 0)
+                s["trailing_highest"] = kline_high
+                if prev_th > 0:
+                    print(f"📈 [高點校準] {sym} trailing_highest 由 {prev_th:.4f} 更新至 K線高 {kline_high:.4f}")
+        else:  # 空單：同步最低點
+            if kline_low < s.get("trailing_lowest", float("inf")):
+                prev_tl = s.get("trailing_lowest", float("inf"))
+                s["trailing_lowest"] = kline_low
+                if prev_tl < float("inf"):
+                    print(f"📉 [低點校準] {sym} trailing_lowest 由 {prev_tl:.4f} 更新至 K線低 {kline_low:.4f}")
+
 # ── 出場邏輯 ──────────────────────────────────────────────────
 
 def update_trailing_stop(sym, current_price, is_long):
