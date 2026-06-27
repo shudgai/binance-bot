@@ -727,7 +727,7 @@
                     <div class="info-val mono">{{ formatQuoteBalance() }}</div>
                 </div>
                 <button class="btn btn-primary fw-bold px-4 shadow-sm" @click="autoSnipeBestCoin" :disabled="isPlacingOrder">
-                    {{ isPlacingOrder ? '🔍 掃描中...' : '🚀 一鍵智能狙擊最飆幣' }}
+                    {{ isPlacingOrder ? '🔍 掃描中...' : '📡 ATR雷達選幣' }}
                 </button>
                 <button
                     v-if="position.qty"
@@ -736,6 +736,25 @@
                     @click="closeActivePosition"
                     :disabled="isPlacingOrder"
                 >🔴 平倉 {{ activeCoin?.name || activeSymbol }}</button>
+            </div>
+
+            <!-- ATR 雷達排名面板 -->
+            <div class="card" v-if="radarRanking.length">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;">📡 ATR 雷達排名</span>
+                    <span style="font-size:10px;color:var(--text-muted);">已選前 {{ radarSelected.length }} 強</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+                    <div v-for="(r, i) in radarRanking" :key="r.symbol"
+                        :style="radarSelected.includes(r.symbol) ? 'background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.35);border-radius:8px;padding:6px 10px;' : 'background:var(--card-bg);border:1px solid var(--border-color);border-radius:8px;padding:6px 10px;opacity:0.55;'"
+                    >
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:12px;font-weight:700;">{{ r.symbol.replace('USDT','') }}</span>
+                            <span :style="radarSelected.includes(r.symbol) ? 'font-size:11px;font-weight:600;color:#16a34a;' : 'font-size:11px;color:var(--text-muted);'">{{ r.atr_pct.toFixed(2) }}%</span>
+                        </div>
+                        <div style="font-size:10px;color:var(--text-muted);">#{{ i+1 }} {{ radarSelected.includes(r.symbol) ? '✅ 已選' : '' }}</div>
+                    </div>
+                </div>
             </div>
 
             <!-- Trade amount -->
@@ -931,6 +950,8 @@ createApp({
 
         const showLogs = ref(true);
         const showLogFullscreen = ref(false);
+        const radarRanking = ref([]);
+        const radarSelected = ref([]);
 
         const bot = ref({ is_running: false, strategy: '-', balance_quote: 0, session_start_balance: 150, active_orders: 0, regime: '-' });
         const allPositions = ref({});
@@ -1428,8 +1449,18 @@ createApp({
         const autoSnipeBestCoin = async () => {
             if (isPlacingOrder.value) return;
             isPlacingOrder.value = true;
-            addLog("⚡ 智能狙擊：正在掃描全市場波動最大的幣種...", "warning");
+            addLog("📡 ATR雷達：從核心幣種中計算 14日ATR% 選出最強幣...", "warning");
             try {
+                // 先取 ATR 排名（顯示用）
+                const rankRes = await fetch(`${API_BASE}/radar/atr-rank`);
+                if (rankRes.ok) {
+                    const rankData = await rankRes.json();
+                    if (rankData.success) {
+                        radarRanking.value = rankData.ranking || [];
+                        radarSelected.value = rankData.selected || [];
+                    }
+                }
+                // 再執行掃描（切換 bot 幣種）
                 const res = await fetch(`${API_BASE}/radar/scan`);
                 if (res.ok) {
                     const resp = await res.json();
@@ -1440,7 +1471,7 @@ createApp({
                         } else {
                             const symbols = data.active_symbols || data.best_symbols || [];
                             if (symbols.length > 0) {
-                                addLog(`🎯 狙擊成功！已選出 ${symbols.length} 個熱門小幣`, "success");
+                                addLog(`🎯 ATR雷達選出 ${symbols.length} 個幣: ${symbols.map(s=>s.replace('USDT','')).join(', ')}`, "success");
                                 coins.value = symbols.map(sym => {
                                     const existing = coins.value.find(c => c.symbol === sym);
                                     if (existing) return existing;
@@ -1970,6 +2001,7 @@ createApp({
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
             allPositions, getPositionInfo, openOrders, slStates,
             showLogs, showLogFullscreen,
+            radarRanking, radarSelected,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             tradeHistoryFullscreen, toggleTradeHistoryFullscreen,
             showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,

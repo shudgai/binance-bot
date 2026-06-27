@@ -152,6 +152,31 @@ def get_1h_volatility(symbol: str):
         pass
     return symbol, 0
 
+def get_atr_ranked_coins(symbols, limit=8):
+    """Rank given symbols by 14-day ATR% (ATR / price). Returns (selected_list, full_ranked_list)."""
+    ranked = []
+    for sym in symbols:
+        try:
+            klines = client.futures_klines(symbol=sym, interval='1d', limit=16)
+            if not klines or len(klines) < 2:
+                continue
+            trs = []
+            for i in range(1, len(klines)):
+                high = float(klines[i][2])
+                low  = float(klines[i][3])
+                prev_close = float(klines[i - 1][4])
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                trs.append(tr)
+            atr = sum(trs[-14:]) / min(len(trs), 14)
+            price = float(klines[-1][4])
+            atr_pct = round(atr / price * 100, 3) if price > 0 else 0.0
+            ranked.append({"symbol": sym, "atr_pct": atr_pct, "price": price})
+        except Exception as e:
+            print(f"[ATR Rank] {sym} error: {e}")
+    ranked.sort(key=lambda x: x["atr_pct"], reverse=True)
+    selected = [r["symbol"] for r in ranked[:limit]]
+    return selected, ranked
+
 def get_top_volume_altcoins(limit=12, ignore_list=None):
     try:
         tickers = client.futures_ticker()

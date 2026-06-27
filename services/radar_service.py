@@ -4,7 +4,11 @@ import time
 import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot
-from services.binance_service import get_top_volume_altcoins
+from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins
+from core.config import COIN_PROFILE_CONFIG
+
+CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
+RADAR_SELECT_COUNT = 8
 
 # 雷達掃描冷卻
 last_radar_scan = 0
@@ -95,8 +99,8 @@ def auto_radar_switch(force_start=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
-        add_system_log("🔥 [雷達切換] 啟動全網小幣掃描 (Top 10 高量高波動小幣)...", "warning")
-        
+        add_system_log(f"📡 [雷達掃描] 從 {len(CORE_SYMBOLS)} 個核心幣種中，依 ATR% 選出最強 {RADAR_SELECT_COUNT} 個...", "warning")
+
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
             time.sleep(API_RATE_LIMIT - elapsed)
@@ -104,35 +108,37 @@ def auto_radar_switch(force_start=False):
 
         bot_status = get_bot_status()
         current_syms = bot_status.get("active_symbols", [])
-        
+
         clean_blacklist()
-        ignore_list = list(BLACKLIST.keys())
-        top_symbols = get_top_volume_altcoins(10, ignore_list=ignore_list)
+        scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
+        top_symbols, full_ranking = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT)
 
         if not top_symbols:
-            add_system_log("⚠️ [雷達掃描] 無法獲取熱門小幣榜單，維持原狀", "warning")
+            add_system_log("⚠️ [雷達掃描] 無法計算 ATR 排名，維持原狀", "warning")
             return current_syms
 
-        # 保留仍有持倉的幣種以及 24 小時內有交易紀錄的幣種，避免介面換幣時找不到
-        open_syms = _get_open_position_symbols()
-        recent_syms = _get_recently_traded_symbols(hours=24)
-        all_preserved = [s for s in list(dict.fromkeys(open_syms + recent_syms)) if s not in top_symbols]
+        # 記錄排名供 UI 顯示
+        ranking_str = " | ".join([f"{r['symbol'].replace('USDT','')} {r['atr_pct']:.2f}%" for r in full_ranking[:10]])
+        add_system_log(f"📊 [ATR排名] {ranking_str}", "info")
 
+        # 保留仍有持倉的幣種，避免被換掉
+        open_syms = _get_open_position_symbols()
+        all_preserved = [s for s in open_syms if s not in top_symbols]
         if all_preserved:
-            add_system_log(f"🔒 [歷史保護] 以下幣種仍有持倉或近期交易紀錄，強制保留: {', '.join(all_preserved)}", "warning")
+            add_system_log(f"🔒 [持倉保護] 強制保留持倉幣種: {', '.join(all_preserved)}", "warning")
 
         final_symbols = all_preserved + top_symbols
-        if len(final_symbols) > 10:
-            final_symbols = final_symbols[:10]
+        if len(final_symbols) > RADAR_SELECT_COUNT + 2:
+            final_symbols = final_symbols[:RADAR_SELECT_COUNT + 2]
 
         # 排序讓比較不受順序影響
         if sorted(final_symbols) == sorted(current_syms):
-            add_system_log(f"✅ [雷達掃描] 當前榜單依然稱霸 ({', '.join(final_symbols)})，維持不變", "success")
+            add_system_log(f"✅ [雷達掃描] 榜單未變 ({', '.join(final_symbols)})，維持不變", "success")
             if force_start and not bot_status.get("is_running"):
                 start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
             return final_symbols
 
-        add_system_log(f"🎯 [雷達鎖定] 最新熱門小幣榜單: {', '.join(top_symbols)}", "success")
+        add_system_log(f"🎯 [雷達鎖定] ATR最強 {RADAR_SELECT_COUNT} 幣: {', '.join(top_symbols)}", "success")
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(all_preserved)}", "warning")
         bot_status["active_symbols"] = final_symbols

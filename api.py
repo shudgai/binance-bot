@@ -33,7 +33,7 @@ from services.paper_trade_service import (
     reset_paper_state,
     get_session_start_balance,
 )
-from services.radar_service import trigger_manual_radar, auto_radar_switch
+from services.radar_service import trigger_manual_radar, auto_radar_switch, CORE_SYMBOLS, RADAR_SELECT_COUNT
 
 load_dotenv()
 
@@ -193,6 +193,17 @@ def api_sl_states():
 def api_radar_scan():
     try:
         return trigger_manual_radar()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/radar/atr-rank")
+def api_radar_atr_rank():
+    try:
+        from services.binance_service import get_atr_ranked_coins
+        from services.radar_service import BLACKLIST
+        scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
+        selected, full_ranking = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT)
+        return {"success": True, "selected": selected, "ranking": full_ranking}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
