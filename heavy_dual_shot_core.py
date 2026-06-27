@@ -1712,8 +1712,10 @@ def update_trailing_stop(sym, current_price, is_long):
                 trailing_multiplier = 0.6
             else:                                    # <0.8%: 緊追 0.4x ATR
                 trailing_multiplier = 0.4
-            dynamic_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
-            
+            # 最小距離防護：低波動模式下 ATR 太小導致 SL 靠太近，用 max 確保至少 0.25% 緩衝
+            _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
+            dynamic_sl = s["trailing_highest"] - _min_gap_l
+
             # Legacy Breakeven：鎖定在進場價 +0.1%，覆蓋來回手續費，避免滑點造成虧損出場
             trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
             sl_dist_atr = trigger_mult * atr_val
@@ -1754,8 +1756,10 @@ def update_trailing_stop(sym, current_price, is_long):
                 trailing_multiplier = 0.6
             else:
                 trailing_multiplier = 0.4
-            dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
-            
+            # 最小距離防護：低波動模式下 ATR 太小導致 SL 靠太近，用 max 確保至少 0.25% 緩衝
+            _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
+            dynamic_sl = s["trailing_lowest"] + _min_gap_s
+
             # Legacy Breakeven (SHORT)：鎖定在進場價 -0.1%，覆蓋來回手續費
             trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
             sl_dist_atr = trigger_mult * atr_val
@@ -1858,6 +1862,13 @@ def has_strong_momentum(sym, is_long):
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
+    # 狀態防護：平倉方向必須與持倉方向一致，防止「多單卻發出買入平空」的狀態混亂
+    actual_qty = s.get("qty", 0)
+    if abs(actual_qty) > 0.000001:
+        expected_side = "sell" if actual_qty > 0 else "buy"
+        if close_side != expected_side:
+            print(f"⚠️ [狀態錯誤修正] {sym} 要求 {close_side} 但持倉為 {'多' if actual_qty > 0 else '空'}，強制修正為 {expected_side} | reason={reason}")
+            close_side = expected_side
     # 不在 finally 裡歸零 adjusted_this_tick：讓旗標保持到本 tick 結束
     # 主迴圈在每個 tick 開頭 (line ~4941) 統一歸零，避免同 tick 內重複進入 check_exits
     await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
