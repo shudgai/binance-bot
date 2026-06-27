@@ -4089,6 +4089,30 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 else:
                     print(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力(未同時滿足實體>1.2x且量能>1.3x)，拒絕進場。(實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/volume_ma20:.2f}x)")
                     return False
+                    
+        # --- 趨勢斜率過濾 (Trend Slope Filter) ---
+        # 確保 EMA20 不是平的。我們利用當前 EMA20 與 3 根 K 線前的 EMA20 來計算斜率。
+        ema20_now = s.get("ema20", 0.0)
+        ema20_hist = s.get("ema20_history", [])
+        if ema20_now > 0 and len(ema20_hist) >= 3:
+            ema20_past = ema20_hist[-3]
+            # 計算 3 根 K 線間的變動率
+            slope_pct = (ema20_now - ema20_past) / ema20_past
+            # 設定門檻：3 根 K 線至少要有 0.05% 的變動 (數值可微調)
+            slope_threshold = 0.0005
+            
+            if side == "buy" and slope_pct < slope_threshold:
+                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
+                    pass
+                else:
+                    print(f"🛑 [WEAK_SLOPE_SKIP] {sym} 做多訊號但 EMA20 趨勢太過平緩 (斜率: {slope_pct*100:.4f}% < {slope_threshold*100:.4f}%)，拒絕上車")
+                    return False
+            elif side == "sell" and slope_pct > -slope_threshold:
+                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
+                    pass
+                else:
+                    print(f"🛑 [WEAK_SLOPE_SKIP] {sym} 做空訊號但 EMA20 趨勢太過平緩 (斜率: {slope_pct*100:.4f}% > -{slope_threshold*100:.4f}%)，拒絕上車")
+                    return False
         
     # 2. RSI 方向保護：超賣禁空、超買禁多
     current_rsi = s.get("current_rsi", 50.0)
