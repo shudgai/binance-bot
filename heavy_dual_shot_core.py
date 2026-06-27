@@ -2535,7 +2535,7 @@ async def check_exits(sym):
     _vc_vol = s.get("current_vol", 0)
     _vc_vol_ma = s.get("vol_ma20", 1)
     _vc_prev_close = s.get("prev_close", p)
-    if (_vc_vol > _vc_vol_ma * 3.0 and profit_pct >= 0.008 and p < _vc_prev_close):
+    if (_vc_vol > _vc_vol_ma * 2.0 and profit_pct >= 0.008 and p < _vc_prev_close):
         cs = 'sell' if is_long else 'buy'
         print(f"🚀 [量能高潮] {sym} 爆量 {_vc_vol/_vc_vol_ma:.1f}x 均量且收盤轉弱，獲利 {profit_pct*100:.2f}%，見好就收")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Volume_Climax_Exit]")
