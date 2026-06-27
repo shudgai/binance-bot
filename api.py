@@ -81,10 +81,30 @@ def daily_reset_daemon():
         time.sleep(wait_seconds)
         daily_market_clean_and_reset(is_manual=False)
 
+def _spot_sltp_daemon():
+    """Background thread: check spot SL/TP every 10 seconds."""
+    import time as _time
+    while True:
+        try:
+            from services.spot_service import check_sltp, get_open_trades
+            if get_open_trades():
+                closed = check_sltp(client)
+                for c in closed:
+                    sign = "+" if c["pnl"] >= 0 else ""
+                    add_system_log(
+                        f"[SpotBot] {c['coin']} {c['reason']} | PnL {sign}{c['pnl']:.4f} USDT",
+                        "success" if c["pnl"] >= 0 else "warning"
+                    )
+        except Exception as e:
+            pass
+        _time.sleep(10)
+
 @app.on_event("startup")
 async def startup_event():
     # 啟動 6:00 AM 定時器
     threading.Thread(target=daily_reset_daemon, daemon=True).start()
+    # 現貨 SL/TP 監控
+    threading.Thread(target=_spot_sltp_daemon, daemon=True).start()
     # 後端重啟後自動恢復機器人
     from services.bot_manager_service import auto_restore_bot_on_startup
     auto_restore_bot_on_startup()
@@ -576,11 +596,15 @@ def get_open_orders(symbol: str):
 #  現貨轉換 (Spot Convert) API
 # ─────────────────────────────────────────────────────────────
 from services.spot_service import (
-    get_state    as spot_get_state,
-    get_balances as spot_get_balances,
-    get_history  as spot_get_history,
-    get_spot_price, get_quote as spot_get_quote,
-    execute_convert as spot_execute_convert,
+    get_state        as spot_get_state,
+    get_balances     as spot_get_balances,
+    get_history      as spot_get_history,
+    get_open_trades  as spot_get_open_trades,
+    get_spot_price,
+    get_quote        as spot_get_quote,
+    execute_convert  as spot_execute_convert,
+    register_open_trade,
+    check_sltp,
     reset_spot, SUPPORTED_COINS,
 )
 
@@ -621,10 +645,18 @@ def api_spot_convert(req: SpotConvertRequest):
 class SpotBuyRequest(BaseModel):
     coin: str
     usdt_amount: float
+    sl_pct:    float = 0.0   # 0 = no SL/TP monitoring
+    tp_pct:    float = 0.0
+    trail_pct: float = 1.5
 
 @app.post("/api/spot/buy")
 def api_spot_buy(req: SpotBuyRequest):
-    return spot_execute_convert("USDT", req.coin, req.usdt_amount, client, "buy")
+    result = spot_execute_convert("USDT", req.coin, req.usdt_amount, client, "buy")
+    if result["success"] and (req.sl_pct > 0 or req.tp_pct > 0):
+        entry = result["trade"]["to_price_usdt"]
+        qty   = result["trade"]["to_amount"]
+        register_open_trade(req.coin, qty, entry, req.sl_pct, req.tp_pct, req.trail_pct)
+    return result
 
 class SpotSellRequest(BaseModel):
     coin: str
@@ -633,6 +665,28 @@ class SpotSellRequest(BaseModel):
 @app.post("/api/spot/sell")
 def api_spot_sell(req: SpotSellRequest):
     return spot_execute_convert(req.coin, "USDT", req.coin_amount, client, "sell")
+
+@app.get("/api/spot/open-trades")
+def api_spot_open_trades():
+    trades = spot_get_open_trades()
+    # Enrich with current prices
+    enriched = {}
+    for coin, t in trades.items():
+        price = get_spot_price(coin, client) or 0
+        pnl   = (price - t["entry_price"]) * t["qty"]
+        pnl_pct = (price - t["entry_price"]) / t["entry_price"] * 100 if t["entry_price"] else 0
+        enriched[coin] = {**t, "current_price": price, "pnl": pnl, "pnl_pct": pnl_pct}
+    return {"open_trades": enriched}
+
+@app.delete("/api/spot/open-trades/{coin}")
+def api_spot_close_trade(coin: str):
+    """Force close a monitored trade (market sell all)."""
+    from services.spot_service import get_balances as _gb
+    qty = _gb().get(coin, 0.0)
+    if qty <= 0:
+        return {"success": False, "error": "無持倉"}
+    result = spot_execute_convert(coin, "USDT", qty, client, "sell")
+    return result
 
 @app.get("/api/spot/history")
 def api_spot_history():

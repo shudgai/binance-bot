@@ -388,19 +388,70 @@ td.down{color:var(--trade-down);font-weight:700;font-family:'JetBrains Mono';}
         </label>
       </div>
       <div class="auto-desc">
-        {{ autoBot ? '✅ 已啟動：每 30 秒掃描信號，自動買入/賣出。' : '信號強度 ≥ 15 時自動執行現貨買賣。' }}
-        <span v-if="autoBot"> 單次動用 <b>{{ autoPct }}%</b> USDT。</span>
+        {{ autoBot ? '✅ 已啟動：每 30 秒掃描信號，含 SL/TP/移動止損。' : '信號強度 ≥ 15 時自動執行，後端每 10 秒監控 SL/TP。' }}
       </div>
-      <div v-if="autoBot" style="margin-top:8px">
-        <label style="font-size:10px;color:var(--text-muted)">每次動用 USDT %：</label>
-        <input type="range" v-model.number="autoPct" min="5" max="50" step="5"
-          style="width:100%;margin-top:4px;accent-color:var(--primary)">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
-          <span>5%</span><span><b>{{ autoPct }}%</b> = {{ fmt((balances['USDT']||0)*autoPct/100) }} USDT</span><span>50%</span>
+      <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <div>
+          <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">動用 %</label>
+          <input class="lo-input" type="number" v-model.number="autoPct" min="5" max="100" step="5" style="text-align:center;padding:6px 4px">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--danger);display:block;margin-bottom:3px">止損 SL %</label>
+          <input class="lo-input" type="number" v-model.number="autoSl" min="0.5" max="10" step="0.5" style="text-align:center;padding:6px 4px;border-color:rgba(220,38,38,.3)">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--success);display:block;margin-bottom:3px">止盈 TP %</label>
+          <input class="lo-input" type="number" v-model.number="autoTp" min="0.5" max="20" step="0.5" style="text-align:center;padding:6px 4px;border-color:rgba(5,150,105,.3)">
         </div>
       </div>
+      <div style="margin-top:6px;font-size:10px;color:var(--text-muted)">
+        移動止損：觸及 TP 後啟動，回撤 <b>{{ autoTrail }}%</b> 平倉
+        <input type="range" v-model.number="autoTrail" min="0.5" max="5" step="0.5"
+          style="width:100%;margin-top:3px;accent-color:var(--primary)">
+      </div>
       <div v-if="autoLogs.length" class="auto-log">
-        <div v-for="l in autoLogs.slice(0,5)" :key="l">{{ l }}</div>
+        <div v-for="l in autoLogs.slice(0,8)" :key="l">{{ l }}</div>
+      </div>
+    </div>
+
+    <!-- Open Trades (SL/TP監控) -->
+    <div v-if="Object.keys(openTrades).length > 0" class="card" style="padding:12px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:10px">
+        📡 監控中持倉 (SL/TP)
+      </div>
+      <div v-for="(t, coin) in openTrades" :key="coin"
+        style="background:#f8f9fb;border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--border-color)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <b style="font-size:14px">{{ coin }}</b>
+          <span :class="t.pnl >= 0 ? 'up' : 'down'" style="font-family:'JetBrains Mono';font-size:13px;font-weight:700">
+            {{ t.pnl >= 0 ? '+' : '' }}{{ t.pnl.toFixed(4) }} USDT
+            ({{ t.pnl_pct >= 0 ? '+' : '' }}{{ t.pnl_pct.toFixed(2) }}%)
+          </span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px">
+          <div style="text-align:center">
+            <div style="color:var(--text-muted)">均價</div>
+            <div style="font-family:'JetBrains Mono';font-weight:700">{{ fmtPriceFull(t.entry_price) }}</div>
+          </div>
+          <div style="text-align:center">
+            <div style="color:var(--danger)">止損</div>
+            <div style="font-family:'JetBrains Mono';font-weight:700;color:var(--danger)">{{ fmtPriceFull(t.sl_price) }}</div>
+          </div>
+          <div style="text-align:center">
+            <div :style="{color: t.trail_active ? 'var(--primary)' : 'var(--success)'}">
+              {{ t.trail_active ? '移動止損' : '止盈' }}
+            </div>
+            <div style="font-family:'JetBrains Mono';font-weight:700"
+              :style="{color: t.trail_active ? 'var(--primary)' : 'var(--success)'}">
+              {{ t.trail_active ? fmtPriceFull(t.trail_high * (1 - (t.trail_pct||1.5)/100)) : fmtPriceFull(t.tp_price) }}
+            </div>
+          </div>
+        </div>
+        <button @click="forceClose(coin)"
+          style="width:100%;margin-top:8px;padding:5px;border:1px solid rgba(220,38,38,.3);
+            border-radius:6px;background:none;color:var(--danger);font-size:11px;font-weight:700;cursor:pointer">
+          強制平倉
+        </button>
       </div>
     </div>
 
@@ -429,12 +480,24 @@ td.down{color:var(--trade-down);font-weight:700;font-family:'JetBrains Mono';}
           <button class="pct-btn" @click="setPct(75)">75%</button>
           <button class="pct-btn" @click="setPct(100)">MAX</button>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+          <div>
+            <label style="font-size:10px;color:var(--danger);display:block;margin-bottom:3px">止損 SL %（可選）</label>
+            <input class="lo-input" type="number" v-model.number="manualSl" min="0" step="0.5" placeholder="0 = 不設"
+              style="border-color:rgba(220,38,38,.3)">
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--success);display:block;margin-bottom:3px">止盈 TP %（可選）</label>
+            <input class="lo-input" type="number" v-model.number="manualTp" min="0" step="0.5" placeholder="0 = 不設"
+              style="border-color:rgba(5,150,105,.3)">
+          </div>
+        </div>
         <div class="lo-hint" v-if="buyUsdt > 0 && activePrice > 0">
           ≈ 獲得 <b>{{ fmtCoin(buyUsdt*(1-0.001)/activePrice, activeCoin) }} {{ activeCoin }}</b>，
           手續費 {{ (buyUsdt*0.001).toFixed(4) }} USDT
         </div>
         <button class="lo-submit-buy" @click="doBuy" :disabled="!buyUsdt || buyUsdt <= 0 || submitting">
-          {{ submitting ? '執行中...' : '✅ 買入 ' + activeCoin }}
+          {{ submitting ? '執行中...' : '✅ 買入 ' + activeCoin + (manualSl||manualTp ? ' + SL/TP' : '') }}
         </button>
       </div>
 
@@ -564,7 +627,13 @@ createApp({
     const submitting = ref(false);
     const autoBot    = ref(false);
     const autoPct    = ref(20);
+    const autoSl     = ref(3.0);
+    const autoTp     = ref(5.0);
+    const autoTrail  = ref(1.5);
     const autoLogs   = ref([]);
+    const openTrades = ref({});
+    const manualSl   = ref(0);
+    const manualTp   = ref(0);
     const showReset  = ref(false);
     const resetAmt   = ref(10000);
     const prevPrice  = ref({});
@@ -573,6 +642,7 @@ createApp({
     let refreshTimer = null;
     let autoTimer    = null;
     let cvTimer      = null;
+    let sltpTimer    = null;
 
     // ── computed ──
     const allCoinNames = computed(() => coinList.value.length ? coinList.value : Object.keys(COIN_COLORS));
@@ -684,6 +754,12 @@ createApp({
         coinList.value = d.coins || [];
       } catch {}
     }
+    async function loadOpenTrades() {
+      try {
+        const d = await (await fetch(B+'/api/spot/open-trades')).json();
+        openTrades.value = d.open_trades || {};
+      } catch {}
+    }
 
     // ── actions ──
     function setPct(p) {
@@ -702,19 +778,37 @@ createApp({
       if (!buyUsdt.value || buyUsdt.value <= 0 || submitting.value) return;
       submitting.value = true;
       try {
+        const body = {
+          coin: activeCoin.value,
+          usdt_amount: buyUsdt.value,
+          sl_pct: manualSl.value || 0,
+          tp_pct: manualTp.value || 0,
+          trail_pct: 0,
+        };
         const r = await fetch(B+'/api/spot/buy', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({coin: activeCoin.value, usdt_amount: buyUsdt.value})
+          body: JSON.stringify(body)
         });
         const d = await r.json();
         if (d.success) {
           balances.value = d.balances;
           buyUsdt.value  = null;
           showToast(`✅ 買入 ${fmtCoin(d.trade.to_amount, d.trade.to_coin)} ${d.trade.to_coin}`);
-          await loadHistory(); await loadBalance();
+          await loadHistory(); await loadBalance(); await loadOpenTrades();
         } else showToast('❌ ' + d.error, 'error');
       } catch { showToast('❌ 網路錯誤', 'error'); }
       finally { submitting.value = false; }
+    }
+
+    async function forceClose(coin) {
+      try {
+        const r = await fetch(B+'/api/spot/open-trades/'+coin, {method:'DELETE'});
+        const d = await r.json();
+        if (d.success) {
+          showToast(`✅ ${coin} 已強制平倉`, 'success');
+          await loadBalance(); await loadHistory(); await loadOpenTrades();
+        } else showToast('❌ ' + (d.error||'平倉失敗'), 'error');
+      } catch { showToast('❌ 網路錯誤', 'error'); }
     }
 
     async function doSell() {
@@ -800,18 +894,23 @@ createApp({
           const ts = new Date().toLocaleTimeString('zh-TW');
 
           if (sig.direction === 'long' && sig.strength >= 15 && budget >= 10) {
-            // Auto buy
+            if (openTrades.value[coin]) continue; // already monitored
             const res = await fetch(B+'/api/spot/buy', {
               method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({coin, usdt_amount: budget})
+              body: JSON.stringify({
+                coin, usdt_amount: budget,
+                sl_pct: autoSl.value,
+                tp_pct: autoTp.value,
+                trail_pct: autoTrail.value,
+              })
             });
             const rd = await res.json();
             if (rd.success) {
-              autoLogs.value.unshift(`[${ts}] 🟢 自動買入 ${fmtCoin(rd.trade.to_amount, coin)} ${coin}`);
+              autoLogs.value.unshift(`[${ts}] 🟢 買入 ${fmtCoin(rd.trade.to_amount, coin)} ${coin} SL:${autoSl.value}% TP:${autoTp.value}%`);
               balances.value = rd.balances;
+              await loadOpenTrades();
             }
           } else if (sig.direction === 'short' && sig.strength >= 15) {
-            // Auto sell if holding
             const holding = balances.value[coin] || 0;
             if (holding > 0) {
               const sellAmt = holding * autoPct.value / 100;
@@ -821,8 +920,9 @@ createApp({
               });
               const rd = await res.json();
               if (rd.success) {
-                autoLogs.value.unshift(`[${ts}] 🔴 自動賣出 ${fmtCoin(sellAmt, coin)} ${coin}`);
+                autoLogs.value.unshift(`[${ts}] 🔴 賣出 ${fmtCoin(sellAmt, coin)} ${coin}`);
                 balances.value = rd.balances;
+                await loadOpenTrades();
               }
             }
           }
@@ -849,20 +949,26 @@ createApp({
       await loadCoins();
       await loadBalance();
       await loadHistory();
+      await loadOpenTrades();
       refreshTimer = setInterval(async () => {
         await loadBalance();
       }, 8000);
+      sltpTimer = setInterval(async () => {
+        await loadOpenTrades();
+      }, 10000);
     });
     onUnmounted(() => {
       clearInterval(refreshTimer);
       clearInterval(autoTimer);
+      clearInterval(sltpTimer);
     });
 
     return {
       balances, prices, avgPrices, history, coinList,
       activeCoin, activeTab, tradeMode,
       buyUsdt, sellQty, cvFrom, cvTo, cvAmount, cvQuote,
-      submitting, autoBot, autoPct, autoLogs,
+      submitting, autoBot, autoPct, autoSl, autoTp, autoTrail, autoLogs,
+      openTrades, manualSl, manualTp,
       showReset, resetAmt, toast,
       allCoins, allCoinNames, tradeableCoins,
       activePrice, activeHolding, activeAvgPrice, priceClass,
@@ -871,7 +977,7 @@ createApp({
       fmt, fmtCoin, fmtPrice, fmtPriceFull, fmtTime,
       setPct, setSellPct, quickSell,
       doBuy, doSell, doConvert, doReset,
-      onAutoBotChange, toggleAutoBot, showReset,
+      forceClose, onAutoBotChange, toggleAutoBot, showReset,
     };
   }
 }).mount('#app');

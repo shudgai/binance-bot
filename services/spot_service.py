@@ -13,11 +13,11 @@ SUPPORTED_COINS = [
 
 def _load_state():
     if not os.path.exists(SPOT_STATE_FILE):
-        return {"balances": {"USDT": 10000.0}, "avg_prices": {}, "history": []}
+        return {"balances": {"USDT": 10000.0}, "avg_prices": {}, "open_trades": {}, "history": []}
     with open(SPOT_STATE_FILE, "r", encoding="utf-8") as f:
         d = json.load(f)
-    if "avg_prices" not in d:
-        d["avg_prices"] = {}
+    d.setdefault("avg_prices", {})
+    d.setdefault("open_trades", {})
     return d
 
 def _save_state(state):
@@ -32,6 +32,9 @@ def get_balances():
 
 def get_history():
     return _load_state()["history"]
+
+def get_open_trades():
+    return _load_state()["open_trades"]
 
 def get_spot_price(coin: str, client) -> float:
     if coin == "USDT":
@@ -77,16 +80,21 @@ def execute_convert(from_coin: str, to_coin: str, amount: float, client, action:
     if not q["success"]:
         return q
 
-    # Update balances
     balances[from_coin] = max(0.0, from_bal - amount)
 
-    old_qty    = balances.get(to_coin, 0.0)
-    old_avg    = avg_p.get(to_coin, 0.0)
-    new_qty    = old_qty + q["to_amount"]
-    # Weighted average cost
+    old_qty = balances.get(to_coin, 0.0)
+    old_avg = avg_p.get(to_coin, 0.0)
+    new_qty = old_qty + q["to_amount"]
     if to_coin != "USDT" and new_qty > 0:
         avg_p[to_coin] = (old_qty * old_avg + q["to_amount"] * q["to_price_usdt"]) / new_qty
     balances[to_coin] = new_qty
+
+    # Clean up open_trades if selling fully
+    if action == "sell" and from_coin != "USDT":
+        if balances[from_coin] < 1e-9:
+            state["open_trades"].pop(from_coin, None)
+            avg_p.pop(from_coin, None)
+            balances[from_coin] = 0.0
 
     record = {
         "time":            int(time.time() * 1000),
@@ -105,7 +113,109 @@ def execute_convert(from_coin: str, to_coin: str, amount: float, client, action:
     _save_state(state)
     return {"success": True, "trade": record, "balances": balances}
 
+# ─── SL/TP 監控 ────────────────────────────────────────────
+
+def register_open_trade(coin: str, qty: float, entry_price: float,
+                        sl_pct: float, tp_pct: float, trail_pct: float):
+    """Register a trade for SL/TP/trail monitoring after buy."""
+    state = _load_state()
+    ot    = state["open_trades"]
+    if coin in ot:
+        # Average into existing
+        old = ot[coin]
+        new_qty = old["qty"] + qty
+        new_entry = (old["qty"] * old["entry_price"] + qty * entry_price) / new_qty
+        ot[coin] = {
+            "entry_price":  new_entry,
+            "qty":          new_qty,
+            "sl_price":     new_entry * (1 - sl_pct / 100),
+            "tp_price":     new_entry * (1 + tp_pct / 100),
+            "trail_high":   max(old.get("trail_high", new_entry), entry_price),
+            "trail_active": old.get("trail_active", False),
+            "trail_pct":    trail_pct,
+            "open_time":    old.get("open_time", int(time.time() * 1000)),
+        }
+    else:
+        ot[coin] = {
+            "entry_price":  entry_price,
+            "qty":          qty,
+            "sl_price":     entry_price * (1 - sl_pct / 100),
+            "tp_price":     entry_price * (1 + tp_pct / 100),
+            "trail_high":   entry_price,
+            "trail_active": False,
+            "trail_pct":    trail_pct,
+            "open_time":    int(time.time() * 1000),
+        }
+    _save_state(state)
+    return ot[coin]
+
+def check_sltp(client) -> list:
+    """Check all open trades; execute sell if SL/TP/trail triggered. Returns closed list."""
+    state = _load_state()
+    ot    = state["open_trades"]
+    closed = []
+
+    for coin, trade in list(ot.items()):
+        price = get_spot_price(coin, client)
+        if price is None:
+            continue
+
+        entry      = trade["entry_price"]
+        sl_price   = trade["sl_price"]
+        tp_price   = trade["tp_price"]
+        trail_pct  = trade.get("trail_pct", 1.5)
+        trail_high = trade.get("trail_high", entry)
+        trail_act  = trade.get("trail_active", False)
+
+        # Update trail high
+        if price > trail_high:
+            trade["trail_high"] = price
+            trail_high = price
+
+        # Activate trailing stop when price exceeds TP by trail_pct
+        trail_activate_price = entry * (1 + trail_pct / 100)
+        if not trail_act and price >= trail_activate_price:
+            trade["trail_active"] = True
+            trail_act = True
+
+        reason = None
+
+        # Trailing stop: trail_pct below the highest price reached
+        if trail_act:
+            trail_sl = trail_high * (1 - trail_pct / 100)
+            if price <= trail_sl:
+                reason = f"移動止損 ▼{trail_pct}% (觸發@{price:.4f}, 高點@{trail_high:.4f})"
+
+        # Take profit
+        if price >= tp_price:
+            reason = f"止盈 🎯 (TP={tp_price:.4f}, 現價={price:.4f})"
+
+        # Stop loss (only if trail not activated yet)
+        if not trail_act and price <= sl_price:
+            reason = f"止損 🛑 (SL={sl_price:.4f}, 現價={price:.4f})"
+
+        if reason:
+            qty = trade["qty"]
+            result = execute_convert(coin, "USDT", qty, client, "sell")
+            if result["success"]:
+                pnl = (price - entry) * qty
+                closed.append({
+                    "coin":        coin,
+                    "reason":      reason,
+                    "entry_price": entry,
+                    "exit_price":  price,
+                    "qty":         qty,
+                    "pnl":         pnl,
+                })
+                ot.pop(coin, None)
+        else:
+            ot[coin] = trade
+
+    state["open_trades"] = ot
+    _save_state(state)
+    return closed
+
 def reset_spot(initial_usdt: float = 10000.0):
-    state = {"balances": {"USDT": initial_usdt}, "avg_prices": {}, "history": []}
+    state = {"balances": {"USDT": initial_usdt}, "avg_prices": {}, "open_trades": {}, "history": []}
     _save_state(state)
     return state
