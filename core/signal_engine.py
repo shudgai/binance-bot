@@ -83,8 +83,8 @@ def compute_signal_strength(sym):
     long_macd_cross = prev_macd_line <= prev_macd_signal and macd_line > macd_signal
     short_macd_cross = prev_macd_line >= prev_macd_signal and macd_line < macd_signal
 
-    long_macd_hist_aligned = macd_hist > prev_macd_hist
-    short_macd_hist_aligned = macd_hist < prev_macd_hist
+    long_macd_hist_aligned = macd_hist > prev_macd_hist * 1.2
+    short_macd_hist_aligned = macd_hist < prev_macd_hist * 1.2
 
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
