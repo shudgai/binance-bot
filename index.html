@@ -1339,10 +1339,10 @@ createApp({
                 if (Array.isArray(data.disabled_symbols)) disabledSymbols.value = data.disabled_symbols;
 
                 // 動態更新界面上的監控幣種
-                // 優先用 watch_symbols（Bot 實際監控），再 fallback 到 active_symbols
-                const symbolList = (data.watch_symbols && data.watch_symbols.length > 0)
-                    ? data.watch_symbols
-                    : (data.active_symbols && data.active_symbols.length > 0 ? data.active_symbols : null);
+                // 優先用 active_symbols（雷達選出的交易幣），watch_symbols 包含全部監控幣不適合顯示
+                const symbolList = (data.active_symbols && data.active_symbols.length > 0)
+                    ? data.active_symbols
+                    : (data.watch_symbols && data.watch_symbols.length > 0 ? data.watch_symbols : null);
 
                 if (symbolList) {
                     // BTCUSDT 不是交易幣，過濾掉；ETHUSDT 現在是交易幣，保留
