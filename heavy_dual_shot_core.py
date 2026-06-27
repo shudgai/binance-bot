@@ -947,7 +947,7 @@ def _macd_vals(s):
     prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
     return macd_hist, prev_macd_hist
 
-def _calc_sl_tp(sym, side, s, p):
+def _calc_sl_tp(sym, side, s, p, route="a"):
     """Calculate ATR, SL distance, TP distance, expected R:R.
 
     Three-dimensional defense:
@@ -960,6 +960,12 @@ def _calc_sl_tp(sym, side, s, p):
     sl_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
+
+    # Layer-S: 動態反手止損 (Dynamic Reverse SL)
+    if route == "Automatic_Reverse":
+        old_sl_mult = sl_mult
+        sl_mult *= 1.25
+        print(f"@@COIN_DEBUG@@ 🛡️ {sym} 反手進場，擴大止損空間 (sl_mult: {old_sl_mult:.2f} -> {sl_mult:.2f})")
 
     # Layer-A: Low-Volatility Mode Switch
     _atr_hist_sl = s.get("atr_history", [])
@@ -2500,13 +2506,46 @@ async def check_exits(sym):
     if s.get("entry_count", 0) > 0:
         time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
         
-        # 1. 15分鐘強制撤離
-        rescue_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 10, is_long)
-        if time_since_last_entry > rescue_timeout_min * 60:
-            print(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援模式逾時 {rescue_timeout_min} 分鐘未達標，強制平倉撤退！")
+        # 1. 動態時空救援逾時 (Dynamic Rescue Timeout)
+        base_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 10, is_long)
+        atr_history_m = s.get("atr_history", [])
+        atr_ma20_m = float(np.mean(atr_history_m)) if len(atr_history_m) > 0 else atr_val
+        
+        if atr_ma20_m > 0:
+            dynamic_timeout = base_timeout_min * (atr_val / atr_ma20_m)
+        else:
+            dynamic_timeout = base_timeout_min
+            
+        dynamic_timeout = max(5.0, min(dynamic_timeout, 20.0))
+        
+        if time_since_last_entry > dynamic_timeout * 60:
+            print(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援模式動態逾時 {dynamic_timeout:.1f} 分鐘未達標 (Base: {base_timeout_min})，強制平倉撤退！")
             cs = "sell" if is_long else "buy"
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Timeout]", is_stop_loss=True)
             return
+
+        # 1.5 動能衰減提早止損 (Momentum Decay Rescue Early Exit)
+        if time_since_last_entry > 180 and profit_pct < -0.001:  # 超過3分鐘且套牢中
+            macd_hist_m = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+            prev_macd_hist_m = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+            ema20_m = s.get("ema20", 0.0)
+            
+            # 判斷動能是否反轉
+            is_momentum_dead = False
+            if is_long:
+                # 做多救援時，如果 MACD 柱狀體往下擴張，或者價格跌破 EMA20
+                if (macd_hist_m < 0 and macd_hist_m < prev_macd_hist_m) or (ema20_m > 0 and p < ema20_m):
+                    is_momentum_dead = True
+            else:
+                # 做空救援時，如果 MACD 柱狀體往上擴張，或者價格突破 EMA20
+                if (macd_hist_m > 0 and macd_hist_m > prev_macd_hist_m) or (ema20_m > 0 and p > ema20_m):
+                    is_momentum_dead = True
+                    
+            if is_momentum_dead:
+                print(f"🚨 [RESCUE_MOMENTUM_DECAY] {sym} 救援期間動能已死(MACD反向或破EMA20)，提早止損！(套牢: {profit_pct*100:.2f}%)")
+                cs = "sell" if is_long else "buy"
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Momentum_Decay]", is_stop_loss=True)
+                return
 
         # 2. 動態追蹤脫困邏輯 (Dynamic Trailing Rescue)
         rescue_floor = get_effective_exit_setting(sym, "rescue_tp_floor_pct", 0.002, is_long)
@@ -4026,6 +4065,31 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         else:
             print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能嚴重不足 (當前: {current_volume:.1f} <= 門檻: {dynamic_vol_threshold:.1f} | {mode_label})，判定為死水行情。")
             return False
+
+    # =========================================================================
+    # 🔴 第一道防線：進場前質量過濾 (Pre-Entry Quality Filter)
+    # =========================================================================
+    # 目的是過濾掉「盤整區間、無資金推動」的無效假突破
+    # 豁免：Extreme_Reversal (極端反轉往往實體極小，且剛開始無量)
+    if route not in ("Extreme_Reversal",) and len(_ohlcv_v) >= 20:
+        past_20_candles = _ohlcv_v[-20:]
+        # 計算過去 20 根 K 線的平均實體大小
+        avg_body_size = float(np.mean([abs(c[4] - c[1]) for c in past_20_candles]))
+        current_body_size = abs(past_20_candles[-1][4] - past_20_candles[-1][1])
+        
+        # current_volume 是最後一根完成的 K 線量能
+        eval_vol = s.get("current_vol", current_volume)
+        
+        if avg_body_size > 0 and volume_ma20 > 0:
+            # 條件：實體大於平均 1.2 倍，或成交量大於平均 1.3 倍 (放寬為 OR，避免完全無法開單)
+            # 嚴格版：AND，但實測極難觸發。這裡依照 user 原始要求採用 AND。
+            if current_body_size <= avg_body_size * 1.2 or eval_vol <= volume_ma20 * 1.3:
+                # 若訊號強度非常高 (e.g. > 20.0) 或反轉路線，給予豁免
+                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
+                    print(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢訊號({strength:.1f})或反手/枯竭路由，豁免實體/量能硬門檻")
+                else:
+                    print(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力，拒絕進場。(實體: {current_body_size/avg_body_size:.2f}x 要求>1.2x | 量能: {eval_vol/volume_ma20:.2f}x 要求>1.3x)")
+                    return False
         
     # 2. RSI 方向保護：超賣禁空、超買禁多
     current_rsi = s.get("current_rsi", 50.0)
@@ -4940,16 +5004,36 @@ async def is_reversal_still_valid(sym, pending_side):
             print(f"📈 [Reversal_Invalid] {sym} 反手做空：現價已漲超 0.5%，放棄")
             return False
 
-    # 3. MACD 方向確認（方向須與反手一致）
+    # 3. MACD 方向確認與「動能擴張」檢查 (Momentum Expansion)
     macd_line = s.get("macd_line", 0.0)
     macd_signal = s.get("macd_signal", 0.0)
-    macd_cross_up = macd_line > macd_signal
-    if pending_side == "buy" and not macd_cross_up:
-        print(f"📉 [Reversal_Invalid] {sym} 反手做多但 MACD 仍空頭，取消")
-        return False
-    if pending_side == "sell" and macd_cross_up:
-        print(f"📈 [Reversal_Invalid] {sym} 反手做空但 MACD 仍多頭，取消")
-        return False
+    prev_macd_line = s.get("prev_macd_line", 0.0)
+    prev_macd_signal = s.get("prev_macd_signal", 0.0)
+    
+    macd_hist_now = macd_line - macd_signal
+    macd_hist_prev = prev_macd_line - prev_macd_signal
+    
+    if pending_side == "buy":
+        if not (macd_hist_now > 0 and macd_hist_now > macd_hist_prev):
+            print(f"📉 [Reversal_Weak_Momentum] {sym} 反手做多：MACD 雖轉正但未擴張 ({macd_hist_now:.6f} <= {macd_hist_prev:.6f})，放棄反手")
+            return False
+    elif pending_side == "sell":
+        if not (macd_hist_now < 0 and macd_hist_now < macd_hist_prev):
+            print(f"📈 [Reversal_Weak_Momentum] {sym} 反手做空：MACD 雖轉負但未擴張 ({macd_hist_now:.6f} >= {macd_hist_prev:.6f})，放棄反手")
+            return False
+
+    # 4. 反手空間防護 (Space Buffer for Reverse)
+    # 確保進場點不是在「剛好轉折」的最高/最低點追價
+    if pending_side == "buy":
+        # 如果現在價格比前一根收盤價還高，代表我們在追高轉折點，拒絕
+        if current_price > prev_close:
+            print(f"🛑 [Reversal_Chase_High] {sym} 反手做多：現價 ({current_price:.4f}) > 前收 ({prev_close:.4f})，在轉折點過高處追價，拒絕")
+            return False
+    elif pending_side == "sell":
+        # 如果現在價格比前一根收盤價還低，代表我們在追低轉折點，拒絕
+        if current_price < prev_close:
+            print(f"🛑 [Reversal_Chase_Low] {sym} 反手做空：現價 ({current_price:.4f}) < 前收 ({prev_close:.4f})，在轉折點過低處追價，拒絕")
+            return False
 
     return True
 
@@ -5200,7 +5284,7 @@ async def check_entries():
                     s["pending_side"] = None
                     
                     p = s["close_price"]
-                    atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p)
+                    atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
                     min_rr = s.get("min_rr", 1.0)
                     if expected_rr < min_rr:
                         print(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
@@ -5498,7 +5582,7 @@ async def check_entries():
                 continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
-        atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p)
+        atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
         base_rr_thresh = s.get("min_rr", 1.3)
         
         # 【第二步修改：放寬 RR 門檻】
