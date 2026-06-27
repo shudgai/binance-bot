@@ -895,10 +895,6 @@ createApp({
 
           if (sig.direction === 'long' && sig.strength >= 15 && budget >= 10) {
             if (openTrades.value[coin]) continue; // already monitored
-            if (!autoSl.value || !autoTp.value) {
-              autoLogs.value.unshift(`[${ts}] ⚠️ ${coin} 未設定 SL/TP，跳過`);
-              continue;
-            }
             const res = await fetch(B+'/api/spot/buy', {
               method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify({
@@ -913,6 +909,20 @@ createApp({
               autoLogs.value.unshift(`[${ts}] 🟢 買入 ${fmtCoin(rd.trade.to_amount, coin)} ${coin} SL:${autoSl.value}% TP:${autoTp.value}%`);
               balances.value = rd.balances;
               await loadOpenTrades();
+            }
+          } else if (sig.direction === 'short' && sig.strength >= 15) {
+            const holding = balances.value[coin] || 0;
+            if (holding > 0) {
+              const res = await fetch(B+'/api/spot/sell', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({coin, coin_amount: holding})
+              });
+              const rd = await res.json();
+              if (rd.success) {
+                autoLogs.value.unshift(`[${ts}] 🔴 趨勢賣出 ${fmtCoin(holding, coin)} ${coin}`);
+                balances.value = rd.balances;
+                await loadOpenTrades();
+              }
             }
           }
         }
