@@ -441,6 +441,10 @@
             transition: max-height 0.3s ease; scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.1) transparent;
         }
         .log-console.collapsed { max-height: 0; padding: 0 10px; border: none; overflow: hidden; height: auto; }
+        .log-fullscreen-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9999; display: flex; align-items: flex-start; justify-content: center; padding: 20px; }
+        .log-fullscreen-inner { background: #fff; border-radius: 16px; width: 100%; max-width: 1000px; height: calc(100vh - 40px); display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
+        .log-fullscreen-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color); flex-shrink: 0; }
+        .log-fullscreen-body { flex: 1; overflow-y: auto; padding: 12px 16px; font-family: 'JetBrains Mono'; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
         .log-console::-webkit-scrollbar { width: 4px; }
         .log-console::-webkit-scrollbar-track { background: transparent; }
         .log-console::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 4px; }
@@ -654,6 +658,7 @@
                     <span class="log-header-title">💻 系統紀錄</span>
                     <div>
                         <span class="log-clear" style="margin-right:10px" @click="showLogs = !showLogs">{{ showLogs ? '▲ 縮起' : '▼ 展開' }}</span>
+                        <span class="log-clear" style="margin-right:10px" @click="showLogFullscreen = true">全頁</span>
                         <span class="log-clear" style="margin-right:10px" @click="copyLogs">複製</span>
                         <span class="log-clear" @click="clearLogs">清除</span>
                     </div>
@@ -665,6 +670,28 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 系統記錄全頁 Modal -->
+            <teleport to="body">
+                <div v-if="showLogFullscreen" class="log-fullscreen-modal" @click.self="showLogFullscreen = false">
+                    <div class="log-fullscreen-inner">
+                        <div class="log-fullscreen-header">
+                            <span style="font-size:13px;font-weight:700;letter-spacing:1px;">💻 系統紀錄（共 {{ logs.length }} 筆）</span>
+                            <div style="display:flex;gap:12px;align-items:center;">
+                                <span class="log-clear" @click="copyLogs">複製</span>
+                                <span class="log-clear" @click="clearLogs">清除</span>
+                                <span class="log-clear" @click="showLogFullscreen = false">✕ 關閉</span>
+                            </div>
+                        </div>
+                        <div class="log-fullscreen-body">
+                            <div v-for="(log, idx) in logs" :key="idx">
+                                <span class="log-time">[{{ log.time }}]</span>
+                                <span :class="log.levelClass">{{ log.text }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </teleport>
 
         </div>
 
@@ -903,6 +930,7 @@ createApp({
         }
 
         const showLogs = ref(true);
+        const showLogFullscreen = ref(false);
 
         const bot = ref({ is_running: false, strategy: '-', balance_quote: 0, session_start_balance: 150, active_orders: 0, regime: '-' });
         const allPositions = ref({});
@@ -1941,7 +1969,7 @@ createApp({
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
             allPositions, getPositionInfo, openOrders, slStates,
-            showLogs,
+            showLogs, showLogFullscreen,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
             tradeHistoryFullscreen, toggleTradeHistoryFullscreen,
             showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,
