@@ -948,24 +948,49 @@ def _macd_vals(s):
     return macd_hist, prev_macd_hist
 
 def _calc_sl_tp(sym, side, s, p):
-    """計算 ATR、SL 距離、TP 距離、預期盈虧比。"""
+    """Calculate ATR, SL distance, TP distance, expected R:R.
+
+    Three-dimensional defense:
+    - Low-volatility mode: when ATR < avg*0.8, switch to fixed % distances
+    - Absolute SL floor: 0.8% (ensures SL not wiped by noise)
+    - Absolute TP floor: 0.5% (ensures profitable exit covers fees)
+    - Forced R:R floor: TP >= SL * 1.5
+    """
     atr_val = _get_atr(s, p)
     sl_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
-    sl_dist = max(atr_val * sl_mult, p * 0.004)
-    tp_dist = max(atr_val * tp_mult, p * 0.015)
 
-    # --- 【修改建議 1】強制 R:R 保底 (Forced R:R Floor) ---
-    # 停利距離必須 >= 停損距離的 1.5 倍，防止「停損大於停利」
+    # Layer-A: Low-Volatility Mode Switch
+    _atr_hist_sl = s.get("atr_history", [])
+    _atr_24h_avg_sl = float(np.mean(_atr_hist_sl)) if len(_atr_hist_sl) > 0 else 0.0
+    _is_low_vol_mode = (_atr_24h_avg_sl > 0 and atr_val < _atr_24h_avg_sl * 0.8)
+
+    if _is_low_vol_mode:
+        sl_dist = p * 0.010
+        tp_dist = p * 0.015
+        print(f"[LowVol_Mode] {sym} ATR low({atr_val:.5f} < avg{_atr_24h_avg_sl:.5f}x0.8), using fixed% SL=1.0% TP=1.5%")
+    else:
+        sl_dist = max(atr_val * sl_mult, p * 0.004)
+        sl_dist += p * 0.0005
+        tp_dist = max(atr_val * tp_mult, p * 0.015)
+
+    # Layer-B: Absolute Distance Floor
+    _SL_FLOOR_PCT = 0.008
+    _TP_FLOOR_PCT = 0.005
+    sl_dist = max(sl_dist, p * _SL_FLOOR_PCT)
+    tp_dist = max(tp_dist, p * _TP_FLOOR_PCT)
+
+    # Layer-C: Forced R:R Floor
     MIN_RR_FLOOR = 1.5
     min_tp_dist = sl_dist * MIN_RR_FLOOR
     if tp_dist < min_tp_dist:
-        print(f"⚠️ [R:R_Adjustment] {sym} 原本停利距離 {tp_dist:.4f} 太近 (< SL×{MIN_RR_FLOOR})，已強制拉開至 {min_tp_dist:.4f} (保證 R:R >= {MIN_RR_FLOOR})")
+        print(f"[R:R_Adjustment] {sym} TP {tp_dist:.4f} < SL x{MIN_RR_FLOOR}, expanding to {min_tp_dist:.4f}")
         tp_dist = min_tp_dist
 
     expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
     return atr_val, sl_dist, tp_dist, expected_rr
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2744,11 +2769,18 @@ async def check_exits(sym):
             elif check_trend_persistence(sym, p, s):
                 pass  # 趨勢仍在持續（中場休息），抑制 Vol_Decay_Exit
             else:
-                cs = 'sell' if is_long else 'buy'
-                print(f"📉 [量能衰竭] {sym} 量能高位後萎縮 ({_vd_vols[-2]:.0f}→{_vd_vols[-1]:.0f} / 均{_vd_vol_ma:.0f})，停止創新高，獲利 {profit_pct*100:.2f}% 落袋")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Decay_Exit]")
-                s["highest_profit_pct"] = 0.0
-                return
+                # Layer-D: Vol_Decay only exits when profit progress >= 70% of target
+                # "volume decay + 70% of target" = early harvest
+                # "volume decay + small profit" = midgame pause, hold position
+                _vd_progress = profit_pct / min_tp_pct if min_tp_pct > 0 else 0.0
+                if _vd_progress >= 0.70:
+                    cs = 'sell' if is_long else 'buy'
+                    print(f"[Vol_Decay_Harvest] {sym} vol decay, profit {profit_pct*100:.2f}% at {_vd_progress*100:.0f}% of target, early exit")
+                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Decay_Exit]")
+                    s["highest_profit_pct"] = 0.0
+                    return
+                else:
+                    print(f"[Vol_Decay_Held] {sym} vol decay but profit only {profit_pct*100:.2f}% (progress {_vd_progress*100:.0f}%<70%), holding")
 
     # ── Trailing TP：槓桿自適應高點停利 ──
     # 啟動門檻 = max(1.2%顯示÷槓桿, 0.2x ATR)；ATR 高幣種不再推高門檻
@@ -3219,17 +3251,26 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         print(f"⚠️ [風控] {sym} 無可用保證金")
         return
 
-    # --- 價格偏離檢查 ---
+    # --- 價格偏離檢查（強制驗證，fetch_ticker 失敗時回落到即時交易流價格）---
     try:
         ticker = await exchange_futures.fetch_ticker(sym)
-        market_price = ticker.get('last')
-        if market_price and market_price > 0:
-            deviation = abs(price - market_price) / market_price
-            if deviation > 0.05:
-                print(f"🚨 [風控] {sym} 訂單價格 {price} 嚴重偏離市價 {market_price} (偏離 {deviation*100:.2f}%)，拒絕執行！")
-                return
+        market_price = float(ticker.get('last') or 0)
     except Exception as e:
-        print(f"⚠️ [價格偏離檢查失敗] {e}")
+        market_price = 0.0
+        print(f"⚠️ [價格偏離檢查] {sym} fetch_ticker 失敗: {e}")
+
+    if market_price <= 0:
+        market_price = float(s.get("last_trade_price", 0.0) or 0)
+
+    if market_price > 0:
+        deviation = abs(price - market_price) / market_price
+        if deviation > 0.05:
+            print(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
+            s["close_price"] = market_price  # 修正被污染的 close_price
+            return
+    else:
+        print(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
+        return
     # --------------------
 
     now = time.time()
@@ -4090,17 +4131,19 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
 
     # --- [過熱噴發過濾 (Moving Average Deviation Filter)] ---
+    # 升級版：分層門檻 + 適用範圍擴大到所有路由
+    ema20 = s.get("ema20", 0.0)
+    if ema20 > 0:
+        ema_dev = (cp - ema20) / ema20
+        _ema_hard_limit = 0.08 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.05
+        if side == "buy" and ema_dev > _ema_hard_limit:
+            print(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱噴發，等回測")
+            return False
+        if side == "sell" and ema_dev < -_ema_hard_limit:
+            print(f"🛑 {sym} 觸發 [EMA過熱過濾] 空單但現價低於 EMA20 {abs(ema_dev)*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱下挫，等回測")
+            return False
     if is_trend:
-        ema20 = s.get("ema20", 0.0)
-        if ema20 > 0:
-            deviation = (cp - ema20) / ema20
-            if strength <= 20.0:
-                if side == "buy" and deviation > 0.08:
-                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做多但價格偏離 EMA20 已達 {deviation*100:.2f}% (> 8%)，視為過熱追高，拒絕進場防接刀")
-                    return False
-                if side == "sell" and deviation < -0.08:
-                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做空但價格偏離 EMA20 已達 {abs(deviation)*100:.2f}% (> 8%)，視為過熱下挫，拒絕進場防地板空")
-                    return False
+        pass  # is_trend 已由上方統一的 EMA 距離過濾處理，不需重複
 
     # --- [15m EMA 趨勢過濾] ---
     if is_trend:
@@ -4194,6 +4237,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         return False
     if bb_width_pct > 0 and bb_width_pct < 0.002:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶收斂盤整 (寬度={bb_width_pct*100:.2f}%<0.2%)，禁止開倉")
+        return False
+
+    # --- [ATR 爆發閘門 (Volatility Spike Gate)] ---
+    # 瞬時波動率 > 2× 歷史平均 → 市場正處於「閃崩/閃漲」狀態，SL 必然過寬，拒絕常規進場
+    _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
+    if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2x ({atr_24h_avg*2:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
         return False
     if not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
@@ -5899,7 +5949,9 @@ async def main():
     while True:
         try:
             await main_loop(exchange_futures)
-        except Exception as e:
+        except BaseException as e:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
             import traceback
             print(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
             traceback.print_exc()

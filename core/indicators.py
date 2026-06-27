@@ -88,6 +88,7 @@ def _calc_sl_tp(sym, side, s, p):
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
     sl_dist = max(atr_val * sl_mult, p * 0.004)
+    sl_dist += p * 0.0005  # 加入 0.05% 執行滑點緩衝（避免市場微結構噪音立即掃損）
     tp_dist = max(atr_val * tp_mult, p * 0.015)
 
     # 強制 R:R 保底 (Forced R:R Floor)

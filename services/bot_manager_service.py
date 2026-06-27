@@ -238,21 +238,22 @@ def read_bot_output(proc, sym):
         from services.radar_service import auto_radar_switch
         threading.Thread(target=auto_radar_switch, daemon=True).start()
     elif bot_status["is_running"] and sym in bot_processes and bot_processes[sym] == proc:
-        # 退出碼 0 = 防禦分流正常退出，不重啟
-        # 退出碼 1+ = 真正崩潰，才重啟
+        # 無論退出碼為何，只要 bot_status["is_running"] 為 True，就必須重啟
+        # (退出碼 0 可能是因為防禦分流、或不可預期的 CancelledError 導致)
         if proc.returncode == 0:
-            add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，守護不重啟。", "info")
+            add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，將在 5 秒後重試檢查...", "info")
         else:
             add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止 (exit {proc.returncode})，將在 5 秒後自動重啟...", "danger")
-            def daemon_restart():
-                time.sleep(5)
-                if not bot_status["is_running"]:
-                    return
-                if sym == "__multi__":
-                    _start_multi_coin_bot(bot_status["trade_amount"])
-                else:
-                    _start_single_bot(sym, bot_status["trade_amount"])
-            threading.Thread(target=daemon_restart, daemon=True).start()
+            
+        def daemon_restart():
+            time.sleep(5)
+            if not bot_status["is_running"]:
+                return
+            if sym == "__multi__":
+                _start_multi_coin_bot(bot_status["trade_amount"])
+            else:
+                _start_single_bot(sym, bot_status["trade_amount"])
+        threading.Thread(target=daemon_restart, daemon=True).start()
 
 
 def _start_single_bot(symbol: str, trade_amt: float):

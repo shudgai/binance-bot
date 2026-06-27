@@ -489,14 +489,26 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     try:
         ticker = await exchange_futures.fetch_ticker(sym)
-        market_price = ticker.get('last')
-        if market_price and market_price > 0:
-            deviation = abs(price - market_price) / market_price
-            if deviation > 0.05:
-                print(f"🚨 [風控] {sym} 訂單價格 {price} 嚴重偏離市價 {market_price} (偏離 {deviation*100:.2f}%)，拒絕執行！")
-                return
+        market_price = float(ticker.get('last') or 0)
     except Exception as e:
-        print(f"⚠️ [價格偏離檢查失敗] {e}")
+        market_price = 0.0
+        print(f"⚠️ [價格偏離檢查] {sym} fetch_ticker 失敗: {e}")
+
+    if market_price <= 0:
+        # fetch_ticker 失敗時回落到即時交易流價格（獨立數據源，不依賴 OHLCV）
+        market_price = float(s.get("last_trade_price", 0.0) or 0)
+
+    if market_price > 0:
+        deviation = abs(price - market_price) / market_price
+        if deviation > 0.05:
+            print(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
+            # 順帶修正被污染的 close_price，避免後續繼續使用錯誤值
+            s["close_price"] = market_price
+            return
+    else:
+        # 完全無法取得市場價格，保守拒絕
+        print(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
+        return
 
     now = time.time()
     if s["entry_count"] > 0 and not is_rescue_dca:

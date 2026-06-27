@@ -333,17 +333,21 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
 
     # --- [過熱噴發過濾 (Moving Average Deviation Filter)] ---
+    # 升級版：分層門檻 + 適用範圍擴大到所有路由
+    # 核心邏輯：價格離 EMA20 越遠 = 越容易在進場後立即回撤觸發 SL
+    ema20 = s.get("ema20", 0.0)
+    if ema20 > 0:
+        ema_dev = (cp - ema20) / ema20  # 正 = 在 EMA 上方，負 = 下方
+        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許較大偏離（8%），普通路由 5%
+        _ema_hard_limit = 0.08 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.05
+        if side == "buy" and ema_dev > _ema_hard_limit:
+            print(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱噴發，等回測")
+            return False
+        if side == "sell" and ema_dev < -_ema_hard_limit:
+            print(f"🛑 {sym} 觸發 [EMA過熱過濾] 空單但現價低於 EMA20 {abs(ema_dev)*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱下挫，等回測")
+            return False
     if is_trend:
-        ema20 = s.get("ema20", 0.0)
-        if ema20 > 0:
-            deviation = (cp - ema20) / ema20
-            if strength <= 20.0:
-                if side == "buy" and cp <= s["ohlcv"][-2][4] and deviation > 0.08:
-                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做多但價格偏離 EMA20 已達 {deviation*100:.2f}% (> 8%)，視為過熱噴發，拒絕進場防接刀")
-                    return False
-                if side == "sell" and deviation < -0.08:
-                    print(f"🛑 {sym} 觸發 [過熱過濾] 順勢做空但價格偏離 EMA20 已達 {abs(deviation)*100:.2f}% (> 8%)，視為過熱下挫，拒絕進場防地板空")
-                    return False
+        pass  # is_trend 已由上方統一的 EMA 距離過濾處理，不需重複
 
     # --- [15m EMA 趨勢過濾] ---
     if is_trend:
@@ -422,6 +426,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         return False
     if bb_width_pct > 0 and bb_width_pct < 0.0015:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
+        return False
+
+    # --- [ATR 爆發閘門 (Volatility Spike Gate)] ---
+    # 瞬時波動率 > 2× 歷史平均 → 市場正處於「閃崩/閃漲」狀態，SL 必然過寬，拒絕常規進場
+    # 豁免：Exhaustion_Entry（耗竭反轉）與 Extreme_Reversal（極端反轉）本就在極端波動中操作
+    _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
+    if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
+        print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2x ({atr_24h_avg*2:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
         return False
     if not is_entry_pin_safe(sym, side):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
