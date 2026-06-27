@@ -4044,11 +4044,19 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             
             if side == "sell":
                 struct_ok = (current_close < avg_high) or (current_close < max(past_lows))
+                # RSI 極端超買 (>95) + Extreme_Reversal → 豁免結構過濾，跌透底的反轉不應再要求低於高點
+                if not struct_ok and route == "Extreme_Reversal" and s.get("current_rsi", 50) > 95:
+                    struct_ok = True
+                    print(f"@@COIN_DEBUG@@ ⚡ {sym} [RSI極端豁免] RSI {s.get('current_rsi', 50):.1f} > 95，Extreme_Reversal 空單豁免結構過濾")
                 if not struct_ok:
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 空單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未低於3K平均高點({avg_high:.4f})且未破任一低點({max(past_lows):.4f})，攔截")
                     return False
             if side == "buy":
                 struct_ok = (current_close > avg_low) or (current_close > min(past_highs))
+                # RSI 極端超賣 (<5) + Extreme_Reversal → 豁免結構過濾，漲透頂的反轉不應再要求高於低點
+                if not struct_ok and route == "Extreme_Reversal" and s.get("current_rsi", 50) < 5:
+                    struct_ok = True
+                    print(f"@@COIN_DEBUG@@ ⚡ {sym} [RSI極端豁免] RSI {s.get('current_rsi', 50):.1f} < 5，Extreme_Reversal 多單豁免結構過濾")
                 if not struct_ok:
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 多單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未高於3K平均低點({avg_low:.4f})且未破任一高點({min(past_highs):.4f})，攔截")
                     return False
