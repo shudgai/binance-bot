@@ -1130,6 +1130,27 @@ def update_trade_signal(sym, trade):
                 s["is_breakeven_locked"] = True
                 print(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
 
+        # ── TrailTP 即時同步至 stop_loss（每個 trade tick 執行）──
+        # update_trailing_stop 只在開倉時被呼叫，必須在 trade handler 也同步
+        # 否則 trailing_highest 有更新但 stop_loss 不跟進，Fast_SL 守不住高點
+        _atr_rt = s.get("current_atr", 0.0)
+        if _atr_rt > 0 and price > 0:
+            _ts_atr_pct_rt = _atr_rt / price
+            _lev_rt = s.get("leverage", 4)
+            _hp_rt = s.get("highest_profit_pct", 0.0)
+            _ts_act_rt = max(0.012 / _lev_rt, _ts_atr_pct_rt * 0.2)
+            _ts_ret_rt = min(max(0.002, _ts_atr_pct_rt * 0.25), _hp_rt * 0.6) if _hp_rt > 0 else 0.002
+            if _hp_rt >= _ts_act_rt:
+                if _is_long:
+                    _ttp_sl = s.get("trailing_highest", avg_p) * (1 - _ts_ret_rt)
+                    if _ttp_sl > s.get("stop_loss", 0):
+                        s["stop_loss"] = _ttp_sl
+                else:
+                    _ttp_sl = s.get("trailing_lowest", avg_p) * (1 + _ts_ret_rt)
+                    _cur_sl_rt = s.get("stop_loss", 0)
+                    if _cur_sl_rt == 0 or _ttp_sl < _cur_sl_rt:
+                        s["stop_loss"] = _ttp_sl
+
 
 REAL_BALANCE = 150.0
 
