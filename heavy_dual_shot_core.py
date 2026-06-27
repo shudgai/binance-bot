@@ -1738,14 +1738,35 @@ def compute_indicators(sym):
             if kline_high > s.get("trailing_highest", 0):
                 prev_th = s.get("trailing_highest", 0)
                 s["trailing_highest"] = kline_high
+                _hp_sync = s.get("highest_profit_pct", 0.0)
+                avg_p_sync = s.get("avg_price", kline_high)
+                if avg_p_sync > 0:
+                    _rt_sync = (kline_high - avg_p_sync) / avg_p_sync
+                    if _rt_sync > _hp_sync:
+                        s["highest_profit_pct"] = _rt_sync
+                        _hp_sync = _rt_sync
+                _r_sync = 0.001 if _hp_sync > 0.02 else 0.0015 if _hp_sync > 0.008 else 0.002
+                new_sl_sync = kline_high * (1 - _r_sync)
+                if new_sl_sync > s.get("stop_loss", 0):
+                    s["stop_loss"] = new_sl_sync
                 if prev_th > 0:
-                    print(f"📈 [高點校準] {sym} trailing_highest 由 {prev_th:.4f} 更新至 K線高 {kline_high:.4f}")
+                    print(f"📈 [高點校準] {sym} trailing_highest {prev_th:.4f}→{kline_high:.4f}, SL→{new_sl_sync:.4f}")
         else:  # 空單：同步最低點
             if kline_low < s.get("trailing_lowest", float("inf")):
                 prev_tl = s.get("trailing_lowest", float("inf"))
                 s["trailing_lowest"] = kline_low
+                _hp_sync = s.get("highest_profit_pct", 0.0)
+                avg_p_sync = s.get("avg_price", kline_low)
+                if avg_p_sync > 0:
+                    _rt_sync = (avg_p_sync - kline_low) / avg_p_sync
+                    if _rt_sync > _hp_sync:
+                        s["highest_profit_pct"] = _rt_sync
+                _r_sync = 0.001 if _hp_sync > 0.02 else 0.0015 if _hp_sync > 0.008 else 0.002
+                new_sl_sync = kline_low * (1 + _r_sync)
+                if s.get("stop_loss", float("inf")) > new_sl_sync:
+                    s["stop_loss"] = new_sl_sync
                 if prev_tl < float("inf"):
-                    print(f"📉 [低點校準] {sym} trailing_lowest 由 {prev_tl:.4f} 更新至 K線低 {kline_low:.4f}")
+                    print(f"📉 [低點校準] {sym} trailing_lowest {prev_tl:.4f}→{kline_low:.4f}, SL→{new_sl_sync:.4f}")
 
 # ── 出場邏輯 ──────────────────────────────────────────────────
 
@@ -5799,6 +5820,45 @@ async def watch_symbol_trades(exchange, sym):
                 update_trade_signal(sym, trades)
         except Exception as e:
             print(f"⚠️ [成交流監聽異常] {sym}: {e}")
+
+        # ── 持倉中：每 3 秒同步 1m K線 HIGH/LOW 補齊 trailing 峰值 ──
+        # fetch_trades(limit=50) 在高流動性幣種（如 INJ）每 3 秒可能超過 50 筆
+        # 導致更早的最低成交價「滾出窗口」，trailing_lowest 無法捕捉真正低點
+        s = STATES.get(sym)
+        if s and abs(s.get("qty", 0)) > 0.000001 and s.get("avg_price", 0) > 0:
+            try:
+                klines_1m = await exchange_futures.fetch_ohlcv(sym, '1m', limit=3)
+                if klines_1m:
+                    avg_p = s["avg_price"]
+                    is_long = s["qty"] > 0
+                    for k in klines_1m:
+                        kh = float(k[2])
+                        kl = float(k[3])
+                        if is_long:
+                            if kh > s.get("trailing_highest", 0):
+                                s["trailing_highest"] = kh
+                                _rt = (kh - avg_p) / avg_p
+                                if _rt > s.get("highest_profit_pct", 0.0):
+                                    s["highest_profit_pct"] = _rt
+                                _hp2 = s.get("highest_profit_pct", 0.0)
+                                _r2 = 0.001 if _hp2 > 0.02 else 0.0015 if _hp2 > 0.008 else 0.002
+                                new_sl = kh * (1 - _r2)
+                                if new_sl > s.get("stop_loss", 0):
+                                    s["stop_loss"] = new_sl
+                        else:
+                            if kl < s.get("trailing_lowest", float("inf")):
+                                s["trailing_lowest"] = kl
+                                _rt = (avg_p - kl) / avg_p
+                                if _rt > s.get("highest_profit_pct", 0.0):
+                                    s["highest_profit_pct"] = _rt
+                                _hp2 = s.get("highest_profit_pct", 0.0)
+                                _r2 = 0.001 if _hp2 > 0.02 else 0.0015 if _hp2 > 0.008 else 0.002
+                                new_sl = kl * (1 + _r2)
+                                if s.get("stop_loss", float("inf")) > new_sl:
+                                    s["stop_loss"] = new_sl
+            except Exception:
+                pass  # 靜默忽略，不影響主流程
+
         await asyncio.sleep(3)
     global WATCH_TASKS
     desired_symbols = set(ALL_SYMBOLS)
