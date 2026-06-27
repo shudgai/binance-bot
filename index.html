@@ -405,6 +405,21 @@
         .trades-table th { color: var(--text-muted); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
         .trades-table td { font-family: 'JetBrains Mono'; font-size: 13px; }
         .trades-table tr:hover td { background: rgba(0,0,0,0.02); }
+
+        /* ── 全螢幕交易紀錄 ── */
+        .trade-history-fullscreen {
+            position: fixed !important;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: 9999;
+            border-radius: 0 !important;
+            margin: 0 !important;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .trade-history-fullscreen .trades-table th,
+        .trade-history-fullscreen .trades-table td { font-size: 14px; padding: 14px 12px; }
         .badge { font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; letter-spacing: 0.5px; }
         .badge.buy { background: rgba(5,150,105,0.1); color: var(--success); border: 1px solid rgba(5,150,105,0.25); }
         .badge.sell { background: rgba(220,38,38,0.1); color: var(--danger); border: 1px solid rgba(220,38,38,0.25); }
@@ -555,14 +570,19 @@
             </div>
 
             <!-- Trade history restored -->
-            <div class="card" style="margin-top: 15px;">
-                
-                <h3 style="margin-top:0;margin-bottom:10px;font-size:12px;color:var(--text-muted);text-transform:uppercase; display: flex; justify-content: space-between;">
+            <div :class="['card', tradeHistoryFullscreen ? 'trade-history-fullscreen' : '']" style="margin-top: 15px;">
+
+                <h3 style="margin-top:0;margin-bottom:10px;font-size:12px;color:var(--text-muted);text-transform:uppercase; display: flex; justify-content: space-between; align-items: center;">
                     近期交易紀錄 (Trade History)
-                    <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showAllTradesModal = true; fetchAllTradesHistory()">查看完整歷史紀錄</span>
+                    <span style="display:flex; align-items:center; gap:12px;">
+                        <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showAllTradesModal = true; fetchAllTradesHistory()">查看完整歷史紀錄</span>
+                        <span @click="toggleTradeHistoryFullscreen" style="cursor:pointer; font-size:16px; color:var(--text-muted); line-height:1;" :title="tradeHistoryFullscreen ? '還原正常顯示' : '全螢幕顯示'">
+                            {{ tradeHistoryFullscreen ? '⊠' : '⛶' }}
+                        </span>
+                    </span>
                 </h3>
 
-                <div style="overflow-x:auto; max-height: 250px; overflow-y: auto;">
+                <div :style="tradeHistoryFullscreen ? 'overflow-x:auto; flex:1; overflow-y:auto;' : 'overflow-x:auto; max-height: 250px; overflow-y: auto;'">
                     <table class="trades-table">
                         <thead>
                             <tr>
@@ -874,6 +894,13 @@ createApp({
 
         const showAllTradesModal = ref(false);
         const allTradesHistory = ref([]);
+
+        const tradeHistoryFullscreen = ref(false);
+        function toggleTradeHistoryFullscreen() {
+            tradeHistoryFullscreen.value = !tradeHistoryFullscreen.value;
+            // 全螢幕時鎖住 body 滾動
+            document.body.style.overflow = tradeHistoryFullscreen.value ? 'hidden' : '';
+        }
 
         const showLogs = ref(true);
 
@@ -1824,8 +1851,17 @@ createApp({
             } catch(e) {}
         };
 
+        // ESC 鍵退出全螢幕交易紀錄
+        function onKeydown(e) {
+            if (e.key === 'Escape' && tradeHistoryFullscreen.value) {
+                tradeHistoryFullscreen.value = false;
+                document.body.style.overflow = '';
+            }
+        }
+
         onMounted(() => {
             addLog('🚀 Dashboard 初始化...');
+            document.addEventListener('keydown', onKeydown);
             initChart();
             fetchExchangeRate();
             fetchBotStatus();
@@ -1853,6 +1889,7 @@ createApp({
         });
 
         onUnmounted(() => {
+            document.removeEventListener('keydown', onKeydown);
             for (const w of wsConnections) { try { w.close(); } catch(e) {} }
             if (wsFallbackTimeout) clearTimeout(wsFallbackTimeout);
             if (reconnectTimer)    clearTimeout(reconnectTimer);
@@ -1903,6 +1940,7 @@ createApp({
             allPositions, getPositionInfo, openOrders, slStates,
             showLogs,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,
+            tradeHistoryFullscreen, toggleTradeHistoryFullscreen,
             showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
             showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
