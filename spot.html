@@ -4,701 +4,874 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="google" content="notranslate">
-<title>現貨轉換 · Spot Convert</title>
+<title>現貨交易 · Spot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
 <style>
 :root {
-  --bg: #f0f2f5;
-  --card: #ffffff;
-  --border: rgba(0,0,0,0.09);
-  --text: #111827;
-  --muted: #6b7280;
+  --bg-color: #f5f7fa;
+  --card-bg: #ffffff;
+  --border-color: rgba(0,0,0,0.09);
+  --text-main: #111827;
+  --text-muted: #6b7280;
   --primary: #f0b90b;
-  --primary-dark: #d4a008;
+  --primary-color: #f0b90b;
   --success: #059669;
   --danger: #dc2626;
-  --shadow: 0 2px 12px rgba(0,0,0,0.08);
+  --trade-up: #059669;
+  --trade-down: #dc2626;
+  --glow-primary: rgba(240,185,11,0.2);
+  --glow-success: rgba(5,150,105,0.15);
+  --glow-danger: rgba(220,38,38,0.15);
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: 'Outfit', sans-serif;
-  min-height: 100vh;
-}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background-color:var(--bg-color);color:var(--text-main);font-family:'Outfit',sans-serif;min-height:100vh;
+  background-image:radial-gradient(circle at 10% 20%,rgba(240,185,11,.04),transparent 35%),
+    radial-gradient(circle at 90% 80%,rgba(5,150,105,.03),transparent 35%);}
 
-/* ── HEADER ── */
-.header {
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
-  padding: 0 24px;
-  height: 56px;
-  display: flex; align-items: center; justify-content: space-between;
-  position: sticky; top: 0; z-index: 100;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-}
-.header-logo { display: flex; align-items: center; gap: 10px; }
-.header-logo span { font-size: 20px; font-weight: 800; color: var(--primary); }
-.header-logo small { font-size: 13px; color: var(--muted); font-weight: 400; }
-.back-link {
-  font-size: 13px; color: var(--muted);
-  text-decoration: none; display: flex; align-items: center; gap: 5px;
-  transition: color .2s;
-}
-.back-link:hover { color: var(--text); }
+/* ── TOP BAR ── */
+.top-bar{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;
+  border-bottom:1px solid var(--border-color);background:rgba(255,255,255,.96);
+  backdrop-filter:blur(16px);position:sticky;top:0;z-index:100;}
+.logo{font-size:18px;font-weight:800;display:flex;align-items:center;gap:12px;letter-spacing:.5px;}
+.logo span{color:var(--primary-color);}
+.env-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:4px;letter-spacing:.5px;text-transform:uppercase;
+  background:rgba(245,158,11,.1);color:#d97706;border:1px solid rgba(245,158,11,.3);}
+.topbar-right{display:flex;align-items:center;gap:10px;}
+.status-badge{font-size:12px;font-weight:600;padding:5px 12px;border-radius:100px;
+  display:flex;align-items:center;gap:6px;border:1px solid var(--border-color);
+  white-space:nowrap;cursor:pointer;user-select:none;transition:all .2s;}
+.status-badge.running{color:var(--success);background:rgba(5,150,105,.08);border-color:rgba(5,150,105,.3);}
+.status-badge.stopped{color:var(--danger);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.3);}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:currentColor;animation:pulse 1.5s infinite;flex-shrink:0;}
+@keyframes pulse{0%,100%{transform:scale(.9);opacity:.7;}50%{transform:scale(1.2);opacity:1;}}
 
 /* ── LAYOUT ── */
-.page { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
-.grid { display: grid; grid-template-columns: 280px 1fr 280px; gap: 16px; }
-@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.main-layout{display:grid;grid-template-columns:1fr 340px;gap:0;height:calc(100vh - 54px);}
+.left-panel{order:1;display:flex;flex-direction:column;overflow:auto;padding:20px 22px;}
+.right-panel{order:2;overflow-y:auto;padding:20px 22px;scrollbar-width:thin;
+  scrollbar-color:rgba(0,0,0,.1) transparent;border-left:1px solid var(--border-color);background:#f9fafb;}
+.bottom-nav{display:none;}
 
-/* ── CARD ── */
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
+/* ── MOBILE ── */
+@media(max-width:768px){
+  .top-bar{padding:10px 14px;}.logo{font-size:15px;}
+  .main-layout{display:block;height:calc(100vh - 50px - 60px);overflow:hidden;}
+  .left-panel,.right-panel{width:100%;height:calc(100vh - 50px - 60px);overflow-y:auto;
+    border:none;padding:12px 14px;display:none;flex-direction:column;background:transparent;}
+  .left-panel.tab-active,.right-panel.tab-active{display:flex;}
+  .coin-strip{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    padding:10px 14px;gap:8px;scrollbar-width:none;}
+  .coin-strip::-webkit-scrollbar{display:none;}
+  .coin-chip{flex-shrink:0;padding:8px 14px;font-size:13px;min-width:70px;text-align:center;white-space:nowrap;}
+  .info-grid{grid-template-columns:1fr 1fr;gap:8px;}
+  .info-card{padding:10px 12px;border-radius:12px;}
+  .info-title{font-size:10px;}.info-val{font-size:14px;}
+  .trades-table{font-size:12px;}
+  .trades-table th,.trades-table td{padding:8px 5px;font-size:11px;}
+  .btn{padding:14px;font-size:15px;border-radius:14px;}
+  .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;height:60px;
+    background:rgba(255,255,255,.96);backdrop-filter:blur(16px);
+    border-top:1px solid var(--border-color);z-index:200;box-shadow:0 -4px 20px rgba(0,0,0,.08);}
+  .nav-tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer;
+    border:none;background:none;-webkit-tap-highlight-color:transparent;}
+  .nav-tab .nav-icon{font-size:20px;line-height:1;}
+  .nav-tab.active{color:var(--primary);}
+  .nav-tab-divider{width:1px;background:var(--border-color);align-self:stretch;margin:10px 0;}
 }
-.card-header {
-  padding: 14px 18px 10px;
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between;
-}
-.card-title {
-  font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 1px;
-  color: var(--muted);
-}
-.card-body { padding: 16px 18px; }
+@media(min-width:769px)and(max-width:1024px){.main-layout{grid-template-columns:1fr 280px;}}
 
-/* ── PORTFOLIO ── */
-.portfolio-total {
-  text-align: center;
-  padding: 16px 0 14px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
-}
-.portfolio-total .label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
-.portfolio-total .value { font-size: 26px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
-.portfolio-total .value span { font-size: 14px; font-weight: 400; color: var(--muted); }
+/* ── COIN STRIP ── */
+.coin-strip{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border-color);}
+.coin-chip{flex-shrink:0;padding:6px 14px;border-radius:20px;border:1px solid var(--border-color);
+  background:#fff;cursor:pointer;font-size:12px;font-weight:700;transition:all .2s;
+  display:flex;flex-direction:column;align-items:center;gap:2px;white-space:nowrap;}
+.coin-chip:hover{border-color:rgba(0,0,0,.2);background:#f3f4f6;transform:translateY(-1px);}
+.coin-chip.active{border-color:var(--primary);background:rgba(240,185,11,.08);color:#92700a;
+  box-shadow:0 2px 8px var(--glow-primary);}
+.coin-chip.has-holding{border-color:rgba(5,150,105,.4);background:rgba(5,150,105,.05);}
+.coin-chip-price{font-size:10px;font-family:'JetBrains Mono';font-weight:400;opacity:.9;}
+.coin-chip-price.up{color:var(--success);}.coin-chip-price.down{color:var(--danger);}
 
-.coin-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 4px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer; transition: background .15s; border-radius: 6px;
-}
-.coin-row:last-child { border-bottom: none; }
-.coin-row:hover { background: rgba(240,185,11,.06); }
-.coin-row .coin-info { display: flex; align-items: center; gap: 10px; }
-.coin-icon {
-  width: 32px; height: 32px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 11px; color: #fff;
-  flex-shrink: 0;
-}
-.coin-name { font-weight: 700; font-size: 14px; }
-.coin-bal { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono'; }
-.coin-usdt { text-align: right; }
-.coin-usdt .val { font-weight: 700; font-size: 14px; font-family: 'JetBrains Mono'; }
-.coin-usdt .price { font-size: 11px; color: var(--muted); }
+/* ── PRICE HERO ── */
+.price-hero{padding:16px 16px 10px;border-bottom:1px solid var(--border-color);}
+.price-hero-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.5px;font-weight:600;}
+.price-hero-value{font-family:'JetBrains Mono';font-size:36px;font-weight:800;transition:color .15s;
+  line-height:1.2;margin-top:4px;letter-spacing:-1px;}
+.price-hero-value.up{color:var(--success);}.price-hero-value.down{color:var(--danger);}
+.price-hero-sub{font-size:11px;color:var(--text-muted);margin-top:4px;display:flex;gap:12px;align-items:center;}
 
-.empty-hint { text-align: center; color: var(--muted); font-size: 13px; padding: 20px 0; }
+/* ── HOLDING CARD ── */
+.holding-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:16px;
+  padding:16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.07);}
+.holding-card .h-title{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;}
+.holding-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.holding-row .label{font-size:12px;color:var(--text-muted);}
+.holding-row .val{font-size:13px;font-weight:700;font-family:'JetBrains Mono';}
+.holding-row .val.up{color:var(--success);}.holding-row .val.down{color:var(--danger);}
 
-/* ── CONVERT WIDGET ── */
-.convert-card { position: relative; }
-.from-to-box {
-  background: #f8f9fb;
-  border: 1.5px solid var(--border);
-  border-radius: 14px;
-  padding: 14px 16px;
-  margin-bottom: 10px;
-  transition: border-color .2s;
-}
-.from-to-box:focus-within { border-color: var(--primary); }
-.from-to-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
-.from-to-row { display: flex; align-items: center; gap: 10px; }
-.coin-select {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 10px; padding: 8px 12px;
-  cursor: pointer; font-weight: 700; font-size: 15px;
-  user-select: none; transition: border-color .2s;
-  white-space: nowrap;
-}
-.coin-select:hover { border-color: var(--primary); }
-.coin-select .arrow { font-size: 10px; color: var(--muted); }
-.amount-input {
-  flex: 1; border: none; outline: none; background: transparent;
-  font-size: 22px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
-  color: var(--text); text-align: right; min-width: 0;
-}
-.amount-input::placeholder { color: var(--border); }
-.amount-sub { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--muted); }
-.max-btn {
-  background: rgba(240,185,11,.12); color: var(--primary-dark);
-  border: none; border-radius: 6px; padding: 2px 8px;
-  font-size: 11px; font-weight: 700; cursor: pointer; transition: background .2s;
-}
-.max-btn:hover { background: rgba(240,185,11,.25); }
+/* ── CARD + INFO GRID ── */
+.card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:16px;
+  padding:16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.07);}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+.info-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:14px;
+  padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.05);}
+.info-title{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;}
+.info-val{font-size:16px;font-weight:800;font-family:'JetBrains Mono';}
+.info-val.mono{font-family:'JetBrains Mono';}
+.info-val.up{color:var(--success);}.info-val.down{color:var(--danger);}
 
-.swap-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 38px; height: 38px; border-radius: 50%;
-  background: var(--card); border: 1.5px solid var(--border);
-  cursor: pointer; font-size: 18px; margin: 4px auto;
-  transition: all .2s; user-select: none;
-}
-.swap-btn:hover { background: var(--primary); border-color: var(--primary); transform: rotate(180deg); }
+/* ── BUY/SELL FORM ── */
+.lo-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;}
+.lo-tab{padding:8px;border-radius:10px;border:1px solid var(--border-color);
+  background:rgba(255,255,255,.03);color:var(--text-muted);
+  font-size:12px;font-weight:700;cursor:pointer;transition:all .2s;text-align:center;}
+.lo-tab:hover{color:var(--text-main);}
+.lo-tab.active-buy{background:rgba(16,185,129,.15);border-color:var(--success);color:var(--success);}
+.lo-tab.active-sell{background:rgba(239,68,68,.15);border-color:var(--danger);color:var(--danger);}
+.lo-field{margin-bottom:10px;}
+.lo-field label{display:block;font-size:10px;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;}
+.lo-input{width:100%;background:rgba(0,0,0,.04);border:1px solid var(--border-color);
+  color:var(--text-main);border-radius:8px;padding:8px 10px;
+  font-family:'JetBrains Mono';font-size:12px;transition:all .2s;}
+.lo-input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 8px var(--glow-primary);}
+.lo-submit-buy,.lo-submit-sell,.lo-submit-convert{
+  width:100%;padding:12px;border-radius:10px;cursor:pointer;
+  font-weight:700;font-size:13px;transition:all .3s;border:1px solid;}
+.lo-submit-buy{background:rgba(16,185,129,.15);border-color:var(--success);color:var(--success);}
+.lo-submit-buy:hover:not(:disabled){background:var(--success);color:#000;box-shadow:0 0 15px var(--glow-success);}
+.lo-submit-sell{background:rgba(239,68,68,.15);border-color:var(--danger);color:var(--danger);}
+.lo-submit-sell:hover:not(:disabled){background:var(--danger);color:#fff;box-shadow:0 0 15px var(--glow-danger);}
+.lo-submit-convert{background:rgba(240,185,11,.15);border-color:var(--primary);color:#92700a;}
+.lo-submit-convert:hover:not(:disabled){background:var(--primary);color:#000;box-shadow:0 0 15px var(--glow-primary);}
+.lo-submit-buy:disabled,.lo-submit-sell:disabled,.lo-submit-convert:disabled{opacity:.4;cursor:not-allowed;}
+.lo-hint{font-size:10px;color:var(--text-muted);text-align:right;margin-top:-6px;margin-bottom:8px;}
+.lo-hint b{color:var(--primary);cursor:pointer;}
+.pct-btns{display:flex;gap:5px;margin-bottom:10px;}
+.pct-btn{flex:1;padding:5px;border:1px solid var(--border-color);border-radius:6px;
+  font-size:11px;font-weight:700;cursor:pointer;background:none;
+  color:var(--text-muted);transition:all .15s;}
+.pct-btn:hover{border-color:var(--primary);color:var(--primary);}
 
-.rate-row {
-  text-align: center; font-size: 12px; color: var(--muted);
-  margin: 8px 0 14px; height: 18px;
-}
-.rate-row b { color: var(--text); }
+/* ── BTN ── */
+.btn{width:100%;padding:12px;border:none;border-radius:12px;
+  font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;margin-bottom:10px;}
+.btn-primary{background:var(--primary);color:#000;}
+.btn-primary:hover{background:#d4a008;box-shadow:0 4px 14px var(--glow-primary);}
+.btn-danger{background:rgba(220,38,38,.1);color:var(--danger);border:1px solid rgba(220,38,38,.3);}
+.btn-danger:hover{background:var(--danger);color:#fff;}
 
-.convert-btn {
-  width: 100%; padding: 14px;
-  background: var(--primary); color: #000;
-  border: none; border-radius: 12px;
-  font-size: 16px; font-weight: 800;
-  cursor: pointer; transition: all .2s;
-  letter-spacing: .5px;
-}
-.convert-btn:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(240,185,11,.35); }
-.convert-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
-.convert-btn.loading { opacity: .7; pointer-events: none; }
+/* ── TRADE TABLE ── */
+.section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-muted);margin:14px 0 8px;}
+.trades-table{width:100%;border-collapse:collapse;font-size:12px;}
+.trades-table th{padding:10px 8px;text-align:left;font-size:10px;font-weight:700;
+  color:var(--text-muted);text-transform:uppercase;letter-spacing:.8px;
+  border-bottom:2px solid var(--border-color);white-space:nowrap;}
+.trades-table td{padding:10px 8px;border-bottom:1px solid var(--border-color);vertical-align:middle;}
+.trades-table tr:last-child td{border-bottom:none;}
+.trades-table tr:hover td{background:rgba(0,0,0,.015);}
+td.up{color:var(--trade-up);font-weight:700;font-family:'JetBrains Mono';}
+td.down{color:var(--trade-down);font-weight:700;font-family:'JetBrains Mono';}
+.badge-buy{display:inline-block;background:rgba(5,150,105,.1);color:var(--success);
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;white-space:nowrap;}
+.badge-sell{display:inline-block;background:rgba(220,38,38,.1);color:var(--danger);
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;white-space:nowrap;}
+.badge-convert{display:inline-block;background:rgba(240,185,11,.12);color:#92700a;
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;white-space:nowrap;}
 
-.fee-note { text-align: center; font-size: 11px; color: var(--muted); margin-top: 10px; }
+/* ── AUTO BOT TOGGLE ── */
+.auto-bot-card{background:var(--card-bg);border:1px solid var(--border-color);
+  border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.05);}
+.auto-bot-card.active{border-color:rgba(5,150,105,.4);background:rgba(5,150,105,.04);}
+.auto-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.auto-title{font-size:13px;font-weight:700;}
+.toggle-switch{position:relative;width:40px;height:22px;flex-shrink:0;}
+.toggle-switch input{opacity:0;width:0;height:0;}
+.toggle-slider{position:absolute;inset:0;border-radius:22px;background:#d1d5db;
+  cursor:pointer;transition:.3s;}
+.toggle-slider:before{content:'';position:absolute;width:16px;height:16px;
+  left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s;box-shadow:0 1px 4px rgba(0,0,0,.2);}
+.toggle-switch input:checked+.toggle-slider{background:var(--success);}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(18px);}
+.auto-desc{font-size:11px;color:var(--text-muted);line-height:1.5;}
+.auto-log{margin-top:8px;font-size:10px;color:var(--text-muted);
+  background:#f3f4f6;border-radius:6px;padding:6px 8px;
+  font-family:'JetBrains Mono';max-height:50px;overflow-y:auto;}
 
-/* Dropdown */
-.dropdown-overlay { position: fixed; inset: 0; z-index: 200; }
-.dropdown-panel {
-  position: absolute; top: 100%; left: 0; right: 0;
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.15);
-  z-index: 300; overflow: hidden; margin-top: 4px;
-}
-.dropdown-search {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-}
-.dropdown-search input {
-  width: 100%; border: none; outline: none; font-size: 14px;
-  background: transparent; font-family: 'Outfit', sans-serif;
-  color: var(--text);
-}
-.dropdown-list { max-height: 240px; overflow-y: auto; }
-.dropdown-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; cursor: pointer;
-  transition: background .15s;
-}
-.dropdown-item:hover { background: rgba(240,185,11,.08); }
-.dropdown-item.selected { background: rgba(240,185,11,.12); }
-.dropdown-item .d-name { font-weight: 700; font-size: 14px; }
-.dropdown-item .d-bal { font-size: 11px; color: var(--muted); margin-left: auto; font-family: 'JetBrains Mono'; }
-
-/* ── HISTORY ── */
-.hist-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--border);
-}
-.hist-row:last-child { border-bottom: none; }
-.hist-arrow { font-size: 18px; color: var(--success); flex-shrink: 0; }
-.hist-info { flex: 1; min-width: 0; }
-.hist-pair { font-weight: 700; font-size: 13px; }
-.hist-time { font-size: 11px; color: var(--muted); }
-.hist-amounts { text-align: right; }
-.hist-from { font-size: 11px; color: var(--muted); }
-.hist-to { font-weight: 700; font-size: 13px; font-family: 'JetBrains Mono'; color: var(--success); }
+/* ── CONVERT SECTION ── */
+.convert-inline{padding:0;}
+.swap-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.swap-row select{flex:1;padding:7px 8px;border:1px solid var(--border-color);
+  border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;
+  background:var(--card-bg);color:var(--text-main);outline:none;cursor:pointer;}
+.swap-arrow{font-size:14px;color:var(--text-muted);}
 
 /* ── TOAST ── */
-.toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: #1f2937; color: #fff;
-  padding: 12px 24px; border-radius: 12px;
-  font-size: 14px; font-weight: 600;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-  z-index: 9999;
-  transition: all .3s;
-}
-.toast.success { background: var(--success); }
-.toast.error { background: var(--danger); }
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  background:#1f2937;color:#fff;padding:11px 22px;border-radius:12px;
+  font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.3);z-index:9999;}
+.toast.success{background:var(--success);}.toast.error{background:var(--danger);}
+.toast.warn{background:#d97706;}
+.fade-enter-active,.fade-leave-active{transition:opacity .3s,transform .3s;}
+.fade-enter-from,.fade-leave-to{opacity:0;transform:translateX(-50%) translateY(8px);}
 
-/* ── RESET BTN ── */
-.reset-btn {
-  background: none; border: 1px solid var(--border); border-radius: 8px;
-  padding: 4px 10px; font-size: 11px; color: var(--muted);
-  cursor: pointer; transition: all .2s;
-}
-.reset-btn:hover { border-color: var(--danger); color: var(--danger); }
-
-/* Loading spinner */
-.spin { display: inline-block; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* ── MODAL ── */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;
+  display:flex;align-items:center;justify-content:center;}
+.modal{background:var(--card-bg);border-radius:18px;width:340px;max-width:92vw;
+  box-shadow:0 20px 60px rgba(0,0,0,.2);overflow:hidden;}
+.modal-head{display:flex;justify-content:space-between;align-items:center;
+  padding:16px 20px;border-bottom:1px solid var(--border-color);}
+.modal-body{padding:20px;}
 </style>
 </head>
 <body>
 <div id="app">
 
-  <!-- HEADER -->
-  <div class="header">
-    <div class="header-logo">
-      <span>⇄</span>
-      <div>
-        <div style="font-size:15px;font-weight:800">現貨轉換</div>
-        <small>Spot Convert · Paper</small>
-      </div>
-    </div>
-    <a href="/" class="back-link">← 回主頁</a>
+<!-- TOP BAR -->
+<div class="top-bar">
+  <div class="logo">
+    <span>⇄</span> 現貨交易
+    <span class="env-badge">SPOT PAPER</span>
   </div>
-
-  <div class="page">
-    <div class="grid">
-
-      <!-- LEFT: Portfolio -->
-      <div>
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">我的資產</span>
-            <button class="reset-btn" @click="showResetModal=true">重置</button>
-          </div>
-          <div class="card-body" style="padding:0 12px 12px">
-            <div class="portfolio-total">
-              <div class="label">總資產</div>
-              <div class="value">{{ fmt(totalUsdt) }}<span> USDT</span></div>
-            </div>
-            <div v-if="nonZeroBalances.length === 0" class="empty-hint">無持倉</div>
-            <div v-for="row in nonZeroBalances" :key="row.coin" class="coin-row" @click="useInFrom(row.coin)">
-              <div class="coin-info">
-                <div class="coin-icon" :style="{background: coinColor(row.coin)}">{{ row.coin.slice(0,3) }}</div>
-                <div>
-                  <div class="coin-name">{{ row.coin }}</div>
-                  <div class="coin-bal">{{ fmtCoin(row.balance, row.coin) }}</div>
-                </div>
-              </div>
-              <div class="coin-usdt">
-                <div class="val">{{ fmt(row.balance * row.price) }}</div>
-                <div class="price">≈ ${{ fmtPrice(row.price) }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CENTER: Convert -->
-      <div>
-        <div class="card convert-card">
-          <div class="card-header">
-            <span class="card-title">即時轉換</span>
-            <span style="font-size:11px;color:var(--muted)">手續費 0.1%</span>
-          </div>
-          <div class="card-body">
-
-            <!-- FROM -->
-            <div class="from-to-box" style="position:relative">
-              <div class="from-to-label">從 · FROM</div>
-              <div class="from-to-row">
-                <div class="coin-select" @click.stop="toggleDrop('from')">
-                  <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(fromCoin)}">{{ fromCoin.slice(0,3) }}</div>
-                  {{ fromCoin }}
-                  <span class="arrow">▼</span>
-                </div>
-                <input class="amount-input" type="number" v-model="fromAmount"
-                  placeholder="0.00" min="0" @input="onFromInput" />
-              </div>
-              <div class="amount-sub">
-                <span>≈ {{ fromUsdt > 0 ? fmt(fromUsdt) + ' USDT' : '—' }}</span>
-                <span>
-                  可用 {{ fmtCoin(fromBalance, fromCoin) }}
-                  <button class="max-btn" @click="setMax">MAX</button>
-                </span>
-              </div>
-              <!-- Dropdown -->
-              <div v-if="dropOpen==='from'" class="dropdown-overlay" @click="dropOpen=null"></div>
-              <div v-if="dropOpen==='from'" class="dropdown-panel">
-                <div class="dropdown-search"><input v-model="dropSearch" placeholder="搜尋幣種..." autofocus /></div>
-                <div class="dropdown-list">
-                  <div v-for="c in filteredCoins('from')" :key="c"
-                    class="dropdown-item" :class="{selected: c===fromCoin}"
-                    @click.stop="selectCoin('from', c)">
-                    <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(c)}">{{ c.slice(0,3) }}</div>
-                    <span class="d-name">{{ c }}</span>
-                    <span class="d-bal">{{ fmtCoin(balances[c]||0, c) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- SWAP button -->
-            <div class="swap-btn" @click="swapCoins">⇅</div>
-
-            <!-- TO -->
-            <div class="from-to-box" style="position:relative">
-              <div class="from-to-label">到 · TO</div>
-              <div class="from-to-row">
-                <div class="coin-select" @click.stop="toggleDrop('to')">
-                  <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(toCoin)}">{{ toCoin.slice(0,3) }}</div>
-                  {{ toCoin }}
-                  <span class="arrow">▼</span>
-                </div>
-                <input class="amount-input" type="number" v-model="toAmountDisp"
-                  placeholder="0.00" readonly style="color:var(--muted)" />
-              </div>
-              <div class="amount-sub">
-                <span>≈ {{ toUsdt > 0 ? fmt(toUsdt) + ' USDT' : '—' }}</span>
-                <span style="color:var(--muted)">手續費 {{ fee > 0 ? '~' + fmt(fee) + ' USDT' : '—' }}</span>
-              </div>
-              <!-- Dropdown -->
-              <div v-if="dropOpen==='to'" class="dropdown-overlay" @click="dropOpen=null"></div>
-              <div v-if="dropOpen==='to'" class="dropdown-panel">
-                <div class="dropdown-search"><input v-model="dropSearch" placeholder="搜尋幣種..." autofocus /></div>
-                <div class="dropdown-list">
-                  <div v-for="c in filteredCoins('to')" :key="c"
-                    class="dropdown-item" :class="{selected: c===toCoin}"
-                    @click.stop="selectCoin('to', c)">
-                    <div class="coin-icon" style="width:24px;height:24px;font-size:9px" :style="{background:coinColor(c)}">{{ c.slice(0,3) }}</div>
-                    <span class="d-name">{{ c }}</span>
-                    <span class="d-bal">{{ fmtCoin(balances[c]||0, c) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Rate -->
-            <div class="rate-row">
-              <span v-if="rate > 0">
-                1 {{ fromCoin }} = <b>{{ fmtRate(rate) }} {{ toCoin }}</b>
-              </span>
-              <span v-else class="spin" style="font-size:16px">⟳</span>
-            </div>
-
-            <button class="convert-btn" :class="{loading: converting}"
-              :disabled="!canConvert" @click="doConvert">
-              <span v-if="converting"><span class="spin">⟳</span> 轉換中...</span>
-              <span v-else>確認轉換</span>
-            </button>
-            <div class="fee-note">模擬現貨交易 · Paper Spot · 不消耗實際資金</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- RIGHT: History -->
-      <div>
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">轉換紀錄</span>
-            <span style="font-size:11px;color:var(--muted)">最近 {{ history.length }} 筆</span>
-          </div>
-          <div class="card-body" style="padding:0 12px 12px">
-            <div v-if="history.length===0" class="empty-hint" style="padding:24px 0">尚無紀錄</div>
-            <div v-for="h in history" :key="h.time" class="hist-row">
-              <span class="hist-arrow">⇄</span>
-              <div class="hist-info">
-                <div class="hist-pair">{{ h.from_coin }} → {{ h.to_coin }}</div>
-                <div class="hist-time">{{ fmtTime(h.time) }}</div>
-              </div>
-              <div class="hist-amounts">
-                <div class="hist-from">-{{ fmtCoin(h.from_amount, h.from_coin) }} {{ h.from_coin }}</div>
-                <div class="hist-to">+{{ fmtCoin(h.to_amount, h.to_coin) }} {{ h.to_coin }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
+  <div class="topbar-right">
+    <span style="font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono'">
+      總值 <b style="color:var(--text-main)">{{ fmt(totalUsdt) }}</b> USDT
+    </span>
+    <a href="/" style="font-size:12px;color:var(--text-muted);text-decoration:none;padding:5px 10px;
+      border:1px solid var(--border-color);border-radius:8px;">← 合約</a>
+    <div :class="['status-badge', autoBot ? 'running' : 'stopped']" @click="toggleAutoBot">
+      <span class="pulse-dot" v-if="autoBot"></span>
+      {{ autoBot ? '🤖 自動運行中' : '⏹ 手動模式' }}
     </div>
   </div>
-
-  <!-- Toast -->
-  <transition name="fade">
-    <div v-if="toast.show" class="toast" :class="toast.type">{{ toast.msg }}</div>
-  </transition>
-
-  <!-- Reset Modal -->
-  <div v-if="showResetModal" style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:500;display:flex;align-items:center;justify-content:center" @click.self="showResetModal=false">
-    <div class="card" style="width:320px;max-width:90vw">
-      <div class="card-header"><span class="card-title">重置資產</span></div>
-      <div class="card-body">
-        <p style="font-size:14px;color:var(--muted);margin-bottom:16px">設定初始 USDT 金額，所有持倉與紀錄將清空。</p>
-        <div style="margin-bottom:14px">
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">初始金額 (USDT)</label>
-          <input v-model.number="resetAmount" type="number" min="1"
-            style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:16px;font-family:inherit;outline:none;color:var(--text)">
-        </div>
-        <div style="display:flex;gap:10px">
-          <button @click="showResetModal=false" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:10px;background:none;cursor:pointer;font-size:14px">取消</button>
-          <button @click="doReset" style="flex:1;padding:10px;background:var(--danger);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">確認重置</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
 </div>
 
-<style>
-.fade-enter-active, .fade-leave-active { transition: opacity .3s, transform .3s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateX(-50%) translateY(10px); }
-</style>
+<!-- MAIN LAYOUT -->
+<div class="main-layout">
+
+  <!-- ══ LEFT PANEL ══ -->
+  <div :class="['left-panel', activeTab==='left' ? 'tab-active' : '']">
+
+    <!-- Coin strip -->
+    <div class="coin-strip">
+      <div v-for="c in allCoins" :key="c.coin"
+        :class="['coin-chip', activeCoin===c.coin ? 'active' : '', c.balance > 0 ? 'has-holding' : '']"
+        @click="activeCoin = c.coin">
+        <span>{{ c.coin }}</span>
+        <span :class="['coin-chip-price', c.priceClass]">{{ fmtPrice(c.price) }}</span>
+      </div>
+    </div>
+
+    <!-- Price hero -->
+    <div class="price-hero">
+      <div class="price-hero-label">{{ activeCoin }} / USDT</div>
+      <div :class="['price-hero-value', priceClass]">{{ fmtPriceFull(activePrice) }}</div>
+      <div class="price-hero-sub">
+        <span>現貨 Binance</span>
+        <span v-if="activeHolding > 0" style="color:var(--success);font-weight:700">
+          持有 {{ fmtCoin(activeHolding, activeCoin) }} {{ activeCoin }}
+        </span>
+        <span v-else style="color:var(--text-muted)">未持有</span>
+      </div>
+    </div>
+
+    <!-- Holding detail card (if holding) -->
+    <div v-if="activeHolding > 0" class="holding-card" style="margin-top:14px">
+      <div class="h-title">📦 持倉詳情 · {{ activeCoin }}</div>
+      <div class="holding-row">
+        <span class="label">數量</span>
+        <span class="val">{{ fmtCoin(activeHolding, activeCoin) }} {{ activeCoin }}</span>
+      </div>
+      <div class="holding-row">
+        <span class="label">現值</span>
+        <span class="val">{{ fmt(activeHolding * activePrice) }} USDT</span>
+      </div>
+      <div class="holding-row" v-if="activeAvgPrice > 0">
+        <span class="label">均價</span>
+        <span class="val">{{ fmtPriceFull(activeAvgPrice) }}</span>
+      </div>
+      <div class="holding-row" v-if="activeAvgPrice > 0">
+        <span class="label">浮動損益</span>
+        <span :class="['val', activeUnrealizedPnl >= 0 ? 'up' : 'down']">
+          {{ activeUnrealizedPnl >= 0 ? '+' : '' }}{{ fmt(activeUnrealizedPnl) }} USDT
+          ({{ activeUnrealizedPct >= 0 ? '+' : '' }}{{ activeUnrealizedPct.toFixed(2) }}%)
+        </span>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="lo-submit-sell" style="flex:1" @click="quickSell(25)">賣 25%</button>
+        <button class="lo-submit-sell" style="flex:1" @click="quickSell(50)">賣 50%</button>
+        <button class="lo-submit-sell" style="flex:1;background:var(--danger);color:#fff;" @click="quickSell(100)">全賣</button>
+      </div>
+    </div>
+
+    <!-- Trade history -->
+    <div class="section-title">📋 交易紀錄</div>
+    <div class="card" style="padding:0;overflow:hidden;">
+      <table class="trades-table">
+        <thead>
+          <tr>
+            <th>時間</th>
+            <th>類型</th>
+            <th>幣種</th>
+            <th>金額</th>
+            <th>手續費</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="history.length === 0">
+            <td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">尚無交易紀錄</td>
+          </tr>
+          <tr v-for="h in history.slice(0,50)" :key="h.time">
+            <td style="font-family:'JetBrains Mono';font-size:10px;color:var(--text-muted)">{{ fmtTime(h.time) }}</td>
+            <td>
+              <span v-if="h.action==='buy'" class="badge-buy">買入</span>
+              <span v-else-if="h.action==='sell'" class="badge-sell">賣出</span>
+              <span v-else class="badge-convert">轉換</span>
+            </td>
+            <td style="font-weight:700">
+              <span v-if="h.action==='buy'">{{ h.to_coin }}</span>
+              <span v-else-if="h.action==='sell'">{{ h.from_coin }}</span>
+              <span v-else>{{ h.from_coin }}→{{ h.to_coin }}</span>
+            </td>
+            <td style="font-family:'JetBrains Mono';font-size:11px">
+              <span v-if="h.action==='buy'" class="up">+{{ fmtCoin(h.to_amount, h.to_coin) }}</span>
+              <span v-else-if="h.action==='sell'" class="down">-{{ fmtCoin(h.from_amount, h.from_coin) }}</span>
+              <span v-else>{{ fmtCoin(h.from_amount, h.from_coin) }}→{{ fmtCoin(h.to_amount, h.to_coin) }}</span>
+            </td>
+            <td style="font-family:'JetBrains Mono';font-size:10px;color:var(--text-muted)">
+              {{ h.fee_usdt.toFixed(4) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div><!-- /left-panel -->
+
+  <!-- ══ RIGHT PANEL ══ -->
+  <div :class="['right-panel', activeTab==='right' ? 'tab-active' : '']">
+
+    <!-- Info grid -->
+    <div class="info-grid">
+      <div class="info-card">
+        <div class="info-title">USDT 餘額</div>
+        <div class="info-val mono">{{ fmt(balances['USDT']||0) }}</div>
+      </div>
+      <div class="info-card">
+        <div class="info-title">持倉幣種</div>
+        <div class="info-val">{{ holdingCount }} 個</div>
+      </div>
+      <div class="info-card">
+        <div class="info-title">未實現損益</div>
+        <div :class="['info-val mono', totalUnrealizedPnl >= 0 ? 'up' : 'down']">
+          {{ totalUnrealizedPnl >= 0 ? '+' : '' }}{{ fmt(totalUnrealizedPnl) }}
+        </div>
+      </div>
+      <div class="info-card">
+        <div class="info-title">總資產</div>
+        <div class="info-val mono">{{ fmt(totalUsdt) }}</div>
+      </div>
+    </div>
+
+    <!-- Auto Bot -->
+    <div :class="['auto-bot-card', autoBot ? 'active' : '']">
+      <div class="auto-header">
+        <span class="auto-title">🤖 自動現貨機器人</span>
+        <label class="toggle-switch">
+          <input type="checkbox" v-model="autoBot" @change="onAutoBotChange">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="auto-desc">
+        {{ autoBot ? '✅ 已啟動：每 30 秒掃描信號，自動買入/賣出。' : '信號強度 ≥ 15 時自動執行現貨買賣。' }}
+        <span v-if="autoBot"> 單次動用 <b>{{ autoPct }}%</b> USDT。</span>
+      </div>
+      <div v-if="autoBot" style="margin-top:8px">
+        <label style="font-size:10px;color:var(--text-muted)">每次動用 USDT %：</label>
+        <input type="range" v-model.number="autoPct" min="5" max="50" step="5"
+          style="width:100%;margin-top:4px;accent-color:var(--primary)">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
+          <span>5%</span><span><b>{{ autoPct }}%</b> = {{ fmt((balances['USDT']||0)*autoPct/100) }} USDT</span><span>50%</span>
+        </div>
+      </div>
+      <div v-if="autoLogs.length" class="auto-log">
+        <div v-for="l in autoLogs.slice(0,5)" :key="l">{{ l }}</div>
+      </div>
+    </div>
+
+    <!-- Buy/Sell/Convert form -->
+    <div class="card">
+      <div class="lo-tabs">
+        <div :class="['lo-tab', tradeMode==='buy' ? 'active-buy' : '']" @click="tradeMode='buy'">📈 買入</div>
+        <div :class="['lo-tab', tradeMode==='sell' ? 'active-sell' : '']" @click="tradeMode='sell'">📉 賣出</div>
+      </div>
+
+      <!-- BUY form -->
+      <div v-if="tradeMode==='buy'">
+        <div class="lo-field">
+          <label>幣種</label>
+          <select class="lo-input" v-model="activeCoin">
+            <option v-for="c in tradeableCoins" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </div>
+        <div class="lo-field">
+          <label>動用 USDT 金額</label>
+          <input class="lo-input" type="number" v-model.number="buyUsdt" placeholder="0.00" min="0">
+        </div>
+        <div class="pct-btns">
+          <button class="pct-btn" @click="setPct(25)">25%</button>
+          <button class="pct-btn" @click="setPct(50)">50%</button>
+          <button class="pct-btn" @click="setPct(75)">75%</button>
+          <button class="pct-btn" @click="setPct(100)">MAX</button>
+        </div>
+        <div class="lo-hint" v-if="buyUsdt > 0 && activePrice > 0">
+          ≈ 獲得 <b>{{ fmtCoin(buyUsdt*(1-0.001)/activePrice, activeCoin) }} {{ activeCoin }}</b>，
+          手續費 {{ (buyUsdt*0.001).toFixed(4) }} USDT
+        </div>
+        <button class="lo-submit-buy" @click="doBuy" :disabled="!buyUsdt || buyUsdt <= 0 || submitting">
+          {{ submitting ? '執行中...' : '✅ 買入 ' + activeCoin }}
+        </button>
+      </div>
+
+      <!-- SELL form -->
+      <div v-if="tradeMode==='sell'">
+        <div class="lo-field">
+          <label>幣種</label>
+          <select class="lo-input" v-model="activeCoin">
+            <option v-for="c in tradeableCoins" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </div>
+        <div class="lo-field">
+          <label>賣出數量（{{ activeCoin }}）</label>
+          <input class="lo-input" type="number" v-model.number="sellQty" placeholder="0.00000" min="0">
+        </div>
+        <div class="pct-btns">
+          <button class="pct-btn" @click="setSellPct(25)">25%</button>
+          <button class="pct-btn" @click="setSellPct(50)">50%</button>
+          <button class="pct-btn" @click="setSellPct(75)">75%</button>
+          <button class="pct-btn" @click="setSellPct(100)">MAX</button>
+        </div>
+        <div class="lo-hint" v-if="sellQty > 0 && activePrice > 0">
+          ≈ 獲得 <b>{{ fmt(sellQty * activePrice * (1-0.001)) }} USDT</b>，
+          手續費 {{ (sellQty * activePrice * 0.001).toFixed(4) }} USDT
+        </div>
+        <button class="lo-submit-sell" @click="doSell" :disabled="!sellQty || sellQty <= 0 || submitting">
+          {{ submitting ? '執行中...' : '🔴 賣出 ' + activeCoin }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Convert section -->
+    <div class="card">
+      <div class="lo-field">
+        <label style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">⇄ 幣種轉換</label>
+        <div class="swap-row">
+          <select class="lo-input" v-model="cvFrom" style="flex:1">
+            <option v-for="c in allCoinNames" :key="c" :value="c">{{ c }}</option>
+          </select>
+          <span class="swap-arrow">→</span>
+          <select class="lo-input" v-model="cvTo" style="flex:1">
+            <option v-for="c in allCoinNames.filter(x=>x!==cvFrom)" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </div>
+        <input class="lo-input" style="margin-top:6px" type="number" v-model.number="cvAmount"
+          :placeholder="`數量 (${cvFrom})`" min="0">
+        <div v-if="cvQuote" style="font-size:11px;color:var(--text-muted);margin:6px 0;text-align:center">
+          ≈ 獲得 <b style="color:var(--text-main)">{{ fmtCoin(cvQuote.to_amount, cvTo) }} {{ cvTo }}</b>
+          | 費 {{ cvQuote.fee_usdt.toFixed(4) }} USDT
+        </div>
+        <button class="lo-submit-convert" style="margin-top:4px" @click="doConvert" :disabled="!cvAmount || submitting">
+          {{ submitting ? '執行中...' : '⇄ 確認轉換' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Reset -->
+    <button class="btn btn-danger" style="margin-top:4px" @click="showReset=true">🔄 重置帳戶</button>
+
+  </div><!-- /right-panel -->
+
+</div><!-- /main-layout -->
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="bottom-nav">
+  <button :class="['nav-tab', activeTab==='left' ? 'active' : '']" @click="activeTab='left'">
+    <span class="nav-icon">📊</span><span>持倉</span>
+  </button>
+  <div class="nav-tab-divider"></div>
+  <button :class="['nav-tab', activeTab==='right' ? 'active' : '']" @click="activeTab='right'">
+    <span class="nav-icon">⚡</span><span>交易</span>
+  </button>
+</nav>
+
+<!-- Toast -->
+<transition name="fade">
+  <div v-if="toast.show" :class="['toast', toast.type]">{{ toast.msg }}</div>
+</transition>
+
+<!-- Reset Modal -->
+<div v-if="showReset" class="modal-backdrop" @click.self="showReset=false">
+  <div class="modal">
+    <div class="modal-head">
+      <span style="font-weight:700">重置帳戶</span>
+      <span style="cursor:pointer;font-size:18px" @click="showReset=false">✕</span>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">所有持倉與紀錄將清空，重設初始 USDT：</p>
+      <input class="lo-input" type="number" v-model.number="resetAmt" min="1" style="margin-bottom:14px;font-size:15px">
+      <div style="display:flex;gap:10px">
+        <button @click="showReset=false" class="btn" style="background:#f3f4f6;color:var(--text-muted);border:1px solid var(--border-color)">取消</button>
+        <button @click="doReset" class="btn btn-danger" style="margin-bottom:0">確認重置</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- #app -->
 
 <script>
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
-
+const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
 const COIN_COLORS = {
-  USDT:'#26a17b', BTC:'#f7931a', ETH:'#627eea', BNB:'#f0b90b',
-  SOL:'#9945ff', XRP:'#00aae4', ADA:'#0d1e2d', DOGE:'#c2a633',
-  DOT:'#e6007a', LTC:'#bfbbbb', LINK:'#2a5ada', SUI:'#6fbcf0',
-  AVAX:'#e84142', NEAR:'#00c08b', APT:'#2e5ce6', ARB:'#28a0f0',
-  OP:'#ff0420', INJ:'#00ade8', HYPE:'#7c5cfc', AAVE:'#b6509e',
+  USDT:'#26a17b',BTC:'#f7931a',ETH:'#627eea',BNB:'#f0b90b',
+  SOL:'#9945ff',XRP:'#00aae4',ADA:'#0d1e2d',DOGE:'#c2a633',
+  DOT:'#e6007a',LTC:'#bfbbbb',LINK:'#2a5ada',SUI:'#6fbcf0',
+  AVAX:'#e84142',NEAR:'#00c08b',APT:'#2e5ce6',ARB:'#28a0f0',
+  OP:'#ff0420',INJ:'#00ade8',HYPE:'#7c5cfc',AAVE:'#b6509e',
 };
 
 createApp({
   setup() {
-    const BASE = '';
+    const B = '';
+    const balances  = ref({});
+    const prices    = ref({});
+    const avgPrices = ref({});
+    const history   = ref([]);
+    const coinList  = ref([]);
+    const activeCoin = ref('ETH');
+    const activeTab  = ref('left');
+    const tradeMode  = ref('buy');
+    const buyUsdt    = ref(null);
+    const sellQty    = ref(null);
+    const cvFrom     = ref('USDT');
+    const cvTo       = ref('ETH');
+    const cvAmount   = ref(null);
+    const cvQuote    = ref(null);
+    const submitting = ref(false);
+    const autoBot    = ref(false);
+    const autoPct    = ref(20);
+    const autoLogs   = ref([]);
+    const showReset  = ref(false);
+    const resetAmt   = ref(10000);
+    const prevPrice  = ref({});
+    const toast      = ref({ show:false, msg:'', type:'' });
 
-    const coins      = ref([]);
-    const balances   = ref({});
-    const prices     = ref({});
-    const history    = ref([]);
-
-    const fromCoin   = ref('USDT');
-    const toCoin     = ref('ETH');
-    const fromAmount = ref('');
-    const toAmountDisp = ref('');
-    const rate       = ref(0);
-    const fee        = ref(0);
-    const converting = ref(false);
-
-    const dropOpen   = ref(null);
-    const dropSearch = ref('');
-    const toast      = ref({ show: false, msg: '', type: '' });
-    const showResetModal = ref(false);
-    const resetAmount = ref(10000);
-
-    let quoteTimer = null;
     let refreshTimer = null;
+    let autoTimer    = null;
+    let cvTimer      = null;
 
     // ── computed ──
-    const fromBalance = computed(() => balances.value[fromCoin.value] || 0);
-    const fromPrice   = computed(() => prices.value[fromCoin.value] || (fromCoin.value==='USDT'?1:0));
-    const toPrice     = computed(() => prices.value[toCoin.value]   || (toCoin.value==='USDT'?1:0));
-    const fromUsdt    = computed(() => (parseFloat(fromAmount.value)||0) * fromPrice.value);
-    const toUsdt      = computed(() => (parseFloat(toAmountDisp.value)||0) * toPrice.value);
-    const canConvert  = computed(() => {
-      const a = parseFloat(fromAmount.value);
-      return a > 0 && fromCoin.value !== toCoin.value && a <= fromBalance.value && !converting.value;
+    const allCoinNames = computed(() => coinList.value.length ? coinList.value : Object.keys(COIN_COLORS));
+
+    const allCoins = computed(() => {
+      return allCoinNames.value.filter(c => c !== 'USDT').map(c => {
+        const p   = prices.value[c] || 0;
+        const pp  = prevPrice.value[c] || p;
+        return {
+          coin: c,
+          price: p,
+          balance: balances.value[c] || 0,
+          priceClass: p > pp ? 'up' : p < pp ? 'down' : '',
+        };
+      });
     });
-    const nonZeroBalances = computed(() => {
-      return Object.entries(balances.value)
-        .filter(([c,b]) => b > 0)
-        .map(([c,b]) => ({ coin:c, balance:b, price: prices.value[c]||(c==='USDT'?1:0) }))
-        .sort((a,b) => b.balance*b.price - a.balance*a.price);
+
+    const tradeableCoins = computed(() => allCoinNames.value.filter(c => c !== 'USDT'));
+
+    const activePrice    = computed(() => prices.value[activeCoin.value] || 0);
+    const activeHolding  = computed(() => balances.value[activeCoin.value] || 0);
+    const activeAvgPrice = computed(() => avgPrices.value[activeCoin.value] || 0);
+    const priceClass     = computed(() => {
+      const p = activePrice.value, pp = prevPrice.value[activeCoin.value] || p;
+      return p > pp ? 'up' : p < pp ? 'down' : '';
     });
-    const totalUsdt = computed(() => nonZeroBalances.value.reduce((s,r)=>s+r.balance*r.price, 0));
+    const activeUnrealizedPnl = computed(() => {
+      if (!activeAvgPrice.value || !activeHolding.value) return 0;
+      return (activePrice.value - activeAvgPrice.value) * activeHolding.value;
+    });
+    const activeUnrealizedPct = computed(() => {
+      if (!activeAvgPrice.value) return 0;
+      return (activePrice.value - activeAvgPrice.value) / activeAvgPrice.value * 100;
+    });
+    const totalUnrealizedPnl = computed(() => {
+      let total = 0;
+      for (const [coin, qty] of Object.entries(balances.value)) {
+        if (coin === 'USDT' || !qty) continue;
+        const avg = avgPrices.value[coin] || 0;
+        if (avg) total += (prices.value[coin] - avg) * qty;
+      }
+      return total;
+    });
+    const totalUsdt = computed(() => {
+      let s = balances.value['USDT'] || 0;
+      for (const [c, q] of Object.entries(balances.value)) {
+        if (c !== 'USDT' && q) s += q * (prices.value[c] || 0);
+      }
+      return s;
+    });
+    const holdingCount = computed(() =>
+      Object.entries(balances.value).filter(([c,q]) => c !== 'USDT' && q > 0).length
+    );
 
     // ── helpers ──
     function fmt(n) {
-      if (!n && n!==0) return '—';
+      if (n == null) return '—';
       return (+n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
     }
     function fmtCoin(n, coin) {
-      if (!n && n!==0) return '0';
+      if (!n && n !== 0) return '0';
       const v = parseFloat(n);
-      if (coin==='USDT') return v.toFixed(2);
-      if (coin==='BTC')  return v.toFixed(6);
+      if (coin === 'USDT') return v.toFixed(2);
+      if (coin === 'BTC')  return v.toFixed(6);
       if (['ETH','SOL','BNB','AVAX','INJ','AAVE','HYPE'].includes(coin)) return v.toFixed(4);
       return v.toFixed(2);
     }
     function fmtPrice(p) {
       if (!p) return '—';
-      if (p >= 1000) return (+p).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-      if (p >= 1)    return (+p).toFixed(4);
-      return (+p).toFixed(6);
+      if (p >= 100) return p.toFixed(2);
+      if (p >= 1)   return p.toFixed(4);
+      return p.toFixed(6);
     }
-    function fmtRate(r) {
-      if (r >= 1)  return r.toFixed(4);
-      return r.toFixed(6);
+    function fmtPriceFull(p) {
+      if (!p) return '—';
+      if (p >= 1000) return p.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+      if (p >= 1)    return p.toFixed(4);
+      return p.toFixed(6);
     }
     function fmtTime(ms) {
       const d = new Date(ms);
-      return d.toLocaleDateString('zh-TW') + ' ' + d.toTimeString().slice(0,5);
+      return d.toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}) + ' ' +
+             d.toTimeString().slice(0,5);
     }
-    function coinColor(c) { return COIN_COLORS[c] || '#888'; }
     function showToast(msg, type='success') {
-      toast.value = { show:true, msg, type };
+      toast.value = {show:true, msg, type};
       setTimeout(() => toast.value.show = false, 3000);
     }
 
-    // ── API calls ──
+    // ── API ──
     async function loadBalance() {
       try {
-        const r = await fetch(BASE+'/api/spot/balance');
-        const d = await r.json();
-        balances.value = d.balances || {};
-        prices.value   = d.prices   || {};
-      } catch(e) {}
+        const d = await (await fetch(B+'/api/spot/balance')).json();
+        prevPrice.value = {...prices.value};
+        balances.value  = d.balances  || {};
+        prices.value    = d.prices    || {};
+        avgPrices.value = d.avg_prices || {};
+      } catch {}
     }
     async function loadHistory() {
       try {
-        const r = await fetch(BASE+'/api/spot/history');
-        const d = await r.json();
+        const d = await (await fetch(B+'/api/spot/history')).json();
         history.value = d.history || [];
-      } catch(e) {}
+      } catch {}
     }
     async function loadCoins() {
       try {
-        const r = await fetch(BASE+'/api/spot/coins');
-        const d = await r.json();
-        coins.value = d.coins || [];
-      } catch(e) { coins.value = Object.keys(COIN_COLORS); }
-    }
-    async function fetchQuote() {
-      const a = parseFloat(fromAmount.value);
-      if (!a || a <= 0 || fromCoin.value === toCoin.value) {
-        toAmountDisp.value = '';
-        rate.value = 0; fee.value = 0;
-        return;
-      }
-      try {
-        const r = await fetch(`${BASE}/api/spot/quote?from_coin=${fromCoin.value}&to_coin=${toCoin.value}&amount=${a}`);
-        const d = await r.json();
-        if (d.success) {
-          toAmountDisp.value = fmtCoin(d.to_amount, toCoin.value);
-          rate.value = d.rate;
-          fee.value  = d.fee_usdt;
-          // update local price cache
-          prices.value[fromCoin.value] = d.from_price_usdt;
-          prices.value[toCoin.value]   = d.to_price_usdt;
-        }
-      } catch(e) {}
+        const d = await (await fetch(B+'/api/spot/coins')).json();
+        coinList.value = d.coins || [];
+      } catch {}
     }
 
     // ── actions ──
-    function onFromInput() {
-      clearTimeout(quoteTimer);
-      quoteTimer = setTimeout(fetchQuote, 400);
+    function setPct(p) {
+      buyUsdt.value = parseFloat(((balances.value['USDT']||0) * p / 100).toFixed(2));
     }
-    function setMax() {
-      fromAmount.value = String(fromBalance.value);
-      onFromInput();
+    function setSellPct(p) {
+      sellQty.value = parseFloat(((balances.value[activeCoin.value]||0) * p / 100).toFixed(6));
     }
-    function swapCoins() {
-      const tmp = fromCoin.value;
-      fromCoin.value = toCoin.value;
-      toCoin.value = tmp;
-      fromAmount.value = '';
-      toAmountDisp.value = '';
-      rate.value = 0; fee.value = 0;
-    }
-    function useInFrom(coin) {
-      fromCoin.value = coin;
-      fromAmount.value = '';
-      toAmountDisp.value = '';
-      rate.value = 0; fee.value = 0;
-    }
-    function toggleDrop(side) {
-      dropSearch.value = '';
-      dropOpen.value = dropOpen.value === side ? null : side;
-    }
-    function selectCoin(side, coin) {
-      if (side === 'from') {
-        if (coin === toCoin.value) toCoin.value = fromCoin.value;
-        fromCoin.value = coin;
-      } else {
-        if (coin === fromCoin.value) fromCoin.value = toCoin.value;
-        toCoin.value = coin;
-      }
-      dropOpen.value = null;
-      fromAmount.value = '';
-      toAmountDisp.value = '';
-      rate.value = 0; fee.value = 0;
-      fetchQuote();
-    }
-    function filteredCoins(side) {
-      const s = dropSearch.value.toLowerCase();
-      return (coins.value.length ? coins.value : Object.keys(COIN_COLORS))
-        .filter(c => !s || c.toLowerCase().includes(s));
+    function quickSell(p) {
+      tradeMode.value = 'sell';
+      activeTab.value = 'right';
+      setSellPct(p);
     }
 
-    async function doConvert() {
-      if (!canConvert.value) return;
-      converting.value = true;
+    async function doBuy() {
+      if (!buyUsdt.value || buyUsdt.value <= 0 || submitting.value) return;
+      submitting.value = true;
       try {
-        const r = await fetch(BASE+'/api/spot/convert', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            from_coin: fromCoin.value,
-            to_coin:   toCoin.value,
-            amount:    parseFloat(fromAmount.value),
-          })
+        const r = await fetch(B+'/api/spot/buy', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({coin: activeCoin.value, usdt_amount: buyUsdt.value})
         });
         const d = await r.json();
         if (d.success) {
           balances.value = d.balances;
-          fromAmount.value = '';
-          toAmountDisp.value = '';
-          rate.value = 0; fee.value = 0;
-          showToast(`✅ 成功轉換 ${fmtCoin(d.trade.from_amount, d.trade.from_coin)} ${d.trade.from_coin} → ${fmtCoin(d.trade.to_amount, d.trade.to_coin)} ${d.trade.to_coin}`);
-          await loadHistory();
-          await loadBalance();
-        } else {
-          showToast('❌ ' + d.error, 'error');
-        }
-      } catch(e) {
-        showToast('❌ 網路錯誤', 'error');
-      } finally {
-        converting.value = false;
-      }
+          buyUsdt.value  = null;
+          showToast(`✅ 買入 ${fmtCoin(d.trade.to_amount, d.trade.to_coin)} ${d.trade.to_coin}`);
+          await loadHistory(); await loadBalance();
+        } else showToast('❌ ' + d.error, 'error');
+      } catch { showToast('❌ 網路錯誤', 'error'); }
+      finally { submitting.value = false; }
+    }
+
+    async function doSell() {
+      if (!sellQty.value || sellQty.value <= 0 || submitting.value) return;
+      submitting.value = true;
+      try {
+        const r = await fetch(B+'/api/spot/sell', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({coin: activeCoin.value, coin_amount: sellQty.value})
+        });
+        const d = await r.json();
+        if (d.success) {
+          balances.value = d.balances;
+          sellQty.value  = null;
+          showToast(`✅ 賣出 → ${fmt(d.trade.to_amount)} USDT`);
+          await loadHistory(); await loadBalance();
+        } else showToast('❌ ' + d.error, 'error');
+      } catch { showToast('❌ 網路錯誤', 'error'); }
+      finally { submitting.value = false; }
+    }
+
+    async function doConvert() {
+      if (!cvAmount.value || cvAmount.value <= 0 || submitting.value) return;
+      submitting.value = true;
+      try {
+        const r = await fetch(B+'/api/spot/convert', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({from_coin:cvFrom.value, to_coin:cvTo.value, amount:cvAmount.value, action:'convert'})
+        });
+        const d = await r.json();
+        if (d.success) {
+          balances.value = d.balances;
+          cvAmount.value = null; cvQuote.value = null;
+          showToast(`✅ ${cvFrom.value} → ${fmtCoin(d.trade.to_amount, cvTo.value)} ${cvTo.value}`);
+          await loadHistory(); await loadBalance();
+        } else showToast('❌ ' + d.error, 'error');
+      } catch { showToast('❌ 網路錯誤', 'error'); }
+      finally { submitting.value = false; }
     }
 
     async function doReset() {
       try {
-        const r = await fetch(BASE+'/api/spot/reset', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ initial_usdt: resetAmount.value })
+        const r = await fetch(B+'/api/spot/reset', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({initial_usdt: resetAmt.value})
         });
         const d = await r.json();
-        balances.value = d.balances || {};
-        history.value  = [];
-        showResetModal.value = false;
-        fromAmount.value = ''; toAmountDisp.value = ''; rate.value = 0;
-        showToast(`✅ 已重置為 ${resetAmount.value} USDT`);
-        await loadBalance();
-      } catch(e) {
-        showToast('❌ 重置失敗', 'error');
+        balances.value = d.balances || {}; avgPrices.value = {}; history.value = [];
+        showReset.value = false;
+        showToast(`✅ 已重置為 ${resetAmt.value} USDT`);
+      } catch { showToast('❌ 重置失敗', 'error'); }
+    }
+
+    // ── Auto Bot ──
+    function onAutoBotChange() {
+      if (autoBot.value) {
+        autoLogs.value = ['[Bot] 自動機器人已啟動'];
+        runAutoBot();
+        autoTimer = setInterval(runAutoBot, 30000);
+        showToast('🤖 自動機器人已啟動', 'warn');
+      } else {
+        clearInterval(autoTimer);
+        autoLogs.value = [];
+        showToast('⏹ 已停止自動機器人', 'warn');
       }
     }
+    function toggleAutoBot() {
+      autoBot.value = !autoBot.value;
+      onAutoBotChange();
+    }
+
+    async function runAutoBot() {
+      try {
+        const r = await fetch(B + '/api/radar/scan');
+        const d = await r.json();
+        if (!d || !d.signals) return;
+        const usdt = balances.value['USDT'] || 0;
+        const budget = usdt * autoPct.value / 100;
+        for (const sig of d.signals.slice(0, 2)) {
+          if (!sig.symbol || !sig.strength) continue;
+          const coin = sig.symbol.replace('USDT','');
+          if (!allCoinNames.value.includes(coin)) continue;
+          const ts = new Date().toLocaleTimeString('zh-TW');
+
+          if (sig.direction === 'long' && sig.strength >= 15 && budget >= 10) {
+            // Auto buy
+            const res = await fetch(B+'/api/spot/buy', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({coin, usdt_amount: budget})
+            });
+            const rd = await res.json();
+            if (rd.success) {
+              autoLogs.value.unshift(`[${ts}] 🟢 自動買入 ${fmtCoin(rd.trade.to_amount, coin)} ${coin}`);
+              balances.value = rd.balances;
+            }
+          } else if (sig.direction === 'short' && sig.strength >= 15) {
+            // Auto sell if holding
+            const holding = balances.value[coin] || 0;
+            if (holding > 0) {
+              const sellAmt = holding * autoPct.value / 100;
+              const res = await fetch(B+'/api/spot/sell', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({coin, coin_amount: sellAmt})
+              });
+              const rd = await res.json();
+              if (rd.success) {
+                autoLogs.value.unshift(`[${ts}] 🔴 自動賣出 ${fmtCoin(sellAmt, coin)} ${coin}`);
+                balances.value = rd.balances;
+              }
+            }
+          }
+        }
+        autoLogs.value = autoLogs.value.slice(0, 10);
+        await loadBalance(); await loadHistory();
+      } catch {}
+    }
+
+    // ── Quote preview for convert ──
+    watch([cvFrom, cvTo, cvAmount], async () => {
+      clearTimeout(cvTimer);
+      if (!cvAmount.value || cvAmount.value <= 0) { cvQuote.value = null; return; }
+      cvTimer = setTimeout(async () => {
+        try {
+          const r = await fetch(`${B}/api/spot/quote?from_coin=${cvFrom.value}&to_coin=${cvTo.value}&amount=${cvAmount.value}`);
+          const d = await r.json();
+          cvQuote.value = d.success ? d : null;
+        } catch {}
+      }, 400);
+    });
 
     onMounted(async () => {
       await loadCoins();
       await loadBalance();
       await loadHistory();
-      // Auto-refresh every 10s
       refreshTimer = setInterval(async () => {
         await loadBalance();
-        if (parseFloat(fromAmount.value) > 0) fetchQuote();
-      }, 10000);
+      }, 8000);
     });
-    onUnmounted(() => clearInterval(refreshTimer));
+    onUnmounted(() => {
+      clearInterval(refreshTimer);
+      clearInterval(autoTimer);
+    });
 
     return {
-      coins, balances, prices, history,
-      fromCoin, toCoin, fromAmount, toAmountDisp, rate, fee,
-      converting, dropOpen, dropSearch, toast,
-      showResetModal, resetAmount,
-      fromBalance, fromPrice, toPrice, fromUsdt, toUsdt,
-      canConvert, nonZeroBalances, totalUsdt,
-      fmt, fmtCoin, fmtPrice, fmtRate, fmtTime, coinColor,
-      onFromInput, setMax, swapCoins, useInFrom,
-      toggleDrop, selectCoin, filteredCoins,
-      doConvert, doReset,
+      balances, prices, avgPrices, history, coinList,
+      activeCoin, activeTab, tradeMode,
+      buyUsdt, sellQty, cvFrom, cvTo, cvAmount, cvQuote,
+      submitting, autoBot, autoPct, autoLogs,
+      showReset, resetAmt, toast,
+      allCoins, allCoinNames, tradeableCoins,
+      activePrice, activeHolding, activeAvgPrice, priceClass,
+      activeUnrealizedPnl, activeUnrealizedPct,
+      totalUnrealizedPnl, totalUsdt, holdingCount,
+      fmt, fmtCoin, fmtPrice, fmtPriceFull, fmtTime,
+      setPct, setSellPct, quickSell,
+      doBuy, doSell, doConvert, doReset,
+      onAutoBotChange, toggleAutoBot, showReset,
     };
   }
 }).mount('#app');

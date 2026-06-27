@@ -576,6 +576,7 @@ def get_open_orders(symbol: str):
 #  現貨轉換 (Spot Convert) API
 # ─────────────────────────────────────────────────────────────
 from services.spot_service import (
+    get_state    as spot_get_state,
     get_balances as spot_get_balances,
     get_history  as spot_get_history,
     get_spot_price, get_quote as spot_get_quote,
@@ -593,12 +594,15 @@ def api_spot_coins():
 
 @app.get("/api/spot/balance")
 def api_spot_balance():
-    balances = spot_get_balances()
-    prices = {}
-    for coin in balances:
-        p = get_spot_price(coin, client)
-        prices[coin] = p if p else 1.0
-    return {"balances": balances, "prices": prices}
+    state    = spot_get_state()
+    balances = state.get("balances", {})
+    avg_p    = state.get("avg_prices", {})
+    prices   = {}
+    for coin in list(SUPPORTED_COINS) + list(balances.keys()):
+        if coin not in prices:
+            p = get_spot_price(coin, client)
+            prices[coin] = p if p else (1.0 if coin == "USDT" else 0.0)
+    return {"balances": balances, "prices": prices, "avg_prices": avg_p}
 
 @app.get("/api/spot/quote")
 def api_spot_quote(from_coin: str, to_coin: str, amount: float):
@@ -608,10 +612,27 @@ class SpotConvertRequest(BaseModel):
     from_coin: str
     to_coin: str
     amount: float
+    action: str = "convert"
 
 @app.post("/api/spot/convert")
 def api_spot_convert(req: SpotConvertRequest):
-    return spot_execute_convert(req.from_coin, req.to_coin, req.amount, client)
+    return spot_execute_convert(req.from_coin, req.to_coin, req.amount, client, req.action)
+
+class SpotBuyRequest(BaseModel):
+    coin: str
+    usdt_amount: float
+
+@app.post("/api/spot/buy")
+def api_spot_buy(req: SpotBuyRequest):
+    return spot_execute_convert("USDT", req.coin, req.usdt_amount, client, "buy")
+
+class SpotSellRequest(BaseModel):
+    coin: str
+    coin_amount: float
+
+@app.post("/api/spot/sell")
+def api_spot_sell(req: SpotSellRequest):
+    return spot_execute_convert(req.coin, "USDT", req.coin_amount, client, "sell")
 
 @app.get("/api/spot/history")
 def api_spot_history():
