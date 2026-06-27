@@ -16,7 +16,8 @@
       "Bash(git -C /home/shudgai999/project/binance-bot status)",
       "Bash(git -C /home/shudgai999/project/binance-bot diff --stat)",
       "Bash(git -C /home/shudgai999/project/binance-bot log --oneline -3)",
-      "Bash(git -C /home/shudgai999/project/binance-bot push origin 20260625_0330)"
+      "Bash(git -C /home/shudgai999/project/binance-bot push origin 20260625_0330)",
+      "Bash(git -C /home/shudgai999/project/binance-bot commit -m ' *)"
     ]
   }
 }

@@ -2485,6 +2485,17 @@ async def check_exits(sym):
     # 如果還沒鎖定保本，設定為預設的 sl_dist
     if not s.get("is_breakeven_locked"):
         s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
+    else:
+        # ── 修正 A：保本鎖定後，stop_loss 只能「往好的方向移動」，絕對不能往回推 ──
+        # 防止 check_exits 每次重算 sl_dist 時把已鎖定的保本線推回虧損方向
+        _locked_sl = s.get("stop_loss", avg)
+        _sl_dist_calc = avg - sl_dist if is_long else avg + sl_dist
+        if is_long:
+            # 多單：SL 只能往上（有利方向）移動
+            s["stop_loss"] = max(_locked_sl, _sl_dist_calc)
+        else:
+            # 空單：SL 只能往下（有利方向）移動
+            s["stop_loss"] = min(_locked_sl, _sl_dist_calc)
 
     # 使用狀態變數的 stop_loss
     sl = s.get("stop_loss", avg)
@@ -5405,7 +5416,7 @@ async def fast_exit_loop():
                                         reason="[Fast_SL]", is_stop_loss=True)
         except Exception as e:
             print(f"⚠️ [快速SL異常] {e}")
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)  # 修正 B：縮短至 1 秒，確保保本鎖定後即時守住高點
 
 
 async def main_loop(exchange):

@@ -1,6 +1,305 @@
 {
-    "balance_usdt": 150.0,
+    "balance_usdt": 151.8016566569766,
     "session_start_balance": 150.0,
-    "positions": {},
-    "trades": []
+    "positions": {
+        "DOT:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.8477456,
+            "realized_pnl": -0.13038027963426996,
+            "entries": []
+        },
+        "ETH:USDT": {
+            "qty": 0.0,
+            "avg_price": 1572.068238,
+            "realized_pnl": -0.8654675939999911,
+            "entries": []
+        },
+        "AAVE:USDT": {
+            "qty": 0.0,
+            "avg_price": 94.72841,
+            "realized_pnl": 4.413201000000011,
+            "entries": []
+        },
+        "BNB:USDT": {
+            "qty": 0.0,
+            "avg_price": 568.8205949999999,
+            "realized_pnl": -0.32199864999991973,
+            "entries": []
+        },
+        "NEAR:USDT": {
+            "qty": 0.0,
+            "avg_price": 1.7945382,
+            "realized_pnl": 2.217901599999969,
+            "entries": []
+        },
+        "INJ:USDT": {
+            "qty": 0.0,
+            "avg_price": 4.912473299999999,
+            "realized_pnl": -1.3298218099998946,
+            "entries": []
+        },
+        "DOGE:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.07575271900000001,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "AVAX:USDT": {
+            "qty": 0.0,
+            "avg_price": 6.5809736999999995,
+            "realized_pnl": 2.186579256834964,
+            "entries": []
+        },
+        "XRP:USDT": {
+            "qty": 0.0,
+            "avg_price": 1.04851446,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "HYPE:USDT": {
+            "qty": 5.99,
+            "avg_price": 63.389010999999996,
+            "realized_pnl": 0.0,
+            "entries": [
+                {
+                    "price": 63.389010999999996,
+                    "qty": 5.99,
+                    "time": 1782520512611,
+                    "side": "buy"
+                }
+            ]
+        }
+    },
+    "trades": [
+        {
+            "symbol": "DOT:USDT",
+            "price": 0.8477456,
+            "qty": 441.8,
+            "time": 1782512919065,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.18726700304,
+            "is_close": false
+        },
+        {
+            "symbol": "DOT:USDT",
+            "price": 0.8480407115428571,
+            "qty": 441.8,
+            "time": 1782513002406,
+            "isBuyer": true,
+            "realized_pnl": -0.13038027963426996,
+            "is_close": true,
+            "fee": 0.18733219317981714
+        },
+        {
+            "symbol": "ETH:USDT",
+            "price": 1572.068238,
+            "qty": 0.237,
+            "time": 1782513129572,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.186290086203,
+            "is_close": false
+        },
+        {
+            "symbol": "AAVE:USDT",
+            "price": 94.72841,
+            "qty": 3.9,
+            "time": 1782513749618,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.1847203995,
+            "is_close": false
+        },
+        {
+            "symbol": "ETH:USDT",
+            "price": 1575.72,
+            "qty": 0.237,
+            "time": 1782513946663,
+            "isBuyer": false,
+            "realized_pnl": -0.8654675939999911,
+            "is_close": true,
+            "fee": 0.18672281999999998
+        },
+        {
+            "symbol": "AAVE:USDT",
+            "price": 95.86,
+            "qty": 3.9,
+            "time": 1782514352370,
+            "isBuyer": false,
+            "realized_pnl": 4.413201000000011,
+            "is_close": true,
+            "fee": 0.186927
+        },
+        {
+            "symbol": "BNB:USDT",
+            "price": 568.910622,
+            "qty": 0.67,
+            "time": 1782515095365,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.19058505837,
+            "is_close": false
+        },
+        {
+            "symbol": "NEAR:USDT",
+            "price": 1.7945382,
+            "qty": 212.0,
+            "time": 1782515095366,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.19022104920000002,
+            "is_close": false
+        },
+        {
+            "symbol": "BNB:USDT",
+            "price": 568.910622,
+            "qty": 0.67,
+            "time": 1782515175048,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "is_close": true,
+            "fee": 0.19058505837
+        },
+        {
+            "symbol": "INJ:USDT",
+            "price": 4.8424523,
+            "qty": 78.3,
+            "time": 1782515627432,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.189582007545,
+            "is_close": false
+        },
+        {
+            "symbol": "NEAR:USDT",
+            "price": 1.805,
+            "qty": 212.0,
+            "time": 1782515671600,
+            "isBuyer": false,
+            "realized_pnl": 2.217901599999969,
+            "is_close": true,
+            "fee": 0.19133
+        },
+        {
+            "symbol": "DOGE:USDT",
+            "price": 0.07575271900000001,
+            "qty": 5064.0,
+            "time": 1782515714596,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.191805884508,
+            "is_close": false
+        },
+        {
+            "symbol": "BNB:USDT",
+            "price": 568.8205949999999,
+            "qty": 0.67,
+            "time": 1782515757757,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.19055489932499997,
+            "is_close": false
+        },
+        {
+            "symbol": "BNB:USDT",
+            "price": 568.34,
+            "qty": 0.67,
+            "time": 1782516345599,
+            "isBuyer": true,
+            "realized_pnl": -0.32199864999991973,
+            "is_close": true,
+            "fee": 0.19039390000000003
+        },
+        {
+            "symbol": "AVAX:USDT",
+            "price": 6.5809736999999995,
+            "qty": 58.0,
+            "time": 1782516668651,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.1908482373,
+            "is_close": false
+        },
+        {
+            "symbol": "INJ:USDT",
+            "price": 4.871,
+            "qty": 78.3,
+            "time": 1782518353016,
+            "isBuyer": false,
+            "realized_pnl": 2.235284910000057,
+            "is_close": true,
+            "fee": 0.19069965000000003
+        },
+        {
+            "symbol": "DOGE:USDT",
+            "price": 0.07575271900000001,
+            "qty": 5064.0,
+            "time": 1782518430685,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "is_close": true,
+            "fee": 0.191805884508
+        },
+        {
+            "symbol": "XRP:USDT",
+            "price": 1.04851446,
+            "qty": 367.7,
+            "time": 1782518511844,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.192769383471,
+            "is_close": false
+        },
+        {
+            "symbol": "INJ:USDT",
+            "price": 4.912473299999999,
+            "qty": 78.4,
+            "time": 1782518861468,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.19256895336,
+            "is_close": false
+        },
+        {
+            "symbol": "AVAX:USDT",
+            "price": 6.618673342359223,
+            "qty": 58.0,
+            "time": 1782519101205,
+            "isBuyer": false,
+            "realized_pnl": 2.186579256834964,
+            "is_close": true,
+            "fee": 0.19194152692841746
+        },
+        {
+            "symbol": "XRP:USDT",
+            "price": 1.04851446,
+            "qty": 367.7,
+            "time": 1782519688139,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "is_close": true,
+            "fee": 0.192769383471
+        },
+        {
+            "symbol": "INJ:USDT",
+            "price": 4.867,
+            "qty": 78.4,
+            "time": 1782519886099,
+            "isBuyer": false,
+            "realized_pnl": -3.5651067199999518,
+            "is_close": true,
+            "fee": 0.19078640000000002
+        },
+        {
+            "symbol": "HYPE:USDT",
+            "price": 63.389010999999996,
+            "qty": 5.99,
+            "time": 1782520512611,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.189850087945,
+            "is_close": false
+        }
+    ]
 }
