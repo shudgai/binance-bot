@@ -2001,6 +2001,19 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
 async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = STATES[sym]
     s["adjusted_this_tick"] = True
+    # ── 防重複平倉鎖（Duplicate Close Guard）──
+    if s.get("_is_closing", False):
+        print(f"⚠️ [DuplicateClose] {sym} 已有平倉指令執行中，忽略重複呼叫 | reason={reason}")
+        return
+    s["_is_closing"] = True
+    try:
+        await _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
+    finally:
+        s["_is_closing"] = False
+
+
+async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
+    s = STATES[sym]
     if not price or price <= 0:
         price = s.get("close_price", 0.0) or s.get("avg_price", 0.0)
         if price <= 0:
@@ -3404,11 +3417,17 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             base_notional = (balance * 0.98) * DUAL_SHOT_LEVERAGE
 
 
-    # 5. 轉換為幣種數量並進行精度修剪
+    # 5. MAX_NOTIONAL 硬上限（防止大餘額×高槓桿買入大量低價幣）
+    MAX_NOTIONAL_PER_TRADE = 500.0  # USDT 名義上限
+    if base_notional > MAX_NOTIONAL_PER_TRADE:
+        print(f"⚠️ [MAX_NOTIONAL] {sym} 名義倉位 {base_notional:.2f} USDT > 上限 {MAX_NOTIONAL_PER_TRADE} USDT，已自動縮減")
+        base_notional = MAX_NOTIONAL_PER_TRADE
+
+    # 6. 轉換為幣種數量並進行精度修剪
     base_amt = base_notional / price
     base_amt = await sanitize_order_qty(sym, base_amt)
-    
-    # 6. 幣安最小下單額限制 (Min Notional Check)
+
+    # 7. 幣安最小下單額限制 (Min Notional Check)
     actual_notional = base_amt * price
     if actual_notional < 6.0 and actual_notional > 0:  # 幣安合約最小下單通常為 5 USDT，抓 6 比較保險
         # 嘗試補足到 6 USDT

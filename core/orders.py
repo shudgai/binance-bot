@@ -102,6 +102,22 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
     s = ctx.STATES[sym]
     s["adjusted_this_tick"] = True
 
+    # ── 防重複平倉鎖（Duplicate Close Guard）──
+    # asyncio 雖然單執行緒，但 await 點會讓另一個 coroutine 插入執行，
+    # 兩個呼叫者同時通過 qty 檢查後都去執行平倉 → 重複平倉。
+    if s.get("_is_closing", False):
+        print(f"⚠️ [DuplicateClose] {sym} 已有平倉指令執行中，忽略重複呼叫 | reason={reason}")
+        return
+    s["_is_closing"] = True
+    try:
+        await _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
+    finally:
+        s["_is_closing"] = False
+
+
+async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
+    s = ctx.STATES[sym]
+
     # 強化防禦：檢查實際持倉與指令方向是否衝突
     actual_qty = s.get("qty", 0)
     if abs(actual_qty) > 0.000001:
@@ -639,6 +655,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         )
         if required_margin > balance * 0.98:
             base_notional = (balance * 0.98) * DUAL_SHOT_LEVERAGE
+
+    # ── MAX_NOTIONAL 硬上限（防止大餘額×高槓桿買入大量低價幣）──
+    # 單筆名義倉位上限：避免帳戶余額大時，買入 DOGE/XRP 等低單價幣產生天文數字的合約量
+    MAX_NOTIONAL_PER_TRADE = 500.0  # USDT 名義上限
+    if base_notional > MAX_NOTIONAL_PER_TRADE:
+        print(f"⚠️ [MAX_NOTIONAL] {sym} 名義倉位 {base_notional:.2f} USDT > 上限 {MAX_NOTIONAL_PER_TRADE} USDT，已自動縮減")
+        base_notional = MAX_NOTIONAL_PER_TRADE
 
     base_amt = base_notional / price
     base_amt = await sanitize_order_qty(sym, base_amt)
