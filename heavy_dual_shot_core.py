@@ -5849,10 +5849,21 @@ async def check_entries():
             print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
             continue
 
-        # 超強訊號（強度 >= 22）跳過 K 線確認，直接進入即時開倉
-        if strength >= 22:
+        # 趨勢確認（trend_bias score ≥ ±2）時門檻降至 17；否則維持 22
+        _tb_direct = s.get("trend_bias", "neutral")
+        _tb_sc_direct = s.get("trend_bias_score", 0)
+        _trend_direct = (
+            (_tb_direct == "long"  and side == "buy"  and _tb_sc_direct >= 2) or
+            (_tb_direct == "short" and side == "sell" and _tb_sc_direct <= -2)
+        )
+        _direct_thr = 17 if _trend_direct else 22
+
+        if strength >= _direct_thr:
             candidates.append((sym, side, strength, route))
-            print(f"⚡ [超強直進] {sym} 強度 {strength:.2f} ≥ 22，所有過濾已通過，跳過 K 線等待直接開倉")
+            if _trend_direct:
+                print(f"⚡ [趨勢直進] {sym} 強度 {strength:.2f} ≥ {_direct_thr}，趨勢{_tb_direct}確認(score={_tb_sc_direct:+d})，直接開倉")
+            else:
+                print(f"⚡ [超強直進] {sym} 強度 {strength:.2f} ≥ 22，直接開倉")
             continue
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
