@@ -1721,8 +1721,9 @@ def compute_indicators(sym):
         s["rsi_history"].append(s["current_rsi"])
         if len(s["rsi_history"]) > 10:
             s["rsi_history"].pop(0)
-    s["vol_ma10"] = float(np.mean(volumes[-11:-1])) if len(volumes) >= 11 else float(np.mean(volumes[:-1]))
-    s["vol_ma20"] = float(np.mean(volumes[-21:-1])) if len(volumes) >= 21 else float(np.mean(volumes[:-1]))
+    # 使用 np.median 替代 np.mean 來計算均量，避免單根極端爆量 K 線拉高門檻
+    s["vol_ma10"] = float(np.median(volumes[-11:-1])) if len(volumes) >= 11 else float(np.median(volumes[:-1]))
+    s["vol_ma20"] = float(np.median(volumes[-21:-1])) if len(volumes) >= 21 else float(np.median(volumes[:-1]))
     # 使用「倒數第二根」（已完成 K 線）的量，避免當前未完成 K 線量偏低誤觸量能過濾
     s["current_vol"] = float(volumes[-2]) if len(volumes) >= 2 else float(volumes[-1])
     if len(closes) >= 20:
@@ -5775,6 +5776,26 @@ async def check_entries():
                 print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
                 continue
 
+        # --- 幣種趨勢偏向過濾（照幣種自己的走向操作）---
+        # neutral → 雙向開放；long → 優先做多；short → 優先做空
+        # 必須在 is_entry_allowed 前攔截，避免逆勢單吃到 CONFLUENCE_PASS
+        # 超強訊號（≥ 20）可突破趨勢限制，捕捉急跌/急漲反轉
+        _tb = s.get("trend_bias", "neutral")
+        _tb_score = s.get("trend_bias_score", 0)
+        if route not in ("Automatic_Reverse", "Extreme_Reversal") and not has_position:
+            if _tb == "long" and side == "sell":
+                if strength < 20.0:
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏多(score={_tb_score:+d})，逆勢空單被攔截 (強度{strength:.1f}<20)")
+                    continue
+                else:
+                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏多但強度{strength:.1f}≥20，允許逆勢空單")
+            elif _tb == "short" and side == "buy":
+                if strength < 20.0:
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏空(score={_tb_score:+d})，逆勢多單被攔截 (強度{strength:.1f}<20)")
+                    continue
+                else:
+                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏空但強度{strength:.1f}≥20，允許逆勢多單")
+
         print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
         
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
@@ -5801,25 +5822,6 @@ async def check_entries():
 
         if not is_entry_allowed(sym, side, route, strength):
             continue
-
-        # --- 幣種趨勢偏向過濾（照幣種自己的走向操作）---
-        # neutral → 雙向開放；long → 優先做多；short → 優先做空
-        # 超強訊號（≥ 20）可突破趨勢限制，捕捉急跌/急漲反轉
-        _tb = s.get("trend_bias", "neutral")
-        _tb_score = s.get("trend_bias_score", 0)
-        if route not in ("Automatic_Reverse", "Extreme_Reversal") and not has_position:
-            if _tb == "long" and side == "sell":
-                if strength < 20.0:
-                    print(f"🛑 [TrendBias] {sym} 趨勢偏多(score={_tb_score:+d})，逆勢空單被攔截 (強度{strength:.1f}<20)")
-                    continue
-                else:
-                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏多但強度{strength:.1f}≥20，允許逆勢空單")
-            elif _tb == "short" and side == "buy":
-                if strength < 20.0:
-                    print(f"🛑 [TrendBias] {sym} 趨勢偏空(score={_tb_score:+d})，逆勢多單被攔截 (強度{strength:.1f}<20)")
-                    continue
-                else:
-                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏空但強度{strength:.1f}≥20，允許逆勢多單")
 
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
         last_trade_side = s.get("last_trade_side", "")
