@@ -2777,7 +2777,9 @@ async def check_exits(sym):
     # 避免 0.15% 微利就觸發保本，導致價格彈回後立即出場（手續費白白損失）
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.003)
+    # 【手術四】保本觸發門檻提高至最低 1.0%，給倉位足夠呼吸空間
+    # 原 0.3% 太低：利潤剛 0.3% 就鎖保本，任何微小回撤就被洗出場
+    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.010)
     
     # --- 【修改建議 3】保本緩衝調升至 0.3% ---
     # 0.3% = 手續費來回(0.1%) + 滑點(0.1%) + 淨利緩衝(0.1%)
