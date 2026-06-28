@@ -6351,6 +6351,12 @@ async def main_loop(exchange):
     ALL_SYMBOLS = filter_valid_symbols(exchange, ALL_SYMBOLS)
     save_symbol_pool(ALL_SYMBOLS)
 
+    # bot_symbols.json 可能包含 COIN_PROFILE_CONFIG 沒有的新幣，補初始化 STATES
+    for _sym in ALL_SYMBOLS:
+        if _sym not in STATES:
+            STATES[_sym] = build_symbol_state(_sym)
+            print(f"🆕 [STATES] 新幣種 {_sym} 已初始化狀態")
+
     print(f"📋 監控幣種: {', '.join(ALL_SYMBOLS)}")
     try:
         await asyncio.wait_for(initialize_atr_history(exchange), timeout=60)
