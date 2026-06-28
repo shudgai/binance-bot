@@ -1,6 +1,79 @@
 {
     "balance_usdt": 150.0,
     "session_start_balance": 150.0,
-    "positions": {},
+    "positions": {
+        "APT:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "ARB:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "AVAX:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "SOL:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "DOGE:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "HYPE:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "XRP:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "SUI:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "BNB:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "ETH:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "INJ:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        },
+        "LINK:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "realized_pnl": 0.0,
+            "entries": []
+        }
+    },
     "trades": []
 }
