@@ -1009,9 +1009,10 @@ def _calc_sl_tp(sym, side, s, p, route="Standard"):
     _is_low_vol_mode = (_atr_24h_avg_sl > 0 and atr_val < _atr_24h_avg_sl * 0.8)
 
     if _is_low_vol_mode:
-        sl_dist = p * 0.010
-        tp_dist = p * 0.015
-        print(f"[LowVol_Mode] {sym} ATR low({atr_val:.5f} < avg{_atr_24h_avg_sl:.5f}x0.8), using fixed% SL=1.0% TP=1.5%")
+        # 低波動模式：擴大止損至 1.3%（原 1.0%）防止市場噪音（插針）掃出場
+        sl_dist = p * 0.013
+        tp_dist = p * 0.020
+        print(f"[LowVol_Mode] {sym} ATR low({atr_val:.5f} < avg{_atr_24h_avg_sl:.5f}x0.8), using fixed% SL=1.3% TP=2.0%")
     else:
         sl_dist = max(atr_val * sl_mult, p * 0.004)
         sl_dist += p * 0.0005
@@ -5030,8 +5031,9 @@ def compute_signal_strength(sym):
     # =========================================================================
 
     # Gate 1: EMA50 方向（硬性 — 不可動）
-    ema50_gate_long  = ema50 <= 0 or close > ema50
-    ema50_gate_short = ema50 <= 0 or close < ema50
+    # 加入 0.2% 緩衝區，防止 EMA50 邊緣反覆觸發錯向訊號
+    ema50_gate_long  = ema50 <= 0 or close > ema50 * 1.002
+    ema50_gate_short = ema50 <= 0 or close < ema50 * 0.998
 
     # Gate 2: RSI 方向區間（放寬至 35/65，給更多動能空間）
     rsi_direction_long  = rsi > 35.0
@@ -5096,9 +5098,11 @@ def compute_signal_strength(sym):
 
     if long_base_ok:
         route = route_tag
-        strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
+        # 基礎分 10.0（原 12.0）：降低純靠 EMA 偏離湊出的虛假強訊號
+        # MACD 金叉加分 7.0（原 5.0）：強化有真實動能確認的訊號
+        strength = 10.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
-            strength += 5.0
+            strength += 7.0
         if route_tag == "Pullback":
             strength += 2.0  # EMA20 回測彈跳加分（位置精準）
         strength += long_trend_score + sma200_bonus_long
@@ -5106,9 +5110,11 @@ def compute_signal_strength(sym):
 
     if short_base_ok:
         route = route_tag
-        strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
+        # 基礎分 10.0（原 12.0）：降低純靠 EMA 偏離湊出的虛假強訊號
+        # MACD 死叉加分 7.0（原 5.0）：強化有真實動能確認的訊號
+        strength = 10.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
-            strength += 5.0
+            strength += 7.0
         if route_tag == "Pullback":
             strength += 2.0
         strength += short_trend_score + sma200_bonus_short
@@ -5657,6 +5663,12 @@ async def check_entries():
 
         # [Layer 0] 每幣種最低信號強度門檻（COIN_PROFILE_CONFIG 中設定 min_signal_strength）
         min_sig = COIN_PROFILE_CONFIG.get(sym, {}).get("min_signal_strength", 10.0)
+        # [橫盤保護] trend_bias = neutral 時，提高門檻 +3，防止無方向的幣種雙向開倉
+        _tb_layer0 = s.get("trend_bias", "neutral")
+        if _tb_layer0 == "neutral":
+            min_sig += 3.0
+            # 不印 log 避免太吵，若想觀察可打開：
+            # print(f"⚠️ [NeutralBias] {sym} 趨勢不明確，最低強度門檻提升至 {min_sig:.1f}")
         if strength < min_sig:
             continue
 
