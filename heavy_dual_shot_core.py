@@ -4228,11 +4228,22 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if current_volume <= dynamic_vol_threshold:
         mode_label = "低波動放寬模式 30%" if is_low_vol_mode else "高波動放寬 40%"
         if route in ("Extreme_Reversal", "Exhaustion_Entry") or strength >= 20.0:
-            # 豁免死水攔截，但 Exhaustion_Entry 仍需最低 5% 均量，避免完全沒人的行情反手
-            _min_vol_floor = volume_ma20 * 0.05
-            if route == "Exhaustion_Entry" and current_volume < _min_vol_floor:
-                print(f"🛑 [EXHAUSTION_NO_VOL] {sym} Exhaustion_Entry 量能太低 (當前: {current_volume:.1f} < 均量5%: {_min_vol_floor:.1f})，完全死水拒絕反手")
-                return False
+            # 豁免死水攔截，但 Exhaustion_Entry 仍需最低均量門檻，避免完全沒人的行情
+            if route == "Exhaustion_Entry":
+                _tb_exh = s.get("trend_bias", "neutral")
+                _tb_sc_exh = s.get("trend_bias_score", 0)
+                _exh_trend_match = (
+                    (_tb_exh == "short" and side == "sell") or
+                    (_tb_exh == "long"  and side == "buy")
+                )
+                # 順勢 Exhaustion 門檻降至 2%；逆勢維持 5%
+                _min_vol_floor = volume_ma20 * (0.02 if _exh_trend_match else 0.05)
+                if current_volume < _min_vol_floor:
+                    _floor_pct = "2%" if _exh_trend_match else "5%"
+                    print(f"🛑 [EXHAUSTION_NO_VOL] {sym} Exhaustion_Entry 量能太低 (當前: {current_volume:.1f} < 均量{_floor_pct}: {_min_vol_floor:.1f})，完全死水拒絕")
+                    return False
+                if _exh_trend_match and current_volume < volume_ma20 * 0.05:
+                    print(f"⚡ [EXHAUSTION_TREND] {sym} 量能略低但趨勢偏{_tb_exh}(score={_tb_sc_exh:+d})，降低門檻允許順勢進場")
             print(f"⚡ [ALLOW] [Filter:Volume] {sym} {route} 路由或高強度({strength:.1f})豁免死水量能攔截 (當前: {current_volume:.1f} | 門檻: {dynamic_vol_threshold:.1f} | {mode_label})")
         else:
             print(f"🛑 [REJECT] [Filter:Volume] {sym} 量能嚴重不足 (當前: {current_volume:.1f} <= 門檻: {dynamic_vol_threshold:.1f} | {mode_label})，判定為死水行情。")
