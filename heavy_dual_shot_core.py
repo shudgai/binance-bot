@@ -5796,8 +5796,6 @@ async def check_entries():
                 else:
                     print(f"⚡ [TrendBias_Override] {sym} 趨勢偏空但強度{strength:.1f}≥20，允許逆勢多單")
 
-        print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
-        
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
         if has_position:
             if side != current_direction:
@@ -5822,6 +5820,8 @@ async def check_entries():
 
         if not is_entry_allowed(sym, side, route, strength):
             continue
+
+        print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
 
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
         last_trade_side = s.get("last_trade_side", "")
