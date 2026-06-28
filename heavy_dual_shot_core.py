@@ -1784,7 +1784,7 @@ def compute_indicators(sym):
             _tb_ema1h > 0 and _tb_price < _tb_ema1h,
             _tb_macd < 0,
         ])
-        _score = _up - _dn   # +4 ~ -4
+        _score = int(_up - _dn)   # +4 ~ -4，強制轉 Python int 避免 numpy int64 序列化錯誤
         if _up >= 3 and _dn <= 1:
             s["trend_bias"]       = "long"
         elif _dn >= 3 and _up <= 1:
