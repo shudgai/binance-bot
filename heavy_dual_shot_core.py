@@ -639,10 +639,14 @@ def apply_symbol_profile(sym, profile):
         "profile_type", "leverage", "mtf_filter",
         "rsi_extreme_low", "rsi_extreme_high", "rsi_recovery_hook", "volatility_cap",
         "min_rr", "min_profit_pct",
-        "trailing_activation_atr", "trailing_distance_atr", "profit_lock_atr"
+        "trailing_activation_atr", "trailing_distance_atr", "profit_lock_atr",
+        "rr_threshold", "min_signal_strength",
     ]:
         if key in profile:
             state[key] = profile[key]
+    # rr_threshold 同步到 min_rr（兩個地方各用其一，統一讓 rr_threshold 覆蓋 min_rr）
+    if "rr_threshold" in profile and "min_rr" not in profile:
+        state["min_rr"] = profile["rr_threshold"]
     state["personality"] = personality
     state["personality_source"] = personality_source
     if personality_source == "manual":
@@ -5950,6 +5954,8 @@ async def check_entries():
             print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
             continue
 
+        # 幣種最低訊號強度門檻（min_signal_strength 現在真正生效）
+        _min_str_coin = s.get("min_signal_strength", 15.0)
         # 趨勢確認（trend_bias score ≥ ±2）時門檻降至 17；否則維持 22
         _tb_direct = s.get("trend_bias", "neutral")
         _tb_sc_direct = s.get("trend_bias_score", 0)
@@ -5957,7 +5963,8 @@ async def check_entries():
             (_tb_direct == "long"  and side == "buy"  and _tb_sc_direct >= 2) or
             (_tb_direct == "short" and side == "sell" and _tb_sc_direct <= -2)
         )
-        _direct_thr = 15 if _trend_direct else 22
+        # 取幣種設定值與方向確認門檻的較大值，確保 min_signal_strength 永遠生效
+        _direct_thr = max(_min_str_coin, 15 if _trend_direct else 22)
 
         if strength >= _direct_thr:
             candidates.append((sym, side, strength, route))
