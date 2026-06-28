@@ -2571,15 +2571,8 @@ async def check_exits(sym):
         _dir_str = f"空(score={_tb_sc_now})" if _flip_long else f"多(score={_tb_sc_now})"
         print(f"🔀 [Trend_Flip_Exit] {sym} 趨勢已轉{_dir_str}，{'多' if is_long else '空'}單虧損 {profit_pct*100:.2f}%，主動平倉止血")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Flip]")
-        # 趨勢確認反轉 → 直接設置反手訊號，不再等 pre_confirm
-        rev_side = "sell" if is_long else "buy"
-        _last_rev = s.get("last_reverse_time", 0)
-        if time.time() - _last_rev > 900:  # 15 分鐘防連續反手
-            s["pending_reverse"] = rev_side
-            s["pending_reverse_time"] = time.time()
-            s["last_reverse_time"] = time.time()
-            s["pending_reverse_source"] = "Trend_Flip"  # 標記來源，豁免 Reversal_MacroBlock
-            print(f"🔄 [Trend_Flip_Reverse] {sym} 趨勢確認反轉，設置反手 → {rev_side}")
+        # 平倉後不急著反手，讓幣種進入冷卻期，等正常掃描找到好位置再進場
+        print(f"⏸️ [Trend_Flip_Wait] {sym} 止血平倉，等待價格回調至更好位置再進場")
         return
 
     # --- 時間停利 (Time-Based Take Profit) ---
@@ -2659,14 +2652,8 @@ async def check_exits(sym):
         cs = 'sell' if is_long else 'buy'
         print(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
-        # 硬止損後若逆勢突破明顯，設置反手信號
-        if abs(profit_pct) > 0.015:
-            last_reverse = s.get("last_reverse_time", 0)
-            if time.time() - last_reverse > 1800:
-                s["pending_reverse"] = "buy" if not is_long else "sell"
-                s["pending_reverse_time"] = time.time()
-                s["last_reverse_time"] = time.time()
-                print(f"🔄 [Hard_SL_Reverse] {sym} 硬止損後設置反手信號 → {s['pending_reverse']}")
+        # 硬止損後不急著反手：讓幣種進冷卻期，等正常掃描找到回調位置再進場
+        print(f"⏸️ [Hard_SL_Wait] {sym} 硬止損出場，等待價格回調再尋找入場機會")
         return
 
     # --- 進場後觀察期快速撤退 (Post-Entry Observation Exit) ---
@@ -3442,25 +3429,9 @@ async def check_exits(sym):
             pnl_pct = (exit_price - avg) / avg if is_long else (avg - exit_price) / avg
             print(f"🛑 [{reason_str}] {sym} 損益:{pnl_pct*100:.2f}% (SL:{sl:.4f} K收:{p:.4f} 成交:{exit_price:.4f})")
             await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason=reason_str, is_stop_loss=True)
-            # SL 後反手邏輯：
-            # 條件 A（優先）：pre_confirm 已指向反手方向（反向訊號在 SL 前已累積）→ 立即反手
-            # 條件 B（備用）：損失 > 1.5% 且非保本停損 → 設置反手
-            rev_side = "buy" if not is_long else "sell"
-            _pre_conf_side = s.get("pre_confirm_side", "")
-            _pre_conf_ts   = s.get("pre_confirm_time", 0.0)
-            _has_preconfirm = (_pre_conf_side == rev_side and time.time() - _pre_conf_ts < 90)
-            _big_loss = abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]"
-
-            if _has_preconfirm or _big_loss:
-                last_reverse = s.get("last_reverse_time", 0)
-                if time.time() - last_reverse > 1800:
-                    s["pending_reverse"] = rev_side
-                    s["pending_reverse_time"] = time.time()
-                    s["last_reverse_time"] = time.time()
-                    if _has_preconfirm:
-                        print(f"🔄 [SL→Reverse] {sym} SL 出場，反向訊號已就緒，立即反手 → {rev_side}")
-                    else:
-                        print(f"🔄 [SL_Reverse] {sym} SL 大損失，設置反手 → {rev_side}")
+            # SL 後不急著反手：停損點通常是極端高/低點，立即反手等於追高/地板空
+            # 讓幣種進冷卻期，等正常掃描找到更好的回調位置再進場
+            print(f"⏸️ [SL_Wait] {sym} 停損出場，進入冷卻等待，讓價格回調至更好位置再進場")
             return
 
 
