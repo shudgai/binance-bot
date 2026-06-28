@@ -5873,7 +5873,7 @@ async def check_entries():
             (_tb_direct == "long"  and side == "buy"  and _tb_sc_direct >= 2) or
             (_tb_direct == "short" and side == "sell" and _tb_sc_direct <= -2)
         )
-        _direct_thr = 17 if _trend_direct else 22
+        _direct_thr = 15 if _trend_direct else 22
 
         if strength >= _direct_thr:
             candidates.append((sym, side, strength, route))
