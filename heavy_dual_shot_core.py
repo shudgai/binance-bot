@@ -355,18 +355,27 @@ async def get_contract_precision(sym: str):
         step_size = float(amount_limits.get('min', 0.001) or 0.001)
         min_qty = float(amount_limits.get('min', step_size) or step_size)
         precision = int(round(-math.log10(step_size))) if step_size > 0 else 8
+        # 從 Binance filters 拿 tick_size（最小價格單位），避免限價單被拒
+        price_filters = [f for f in market.get('info', {}).get('filters', []) if f.get('filterType') == 'PRICE_FILTER']
+        if price_filters:
+            tick_size = float(price_filters[0].get('tickSize', 0))
+        else:
+            price_prec = market.get('precision', {}).get('price', 4)
+            tick_size = 10 ** -int(price_prec) if isinstance(price_prec, (int, float)) else 0.0001
         _PRECISION_CACHE[sym] = {
             'step_size': step_size,
             'min_qty': min_qty,
             'qty_prec': market.get('precision', {}).get('amount', precision),
-            'price_prec': market.get('precision', {}).get('price', precision)
+            'price_prec': market.get('precision', {}).get('price', precision),
+            'tick_size': tick_size,
         }
     except Exception:
         _PRECISION_CACHE[sym] = {
             'step_size': 0.001,
             'min_qty': 0.001,
             'qty_prec': 3,
-            'price_prec': 3
+            'price_prec': 3,
+            'tick_size': 0.0001,
         }
 
     return _PRECISION_CACHE[sym]
@@ -3704,15 +3713,17 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     if PAPER_TRADING:
         try:
-            # 模擬右側限價單：買單掛在 ask1 (略高於信號)，賣單掛在 bid1 (略低於信號)
-            spread_pct = 0.0003  # 模擬 0.03% 價差（約等於 ask-bid 半幅）
-            limit_price = price * (1 + spread_pct) if side == 'buy' else price * (1 - spread_pct)
+            # ATR 動態偏移：波動大時偏移大，平靜時貼近價格，上限 0.15%
+            atr_val = s.get("atr", price * 0.001)
+            atr_spread = min(atr_val * 0.25, price * 0.0015)  # 0.25 ATR，最多 0.15%
+            limit_price = price + atr_spread if side == 'buy' else price - atr_spread
             s["pending_paper_order"] = {
                 "side": side, "limit_price": limit_price, "qty": base_amt,
                 "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
             }
             direction = "做多" if side == 'buy' else "做空"
-            print(f"⏳ [Paper限價掛出] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待最多{DUAL_SHOT_ORDER_TIMEOUT}秒成交)")
+            spread_pct = atr_spread / price * 100
+            print(f"⏳ [Paper限價掛出] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (ATR偏移 {spread_pct:.3f}%，等待最多{DUAL_SHOT_ORDER_TIMEOUT}秒成交)")
         except Exception as e:
             print(f"🛑 [模擬掛單失敗] {sym}: {e}")
     else:
@@ -3738,6 +3749,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             except Exception:
                 limit_price = price  # Fallback to signal price
                 order_type = 'limit'
+
+            # 對齊 tick_size，防止交易所拒單
+            prec_live = await get_contract_precision(sym)
+            _tick = prec_live.get('tick_size', 0)
+            if _tick > 0:
+                limit_price = round_step(limit_price, _tick)
 
             params = {'marginMode': 'isolated', 'timeInForce': 'GTC'}
             if order_type == 'STOP_MARKET':
