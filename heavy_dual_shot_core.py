@@ -2668,11 +2668,16 @@ async def check_exits(sym):
     loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.004, is_long)
     _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
     if not _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
-        print(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 {loss_limit*100:.4f}%，啟動緊急救援加碼！")
-        cs = "buy" if is_long else "sell"
-        # 繞過常規防護
-        await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
-        return
+        # 全局風控前置檢查：若整體虧損已接近熔斷線，禁止 DCA 加碼
+        # （DCA 加倍倉位 → 推高整體虧損 → 剛好觸發熔斷 → DCA 費用白費）
+        if not check_total_equity_protection():
+            print(f"⚠️ [DCA_Blocked_Meltdown] {sym} 全局未實現虧損已達熔斷門檻，禁止 DCA 加碼，等待 SL 出場")
+        else:
+            print(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 {loss_limit*100:.4f}%，啟動緊急救援加碼！")
+            cs = "buy" if is_long else "sell"
+            # 繞過常規防護
+            await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
+            return
     elif _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
         print(f"ℹ️ [DCA_Disabled] {sym} 虧損 {profit_pct*100:.2f}% 但此幣種已停用 Rescue DCA，等待 ATR-SL 出場")
 
