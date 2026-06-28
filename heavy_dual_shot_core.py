@@ -5793,25 +5793,72 @@ async def check_entries():
                 print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
                 continue
 
-        # --- 幣種趨勢偏向過濾（照幣種自己的走向操作）---
-        # neutral → 雙向開放；long → 優先做多；short → 優先做空
-        # 必須在 is_entry_allowed 前攔截，避免逆勢單吃到 CONFLUENCE_PASS
-        # 超強訊號（≥ 20）可突破趨勢限制，捕捉急跌/急漲反轉
+        # --- 逆向開倉防護三層過濾 ---
         _tb = s.get("trend_bias", "neutral")
         _tb_score = s.get("trend_bias_score", 0)
-        if route not in ("Automatic_Reverse", "Extreme_Reversal") and not has_position:
-            if _tb == "long" and side == "sell":
-                if strength < 20.0:
-                    print(f"🛑 [TrendBias] {sym} 趨勢偏多(score={_tb_score:+d})，逆勢空單被攔截 (強度{strength:.1f}<20)")
+        # 完全豁免（Automatic_Reverse/Extreme_Reversal 本就是逆向設計）
+        _FULL_EXEMPT = ("Automatic_Reverse", "Extreme_Reversal")
+        # 寬鬆豁免（Exhaustion_Entry 本質為極端 RSI 反手，不受 score 對齊限制）
+        _SCORE_EXEMPT = ("Automatic_Reverse", "Extreme_Reversal", "Exhaustion_Entry")
+
+        # [方案B] 同向虧損封鎖：現有同向持倉虧損中 → 禁止再開同向新倉
+        if route not in _FULL_EXEMPT and not has_position:
+            losing_same_dir = sum(
+                1 for _ss in STATES.values()
+                if abs(_ss.get("qty", 0)) > 1e-6
+                and _ss.get("avg_price", 0) > 0
+                and _ss.get("close_price", 0) > 0
+                and (
+                    (side == "sell" and _ss.get("qty", 0) < 0
+                     and _ss.get("close_price", 0) > _ss.get("avg_price", 0))
+                    or
+                    (side == "buy" and _ss.get("qty", 0) > 0
+                     and _ss.get("close_price", 0) < _ss.get("avg_price", 0))
+                )
+            )
+            if losing_same_dir >= 1:
+                dir_str = "空" if side == "sell" else "多"
+                print(f"🛑 [CorrelBlock] {sym} 已有 {losing_same_dir} 筆虧損{dir_str}倉，封鎖同向新倉")
+                continue
+
+        # [方案A] Trend Score 對齊要求
+        if not has_position:
+            if route not in _SCORE_EXEMPT:
+                # 一般路由：trend_score 必須支持方向；強度≥22 可突破
+                if side == "sell" and _tb_score > -2:
+                    if strength >= 22.0:
+                        print(f"⚡ [TrendAlign_Override] {sym} score={_tb_score:+d} 但強度{strength:.1f}≥22，允許開空")
+                    else:
+                        print(f"🛑 [TrendAlign] {sym} 空單需 score≤-2，當前 {_tb_score:+d} (強度{strength:.1f}<22)")
+                        continue
+                elif side == "buy" and _tb_score < 2:
+                    if strength >= 22.0:
+                        print(f"⚡ [TrendAlign_Override] {sym} score={_tb_score:+d} 但強度{strength:.1f}≥22，允許開多")
+                    else:
+                        print(f"🛑 [TrendAlign] {sym} 多單需 score≥+2，當前 {_tb_score:+d} (強度{strength:.1f}<22)")
+                        continue
+            elif route == "Exhaustion_Entry":
+                # Exhaustion 保留舊邏輯：只攔截方向完全相反的情況
+                if _tb == "long" and side == "sell" and strength < 20.0:
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏多，Exhaustion空單被攔截 (強度{strength:.1f}<20)")
                     continue
-                else:
-                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏多但強度{strength:.1f}≥20，允許逆勢空單")
-            elif _tb == "short" and side == "buy":
-                if strength < 20.0:
-                    print(f"🛑 [TrendBias] {sym} 趨勢偏空(score={_tb_score:+d})，逆勢多單被攔截 (強度{strength:.1f}<20)")
+                elif _tb == "short" and side == "buy" and strength < 20.0:
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏空，Exhaustion多單被攔截 (強度{strength:.1f}<20)")
                     continue
-                else:
-                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏空但強度{strength:.1f}≥20，允許逆勢多單")
+
+        # [方案C] 近期動能確認：近2根K線不得雙雙逆向
+        if route not in _SCORE_EXEMPT and not has_position:
+            _ohlcv = s.get("ohlcv", [])
+            if len(_ohlcv) >= 2:
+                _c1, _c2 = _ohlcv[-1], _ohlcv[-2]
+                _c1_bull = float(_c1[4]) > float(_c1[1])
+                _c2_bull = float(_c2[4]) > float(_c2[1])
+                if side == "sell" and _c1_bull and _c2_bull:
+                    print(f"🛑 [MomentumGuard] {sym} 近2根皆收陽，拒絕開空")
+                    continue
+                elif side == "buy" and not _c1_bull and not _c2_bull:
+                    print(f"🛑 [MomentumGuard] {sym} 近2根皆收陰，拒絕開多")
+                    continue
 
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
         if has_position:
