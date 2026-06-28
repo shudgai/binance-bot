@@ -4232,11 +4232,12 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # =========================================================================
     if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
         _tb_score_gate = s.get("trend_bias_score", 0)
-        if side == "buy" and _tb_score_gate <= -1:
-            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢偏空，拒絕做多 (Route:{route})")
+        # score 永遠是偶數 (0, ±2, ±4)，中性(0)時不進場，只在明確趨勢方向才開倉
+        if side == "buy" and _tb_score_gate <= 0:
+            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢不偏多，拒絕做多 (Route:{route})")
             return False
-        if side == "sell" and _tb_score_gate >= 1:
-            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢偏多，拒絕做空 (Route:{route})")
+        if side == "sell" and _tb_score_gate >= 0:
+            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢不偏空，拒絕做空 (Route:{route})")
             return False
 
     # =========================================================================
