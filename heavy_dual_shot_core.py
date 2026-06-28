@@ -2754,10 +2754,10 @@ async def check_exits(sym):
     # 逆勢交易緊縮止損：BTC 4H 趨勢反向時，SL 縮緊 30%，快速認錯
     btc_4h = MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
     _is_counter_trend = (is_long and btc_4h == "BEAR") or (not is_long and btc_4h == "BULL")
-    _sl_floor_pct = 0.004
+    _sl_floor_pct = 0.007  # 最低 0.7%，與 _calc_sl_tp 的 0.8% 接近，防止重算後 SL 被壓太緊
     if _is_counter_trend:
         sl_mult *= 0.7
-        _sl_floor_pct = 0.0025  # 0.25%（原 0.4%），逆勢時縮小最低保護距離
+        _sl_floor_pct = 0.005  # 逆勢 0.5%（原 0.25%），給更多呼吸空間
 
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     # [修正] 低波動市場縮短 TP 目標至 4~6x ATR，讓停利有機會實際觸及
@@ -2803,6 +2803,13 @@ async def check_exits(sym):
                     s['is_breakeven_locked'] = True
                     print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
                     
+    # 前 5 分鐘保護期：ATR 動態 SL 先使用較寬鬆的距離，避免進場後立即被雜訊掃出
+    _hold_sec_sl = time.time() - s.get("open_time", time.time())
+    if _hold_sec_sl < 300 and not s.get("is_breakeven_locked"):
+        # 前 5 分鐘 SL 至少 1.0%，給倉位足夠呼吸空間
+        _init_sl_floor = avg * 0.010
+        sl_dist = max(sl_dist, _init_sl_floor)
+
     # 如果還沒鎖定保本，設定為預設的 sl_dist
     if not s.get("is_breakeven_locked"):
         s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
