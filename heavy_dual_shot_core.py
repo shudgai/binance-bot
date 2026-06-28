@@ -3713,70 +3713,33 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     if PAPER_TRADING:
         try:
-            # ATR 動態偏移：波動大時偏移大，平靜時貼近價格，上限 0.15%
-            atr_val = s.get("atr", price * 0.001)
-            atr_spread = min(atr_val * 0.25, price * 0.0015)  # 0.25 ATR，最多 0.15%
-            limit_price = price + atr_spread if side == 'buy' else price - atr_spread
-            s["pending_paper_order"] = {
-                "side": side, "limit_price": limit_price, "qty": base_amt,
-                "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
-            }
+            # 市價單模式：立即以訊號價格成交，模擬 0.05% Taker 滑點
+            _taker_slip = 0.0005  # 0.05% Taker fee slippage simulation
+            fill_price = price * (1 + _taker_slip) if side == 'buy' else price * (1 - _taker_slip)
             direction = "做多" if side == 'buy' else "做空"
-            spread_pct = atr_spread / price * 100
-            print(f"⏳ [Paper限價掛出] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (ATR偏移 {spread_pct:.3f}%，等待最多{DUAL_SHOT_ORDER_TIMEOUT}秒成交)")
+            print(f"⚡ [Paper市價成交] {sym} {direction} {base_amt:.4f} @ {fill_price:.6f} (模擬Taker滑點 0.05%)")
+            # 暫設 pending_paper_order 讓 _fill_paper_order 讀取後立即成交
+            s["pending_paper_order"] = {
+                "side": side, "qty": base_amt, "margin": margin,
+                "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
+                "limit_price": fill_price,
+            }
+            _fill_paper_order(sym, fill_price)
         except Exception as e:
-            print(f"🛑 [模擬掛單失敗] {sym}: {e}")
+            print(f"🛑 [模擬市價失敗] {sym}: {e}")
     else:
         try:
-            # === 右側 Stop 單策略 (Right-Side Stop Execution) ===
-            try:
-                ob = await exchange_futures.fetch_order_book(sym, limit=5)
-                asks = ob.get('asks', [])
-                bids = ob.get('bids', [])
-                ask1 = float(asks[0][0]) if asks else price
-                bid1 = float(bids[0][0]) if bids else price
-
-                if side == 'buy':
-                    # 順勢做多：掛在 Ask1（右側），確保價格向上突破訊號點才成交
-                    limit_price = ask1 if ask1 > price else price
-                    order_type = 'STOP_MARKET' if limit_price > price else 'limit'
-                    print(f"📌 [Right-Side Stop] {sym} 順勢多單，設定 {order_type} @ {limit_price:.6f}")
-                else:
-                    # 順勢做空：掛在 Bid1（右側），確保價格向下突破訊號點才成交
-                    limit_price = bid1 if bid1 < price else price
-                    order_type = 'STOP_MARKET' if limit_price < price else 'limit'
-                    print(f"📌 [Right-Side Stop] {sym} 順勢空單，設定 {order_type} @ {limit_price:.6f}")
-            except Exception:
-                limit_price = price  # Fallback to signal price
-                order_type = 'limit'
-
-            # 對齊 tick_size，防止交易所拒單
-            prec_live = await get_contract_precision(sym)
-            _tick = prec_live.get('tick_size', 0)
-            if _tick > 0:
-                limit_price = round_step(limit_price, _tick)
-
-            params = {'marginMode': 'isolated', 'timeInForce': 'GTC'}
-            if order_type == 'STOP_MARKET':
-                params['stopPrice'] = limit_price
-                params.pop('timeInForce', None) # Market orders don't use timeInForce
-
+            # === 市價單策略：立即成交，不等掛單 ===
+            params = {'marginMode': 'isolated'}
             order = await exchange_futures.create_order(
-                sym, type=order_type, side=side, amount=abs(base_amt), price=limit_price if order_type != 'STOP_MARKET' else None,
-                params=params
+                sym, type='market', side=side, amount=abs(base_amt), params=params
             )
             order_id = order['id']
             order_ts = time.time()
+            print(f"⚡ [市價單送出] {sym} {side} {base_amt:.4f} (ID: {order_id})")
 
-            # 記錄挂單到監控表
-            PENDING_LIMIT_ORDERS[order_id] = {
-                "sym": sym, "side": side, "qty": base_amt,
-                "price": limit_price, "timestamp": order_ts
-            }
-            print(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price:.6f} (ID: {order_id})")
-
-            # === 2. 等待成交 (3 秒內快速確認) ===
-            await asyncio.sleep(3)
+            # === 2. 市價單：1 秒後確認成交 ===
+            await asyncio.sleep(1)
             try:
                 fetched = await exchange_futures.fetch_order(order_id, sym)
                 status = fetched.get('status', '')
@@ -3786,19 +3749,15 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 filled_qty = 0.0
 
             if status == 'closed' or filled_qty >= base_amt * 0.99:
-                # 完全成交：移出監控表
-                PENDING_LIMIT_ORDERS.pop(order_id, None)
-                fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
-                print(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
+                fill_price = float(fetched.get('average') or fetched.get('price') or price)
+                print(f"✅ [市價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
             elif filled_qty > 0:
-                # 部分成交：留在監控表，以實際成交量計算
-                fill_price = float(fetched.get('average') or limit_price)
-                base_amt = filled_qty  # 更正為實際成交量
-                print(f"⚠️ [部分成交] {sym} 實際成交: {filled_qty:.4f} (OK率: {filled_qty/base_amt*100:.1f}%)")
+                fill_price = float(fetched.get('average') or price)
+                base_amt = filled_qty
+                print(f"⚠️ [部分成交] {sym} 實際成交: {filled_qty:.4f}")
             else:
-                # 尚未成交：已在監控表，等待止單機制處理
-                print(f"⏳ [等待成交] {sym} 限價單 {order_id} 尚未成交，由逃期止單機制接管")
-                return  # 不更新狀態，等逐期止單後再同步
+                fill_price = price  # Fallback：用信號價繼續
+                print(f"⚠️ [市價單未確認] {sym} 暫以信號價 {fill_price:.6f} 繼續")
 
             # === 3. 實體持倉同步 (Actual Position Sync) ===
             try:
@@ -3825,7 +3784,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     s["qty"] -= base_amt
 
             slippage = abs(fill_price - price) / price if price > 0 else 0
-            print(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
+            print(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
 
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
