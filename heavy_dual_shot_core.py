@@ -5429,8 +5429,17 @@ async def check_entries():
                 if _pending_route not in ("Exhaustion_Entry", "Extreme_Reversal"):
                     _sig_vol = prev_candle[5]
                     _vol_ma = s.get("vol_ma20", 0.0)
-                    if _vol_ma > 0 and _sig_vol < _vol_ma * 1.2:
-                        print(f"🛑 [VPA] {sym} 訊號K線量能不足 ({_sig_vol:.0f} < 1.2x均量 {_vol_ma*1.2:.0f})，無量突破，取消進場")
+                    # 趨勢確認（trend_bias 方向一致）時，VPA 門檻從 1.2x 放寬至 0.6x
+                    _tb_vpa = s.get("trend_bias", "neutral")
+                    _tb_sc_vpa = s.get("trend_bias_score", 0)
+                    _trend_vpa = (
+                        (s.get("pending_side") == "buy" and _tb_vpa == "long" and _tb_sc_vpa >= 2) or
+                        (s.get("pending_side") == "sell" and _tb_vpa == "short" and _tb_sc_vpa <= -2)
+                    )
+                    _vpa_mult = 0.6 if _trend_vpa else 1.2
+                    if _vol_ma > 0 and _sig_vol < _vol_ma * _vpa_mult:
+                        _tag = "趨勢確認放寬0.6x" if _trend_vpa else "1.2x"
+                        print(f"🛑 [VPA] {sym} 訊號K線量能不足 ({_sig_vol:.0f} < {_tag}均量 {_vol_ma*_vpa_mult:.0f})，取消進場")
                         s["pending_side"] = None
                         continue
 
@@ -5667,7 +5676,14 @@ async def check_entries():
             price_change = cp - s["ohlcv"][-2][1]  # 使用完成 K 線的開盤價計算
             
             # 1. [放寬] RVOL 門檻與 D 塊對齊
-            _rvol_multiplier = 0.03 if _is_low_vol_ce else 0.04
+            # 趨勢確認（trend_bias 方向一致）時，RVOL 從 3%/4% 放寬至 1.5%/2%
+            _tb_lp = s.get("trend_bias", "neutral")
+            _tb_sc_lp = s.get("trend_bias_score", 0)
+            _trend_lp = (
+                (_tb_lp == "long" and side == "buy" and _tb_sc_lp >= 2) or
+                (_tb_lp == "short" and side == "sell" and _tb_sc_lp <= -2)
+            )
+            _rvol_multiplier = (0.015 if _trend_lp else 0.03) if _is_low_vol_ce else (0.02 if _trend_lp else 0.04)
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
             
             # 2. 流動性底線 (估算 24H 交易額 > 1,000,000 USD)
