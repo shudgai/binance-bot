@@ -5800,33 +5800,13 @@ async def check_entries():
                 print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
                 continue
 
-        # --- 逆向開倉防護三層過濾 ---
+        # --- 逆向開倉防護過濾 ---
         _tb = s.get("trend_bias", "neutral")
         _tb_score = s.get("trend_bias_score", 0)
         # 完全豁免（Automatic_Reverse/Extreme_Reversal 本就是逆向設計）
         _FULL_EXEMPT = ("Automatic_Reverse", "Extreme_Reversal")
         # 寬鬆豁免（Exhaustion_Entry 本質為極端 RSI 反手，不受 score 對齊限制）
         _SCORE_EXEMPT = ("Automatic_Reverse", "Extreme_Reversal", "Exhaustion_Entry")
-
-        # [方案B] 同向虧損封鎖：現有同向持倉虧損中 → 禁止再開同向新倉
-        if route not in _FULL_EXEMPT and not has_position:
-            losing_same_dir = sum(
-                1 for _ss in STATES.values()
-                if abs(_ss.get("qty", 0)) > 1e-6
-                and _ss.get("avg_price", 0) > 0
-                and _ss.get("close_price", 0) > 0
-                and (
-                    (side == "sell" and _ss.get("qty", 0) < 0
-                     and _ss.get("close_price", 0) > _ss.get("avg_price", 0))
-                    or
-                    (side == "buy" and _ss.get("qty", 0) > 0
-                     and _ss.get("close_price", 0) < _ss.get("avg_price", 0))
-                )
-            )
-            if losing_same_dir >= 1:
-                dir_str = "空" if side == "sell" else "多"
-                print(f"🛑 [CorrelBlock] {sym} 已有 {losing_same_dir} 筆虧損{dir_str}倉，封鎖同向新倉")
-                continue
 
         # [方案A] Trend Score 對齊要求
         if not has_position:
