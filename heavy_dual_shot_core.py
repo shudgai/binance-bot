@@ -2677,7 +2677,9 @@ async def check_exits(sym):
         print(f"ℹ️ [DCA_Disabled] {sym} 虧損 {profit_pct*100:.2f}% 但此幣種已停用 Rescue DCA，等待 ATR-SL 出場")
 
     # --- B. 救援式 DCA 速戰速決系統 (Rescue Mode) ---
-    if s.get("entry_count", 0) > 0:
+    # entry_count >= 2 = 已執行 DCA 加碼，才啟動逾時計時
+    # entry_count == 1 = 首倉，靠 TP/SL/Time_TP 出場，不在這裡強制關倉
+    if s.get("entry_count", 0) >= 2:
         time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
         
         # 1. 動態時空救援逾時 (Dynamic Rescue Timeout)
