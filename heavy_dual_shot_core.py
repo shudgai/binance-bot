@@ -6026,6 +6026,11 @@ async def main_loop(exchange):
         print(f"⚠️ load_markets 失敗 ({e})，使用預設市場清單")
 
     global ALL_SYMBOLS
+    # 優先讀取 bot_symbols.json（由 start_bot() 在啟動前寫入雷達選幣）
+    # 避免覆寫雷達選出的 8 幣，回到 COIN_PROFILE_CONFIG 的 18 幣
+    saved_pool = load_symbol_pool()
+    if saved_pool:
+        ALL_SYMBOLS = saved_pool
     ALL_SYMBOLS = filter_valid_symbols(exchange, ALL_SYMBOLS)
     save_symbol_pool(ALL_SYMBOLS)
 
