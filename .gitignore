@@ -5,3 +5,4 @@ __pycache__/
 api_b64.txt
 *.log
 .DS_Store
+.claude/
