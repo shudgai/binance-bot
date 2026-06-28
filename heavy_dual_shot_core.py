@@ -4368,7 +4368,7 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # =========================================================================
     if is_trend_route:
         adx_val = s.get("adx", 0.0)
-        if adx_val > 0:  # adx 資料存在才過濾（避免初始化前誤攔截）
+        if adx_val > 0 and strength < 25.0:  # adx 資料存在才過濾（避免初始化前誤攔截）
             # 強訊號（strength >= 20）放寬至 ADX > 15，其餘硬性要求 ADX > 18
             adx_min = 18.0 if strength >= 20.0 else 20.0
             if adx_val < adx_min:
@@ -4390,7 +4390,7 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
             print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — 由 RR/利潤門檻把關")
             
     # 4. 收盤確認 (Candle Close Check) — Extreme_Reversal 豁免（極端超賣/超買反轉本就逆勢進場）
-    if route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
+    if route not in ("Extreme_Reversal", "Exhaustion_Entry") and strength < 25.0 and len(s["ohlcv"]) >= 2:
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
@@ -4578,19 +4578,19 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
             
             if side == "sell":
                 struct_ok = (current_close < avg_high) or (current_close < max(past_lows))
-                # RSI 極端超買 (>95) + Extreme_Reversal → 豁免結構過濾，跌透底的反轉不應再要求低於高點
-                if not struct_ok and route == "Extreme_Reversal" and s.get("current_rsi", 50) > 95:
+                # 極端反轉或極強動能 (strength >= 25.0) 豁免結構過濾
+                if not struct_ok and (strength >= 25.0 or (route == "Extreme_Reversal" and s.get("current_rsi", 50) > 95)):
                     struct_ok = True
-                    print(f"@@COIN_DEBUG@@ ⚡ {sym} [RSI極端豁免] RSI {s.get('current_rsi', 50):.1f} > 95，Extreme_Reversal 空單豁免結構過濾")
+                    print(f"@@COIN_DEBUG@@ ⚡ {sym} [動能豁免] 強度 {strength:.1f} >= 25 或 RSI極端，空單豁免結構過濾")
                 if not struct_ok:
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 空單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未低於3K平均高點({avg_high:.4f})且未破任一低點({max(past_lows):.4f})，攔截")
                     return False
             if side == "buy":
                 struct_ok = (current_close > avg_low) or (current_close > min(past_highs))
-                # RSI 極端超賣 (<5) + Extreme_Reversal → 豁免結構過濾，漲透頂的反轉不應再要求高於低點
-                if not struct_ok and route == "Extreme_Reversal" and s.get("current_rsi", 50) < 5:
+                # 極端反轉或極強動能 (strength >= 25.0) 豁免結構過濾
+                if not struct_ok and (strength >= 25.0 or (route == "Extreme_Reversal" and s.get("current_rsi", 50) < 5)):
                     struct_ok = True
-                    print(f"@@COIN_DEBUG@@ ⚡ {sym} [RSI極端豁免] RSI {s.get('current_rsi', 50):.1f} < 5，Extreme_Reversal 多單豁免結構過濾")
+                    print(f"@@COIN_DEBUG@@ ⚡ {sym} [動能豁免] 強度 {strength:.1f} >= 25 或 RSI極端，多單豁免結構過濾")
                 if not struct_ok:
                     print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 多單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未高於3K平均低點({avg_low:.4f})且未破任一高點({min(past_highs):.4f})，攔截")
                     return False
@@ -4750,12 +4750,12 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         if atr_pe > 0:
             if side == "buy" and bb_up_pe > 0:
                 dist_to_res = bb_up_pe - cp
-                if dist_to_res < atr_pe * 1.0:
+                if dist_to_res < atr_pe * 1.0 and strength < 25.0:
                     print(f"🛑 [Profit_Erosion] {sym} 多單空間不足：距離上方阻力 BB 上軌僅剩 {dist_to_res/atr_pe:.1f} ATR (< 1.0 ATR)，容易撞牆回落，拒絕進場")
                     return False
             elif side == "sell" and bb_low_pe > 0:
                 dist_to_sup = cp - bb_low_pe
-                if dist_to_sup < atr_pe * 1.0:
+                if dist_to_sup < atr_pe * 1.0 and strength < 25.0:
                     print(f"🛑 [Profit_Erosion] {sym} 空單空間不足：距離下方支撐 BB 下軌僅剩 {dist_to_sup/atr_pe:.1f} ATR (< 1.0 ATR)，容易撞牆反彈，拒絕進場")
                     return False
 
