@@ -165,7 +165,7 @@ COIN_PROFILE_CONFIG = {
     "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # SOL｜趨勢旗艦 — 生態系龍頭，趨勢確認後動能強；硬停損守住不爆倉
-    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
+    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
 
     # AVAX｜均衡生態 — 中等流動性L1，跟大盤趨勢；寬於ETH但不躁進
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
@@ -181,10 +181,10 @@ COIN_PROFILE_CONFIG = {
 
     # BNBUSDT / XRPUSDT / DOTUSDT / LTCUSDT / LINKUSDT — 保留原設定
     "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
-    "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 18.5, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
     "DOTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
     "LTCUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
-    "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 18.5, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
 
     # ══════════════════════════════════════════════════════════════════════
     # 第二類：高彈性動能型 — 波動大、追蹤停利是命脈、單次報酬高
