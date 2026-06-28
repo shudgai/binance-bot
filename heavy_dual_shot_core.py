@@ -211,7 +211,8 @@ COIN_PROFILE_CONFIG = {
     "OPUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 15.0, "hard_sl_pct": 0.025},
 
     # DOGE — 保留原設定
-    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 15.0},
+    # DOGE｜梗幣王 — 量大波動猛，但假訊號多，必須 MTF 過濾保護，RSI 超賣禁空
+    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 17.0},
 
 }
 
@@ -5068,6 +5069,7 @@ def compute_signal_strength(sym):
     ema20_below_ema50   = ema20 > 0 and ema50 > 0 and ema20 < ema50  # EMA20 < EMA50 → 空頭排列
 
     route_b_long = (
+        sma200_ok_long and           # SMA200 大方向確認（多頭/平盤）
         ema50_gate_long and
         ema20_above_ema50 and        # EMA20 > EMA50（多頭趨勢確認）
         near_ema20_pullback and      # 現價在 EMA20 附近（回測）
@@ -5078,6 +5080,7 @@ def compute_signal_strength(sym):
     )
 
     route_b_short = (
+        sma200_ok_short and          # SMA200 大方向確認（空頭/平盤）
         ema50_gate_short and
         ema20_below_ema50 and        # EMA20 < EMA50（空頭趨勢確認）
         near_ema20_pullback and      # 現價在 EMA20 附近（反彈高點）
