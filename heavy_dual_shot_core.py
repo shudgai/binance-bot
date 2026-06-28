@@ -4226,6 +4226,20 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # 熊市防禦模式下，做空方向完全放行（不封鎖）
 
     # =========================================================================
+    # 🛑 STAGE 0.5: TREND BIAS GATE (幣種自身趨勢偏向過濾)
+    # trend_bias_score = +4 ~ -4，由 EMA20/EMA50/EMA1H/MACD 組成
+    # 反轉路由（Exhaustion/Extreme_Reversal）豁免：它們本來就是逆勢策略
+    # =========================================================================
+    if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
+        _tb_score_gate = s.get("trend_bias_score", 0)
+        if side == "buy" and _tb_score_gate <= -2:
+            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢偏空，拒絕做多 (Route:{route})")
+            return False
+        if side == "sell" and _tb_score_gate >= 2:
+            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢偏多，拒絕做空 (Route:{route})")
+            return False
+
+    # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
     # =========================================================================
     # 1. 動態量能門檻過濾 (Adaptive Volume Gate)
@@ -4501,7 +4515,7 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        _mtf_override_threshold = 11.0  # 訊號強度超過此値可繞過 MTF 趨勢複覆（原 13 太嚴）
+        _mtf_override_threshold = 16.0  # 逆趨勢進場需強訊號才能繞過 1H MTF 過濾
         
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
@@ -4932,8 +4946,8 @@ def compute_signal_strength(sym):
     long_macd_cross = prev_macd_line <= prev_macd_signal and macd_line > macd_signal
     short_macd_cross = prev_macd_line >= prev_macd_signal and macd_line < macd_signal
     
-    long_macd_hist_aligned = macd_hist > prev_macd_hist * 1.2
-    short_macd_hist_aligned = macd_hist < prev_macd_hist * 1.2
+    long_macd_hist_aligned  = macd_hist > 0 and macd_hist > prev_macd_hist
+    short_macd_hist_aligned = macd_hist < 0 and macd_hist < prev_macd_hist
     
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
