@@ -6318,7 +6318,7 @@ def print_multi_status():
         print("  📜 [近期戰績] 無記錄")
 
     # 4. 輸出統計數據 (監控池、冷卻、禁賽、持倉數)
-    total_monitored = len(STATES)
+    total_monitored = len(ALL_SYMBOLS)
     active_count = len(active_positions)
     cooldown_count = sum(1 for s in STATES.values() if s.get('status') == 'COOLDOWN')
     banned_count = sum(1 for s in STATES.values() if s.get('status') == 'BANNED')
