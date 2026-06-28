@@ -165,7 +165,7 @@ COIN_PROFILE_CONFIG = {
     "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # SOL｜趨勢旗艦 — 生態系龍頭，趨勢確認後動能強；硬停損守住不爆倉
-    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
+    "SOLUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015},
 
     # AVAX｜均衡生態 — 中等流動性L1，跟大盤趨勢；寬於ETH但不躁進
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
@@ -4232,10 +4232,10 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # =========================================================================
     if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
         _tb_score_gate = s.get("trend_bias_score", 0)
-        if side == "buy" and _tb_score_gate <= -2:
+        if side == "buy" and _tb_score_gate <= -1:
             print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢偏空，拒絕做多 (Route:{route})")
             return False
-        if side == "sell" and _tb_score_gate >= 2:
+        if side == "sell" and _tb_score_gate >= 1:
             print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢偏多，拒絕做空 (Route:{route})")
             return False
 
