@@ -5935,9 +5935,9 @@ async def check_entries():
         # --- 【修改建議 2】絕對獲利空間硬門檻 1.5% (MinProfit Hard Gate) ---
         # 防止在極低波動（ATR 極小）時進場：即使 R:R 比例達標，
         # 若預期獲利空間太小（< 1.5%），扣除來回手續費與滑點後幾乎無利潤。
-        _HARD_MIN_PROFIT_PCT = 0.015  # 1.5% 硬門檻
+        _HARD_MIN_PROFIT_PCT = 0.012  # 1.2% 硬門檻（原 1.5%，對齊 DUAL_SHOT_MIN_PROFIT_ROOM）
         if expected_profit_pct < _HARD_MIN_PROFIT_PCT:
-            print(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
+            print(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
             continue
 
         # --- Flip Buffer: 防止快速反手 (在寫入 pending 之前判斷) ---
