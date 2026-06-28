@@ -2544,6 +2544,19 @@ async def check_exits(sym):
     min_tp_pct = expected_loss_pct * _rr_thresh
     # ────────────────────────────────────────────────────────────────
 
+    # --- 時間停利 (Time-Based Take Profit) ---
+    # 持倉超過 TIME_STOP_MINUTES 分鐘且有獲利 → 主動停利，不無限等待
+    _time_tp_base = TIME_STOP_MINUTES * 60          # 30 min
+    if hold_sec > _time_tp_base and profit_pct > 0:
+        # 持倉愈久，停利門檻愈低（30min 需達 min_tp_pct；60min 以上只需 0.2%）
+        _time_tp_threshold = min_tp_pct if hold_sec < _time_tp_base * 2 else 0.002
+        if profit_pct >= _time_tp_threshold:
+            cs = "sell" if is_long else "buy"
+            _hold_min = int(hold_sec / 60)
+            print(f"⏰ [Time_TP] {sym} 持倉 {_hold_min}min，獲利 {profit_pct*100:.2f}% ≥ 停利門檻 {_time_tp_threshold*100:.2f}%，主動停利出場")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_TP]")
+            return
+
     # --- A. 自動反手偵測邏輯 (Global Reverse Engine) ---
     bb_upper = s.get('bb_up', 0)
     bb_lower = s.get('bb_low', 0)
