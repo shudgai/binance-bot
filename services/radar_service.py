@@ -3,9 +3,87 @@ import json
 import time
 import threading
 from services.system_log_service import add_system_log
-from services.bot_manager_service import get_bot_status, start_bot, kill_bot
+from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
 from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins
 from core.config import COIN_PROFILE_CONFIG
+
+SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
+
+
+def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:
+    """
+    根據 ATR%、單價、排名，AI 輔助計算當期最佳個性參數。
+    結果寫入 bot_symbols.json profiles，覆蓋靜態 COIN_PROFILE_CONFIG。
+    """
+    base = dict(COIN_PROFILE_CONFIG.get(symbol, {}))
+
+    # ── 槓桿上限（依單價）──
+    if price < 0.10:
+        lev_cap, price_tag = 2, "超低價"
+    elif price < 1.0:
+        lev_cap, price_tag = 3, "低價"
+    else:
+        lev_cap, price_tag = 4, "正常"
+
+    # ── 依 ATR% 決定 SL 寬度、槓桿、追蹤停利 ──
+    if atr_pct > 4.0:
+        sl_mult   = round(base.get("sl_atr_multiplier", 2.5) + 1.0, 1)
+        lev_cap   = min(lev_cap, 2)
+        hard_sl   = max(base.get("hard_sl_pct", 0.0), 0.030)
+        trail_on  = True
+        vol_tag   = "超高波動"
+    elif atr_pct > 2.5:
+        sl_mult   = round(base.get("sl_atr_multiplier", 2.5) + 0.5, 1)
+        lev_cap   = min(lev_cap, 3)
+        hard_sl   = base.get("hard_sl_pct", 0.0)
+        trail_on  = True
+        vol_tag   = "高波動"
+    elif atr_pct > 1.5:
+        sl_mult   = base.get("sl_atr_multiplier", 2.5)
+        hard_sl   = base.get("hard_sl_pct", 0.0)
+        trail_on  = True
+        vol_tag   = "中波動"
+    else:
+        sl_mult   = max(round(base.get("sl_atr_multiplier", 2.5) - 0.3, 1), 1.5)
+        hard_sl   = base.get("hard_sl_pct", 0.0)
+        trail_on  = False
+        vol_tag   = "低波動"
+
+    # ── ATR 排名越高 → TP 放大（讓強勢幣跑更遠）──
+    rank_factor  = 1.0 + (total - rank) / max(total, 1) * 0.5   # rank1=+50%, rank=total=+0%
+    tp_mult      = round(base.get("tp_atr_multiplier", 10.0) * rank_factor, 1)
+
+    # ── 最終槓桿 ──
+    final_lev = min(base.get("leverage", 3), lev_cap)
+
+    profile = {
+        "sl_atr_multiplier": sl_mult,
+        "tp_atr_multiplier": tp_mult,
+        "leverage":          final_lev,
+        "_radar_atr_pct":    round(atr_pct, 3),
+        "_radar_rank":       rank,
+        "_radar_tag":        f"{price_tag}/{vol_tag}",
+    }
+    if hard_sl > 0:
+        profile["hard_sl_pct"] = hard_sl
+    if trail_on:
+        profile["trailing_activation_atr"] = base.get("trailing_activation_atr", 1.2)
+        profile["trailing_distance_atr"]   = base.get("trailing_distance_atr",   0.7)
+    return profile
+
+
+def _save_radar_profiles(profiles: dict):
+    """將動態個性寫入 bot_symbols.json profiles 區塊。"""
+    try:
+        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {"symbols": data}
+        data["profiles"] = profiles
+        with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
 RADAR_SELECT_COUNT = 8
@@ -130,6 +208,24 @@ def auto_radar_switch(force_start=False):
         final_symbols = all_preserved + top_symbols
         if len(final_symbols) > RADAR_SELECT_COUNT + 2:
             final_symbols = final_symbols[:RADAR_SELECT_COUNT + 2]
+
+        # ── AI 輔助自動分析：為每個入選幣種計算動態個性，寫入 bot_symbols.json ──
+        rank_map = {r["symbol"]: (i + 1, r["atr_pct"], r["price"]) for i, r in enumerate(full_ranking)}
+        dynamic_profiles = {}
+        analysis_lines = []
+        for i, sym in enumerate(top_symbols):
+            rank, atr_pct, price = rank_map.get(sym, (i + 1, 0.0, 0.0))
+            prof = _compute_dynamic_profile(sym, atr_pct, price, rank, len(full_ranking))
+            dynamic_profiles[sym] = prof
+            tag = prof.get("_radar_tag", "")
+            analysis_lines.append(
+                f"{sym.replace('USDT','')} ATR{atr_pct:.2f}% → "
+                f"lev{prof['leverage']}x SL{prof['sl_atr_multiplier']}x TP{prof['tp_atr_multiplier']}x [{tag}]"
+            )
+        _save_radar_profiles(dynamic_profiles)
+        add_system_log(f"🤖 [AI個性] 已為 {len(dynamic_profiles)} 幣自動設定個性:", "info")
+        for line in analysis_lines:
+            add_system_log(f"   ↳ {line}", "info")
 
         # 排序讓比較不受順序影響
         if sorted(final_symbols) == sorted(current_syms):

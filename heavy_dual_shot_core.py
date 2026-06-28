@@ -654,7 +654,8 @@ def apply_all_symbol_profiles():
         if not json_profile:
             json_profile = default_profile.copy()
         py_profile = COIN_PROFILE_CONFIG.get(sym, {})
-        merged_profile = {**json_profile, **py_profile}
+        # json_profile（bot_symbols.json，雷達動態分析寫入）優先覆蓋 COIN_PROFILE_CONFIG
+        merged_profile = {**py_profile, **json_profile}
         apply_symbol_profile(sym, merged_profile)
 
 
