@@ -162,16 +162,16 @@ COIN_PROFILE_CONFIG = {
     # ══════════════════════════════════════════════════════════════════════
 
     # ETH｜穩定基石 — 最高流動性，跟隨宏觀，低槓桿穩打；寧等強訊號不貿然進
-    "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # SOL｜趨勢旗艦 — 生態系龍頭，趨勢確認後動能強；硬停損守住不爆倉
-    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
+    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
 
     # AVAX｜均衡生態 — 中等流動性L1，跟大盤趨勢；寬於ETH但不躁進
-    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # NEAR｜均衡L1 — 中等波動、穩定生態，不激進；3x槓桿穩健操作
-    "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0, "disable_rescue_dca": True},
+    "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0, "disable_rescue_dca": True},
 
     # ADA｜低噪追隨 — 低價高雜訊，自身趨勢弱，只在明確方向時進；槓桿壓到最低
     "ADAUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 7.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 2, "rr_threshold": 1.5, "min_signal_strength": 14.0, "hard_sl_pct": 0.025},
@@ -180,11 +180,11 @@ COIN_PROFILE_CONFIG = {
     "AAVEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 16.0, "trailing_activation_atr": 1.5, "trailing_distance_atr": 0.8},
 
     # BNBUSDT / XRPUSDT / DOTUSDT / LTCUSDT / LINKUSDT — 保留原設定
-    "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
-    "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
-    "DOTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
-    "LTCUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
-    "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "DOTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "LTCUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # ══════════════════════════════════════════════════════════════════════
     # 第二類：高彈性動能型 — 波動大、追蹤停利是命脈、單次報酬高
@@ -194,11 +194,11 @@ COIN_PROFILE_CONFIG = {
     "INJUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.2, "min_signal_strength": 19.0, "hard_sl_pct": 0.015, "disable_rescue_dca": True, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
 
     # APT｜爆發新星 — 主題敘事驅動，一旦趨勢確立幅度大；追蹤停利+寬停損容納波動
-    "APTUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.2, "min_signal_strength": 18.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
+    "APTUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.2, "min_signal_strength": 18.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
 
     # SUI — 保留原設定
-    "SUIUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.2, "min_signal_strength": 19.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
-    "HYPEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.2, "min_signal_strength": 19.0},
+    "SUIUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.2, "min_signal_strength": 19.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
+    "HYPEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.2, "min_signal_strength": 19.0},
 
     # ══════════════════════════════════════════════════════════════════════
     # 第三類：低價投機型 — 單價極低、ATR% 超高、最低槓桿硬停損保命
@@ -212,7 +212,7 @@ COIN_PROFILE_CONFIG = {
 
     # DOGE — 保留原設定
     # DOGE｜梗幣王 — 量大波動猛，但假訊號多，必須 MTF 過濾保護，RSI 超賣禁空
-    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 19.0},
+    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 19.0},
 
 }
 
@@ -2560,6 +2560,28 @@ async def check_exits(sym):
     min_tp_pct = expected_loss_pct * _rr_thresh
     # ────────────────────────────────────────────────────────────────
 
+    # --- Trend_Flip_Exit：趨勢轉向主動止血 ---
+    # 若持倉方向已與 trend_bias_score 完全相反（多單但 score ≤ -2，或空單但 score ≥ +2）
+    # 且持倉已虧損 → 不等 SL，主動平倉止血，避免損失繼續擴大
+    _tb_sc_now = s.get("trend_bias_score", 0)
+    _flip_long  = is_long     and _tb_sc_now <= -2  # 多單但趨勢轉空
+    _flip_short = not is_long and _tb_sc_now >=  2  # 空單但趨勢轉多
+    if (_flip_long or _flip_short) and profit_pct < -0.002 and hold_sec > 120:
+        cs = "sell" if is_long else "buy"
+        _dir_str = f"空(score={_tb_sc_now})" if _flip_long else f"多(score={_tb_sc_now})"
+        print(f"🔀 [Trend_Flip_Exit] {sym} 趨勢已轉{_dir_str}，{'多' if is_long else '空'}單虧損 {profit_pct*100:.2f}%，主動平倉止血")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Flip]")
+        # 趨勢確認反轉 → 直接設置反手訊號，不再等 pre_confirm
+        rev_side = "sell" if is_long else "buy"
+        _last_rev = s.get("last_reverse_time", 0)
+        if time.time() - _last_rev > 900:  # 15 分鐘防連續反手
+            s["pending_reverse"] = rev_side
+            s["pending_reverse_time"] = time.time()
+            s["last_reverse_time"] = time.time()
+            s["pending_reverse_source"] = "Trend_Flip"  # 標記來源，豁免 Reversal_MacroBlock
+            print(f"🔄 [Trend_Flip_Reverse] {sym} 趨勢確認反轉，設置反手 → {rev_side}")
+        return
+
     # --- 時間停利 (Time-Based Take Profit) ---
     # 持倉超過 TIME_STOP_MINUTES 分鐘且有獲利 → 主動停利，不無限等待
     _time_tp_base = TIME_STOP_MINUTES * 60          # 30 min
@@ -3420,15 +3442,25 @@ async def check_exits(sym):
             pnl_pct = (exit_price - avg) / avg if is_long else (avg - exit_price) / avg
             print(f"🛑 [{reason_str}] {sym} 損益:{pnl_pct*100:.2f}% (SL:{sl:.4f} K收:{p:.4f} 成交:{exit_price:.4f})")
             await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason=reason_str, is_stop_loss=True)
-            # SL 觸發且損失 > 1.5%：逆勢動能明顯，設置反手信號
-            if abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]":
+            # SL 後反手邏輯：
+            # 條件 A（優先）：pre_confirm 已指向反手方向（反向訊號在 SL 前已累積）→ 立即反手
+            # 條件 B（備用）：損失 > 1.5% 且非保本停損 → 設置反手
+            rev_side = "buy" if not is_long else "sell"
+            _pre_conf_side = s.get("pre_confirm_side", "")
+            _pre_conf_ts   = s.get("pre_confirm_time", 0.0)
+            _has_preconfirm = (_pre_conf_side == rev_side and time.time() - _pre_conf_ts < 90)
+            _big_loss = abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]"
+
+            if _has_preconfirm or _big_loss:
                 last_reverse = s.get("last_reverse_time", 0)
                 if time.time() - last_reverse > 1800:
-                    rev_side = "buy" if not is_long else "sell"
                     s["pending_reverse"] = rev_side
                     s["pending_reverse_time"] = time.time()
                     s["last_reverse_time"] = time.time()
-                    print(f"🔄 [SL_Reverse] {sym} SL 後偵測到強勢逆向突破，設置反手 → {rev_side}")
+                    if _has_preconfirm:
+                        print(f"🔄 [SL→Reverse] {sym} SL 出場，反向訊號已就緒，立即反手 → {rev_side}")
+                    else:
+                        print(f"🔄 [SL_Reverse] {sym} SL 大損失，設置反手 → {rev_side}")
             return
 
 
@@ -3436,7 +3468,7 @@ async def check_exits(sym):
 
 # ── 進場邏輯 ──────────────────────────────────────────────────
 
-async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False):
+async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False, is_flip_reverse=False):
     import numpy as np  # 強制防禦局部變量失效漏洞
     s = STATES[sym]
 
@@ -3482,12 +3514,18 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             print(f"⚠️ [槓桿設定失敗] {sym}: {e}")
             
     margin = compute_per_coin_margin(sym, allocation_pct)
-    
-
 
     if margin <= 0:
-        print(f"⚠️ [風控] {sym} 無可用保證金")
-        return
+        if is_flip_reverse:
+            # Trend_Flip 反手：此倉位剛平倉，保證金尚未釋放完，強制用固定金額反手
+            margin = compute_per_coin_margin(sym, allocation_pct, ignore_open_count=True)
+            if margin <= 0:
+                print(f"⚠️ [風控] {sym} Flip反手保證金仍不足，放棄")
+                return
+            print(f"⚡ [Flip反手] {sym} 強制分配保證金 {margin:.2f} USDT 反手")
+        else:
+            print(f"⚠️ [風控] {sym} 無可用保證金")
+            return
 
     # --- 價格偏離檢查（強制驗證，fetch_ticker 失敗時回落到即時交易流價格）---
     try:
@@ -3725,11 +3763,18 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     if PAPER_TRADING:
         try:
-            # 市價單模式：立即以訊號價格成交，模擬 0.05% Taker 滑點
-            _taker_slip = 0.0005  # 0.05% Taker fee slippage simulation
-            fill_price = price * (1 + _taker_slip) if side == 'buy' else price * (1 - _taker_slip)
+            # 市價單模式：取即時現價成交，模擬 0.05% Taker 滑點
+            _taker_slip = 0.0005
+            try:
+                _ticker = await exchange_futures.fetch_ticker(sym)
+                _live_price = float(_ticker.get('last') or 0)
+            except Exception:
+                _live_price = 0.0
+            _base_price = _live_price if _live_price > 0 else price
+            fill_price = _base_price * (1 + _taker_slip) if side == 'buy' else _base_price * (1 - _taker_slip)
             direction = "做多" if side == 'buy' else "做空"
-            print(f"⚡ [Paper市價成交] {sym} {direction} {base_amt:.4f} @ {fill_price:.6f} (模擬Taker滑點 0.05%)")
+            _src = "現價" if _live_price > 0 else "K棒收盤價"
+            print(f"⚡ [Paper市價成交] {sym} {direction} {base_amt:.4f} @ {fill_price:.6f} ({_src}+0.05%滑點)")
             # 暫設 pending_paper_order 讓 _fill_paper_order 讀取後立即成交
             s["pending_paper_order"] = {
                 "side": side, "qty": base_amt, "margin": margin,
@@ -4197,10 +4242,13 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR")
     if bear_defense_mode and side == 'buy':
         current_rsi_macro = s.get("current_rsi", 50.0)
-        # 例外豁免：極端超賣（RSI < 32）或反轉路由才放行多單
-        is_reversal_route = route in ("Extreme_Reversal", "Exhaustion_Entry")
-        if current_rsi_macro < 32.0 or is_reversal_route:
-            print(f"⚡ [MACRO_EXEMPT] {sym} BTC 雙熊但 RSI={current_rsi_macro:.1f}<32 或反轉路由 ({route})，豁免熔斷允許多單")
+        _tb_score_macro   = s.get("trend_bias_score", 0)
+        # 豁免條件：極端超賣、反轉路由、或幣種本身趨勢強勢（score≥+2）的回調進場
+        is_reversal_route    = route in ("Extreme_Reversal", "Exhaustion_Entry")
+        is_strong_pullback   = (route == "Pullback" and _tb_score_macro >= 4)
+        if current_rsi_macro < 32.0 or is_reversal_route or is_strong_pullback:
+            _reason = "RSI超賣" if current_rsi_macro < 32.0 else ("強趨勢回調" if is_strong_pullback else "反轉路由")
+            print(f"⚡ [MACRO_EXEMPT] {sym} BTC 雙熊但 {_reason} (score={_tb_score_macro})，豁免熔斷允許多單")
         else:
             print(f"🔴 [MACRO_BLOCK] {sym} BTC 4H+1H 雙熊，封鎖做多訊號 (RSI:{current_rsi_macro:.1f}, Route:{route})")
             return False
@@ -5094,7 +5142,7 @@ def compute_signal_strength(sym):
         macd_ok_long and             # MACD 方向支持
         rsi_direction_long and       # RSI 不在超買
         rsi_ok_long and
-        last_candle_long             # 當根收紅（反彈確認）
+        last_candle_long             # 當根收陽確認（回調後需見買盤）
     )
 
     route_b_short = (
@@ -5105,7 +5153,7 @@ def compute_signal_strength(sym):
         macd_ok_short and
         rsi_direction_short and
         rsi_ok_short and
-        last_candle_short            # 當根收黑（繼續下跌確認）
+        last_candle_short            # 當根收黑確認（反彈後需見賣壓）
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -5121,6 +5169,8 @@ def compute_signal_strength(sym):
             strength += 3.0
         if route_tag == "Pullback":
             strength += 2.0
+            if last_candle_long:        # 回調路徑：當根收陽額外 +1.5（優先信號）
+                strength += 1.5
         strength += long_trend_score + sma200_bonus_long
         return ("buy", strength if strength >= 10.0 else 0.0, route)
 
@@ -5133,6 +5183,8 @@ def compute_signal_strength(sym):
             strength += 3.0
         if route_tag == "Pullback":
             strength += 2.0
+            if last_candle_short:       # 回調路徑：當根收黑額外 +1.5（優先信號）
+                strength += 1.5
         strength += short_trend_score + sma200_bonus_short
         return ("sell", strength if strength >= 10.0 else 0.0, route)
 
@@ -5245,8 +5297,11 @@ async def is_reversal_still_valid(sym, pending_side):
     btc_4h = MARKET_WIND.get("btc_trend_4h")
     btc_1h = MARKET_WIND.get("btc_trend_1h")
     rsi = s.get("current_rsi", 50.0)
+    _rev_source = s.get("pending_reverse_source", "")
     if pending_side == "buy" and btc_4h == "BEAR" and btc_1h == "BEAR":
-        if rsi >= 32:
+        if _rev_source == "Trend_Flip":
+            print(f"⚡ [Reversal_MacroExempt] {sym} Trend_Flip 確認反轉，豁免 BTC 雙熊限制，允許做多反手")
+        elif rsi >= 32:
             print(f"🔴 [Reversal_MacroBlock] {sym} BTC 雙熊，做多反手需 RSI<32，目前 {rsi:.1f}")
             return False
 
@@ -5404,6 +5459,7 @@ async def check_entries():
                     print(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
                     price = s["close_price"]
                     s["pending_reverse"] = None
+                    s["pending_reverse_source"] = ""
                     s["is_ordering"] = True
                     
                     async def _rev_task(sym, pending_rev, price):
@@ -5417,6 +5473,7 @@ async def check_entries():
                 continue
             else:
                 s["pending_reverse"] = None
+                s["pending_reverse_source"] = ""
 
         if s["status"] != "ACTIVE":
             if s["status"] == "BANNED":
@@ -5829,12 +5886,12 @@ async def check_entries():
                         print(f"🛑 [TrendAlign] {sym} 多單需 score≥+2，當前 {_tb_score:+d} (強度{strength:.1f}<22)")
                         continue
             elif route == "Exhaustion_Entry":
-                # Exhaustion 保留舊邏輯：只攔截方向完全相反的情況
-                if _tb == "long" and side == "sell" and strength < 20.0:
-                    print(f"🛑 [TrendBias] {sym} 趨勢偏多，Exhaustion空單被攔截 (強度{strength:.1f}<20)")
+                # Exhaustion：趨勢明確時（score ≥ +2 或 ≤ -2），禁止開逆勢單
+                if _tb_score >= 2 and side == "sell":
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏多(score={_tb_score:+d})，Exhaustion空單被攔截")
                     continue
-                elif _tb == "short" and side == "buy" and strength < 20.0:
-                    print(f"🛑 [TrendBias] {sym} 趨勢偏空，Exhaustion多單被攔截 (強度{strength:.1f}<20)")
+                elif _tb_score <= -2 and side == "buy":
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏空(score={_tb_score:+d})，Exhaustion多單被攔截")
                     continue
 
         # [方案C] 近期動能確認：近2根K線不得雙雙逆向
@@ -5951,8 +6008,22 @@ async def check_entries():
         # 修復: 使用 last_entry_time (time.time() 秒級) 比較，而非 K 線時間戳 (ms)
         last_entry_time = s.get("last_entry_time", 0.0)
         if route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
-            print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
-            continue
+            # 例外：當前持倉虧損 > 0.3%（price%）且訊號反向 → 允許跳過 Flip Buffer
+            _fb_qty  = s.get("qty", 0)
+            _fb_has  = abs(_fb_qty) > 0.000001
+            _fb_skip = False
+            if _fb_has:
+                _fb_dir  = "buy" if _fb_qty > 0 else "sell"
+                if side != _fb_dir:
+                    _fb_p   = s.get("close_price", 0)
+                    _fb_avg = s.get("avg_price", 0)
+                    _fb_pnl = ((_fb_p - _fb_avg) / _fb_avg if _fb_qty > 0 else (_fb_avg - _fb_p) / _fb_avg) if _fb_avg > 0 else 0
+                    if _fb_pnl < -0.003:
+                        _fb_skip = True
+                        print(f"⚠️ [Flip Buffer 豁免] {sym} 持倉虧損 {_fb_pnl*100:.2f}%，允許反向訊號通過")
+            if not _fb_skip:
+                print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
+                continue
 
         # 幣種最低訊號強度門檻（min_signal_strength 現在真正生效）
         _min_str_coin = s.get("min_signal_strength", 15.0)
@@ -5967,11 +6038,31 @@ async def check_entries():
         _direct_thr = max(_min_str_coin, 15 if _trend_direct else 22)
 
         if strength >= _direct_thr:
-            candidates.append((sym, side, strength, route))
-            if _trend_direct:
-                print(f"⚡ [趨勢直進] {sym} 強度 {strength:.2f} ≥ {_direct_thr}，趨勢{_tb_direct}確認(score={_tb_sc_direct:+d})，直接開倉")
+            # Automatic_Reverse 反手訊號時效性強，不等待確認
+            if route == "Automatic_Reverse":
+                candidates.append((sym, side, strength, route))
+                print(f"⚡ [反手直進] {sym} 強度 {strength:.2f}，立即反手開倉")
+                continue
+
+            # ★ 訊號二次確認：防止假突破直接造成停損
+            # 第一次出現 → 記錄但不進場；下一週期（~25秒）若方向仍相同 → 才進場
+            _pre_ts   = s.get("pre_confirm_time", 0.0)
+            _pre_side = s.get("pre_confirm_side", "")
+            _now_t    = time.time()
+
+            if _pre_side == side and (_now_t - _pre_ts) < 60:
+                # 二次確認通過 → 加入候選
+                candidates.append((sym, side, strength, route))
+                s["pre_confirm_side"] = ""  # 重置，避免重複累積
+                if _trend_direct:
+                    print(f"⚡ [趨勢直進✓] {sym} 二次確認 強度 {strength:.2f}，趨勢{_tb_direct}(score={_tb_sc_direct:+d})，開倉")
+                else:
+                    print(f"⚡ [超強直進✓] {sym} 二次確認 強度 {strength:.2f} ≥ {_direct_thr}，開倉")
             else:
-                print(f"⚡ [超強直進] {sym} 強度 {strength:.2f} ≥ 22，直接開倉")
+                # 第一次出現或方向改變 → 記錄，等下一週期確認
+                s["pre_confirm_time"] = _now_t
+                s["pre_confirm_side"] = side
+                print(f"🔎 [預備確認] {sym} {side} 強度 {strength:.2f}，等待下一週期確認再進場...")
             continue
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
@@ -5994,7 +6085,36 @@ async def check_entries():
     for sym, side, strength, route in candidates:
         s = STATES[sym]
         has_pos = abs(s["qty"]) > 0.000001
-        
+        current_dir = ("buy" if s["qty"] > 0 else "sell") if has_pos else None
+
+        # --- 虧損反手：持倉方向與訊號相反，且當前虧損 → 平倉並反手 ---
+        if has_pos and current_dir != side:
+            _p   = s.get("close_price", 0)
+            _avg = s.get("avg_price", 0)
+            _is_long_pos = s["qty"] > 0
+            _pnl = ((_p - _avg) / _avg if _is_long_pos else (_avg - _p) / _avg) if _avg > 0 else 0
+
+            if _pnl < -0.003:  # 虧損超過 0.3% → 允許反手
+                print(f"🔄 [虧損反手] {sym} 持倉虧損 {_pnl*100:.2f}%，強度 {strength:.1f}，準備平倉反手 {current_dir}→{side}...")
+                if not s.get("is_ordering"):
+                    s["is_ordering"] = True
+                    _close_side = "sell" if _is_long_pos else "buy"
+                    _rev_price  = s["close_price"]
+
+                    async def _reverse_task(sym=sym, close_side=_close_side, rev_side=side, price=_rev_price):
+                        try:
+                            si = STATES[sym]
+                            await close_position(sym, close_side, abs(si["qty"]), price, si["avg_price"], reason="[Signal_Reverse]")
+                            await asyncio.sleep(0.5)
+                            reset_coin_state(sym)
+                            await execute_order(sym, rev_side, price)
+                        finally:
+                            STATES[sym]["is_ordering"] = False
+                    asyncio.create_task(_reverse_task())
+            else:
+                print(f"⏭️ [反手跳過] {sym} 持倉尚未虧損 ({_pnl*100:.2f}%)，不反手")
+            continue
+
         if not has_pos:
             if remaining_slots <= 0:
                 continue
@@ -6002,25 +6122,25 @@ async def check_entries():
             print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
         else:
             print(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
-            
+
         if not s.get("is_ordering"):
             s["is_ordering"] = True
-            
+
             # --- 動態權重分配 (Dynamic Position Sizing) ---
             raw_ratio = strength / total_weight if total_weight > 0 else 1.0
             allocation_pct = min(raw_ratio, 0.6) # 最高封頂 60%
-            
+
             weight_label = f"{allocation_pct*100:.1f}%"
             print(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%)，實際分配資金封頂為: {weight_label}")
-            
+
             async def _entry_task(sym, side, price, alloc_pct):
                 try:
                     await execute_order(sym, side, price, alloc_pct)
                 finally:
                     STATES[sym]["is_ordering"] = False
-            
+
             asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct))
-            
+
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
         s["pending_confirm_low"] = 0
