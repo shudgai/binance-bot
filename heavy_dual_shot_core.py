@@ -4751,13 +4751,15 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         if atr_pe > 0:
             if side == "buy" and bb_up_pe > 0:
                 dist_to_res = bb_up_pe - cp
-                if dist_to_res < atr_pe * 1.0 and strength < 25.0:
-                    print(f"🛑 [Profit_Erosion] {sym} 多單空間不足：距離上方阻力 BB 上軌僅剩 {dist_to_res/atr_pe:.1f} ATR (< 1.0 ATR)，容易撞牆回落，拒絕進場")
+                # 【手術二】 BB 空間門檻 1.0→1.5 ATR，足夠的距離才不會採到障力
+                if dist_to_res < atr_pe * 1.5 and strength < 25.0:
+                    print(f"🛑 [Profit_Erosion] {sym} 多單空間不足：距離上方阻力 BB 上軌僅剩 {dist_to_res/atr_pe:.1f} ATR (< 1.5 ATR)，容易撞牆回落，拒絕進場")
                     return False
             elif side == "sell" and bb_low_pe > 0:
                 dist_to_sup = cp - bb_low_pe
-                if dist_to_sup < atr_pe * 1.0 and strength < 25.0:
-                    print(f"🛑 [Profit_Erosion] {sym} 空單空間不足：距離下方支撐 BB 下軌僅剩 {dist_to_sup/atr_pe:.1f} ATR (< 1.0 ATR)，容易撞牆反彈，拒絕進場")
+                # 【手術二】 BB 空間門檻 1.0→1.5 ATR，足夠的距離才不會撞到支撐
+                if dist_to_sup < atr_pe * 1.5 and strength < 25.0:
+                    print(f"🛑 [Profit_Erosion] {sym} 空單空間不足：距離下方支撐 BB 下軌僅剩 {dist_to_sup/atr_pe:.1f} ATR (< 1.5 ATR)，容易撞牆反彈，拒絕進場")
                     return False
 
         # 3. 趨勢強度過濾 (Trend Strength Filter) - 確保 MACD 柱狀圖在擴張
@@ -5043,6 +5045,12 @@ def compute_signal_strength(sym):
     macd_ok_long  = long_macd_cross  or macd_hist > 0
     macd_ok_short = short_macd_cross or macd_hist < 0
 
+    # 【手術一：動能加速強度加分】
+    # MACD 柱狀圖相比上一根擴張 >= 30%，視為「动能尚在擴大」，進場締時機更佳
+    # 还沒加速 = 0分；加速確認 = +3分加入 trend_score
+    _macd_accel_long  = macd_hist > 0 and prev_macd_hist > 0 and macd_hist >= prev_macd_hist * 1.3
+    _macd_accel_short = macd_hist < 0 and prev_macd_hist < 0 and macd_hist <= prev_macd_hist * 1.3
+
     # SMA200 純加分（不再作為硬性關口，EMA50 已守住方向）
     sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
@@ -5107,23 +5115,23 @@ def compute_signal_strength(sym):
 
     if long_base_ok:
         route = route_tag
-        # 基礎分 10.0（原 12.0）：降低純靠 EMA 偏離湊出的虛假強訊號
-        # MACD 金叉加分 7.0（原 5.0）：強化有真實動能確認的訊號
         strength = 10.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 7.0
+        elif _macd_accel_long:          # 【手術一】 MACD 尚在加速，額外 +3分
+            strength += 3.0
         if route_tag == "Pullback":
-            strength += 2.0  # EMA20 回測彈跳加分（位置精準）
+            strength += 2.0
         strength += long_trend_score + sma200_bonus_long
         return ("buy", strength if strength >= 10.0 else 0.0, route)
 
     if short_base_ok:
         route = route_tag
-        # 基礎分 10.0（原 12.0）：降低純靠 EMA 偏離湊出的虛假強訊號
-        # MACD 死叉加分 7.0（原 5.0）：強化有真實動能確認的訊號
         strength = 10.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 7.0
+        elif _macd_accel_short:         # 【手術一】 MACD 尚在加速，額外 +3分
+            strength += 3.0
         if route_tag == "Pullback":
             strength += 2.0
         strength += short_trend_score + sma200_bonus_short
