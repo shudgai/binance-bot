@@ -513,10 +513,10 @@ def save_symbol_profiles(profiles):
 
 
 def infer_symbol_personality(sym):
-    if sym in ("BTCUSDT", "ETHUSDT"):
+    if sym in ("BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "LINKUSDT"):
         return "calm"
-    aggressive_coins = {"DOGEUSDT", "SHIBUSDT"}
-    balanced_coins = {"ADAUSDT", "SOLUSDT", "LINKUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "INJUSDT", "RENDERUSDT"}
+    aggressive_coins = {"DOGEUSDT", "SHIBUSDT", "HYPEUSDT"}
+    balanced_coins   = {"SOLUSDT", "NEARUSDT", "SUIUSDT", "INJUSDT", "AVAXUSDT", "ADAUSDT", "RENDERUSDT"}
     if sym in aggressive_coins:
         return "aggressive"
     if sym in balanced_coins:
