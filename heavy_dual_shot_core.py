@@ -5488,12 +5488,29 @@ async def check_entries():
                             is_valid = False
 
                 if is_valid:
+                    # ── 趨勢偏向再確認（pending 路徑補加，避免開倉時已背離趨勢）──
+                    _tb_conf = s.get("trend_bias", "neutral")
+                    _tb_sc_conf = s.get("trend_bias_score", 0)
+                    _pend_side_conf = s.get("pending_side")
+                    _pend_str_conf = s.get("pending_strength", 5.0)
+                    _pend_route_conf = s.get("pending_route", "confirmed")
+                    if _tb_conf != "neutral" and _pend_route_conf not in ("Automatic_Reverse",):
+                        if _tb_conf == "short" and _pend_side_conf == "buy" and _pend_str_conf < 20.0:
+                            print(f"🛑 [TrendBias_Confirm] {sym} 確認階段趨勢偏空(score={_tb_sc_conf:+d})，取消逆勢多單")
+                            s["pending_side"] = None
+                            is_valid = False
+                        elif _tb_conf == "long" and _pend_side_conf == "sell" and _pend_str_conf < 20.0:
+                            print(f"🛑 [TrendBias_Confirm] {sym} 確認階段趨勢偏多(score={_tb_sc_conf:+d})，取消逆勢空單")
+                            s["pending_side"] = None
+                            is_valid = False
+
+                if is_valid:
                     print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
                     side = s["pending_side"]
                     strength = s.get("pending_strength", 5.0)
                     route = s.get("pending_route", "confirmed")
                     s["pending_side"] = None
-                    
+
                     p = s["close_price"]
                     atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
                     min_rr = s.get("min_rr", 1.0)
