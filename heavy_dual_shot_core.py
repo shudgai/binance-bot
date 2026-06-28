@@ -4753,15 +4753,15 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         if atr_pe > 0:
             if side == "buy" and bb_up_pe > 0:
                 dist_to_res = bb_up_pe - cp
-                # 【手術二】 BB 空間門檻 1.0→1.5 ATR，足夠的距離才不會採到障力
-                if dist_to_res < atr_pe * 1.5 and strength < 25.0:
-                    print(f"🛑 [Profit_Erosion] {sym} 多單空間不足：距離上方阻力 BB 上軌僅剩 {dist_to_res/atr_pe:.1f} ATR (< 1.5 ATR)，容易撞牆回落，拒絕進場")
+                # BB 空間門檻 1.2 ATR（原 1.5 ATR，放寬但仍保留緩衝）
+                if dist_to_res < atr_pe * 1.2 and strength < 25.0:
+                    print(f"🛑 [Profit_Erosion] {sym} 多單空間不足：距離上方阻力 BB 上軌僅剩 {dist_to_res/atr_pe:.1f} ATR (< 1.2 ATR)，容易撞牆回落，拒絕進場")
                     return False
             elif side == "sell" and bb_low_pe > 0:
                 dist_to_sup = cp - bb_low_pe
-                # 【手術二】 BB 空間門檻 1.0→1.5 ATR，足夠的距離才不會撞到支撐
-                if dist_to_sup < atr_pe * 1.5 and strength < 25.0:
-                    print(f"🛑 [Profit_Erosion] {sym} 空單空間不足：距離下方支撐 BB 下軌僅剩 {dist_to_sup/atr_pe:.1f} ATR (< 1.5 ATR)，容易撞牆反彈，拒絕進場")
+                # BB 空間門檻 1.2 ATR（原 1.5 ATR，放寬但仍保留緩衝）
+                if dist_to_sup < atr_pe * 1.2 and strength < 25.0:
+                    print(f"🛑 [Profit_Erosion] {sym} 空單空間不足：距離下方支撐 BB 下軌僅剩 {dist_to_sup/atr_pe:.1f} ATR (< 1.2 ATR)，容易撞牆反彈，拒絕進場")
                     return False
 
         # 3. 趨勢強度過濾 (Trend Strength Filter) - 確保 MACD 柱狀圖在擴張
@@ -5617,8 +5617,8 @@ async def check_entries():
                         continue
                         
                     expected_profit_pct = tp_dist / p if p > 0 else 0
-                    if expected_profit_pct < 0.015:  # Minimum 1.5% profit buffer (covers fees + slippage)
-                        print(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 1.5% 硬門檻，拒絕進場")
+                    if expected_profit_pct < 0.012:  # 最低獲利門檻 1.2%（原 1.5%），對齊 DUAL_SHOT_MIN_PROFIT_ROOM
+                        print(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，低於 1.2% 硬門檻，拒絕進場")
                         continue
                         
                     # [Layer 4] 動態空間過濾 (Adaptive Space Check)
