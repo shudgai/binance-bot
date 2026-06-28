@@ -1,0 +1,80 @@
+{
+    "balances": {
+        "USDT": 49.152,
+        "ETH": 0.018661154040136737,
+        "SOL": 0.3283483976992605,
+        "XRP": 17.847585372662138,
+        "ARB": 202.97142857142856,
+        "OP": 118.72061895551256
+    },
+    "avg_prices": {
+        "ETH": 1606.01,
+        "SOL": 73.02,
+        "XRP": 1.0747,
+        "ARB": 0.0756,
+        "OP": 0.1034
+    },
+    "open_trades": {},
+    "history": [
+        {
+            "time": 1782575196423,
+            "action": "buy",
+            "from_coin": "USDT",
+            "to_coin": "OP",
+            "from_amount": 12.288,
+            "to_amount": 118.72061895551256,
+            "from_price_usdt": 1.0,
+            "to_price_usdt": 0.1034,
+            "fee_usdt": 0.012288,
+            "rate": 9.671179883945841
+        },
+        {
+            "time": 1782575166513,
+            "action": "buy",
+            "from_coin": "USDT",
+            "to_coin": "ARB",
+            "from_amount": 15.36,
+            "to_amount": 202.97142857142856,
+            "from_price_usdt": 1.0,
+            "to_price_usdt": 0.0756,
+            "fee_usdt": 0.01536,
+            "rate": 13.227513227513228
+        },
+        {
+            "time": 1782575136520,
+            "action": "buy",
+            "from_coin": "USDT",
+            "to_coin": "XRP",
+            "from_amount": 19.2,
+            "to_amount": 17.847585372662138,
+            "from_price_usdt": 1.0,
+            "to_price_usdt": 1.0747,
+            "fee_usdt": 0.0192,
+            "rate": 0.9304922303898763
+        },
+        {
+            "time": 1782575105676,
+            "action": "buy",
+            "from_coin": "USDT",
+            "to_coin": "SOL",
+            "from_amount": 24.0,
+            "to_amount": 0.3283483976992605,
+            "from_price_usdt": 1.0,
+            "to_price_usdt": 73.02,
+            "fee_usdt": 0.024,
+            "rate": 0.013694878115584772
+        },
+        {
+            "time": 1782575075679,
+            "action": "buy",
+            "from_coin": "USDT",
+            "to_coin": "ETH",
+            "from_amount": 30.0,
+            "to_amount": 0.018661154040136737,
+            "from_price_usdt": 1.0,
+            "to_price_usdt": 1606.01,
+            "fee_usdt": 0.03,
+            "rate": 0.0006226611291336915
+        }
+    ]
+}

@@ -5217,17 +5217,25 @@ def compute_signal_strength(sym):
             near_sup = (bb_low_v > 0 and c1[3] <= bb_low_v * 1.02) or (recent_low_50 > 0 and c1[3] <= recent_low_50 * 1.02)
             bullish_signal = c1[4] >= c2[4] or c1[4] >= c1[1]  # 止跌（收盤 >= 前收）或當根收陽
             macd_recovering = macd_hist_now >= macd_hist_prev  # MACD 柱狀必須止跌回升
-            if near_sup and bullish_signal and macd_recovering:
-                print(f"🆘 [RSI超賣直觸發] {sym} RSI {rsi_now:.1f} < 26，支撐區有止跌跡象，觸發 Exhaustion_Entry")
+            _tb_rsi_c_long = s.get("trend_bias_score", 0)
+            # Route C RSI超賣直觸發：score <= -2 表示大趨募偏空，拒絕接刀做多 (Route A/B 門槛對齊)
+            if near_sup and bullish_signal and macd_recovering and _tb_rsi_c_long >= -1:
+                print(f"🆘 [RSI超賣直觸發-C] {sym} RSI {rsi_now:.1f} < 26，支撐區止跌 (score={_tb_rsi_c_long})，觸發 Exhaustion_Entry")
                 return ("buy", 15.0, "Exhaustion_Entry")
+            elif near_sup and bullish_signal and macd_recovering and _tb_rsi_c_long <= -2:
+                print(f"🛑 [Exhaustion_RSI_Block-C] {sym} RSI超賣但 trend_bias_score={_tb_rsi_c_long} 趨募強烈偏空，拒絕接刀")
         if rsi_now > 74:
             bb_up_v = s.get("bb_up", 0)
             near_res = (bb_up_v > 0 and c1[2] >= bb_up_v * 0.98) or (recent_high_50 > 0 and c1[2] >= recent_high_50 * 0.99)
             bearish_signal = c1[4] <= c2[4] or c1[4] <= c1[1]  # 見頂（收盤 <= 前收）或當根收陰
             macd_declining = macd_hist_now <= macd_hist_prev  # MACD 柱狀必須見頂轉弱
-            if near_res and bearish_signal and macd_declining:
-                print(f"🆘 [RSI超買直觸發] {sym} RSI {rsi_now:.1f} > 74，阻力區有見頂跡象，觸發 Exhaustion_Entry")
+            _tb_rsi_c_short = s.get("trend_bias_score", 0)
+            # Route C RSI超買直觸發：score >= 2 表示大趨募偏多，拒絕追空 (Route A/B 門槛對齊)
+            if near_res and bearish_signal and macd_declining and _tb_rsi_c_short <= 1:
+                print(f"🆘 [RSI超買直觸發-C] {sym} RSI {rsi_now:.1f} > 74，阻力區見頂 (score={_tb_rsi_c_short})，觸發 Exhaustion_Entry")
                 return ("sell", 15.0, "Exhaustion_Entry")
+            elif near_res and bearish_signal and macd_declining and _tb_rsi_c_short >= 2:
+                print(f"🛑 [Exhaustion_RSI_Block-C] {sym} RSI超買但 trend_bias_score={_tb_rsi_c_short} 趨募強烈偏多，拒絕打到反彈")
         sma200 = s.get("sma200_15m", 0)
         
         # 多單：抓回檔底部
