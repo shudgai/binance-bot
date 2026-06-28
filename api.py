@@ -189,6 +189,10 @@ def api_get_logs():
 def api_sl_states():
     return bot_status.get("sl_states", {})
 
+@app.get("/api/trend-bias")
+def api_trend_bias():
+    return bot_status.get("trend_bias", {})
+
 @app.get("/api/radar/scan")
 def api_radar_scan():
     try:

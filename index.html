@@ -520,7 +520,12 @@
                         :class="['coin-chip', activeSymbol === coin.symbol ? 'active' : '', disabledSymbols.includes(coin.symbol) ? 'coin-disabled' : '']"
                         @click="setActiveCoin(coin.symbol)"
                     >
-                        <span>{{ coin.name }}<span v-if="disabledSymbols.includes(coin.symbol)" style="font-size:9px;color:#f44;margin-left:3px;">停</span></span>
+                        <span>{{ coin.name }}<span v-if="disabledSymbols.includes(coin.symbol)" style="font-size:9px;color:#f44;margin-left:3px;">停</span><span
+                            v-if="trendBias[coin.symbol]"
+                            :style="{ fontSize:'9px', marginLeft:'3px', fontWeight:'bold',
+                                color: trendBias[coin.symbol].bias==='long' ? '#2ecc71' :
+                                       trendBias[coin.symbol].bias==='short' ? '#e74c3c' : '#888' }"
+                        >{{ trendBias[coin.symbol].bias==='long' ? '▲' : trendBias[coin.symbol].bias==='short' ? '▼' : '—' }}</span></span>
                         <span :class="['coin-chip-price', coin.priceClass]">
                             {{ formatMiniPrice(coin.price) }}
                         </span>
@@ -867,6 +872,7 @@ createApp({
         const twdRate = ref(32.5);
         const logs = ref([]);
         const slStates = ref({});
+        const trendBias = ref({});
         const activeTab = ref('chart');  // mobile tab: 'chart' | 'trade' | 'history' | 'settings'
         const consoleRef = ref(null);
         const isPlacingOrder = ref(false);
@@ -1890,6 +1896,13 @@ createApp({
             } catch(e) {}
         };
 
+        const fetchTrendBias = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/trend-bias`);
+                if (res.ok) trendBias.value = await res.json();
+            } catch(e) {}
+        };
+
         const fetchAllTradesHistory = async () => {
             // Implementation logic
         };
@@ -1947,7 +1960,9 @@ createApp({
             openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
             slInterval           = setInterval(fetchSlStates, 3000);
             setInterval(fetchPricesBatch, 5000);
+            setInterval(fetchTrendBias, 10000);
             fetchSlStates();
+            fetchTrendBias();
         });
 
         onUnmounted(() => {
@@ -1999,7 +2014,7 @@ createApp({
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
-            allPositions, getPositionInfo, openOrders, slStates,
+            allPositions, getPositionInfo, openOrders, slStates, trendBias,
             showLogs, showLogFullscreen,
             radarRanking, radarSelected,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,

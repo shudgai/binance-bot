@@ -891,6 +891,8 @@ def build_symbol_state(sym):
         "personality": "balanced",
         "personality_source": "infer",
         "last_personality_update": 0.0,
+        "trend_bias": "neutral",   # long / short / neutral — 每 25s 由 compute_indicators 更新
+        "trend_bias_score": 0,     # -3 ~ +3
         "last_entry_time": 0.0,
         "is_ordering": False,
         "last_action_time": 0.0,
@@ -1761,6 +1763,35 @@ def compute_indicators(sym):
             s["divergence"] = "bullish"
         elif curr_c >= c_max and curr_r < r_max and curr_r < prev_r:
             s["divergence"] = "bearish"
+
+    # ── 趨勢偏向判斷（EMA 多時框對齊）──
+    # 讓每個幣照自己的走向操作：順勢優先，逆勢攔截（雙熊框架僅為備援）
+    _tb_ema20   = s.get("ema20", 0.0)
+    _tb_ema50   = s.get("ema50", 0.0)
+    _tb_ema1h   = s.get("ema50_1h", 0.0)
+    _tb_price   = s.get("close_price", 0.0)
+    _tb_macd    = s.get("macd_hist", 0.0)
+    if _tb_ema20 > 0 and _tb_ema50 > 0 and _tb_price > 0:
+        _up = sum([
+            _tb_price > _tb_ema20,
+            _tb_ema20 > _tb_ema50,
+            _tb_ema1h > 0 and _tb_price > _tb_ema1h,
+            _tb_macd > 0,
+        ])
+        _dn = sum([
+            _tb_price < _tb_ema20,
+            _tb_ema20 < _tb_ema50,
+            _tb_ema1h > 0 and _tb_price < _tb_ema1h,
+            _tb_macd < 0,
+        ])
+        _score = _up - _dn   # +4 ~ -4
+        if _up >= 3 and _dn <= 1:
+            s["trend_bias"]       = "long"
+        elif _dn >= 3 and _up <= 1:
+            s["trend_bias"]       = "short"
+        else:
+            s["trend_bias"]       = "neutral"
+        s["trend_bias_score"] = _score
 
     # ── 持倉中：用 K 線 High/Low 同步追蹤峰值（補 WS trade feed 的漏網之魚）──
     # WS 成交流只抓到有成交的瞬間；K 線 high 才是真實最高點（含 maker 掛單成交）
@@ -5707,6 +5738,25 @@ async def check_entries():
         if not is_entry_allowed(sym, side, route, strength):
             continue
 
+        # --- 幣種趨勢偏向過濾（照幣種自己的走向操作）---
+        # neutral → 雙向開放；long → 優先做多；short → 優先做空
+        # 超強訊號（≥ 20）可突破趨勢限制，捕捉急跌/急漲反轉
+        _tb = s.get("trend_bias", "neutral")
+        _tb_score = s.get("trend_bias_score", 0)
+        if route not in ("Automatic_Reverse", "Extreme_Reversal") and not has_position:
+            if _tb == "long" and side == "sell":
+                if strength < 20.0:
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏多(score={_tb_score:+d})，逆勢空單被攔截 (強度{strength:.1f}<20)")
+                    continue
+                else:
+                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏多但強度{strength:.1f}≥20，允許逆勢空單")
+            elif _tb == "short" and side == "buy":
+                if strength < 20.0:
+                    print(f"🛑 [TrendBias] {sym} 趨勢偏空(score={_tb_score:+d})，逆勢多單被攔截 (強度{strength:.1f}<20)")
+                    continue
+                else:
+                    print(f"⚡ [TrendBias_Override] {sym} 趨勢偏空但強度{strength:.1f}≥20，允許逆勢多單")
+
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
         last_trade_side = s.get("last_trade_side", "")
         if last_trade_side != "" and side != last_trade_side and route != "Automatic_Reverse":
@@ -6291,6 +6341,18 @@ def print_multi_status():
     if sl_data:
         import json as _json
         print(f"@@SL_STATE@@{_json.dumps(sl_data)}")
+
+    # 輸出各幣種趨勢偏向（供 UI 顯示方向旗標）
+    trend_data = {}
+    for sym in ALL_SYMBOLS:
+        s = STATES.get(sym, {})
+        bias  = s.get("trend_bias", "neutral")
+        score = s.get("trend_bias_score", 0)
+        if bias != "neutral" or score != 0:
+            trend_data[sym] = {"bias": bias, "score": score}
+    if trend_data:
+        import json as _json
+        print(f"@@TREND_BIAS@@{_json.dumps(trend_data)}")
 
     # 4. 使用分隔線區隔，讓每一輪掃描的開始更清晰
     print("-" * 60)
