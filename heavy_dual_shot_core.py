@@ -983,7 +983,7 @@ def _macd_vals(s):
     prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
     return macd_hist, prev_macd_hist
 
-def _calc_sl_tp(sym, side, s, p, route="a"):
+def _calc_sl_tp(sym, side, s, p, route="Standard"):
     """Calculate ATR, SL distance, TP distance, expected R:R.
 
     Three-dimensional defense:
@@ -1073,7 +1073,7 @@ def is_symbol_locked(sym):
     s = STATES.get(sym)
     if not s:
         return False
-    return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED") or s.get("pending_side") is not None
+    return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED") or s.get("pending_side") is not None or s.get("pending_paper_order") is not None
 
 
 def filter_valid_symbols(exchange, symbols):
@@ -2976,7 +2976,7 @@ async def check_exits(sym):
                 # "volume decay + small profit" = midgame pause, hold position
                 _vd_progress = profit_pct / min_tp_pct if min_tp_pct > 0 else 0.0
                 # 若是強勢趨勢，將出場門檻提高到 0.85，讓利潤有機會擴大
-                is_strong = s.get("current_strength", 0.0) >= 15.0 or s.get("pending_route", "") == "a"
+                is_strong = s.get("current_strength", 0.0) >= 15.0 or s.get("pending_route", "") == "Standard"
                 vd_threshold = 0.85 if is_strong else 0.70
                 
                 if _vd_progress >= vd_threshold:
@@ -4180,7 +4180,7 @@ def is_entry_pin_safe(sym, side):
     return True
 
 
-def is_entry_allowed(sym, side, route="a", strength=0.0):
+def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     s = STATES[sym]
     cp = s["close_price"]
 
@@ -4406,7 +4406,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             print(f"🛑 觸發 [MTF 4H 強壓力位] {sym} 現價 {cp} 貼近 4H 布林下軌 {lower_4h:.4f} (<0.2*ATR)，禁止空單地板空")
             return False
 
-    is_trend = route == "a"
+    is_trend = route == "Standard"
     if side == 'buy' and not MARKET_WIND.get("allow_long", True) and is_trend:
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [大盤瀑布風控] 大盤異常跌勢，禁止開多")
         return False
@@ -4451,7 +4451,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     # --- [BTC 4H 趨勢] route a 趨勢多/空單：單 4H 逆風直接封鎖 ---
     btc_4h = MARKET_WIND.get("btc_trend_4h")
-    if is_trend and btc_4h is not None and route == "a":
+    if is_trend and btc_4h is not None and route == "Standard":
         if side == 'buy' and btc_4h == "BEAR":
             is_reversal_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry") or strength > 20.0
             if is_reversal_exempt:
@@ -4480,7 +4480,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
-                if route == "a":
+                if route == "Standard":
                     # [修正 3] 趨勢型多單：MTF 1H 為硬性攔截，強度不可繞過
                     print(f"🛑 [MTF_Hard] {sym} 趨勢多單：1H EMA50向下 ({cp:.4f}<{ema50_1h:.4f})，強制拒絕進場")
                     return False
@@ -4492,7 +4492,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             # 空單 MTF 1H EMA50 過濾：Exhaustion_Entry 不受限（反轉策略）
             if side == 'sell' and route != "Exhaustion_Entry":
                 if cp >= ema50_1h:
-                    if route == "a":
+                    if route == "Standard":
                         # [修正 3] 趨勢型空單：MTF 1H 為硬性攔截
                         print(f"🛑 [MTF_Hard] {sym} 趨勢空單：1H EMA50向上 ({cp:.4f}>{ema50_1h:.4f})，強制拒絕進場")
                         return False
@@ -4522,7 +4522,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，盤整中 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
         return False
     # [修正 4] 趨勢型進場額外要求：ATR 需在擴張或接近均值（不能在萎縮中）
-    if route == "a" and atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.85:
+    if route == "Standard" and atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.85:
         print(f"🛑 [Volatility_Shrink] {sym} ATR萎縮 ({current_atr:.5f} < 24H均{atr_24h_avg:.5f}×85%)，市場進入盤整，拒絕趨勢進場")
         return False
     if bb_width_pct > 0 and bb_width_pct < 0.002:
@@ -5084,14 +5084,14 @@ def compute_signal_strength(sym):
 
     long_base_ok  = route_a_long or route_b_long
     short_base_ok = route_a_short or route_b_short
-    route_tag     = "b" if (route_b_long or route_b_short) else "a"
+    route_tag     = "Pullback" if (route_b_long or route_b_short) else "Standard"
 
     if long_base_ok:
         route = route_tag
         strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
         if long_macd_cross:
             strength += 5.0
-        if route_tag == "b":
+        if route_tag == "Pullback":
             strength += 2.0  # EMA20 回測彈跳加分（位置精準）
         strength += long_trend_score + sma200_bonus_long
         return ("buy", strength if strength >= 10.0 else 0.0, route)
@@ -5101,7 +5101,7 @@ def compute_signal_strength(sym):
         strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
         if short_macd_cross:
             strength += 5.0
-        if route_tag == "b":
+        if route_tag == "Pullback":
             strength += 2.0
         strength += short_trend_score + sma200_bonus_short
         return ("sell", strength if strength >= 10.0 else 0.0, route)
@@ -5449,7 +5449,7 @@ async def check_entries():
                 prev_close = prev_candle[4]
 
                 # [修正 2] VPA 量價協同：訊號K線的量必須 >= 1.2x 均量（排除反轉路由）
-                _pending_route = s.get("pending_route", "a")
+                _pending_route = s.get("pending_route", "Standard")
                 if _pending_route not in ("Exhaustion_Entry", "Extreme_Reversal"):
                     _sig_vol = prev_candle[5]
                     _vol_ma = s.get("vol_ma20", 0.0)
@@ -5563,7 +5563,7 @@ async def check_entries():
                                     continue
 
                     # RSI 過熱/過冷保護：趨勢型訊號確認時，禁止追高做多或追低做空
-                    if route == "a":
+                    if route == "Standard":
                         rsi_conf = s.get("rsi", 50.0)
                         if side == "buy" and rsi_conf > 68.0:
                             print(f"🛑 [RSI過熱] {sym} 確認階段 RSI={rsi_conf:.1f}>68，趨勢多單追高風險過高，放棄")
