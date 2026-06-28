@@ -162,16 +162,16 @@ COIN_PROFILE_CONFIG = {
     # ══════════════════════════════════════════════════════════════════════
 
     # ETH｜穩定基石 — 最高流動性，跟隨宏觀，低槓桿穩打；寧等強訊號不貿然進
-    "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.6, "min_signal_strength": 15.0},
+    "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # SOL｜趨勢旗艦 — 生態系龍頭，趨勢確認後動能強；硬停損守住不爆倉
     "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
 
     # AVAX｜均衡生態 — 中等流動性L1，跟大盤趨勢；寬於ETH但不躁進
-    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 15.0},
+    "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # NEAR｜均衡L1 — 中等波動、穩定生態，不激進；3x槓桿穩健操作
-    "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 15.0, "disable_rescue_dca": True},
+    "NEARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0, "disable_rescue_dca": True},
 
     # ADA｜低噪追隨 — 低價高雜訊，自身趨勢弱，只在明確方向時進；槓桿壓到最低
     "ADAUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 7.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 2, "rr_threshold": 1.5, "min_signal_strength": 14.0, "hard_sl_pct": 0.025},
@@ -180,25 +180,25 @@ COIN_PROFILE_CONFIG = {
     "AAVEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 16.0, "trailing_activation_atr": 1.5, "trailing_distance_atr": 0.8},
 
     # BNBUSDT / XRPUSDT / DOTUSDT / LTCUSDT / LINKUSDT — 保留原設定
-    "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 15.0},
-    "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 15.0},
-    "DOTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 15.0},
-    "LTCUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 15.0},
-    "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 15.0},
+    "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "XRPUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "DOTUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "LTCUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "LINKUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # ══════════════════════════════════════════════════════════════════════
     # 第二類：高彈性動能型 — 波動大、追蹤停利是命脈、單次報酬高
     # ══════════════════════════════════════════════════════════════════════
 
     # INJ｜劇烈動能爆發 — 低浮動籌碼，一旦啟動波幅驚人；追蹤停利鎖住，嚴格入場
-    "INJUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0, "hard_sl_pct": 0.015, "disable_rescue_dca": True, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
+    "INJUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.2, "min_signal_strength": 19.0, "hard_sl_pct": 0.015, "disable_rescue_dca": True, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
 
     # APT｜爆發新星 — 主題敘事驅動，一旦趨勢確立幅度大；追蹤停利+寬停損容納波動
-    "APTUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 16.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
+    "APTUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.2, "min_signal_strength": 18.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
 
     # SUI — 保留原設定
-    "SUIUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 17.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
-    "HYPEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
+    "SUIUSDT":  {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.7, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 4, "rr_threshold": 2.2, "min_signal_strength": 19.0, "trailing_activation_atr": 1.2, "trailing_distance_atr": 0.7},
+    "HYPEUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 3, "rr_threshold": 2.2, "min_signal_strength": 19.0},
 
     # ══════════════════════════════════════════════════════════════════════
     # 第三類：低價投機型 — 單價極低、ATR% 超高、最低槓桿硬停損保命
@@ -212,7 +212,7 @@ COIN_PROFILE_CONFIG = {
 
     # DOGE — 保留原設定
     # DOGE｜梗幣王 — 量大波動猛，但假訊號多，必須 MTF 過濾保護，RSI 超賣禁空
-    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 17.0},
+    "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.8, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 19.0},
 
 }
 
@@ -4218,10 +4218,10 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # [放寬] 量能硬門檻：高波動 0.8→0.4，低波動 0.6→0.3
     # 策略：僅攔截真正死水行情，讓更多訊號通過，由後端 RR/ATR/利潤 守門
     # 低波動模式下自動減半量能門櫛，避免死水行情下封磁所有訊號
-    vol_multiplier = (0.15 if is_low_vol_mode else 0.2)
+    vol_multiplier = (0.35 if is_low_vol_mode else 0.5)
     dynamic_vol_threshold = volume_ma20 * vol_multiplier
     if current_volume <= dynamic_vol_threshold:
-        mode_label = "低波動放寬模式 30%" if is_low_vol_mode else "高波動放寬 40%"
+        mode_label = "低波動模式 35%" if is_low_vol_mode else "高波動模式 50%"
         if route in ("Extreme_Reversal", "Exhaustion_Entry") or strength >= 20.0:
             # 豁免死水攔截，但 Exhaustion_Entry 仍需最低均量門檻，避免完全沒人的行情
             if route == "Exhaustion_Entry":
@@ -4279,10 +4279,10 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         eval_vol = s.get("current_vol", current_volume)
         
         if avg_body_size > 0 and volume_ma20 > 0:
-            # 條件：實體大於平均 1.3 倍，且成交量大於平均 1.4 倍 (嚴格要求 AND)
-            if current_body_size <= avg_body_size * 1.2 or eval_vol <= volume_ma20 * 1.3:
-                # 若訊號強度非常高 (e.g. > 20.0) 或反轉路線，給予豁免
-                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
+            # 條件：實體大於平均 1.5 倍，且成交量大於平均 1.5 倍（收緊品質門檻）
+            if current_body_size <= avg_body_size * 1.5 or eval_vol <= volume_ma20 * 1.5:
+                # 若訊號強度非常高 (>= 22) 或反轉路線，給予豁免
+                if strength >= 22.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
                     print(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢訊號({strength:.1f})或反手/枯竭路由，豁免實體/量能嚴格門檻")
                 else:
                     print(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力(需實體>1.2x且量能>1.3x)，拒絕進場。(實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/volume_ma20:.2f}x)")
@@ -4297,8 +4297,8 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
             # 計算 3 根 K 線間的變動率
             slope_pct = (ema20_now - ema20_past) / ema20_past
             # 設定門檻：3 根 K 線至少要有 0.05% 的變動 (數值可微調)
-            slope_threshold = 0.0005
-            
+            slope_threshold = 0.0012
+
             if side == "buy" and slope_pct < slope_threshold:
                 if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
                     pass
@@ -4357,7 +4357,7 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         adx_val = s.get("adx", 0.0)
         if adx_val > 0 and strength < 25.0:  # adx 資料存在才過濾（避免初始化前誤攔截）
             # 強訊號（strength >= 20）放寬至 ADX > 15，其餘硬性要求 ADX > 18
-            adx_min = 18.0 if strength >= 20.0 else 20.0
+            adx_min = 20.0 if strength >= 20.0 else 25.0
             if adx_val < adx_min:
                 print(f"🛑 [REJECT] [Filter:ADX_Ranging] {sym} ADX {adx_val:.1f} < {adx_min:.0f}，市場處於盤整區間，假突破風險高，拒絕 {side} 訊號（強度: {strength:.1f}）")
                 return False
@@ -4368,13 +4368,20 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # Extreme_Reversal 豁免：反轉策略本質上就是逆勢進場，MTF趨勢對齊反而是錯誤的限制
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
-    # [放寬] MTF 15m 趨勢對齊：改為警告而非硬攔截
-    # 理由：讓 RR/ATR/利潤門檻取代趨勢強制攔截，允許逆勢高品質訊號通過
-    if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
+    # MTF 15m 趨勢對齊：硬封鎖（Standard 路由；強度 >= 22 或反轉路由豁免）
+    if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse"):
         if side == 'sell' and ema20_15m > ema50_15m:
-            print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — 由 RR/利潤門檻把關")
+            if strength >= 22.0:
+                print(f"⚡ [MTF_Trend_Override] {sym} 15m 趨勢向上但強度{strength:.1f}≥22，允許開空")
+            else:
+                print(f"🛑 [MTF_Trend_Block] {sym} 15m EMA20({ema20_15m:.4f})>EMA50({ema50_15m:.4f}) 趨勢向上，禁止開空 (強度{strength:.1f}<22)")
+                return False
         elif side == 'buy' and ema20_15m < ema50_15m:
-            print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — 由 RR/利潤門檻把關")
+            if strength >= 22.0:
+                print(f"⚡ [MTF_Trend_Override] {sym} 15m 趨勢向下但強度{strength:.1f}≥22，允許開多")
+            else:
+                print(f"🛑 [MTF_Trend_Block] {sym} 15m EMA20({ema20_15m:.4f})<EMA50({ema50_15m:.4f}) 趨勢向下，禁止開多 (強度{strength:.1f}<22)")
+                return False
             
     # 4. 收盤確認 (Candle Close Check) — Extreme_Reversal 豁免（極端超賣/超買反轉本就逆勢進場）
     if route not in ("Extreme_Reversal", "Exhaustion_Entry") and strength < 25.0 and len(s["ohlcv"]) >= 2:
@@ -4430,18 +4437,18 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     if is_trend:
         pass  # is_trend 已由上方統一的 EMA 距離過濾處理，不需重複
 
-    # --- [15m EMA 趨勢過濾] ---
+    # --- [15m EMA 趨勢過濾] 強度 >= 20 才豁免（原本 >= 10，過於寬鬆）---
     if is_trend:
-        if strength >= 10.0:
-            pass # 強勢 Override，跳過 15m EMA 過濾
+        if strength >= 20.0:
+            pass
         else:
             ema20_15m = s.get("ema20_15m", 0.0)
             if ema20_15m > 0:
                 if side == 'buy' and cp < ema20_15m:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做多，但 15m EMA 向下 (現價 {cp:.4f} < 15m_EMA20 {ema20_15m:.4f})")
+                    print(f"🛑 [15m_EMA] {sym} 做多但現價({cp:.4f}) < 15m_EMA20({ema20_15m:.4f})，禁止逆勢多")
                     return False
                 if side == 'sell' and cp > ema20_15m:
-                    print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做空，但 15m EMA 向上 (現價 {cp:.4f} > 15m_EMA20 {ema20_15m:.4f})")
+                    print(f"🛑 [15m_EMA] {sym} 做空但現價({cp:.4f}) > 15m_EMA20({ema20_15m:.4f})，禁止逆勢空")
                     return False
 
     # --- [BTC 4H 趨勢] route a 趨勢多/空單：單 4H 逆風直接封鎖 ---
