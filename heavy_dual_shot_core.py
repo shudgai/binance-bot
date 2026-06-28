@@ -165,7 +165,7 @@ COIN_PROFILE_CONFIG = {
     "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.6, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.6, "min_signal_strength": 13.0},
 
     # SOL｜趨勢旗艦 — 生態系龍頭，趨勢確認後動能強；硬停損守住不爆倉
-    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 15.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
+    "SOLUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.012},
 
     # AVAX｜均衡生態 — 中等流動性L1，跟大盤趨勢；寬於ETH但不躁進
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 14.0},
@@ -5048,13 +5048,21 @@ def compute_signal_strength(sym):
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
+    # 關鍵修正：加入 SMA200 方向一致性檢查
+    # 做多：SMA200 中立或支持多頭（sma200_neutral 或 is_above_sma200）
+    # 做空：SMA200 中立或支持空頭（sma200_neutral 或 is_below_sma200）
+    # 目的：防止在長線多頭結構（close > SMA200）中反覆開空，以及長線空頭結構中反覆開多
+    sma200_ok_long  = sma200_neutral or is_above_sma200
+    sma200_ok_short = sma200_neutral or is_below_sma200
+
     route_a_long = (
         macd_ok_long and
         last_candle_long and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
-        close_near_ema20_long
+        close_near_ema20_long and
+        sma200_ok_long              # 新增：SMA200 方向不能逆勢
     )
 
     route_a_short = (
@@ -5063,7 +5071,8 @@ def compute_signal_strength(sym):
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
-        close_near_ema20_short
+        close_near_ema20_short and
+        sma200_ok_short             # 新增：SMA200 方向不能逆勢
     )
 
     # ── Route B: EMA20 回測彈跳（趨勢延續中途補進）─────────────────────────
