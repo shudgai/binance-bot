@@ -2842,9 +2842,8 @@ async def check_exits(sym):
     # 避免 0.15% 微利就觸發保本，導致價格彈回後立即出場（手續費白白損失）
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    # 【手術四】保本觸發門檻提高至最低 1.0%，給倉位足夠呼吸空間
-    # 原 0.3% 太低：利潤剛 0.3% 就鎖保本，任何微小回撤就被洗出場
-    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.006)
+    # 【保本觸發上限】為了確保利潤不回吐，不管 ATR 多大，利潤一到 0.5% 絕對無條件啟動保本
+    breakeven_threshold = min(max(entry_atr_pct * _be_mult, 0.004), 0.005)
     
     # --- 保本緩衝：改用 ATR 動態計算，最低 1.2%，避免空單因緩衝太小立即觸發保本 ---
     # 原固定 0.5% 在低 ATR 幣種幾乎等同即時停損，特別傷害空單
@@ -3081,8 +3080,8 @@ async def check_exits(sym):
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
-    # 【提早啟動追蹤停利】啟動門檻從 0.5% (2.0%÷4x) 降為 0.25% (1.0%÷4x)
-    ts_activation_pct = max(0.010 / _lev, atr_pct * 0.2)
+    # 【提早啟動追蹤停利】啟動門檻從 0.5% (2.0%÷4x) 降為 0.25% (1.0%÷4x)，且設定絕對上限 0.5%
+    ts_activation_pct = min(max(0.010 / _lev, atr_pct * 0.2), 0.005)
     # 動態縮緊（ATR 分層）：與 update_trailing_stop 一致，利潤越高追蹤網越緊
     # 【極致高點停利】根據使用者需求：利潤要停在最高點，大幅縮緊回撤容忍度
     if _hp >= 0.03:     ts_retracement_pct = atr_pct * 0.1   # > 3%：極度貼緊 (0.1x ATR)
