@@ -4276,9 +4276,9 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # =========================================================================
     # 🛑 STAGE 0.5: TREND BIAS GATE (幣種自身趨勢偏向過濾)
     # trend_bias_score = +4 ~ -4，由 EMA20/EMA50/EMA1H/MACD 組成
-    # 反轉路由（Exhaustion/Extreme_Reversal）豁免：它們本來就是逆勢策略
-    # =========================================================================
-    if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
+    # 【徹底解決逆勢開錯方向】移除 Exhaustion/Extreme 反轉路由的豁免權！
+    # 讓所有進場（除了系統自己判斷的 Automatic_Reverse）全部都要乖乖遵守最高等級的趨勢過濾
+    if route not in ("Automatic_Reverse",):
         _tb_score_gate = s.get("trend_bias_score", 0)
         # score 永遠是偶數 (0, ±2, ±4)，中性(0)時不進場，只在明確趨勢方向才開倉
         # require_strong_bias 幣種（如 SOL）需 4 項全符合 (score = ±4)，避免盤整洗盤
