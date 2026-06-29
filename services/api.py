@@ -111,7 +111,7 @@ async def startup_event():
 
 @app.get("/")
 def read_root():
-    with open("index.html", "r", encoding="utf-8") as f:
+    with open(os.path.join(os.path.dirname(__file__), "..", "web", "index.html"), "r", encoding="utf-8") as f:
         content = f.read()
     response = HTMLResponse(content=content, media_type="text/html; charset=utf-8")
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
@@ -498,10 +498,11 @@ def api_chat(chat_msg: ChatMessage):
 @app.get("/api/history/summary")
 def api_history_summary():
     try:
-        if not os.path.exists("paper_state.json"):
+        ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+        if not os.path.exists(ps_path):
             return {"summaries": []}
         tz = pytz.timezone('Asia/Taipei')
-        with open("paper_state.json", "r") as f:
+        with open(ps_path, "r") as f:
             state = json.load(f)
         trades = state.get("trades", [])
         daily = {}
@@ -526,9 +527,10 @@ def api_history_summary():
 @app.get("/api/history/download/{date}")
 def api_history_download(date: str):
     try:
-        if not os.path.exists("paper_state.json"):
+        ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+        if not os.path.exists(ps_path):
             raise HTTPException(status_code=404, detail="無交易紀錄")
-        with open("paper_state.json", "r") as f:
+        with open(ps_path, "r") as f:
             state = json.load(f)
         trades = state.get("trades", [])
         tz = pytz.timezone('Asia/Taipei')
@@ -625,7 +627,7 @@ from services.spot_service import (
 
 @app.get("/spot")
 def spot_page():
-    return FileResponse("spot.html")
+    return FileResponse(os.path.join(os.path.dirname(__file__), "..", "web", "spot.html"))
 
 @app.get("/api/spot/coins")
 def api_spot_coins():

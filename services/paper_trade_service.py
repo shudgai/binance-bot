@@ -2,10 +2,10 @@ import os
 import json
 from services.binance_service import get_price
 from services.bot_manager_service import restart_bot, get_bot_status
-from update_paper_state import update_paper_state
+from services.update_paper_state import update_paper_state
 from services.system_log_service import add_system_log
 
-PAPER_STATE_FILE = "paper_state.json"
+PAPER_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
 import sys
 # 測試環境隔離，避免單元測試污染實際紙交易數據
 if any("pytest" in x or "unittest" in x for x in sys.argv) or "pytest" in sys.modules or "unittest" in sys.modules:

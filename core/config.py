@@ -6,7 +6,7 @@ load_dotenv()
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
 TIMEFRAME = '5m'
-TRADE_HISTORY_FILE = "trade_history.json"
+TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 2
 DEFAULT_LEVERAGE = 5
 DUAL_SHOT_MAX_SLOTS = 2
@@ -64,7 +64,7 @@ DEFAULT_SYMBOLS = [
     "LINKUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT",
     "HYPEUSDT", "AAVEUSDT", "AVAXUSDT", "DOGEUSDT",
 ]
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_symbols.json")
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
 
 PERSONALITY_TEMPLATES = {
     "calm": {

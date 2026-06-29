@@ -7,7 +7,7 @@ from services.bot_manager_service import get_bot_status, start_bot, kill_bot, sa
 from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins
 from core.config import COIN_PROFILE_CONFIG
 
-SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
+SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 
 
 def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:
@@ -137,7 +137,7 @@ def trigger_manual_radar():
 
 def _get_recently_traded_symbols(hours=24):
     try:
-        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "paper_state.json")
+        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "paper_state.json")
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:
@@ -156,7 +156,7 @@ def _get_recently_traded_symbols(hours=24):
 
 def _get_open_position_symbols():
     try:
-        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "paper_state.json")
+        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "paper_state.json")
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:

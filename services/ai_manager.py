@@ -12,8 +12,8 @@ load_dotenv()
 # --- 配置 ---
 AI_API_KEY = os.getenv("OPENAI_API_KEY")
 AI_MODEL = "gpt-4o" # 推薦使用 gpt-4o 或 claude-3-5-sonnet
-TRADE_HISTORY_FILE = "trade_history.json"
-BOT_SYMBOLS_FILE = "bot_symbols.json"
+TRADE_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "trade_history.json")
+BOT_SYMBOLS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
 
 # --- 安全閥門：硬性限制 ---
 SAFETY_LIMITS = {

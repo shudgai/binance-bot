@@ -2,7 +2,7 @@ import json
 import os
 import time
 
-SPOT_STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "spot_state.json")
+SPOT_STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "spot_state.json")
 SPOT_FEE_RATE = 0.001  # 0.1%
 
 SUPPORTED_COINS = [

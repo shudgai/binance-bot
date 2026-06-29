@@ -10,8 +10,8 @@ load_dotenv()
 # Configuration
 WHITELIST = ["BTCUSDT", "ETHUSDT"]
 MAX_SYMBOLS = 20  # Target count of active symbols
-STATE_FILE = os.path.join(os.path.dirname(__file__), "scanner_state.json")
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "bot_symbols.json")
+STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "scanner_state.json")
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
 SCAN_INTERVAL_SEC = 3600
 
 def run_scan():

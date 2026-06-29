@@ -15,8 +15,8 @@ from core.state_manager import mark_exit, reset_coin_state, build_symbol_state
 from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES
 from core.config import get_symbol_leverage
 from services.utils import paper_key
-from update_paper_state import update_paper_state
-from ai_manager import ai_engine
+from services.update_paper_state import update_paper_state
+from services.ai_manager import ai_engine
 
 
 def _import_update_trailing_stop():
@@ -306,7 +306,7 @@ async def execute_panic_sell_all_positions():
 def get_total_wallet_balance():
     if PAPER_TRADING:
         try:
-            with open("paper_state.json", 'r') as f:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), 'r') as f:
                 st = json.load(f)
                 realized = sum(v.get('realized_pnl', 0.0) for v in st.get('positions', {}).values())
                 return 1500.0 + realized

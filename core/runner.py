@@ -254,7 +254,7 @@ async def main_loop(exchange):
 
             # --- AI 大腦診斷 ---
             try:
-                from ai_manager import ai_engine
+                from services.ai_manager import ai_engine
                 if time.time() % 1800 < 6:
                     asyncio.create_task(ai_engine.run_ai_diagnosis_cycle())
             except ImportError:
@@ -373,7 +373,7 @@ async def periodic_status_log():
             cache_data = {}
             for sym in ctx.STATES:
                 cache_data[sym] = ctx.STATES[sym]["atr_history"][-1000:]
-            with open("atr_history_cache.json", "w") as f:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "atr_history_cache.json"), "w") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -386,7 +386,7 @@ async def sync_paper_state():
         if not PAPER_TRADING:
             continue
         try:
-            with open("paper_state.json", "r") as f:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), "r") as f:
                 state = json.load(f)
             for sym in ctx.ALL_SYMBOLS:
                 pk = paper_key(sym)

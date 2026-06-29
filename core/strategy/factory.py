@@ -1,7 +1,10 @@
 from core.strategy.base_strategy import BaseStrategy
 from core.strategy.trend_strategy import CoreTrendStrategy
 from core.strategy.momentum_strategy import HighBetaMomentumStrategy
-from core.strategy.speculative_strategy import SpeculativeRiskStrategy
+try:
+    from core.strategy.speculative_strategy import SpeculativeRiskStrategy
+except ImportError:
+    SpeculativeRiskStrategy = None
 from core.config import COIN_PROFILE_CONFIG
 
 class StrategyFactory:
@@ -15,7 +18,9 @@ class StrategyFactory:
         elif profile_type == "High_Beta_Momentum":
             return HighBetaMomentumStrategy(symbol)
         elif profile_type == "Speculative_Risk":
-            return SpeculativeRiskStrategy(symbol)
+            if SpeculativeRiskStrategy is not None:
+                return SpeculativeRiskStrategy(symbol)
+            return CoreTrendStrategy(symbol)
         else:
             # Default to Core Trend
             return CoreTrendStrategy(symbol)

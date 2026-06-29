@@ -70,7 +70,7 @@ def load_symbol_config():
         SYMBOL_REVERSAL_SETTINGS = reversal_settings
 
         try:
-            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "strategy_config.json"), "r") as f:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "strategy_config.json"), "r") as f:
                 config = json.load(f)
                 priority_list = config.get("priority_symbols", [])
         except Exception:

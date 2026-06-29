@@ -55,7 +55,7 @@ def get_balance():
     if not PAPER_TRADING:
         return REAL_BALANCE
     try:
-        with open("paper_state.json", "r") as f:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), "r") as f:
             state = json.load(f)
             return float(state.get("balance_usdt", 150.0))
     except:
@@ -77,7 +77,7 @@ def get_fee_overhead(leverage: float = 5.0) -> float:
 def get_total_wallet_balance():
     if PAPER_TRADING:
         try:
-            with open("paper_state.json", 'r') as f:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), 'r') as f:
                 st = json.load(f)
                 return float(st.get("balance_usdt", 150.0))
         except:

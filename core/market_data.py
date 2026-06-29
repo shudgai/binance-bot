@@ -78,8 +78,9 @@ async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SI
 
     loaded_symbols = set()
     try:
-        if os.path.exists("atr_history_cache.json"):
-            with open("atr_history_cache.json", "r") as f:
+        cache_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "atr_history_cache.json")
+        if os.path.exists(cache_path):
+            with open(cache_path, "r") as f:
                 cache_data = json.load(f)
             for sym in cache_data:
                 if sym in ctx.STATES and sym in target_symbols:
@@ -247,7 +248,8 @@ async def load_open_positions():
     if not PAPER_TRADING:
         return
     try:
-        with open("paper_state.json", "r") as f:
+        state_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json")
+        with open(state_path, "r") as f:
             state = json.load(f)
 
         current_time = time.time()

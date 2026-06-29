@@ -1,0 +1,102 @@
+{
+  "symbols": [
+    "HYPEUSDT",
+    "NEARUSDT",
+    "INJUSDT",
+    "SUIUSDT",
+    "AVAXUSDT",
+    "AAVEUSDT",
+    "ADAUSDT",
+    "APTUSDT"
+  ],
+  "profiles": {
+    "HYPEUSDT": {
+      "sl_atr_multiplier": 4.5,
+      "tp_atr_multiplier": 17.7,
+      "leverage": 2,
+      "_radar_atr_pct": 12.46,
+      "_radar_rank": 1,
+      "_radar_tag": "正常/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "NEARUSDT": {
+      "sl_atr_multiplier": 3.5,
+      "tp_atr_multiplier": 14.4,
+      "leverage": 2,
+      "_radar_atr_pct": 11.153,
+      "_radar_rank": 2,
+      "_radar_tag": "正常/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "INJUSDT": {
+      "sl_atr_multiplier": 4.0,
+      "tp_atr_multiplier": 19.8,
+      "leverage": 2,
+      "_radar_atr_pct": 8.654,
+      "_radar_rank": 3,
+      "_radar_tag": "正常/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "SUIUSDT": {
+      "sl_atr_multiplier": 4.5,
+      "tp_atr_multiplier": 27.8,
+      "leverage": 2,
+      "_radar_atr_pct": 7.915,
+      "_radar_rank": 4,
+      "_radar_tag": "低價/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "AVAXUSDT": {
+      "sl_atr_multiplier": 3.5,
+      "tp_atr_multiplier": 13.6,
+      "leverage": 2,
+      "_radar_atr_pct": 7.779,
+      "_radar_rank": 5,
+      "_radar_tag": "正常/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "AAVEUSDT": {
+      "sl_atr_multiplier": 3.5,
+      "tp_atr_multiplier": 16.0,
+      "leverage": 2,
+      "_radar_atr_pct": 7.748,
+      "_radar_rank": 6,
+      "_radar_tag": "正常/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.5,
+      "trailing_distance_atr": 0.8
+    },
+    "ADAUSDT": {
+      "sl_atr_multiplier": 3.5,
+      "tp_atr_multiplier": 9.1,
+      "leverage": 2,
+      "_radar_atr_pct": 7.34,
+      "_radar_rank": 7,
+      "_radar_tag": "低價/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "APTUSDT": {
+      "sl_atr_multiplier": 4.5,
+      "tp_atr_multiplier": 23.0,
+      "leverage": 2,
+      "_radar_atr_pct": 7.155,
+      "_radar_rank": 8,
+      "_radar_tag": "低價/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    }
+  }
+}

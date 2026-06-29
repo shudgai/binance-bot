@@ -4,7 +4,7 @@ import fcntl
 import threading
 import time
 
-PAPER_STATE_FILE = "paper_state.json"
+PAPER_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
 _lock = threading.Lock()
 
 def update_paper_state(symbol: str, side: str, price: float, qty: float, is_close: bool = False, pnl: float = 0.0):

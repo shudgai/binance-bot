@@ -20,8 +20,8 @@ bot_status = {
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
-SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
-BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_running_state.json")
+SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
+BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
     "SOLUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT",
     "LINKUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT"
@@ -145,7 +145,7 @@ def get_bot_status():
         try:
             total_realized = 0.0
             total_fees = 0.0
-            state_path = os.path.join(os.path.dirname(__file__), "..", "paper_state.json")
+            state_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
             if os.path.exists(state_path):
                 with open(state_path, "r") as f:
                     state = json.load(f)
@@ -274,7 +274,7 @@ def _start_single_bot(symbol: str, trade_amt: float):
 
 def _start_multi_coin_bot(trade_amt: float):
     global bot_processes
-    cmd = [sys.executable, "-u", "heavy_dual_shot_core.py"]
+    cmd = [sys.executable, "-u", "main.py"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
@@ -283,7 +283,7 @@ def _start_multi_coin_bot(trade_amt: float):
 
 def _get_open_position_symbols():
     try:
-        state_path = os.path.join(os.path.dirname(__file__), "..", "paper_state.json")
+        state_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:
@@ -364,7 +364,7 @@ def kill_bot():
     
     # 確保所有遺留的 bot 行程都被清除（包含 manage_bot.sh 直接啟動的進程）
     try:
-        os.system("pkill -f 'heavy_dual_shot_core\\.py'")
+        os.system("pkill -f 'main\\.py'")
     except:
         pass
 

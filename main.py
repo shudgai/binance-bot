@@ -1,5 +1,5 @@
 """
-heavy_dual_shot_core.py — Thin entry-point (refactored)
+main.py — Thin entry-point (refactored)
 All trading logic lives in core/*.py modules.
 """
 import asyncio
