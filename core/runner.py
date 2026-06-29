@@ -401,17 +401,22 @@ async def main():
     asyncio.create_task(sync_paper_state())
     asyncio.create_task(periodic_htf_update(exchange_futures))
     asyncio.create_task(periodic_status_log())
-    asyncio.create_task(check_stale_limit_orders())  # 逆期限價單止單機制
+    asyncio.create_task(check_stale_limit_orders())
 
-    while True:
+    try:
+        while True:
+            try:
+                await main_loop(exchange_futures)
+            except Exception as e:
+                print(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
+                traceback.print_exc()
+                print("⏳ 將在 10 秒後由內部自動重啟主程序...")
+                await asyncio.sleep(10)
+    finally:
+        # 在同一個 event loop 內關閉 ccxt 連線，避免跨 loop 的資源殘留
         try:
-            await main_loop(exchange_futures)
-        except Exception as e:
-            print(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
-            traceback.print_exc()
-            print("⏳ 將在 10 秒後由內部自動重啟主程序...")
-            await asyncio.sleep(10)
-        finally:
+            await exchange_futures.close()
+        except Exception:
             pass
 
 

@@ -90,14 +90,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n🛑 程式已被手動終止 (KeyboardInterrupt)")
     except Exception as e:
+        import traceback
         print(f"\n🚨 核心運行遭遇未捕獲異常: {e}", file=sys.stderr)
-    finally:
-        print("⏳ 正在釋放交易所 API 連線資源...")
-        try:
-            # 用全新 event loop 避免與已結束的 asyncio.run() 衝突
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(exchange_futures.close())
-            loop.close()
-            print("✅ 資源釋放完畢，安全退出。")
-        except Exception as e:
-            print(f"⚠️ 釋放資源時發生異常 (可能已在核心內部關閉): {e}", file=sys.stderr)
+        traceback.print_exc()
+    # exchange_futures.close() 已在 core.runner.main() 的 finally 中處理（同一 event loop）
