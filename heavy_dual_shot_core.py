@@ -214,6 +214,21 @@ COIN_PROFILE_CONFIG = {
     # DOGE｜梗幣王 — 量大波動猛，但假訊號多，必須 MTF 過濾保護，RSI 超賣禁空
     "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 19.0},
 
+    # ══ 雷達選入的新幣種（保守設定，2x槓桿、嚴格門檻）══
+    "GUAUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 20.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015},
+    "SIRENUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 20.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015},
+
+}
+
+# 雷達選入但尚未手動設定的新幣種：套用此保守預設值（日後自動生效）
+DEFAULT_NEW_COIN_PROFILE = {
+    "sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0,
+    "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5,
+    "min_flip_time": 1800, "mtf_filter": True,
+    "profile_type": "Speculative_Risk",
+    "leverage": 2, "rr_threshold": 2.0,
+    "min_signal_strength": 20.0,
+    "disable_rescue_dca": True, "hard_sl_pct": 0.015,
 }
 
 ALL_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
@@ -4277,11 +4292,11 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     s = STATES[sym]
     cp = s["close_price"]
 
-    # 無風控配置的幣種（如雷達選入但未在 COIN_PROFILE_CONFIG 的新幣）禁止開倉
-    # 原因：會使用 DEFAULT_LEVERAGE=5 且無 hard_sl_pct，風險不可控
+    # 正常情況下 main_loop 已自動為新幣套用 DEFAULT_NEW_COIN_PROFILE
+    # 此處作最後防線：若仍無設定，套用預設後放行（避免 DEFAULT_LEVERAGE=5）
     if sym not in COIN_PROFILE_CONFIG:
-        print(f"🚫 [NO_PROFILE] {sym} 無風控配置，禁止開倉（DEFAULT_LEVERAGE=5 風險過高）")
-        return False
+        COIN_PROFILE_CONFIG[sym] = DEFAULT_NEW_COIN_PROFILE.copy()
+        print(f"⚠️ [AUTO_PROFILE] {sym} 補套預設風控（2x槓桿 / hard_sl 1.5%）")
 
     if route == "Automatic_Reverse":
         print(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
@@ -6502,11 +6517,15 @@ async def main_loop(exchange):
     ALL_SYMBOLS = filter_valid_symbols(exchange, ALL_SYMBOLS)
     save_symbol_pool(ALL_SYMBOLS)
 
-    # bot_symbols.json 可能包含 COIN_PROFILE_CONFIG 沒有的新幣，補初始化 STATES
+    # bot_symbols.json 可能包含 COIN_PROFILE_CONFIG 沒有的新幣
+    # 自動套用保守預設風控，讓新幣馬上可監控並以安全設定交易
     for _sym in ALL_SYMBOLS:
+        if _sym not in COIN_PROFILE_CONFIG:
+            COIN_PROFILE_CONFIG[_sym] = DEFAULT_NEW_COIN_PROFILE.copy()
+            print(f"🆕 [PROFILE] {_sym} 套用預設保守風控（2x槓桿 / hard_sl 1.5% / min_strength 20）")
         if _sym not in STATES:
             STATES[_sym] = build_symbol_state(_sym)
-            print(f"🆕 [STATES] 新幣種 {_sym} 已初始化狀態")
+            print(f"🆕 [STATES] {_sym} 已初始化狀態")
 
     print(f"📋 監控幣種: {', '.join(ALL_SYMBOLS)}")
     try:
