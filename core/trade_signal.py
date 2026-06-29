@@ -1,6 +1,9 @@
+import logging
 import time
 import numpy as np
 from core import ctx
+
+logger = logging.getLogger(__name__)
 
 
 def update_trade_signal(sym, trade):
@@ -73,11 +76,11 @@ def update_trade_signal(sym, trade):
             if _is_long and (_sl_now == 0 or _be > _sl_now):
                 s["stop_loss"] = _be
                 s["is_breakeven_locked"] = True
-                print(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
+                logger.info(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
             elif not _is_long and (_sl_now == 0 or _be < _sl_now):
                 s["stop_loss"] = _be
                 s["is_breakeven_locked"] = True
-                print(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
+                logger.info(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
 
         # ── TrailTP 即時同步至 stop_loss（每個 trade tick 執行）──
         _atr_rt = s.get("current_atr", 0.0)

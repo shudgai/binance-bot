@@ -1,8 +1,11 @@
+import logging
 import time
 from core.config import (
     COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT,
     MAX_STOPS_IN_WINDOW, BAN_WINDOW, BAN_DURATION,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def build_symbol_state(sym):
@@ -101,13 +104,13 @@ def update_states():
         if s["status"] == "COOLDOWN" and now >= s["next_status_time"]:
             s["status"] = "ACTIVE"
             s["status_reason"] = ""
-            print(f"🔄 [狀態] {sym} 冷卻結束 → ACTIVE")
+            logger.info(f"🔄 [狀態] {sym} 冷卻結束 → ACTIVE")
         if s["status"] == "BANNED" and now >= s["next_status_time"]:
             s["status"] = "ACTIVE"
             s["status_reason"] = ""
             s["stop_count"] = 0
             s["first_stop_time"] = 0
-            print(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
+            logger.info(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
 
 
 def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
@@ -119,12 +122,12 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
     actual_cooldown = 1800 if is_stop_loss else 3600
     if abs(loss_pct) >= 0.02:
         actual_cooldown += 3600
-        print(f"⚠️ [大虧延罰] {sym} 虧損 {loss_pct*100:.2f}% ≥ 2%，冷卻額外延長 60 分鐘")
+        logger.info(f"⚠️ [大虧延罰] {sym} 虧損 {loss_pct*100:.2f}% ≥ 2%，冷卻額外延長 60 分鐘")
     s["next_status_time"] = now + actual_cooldown
 
     cd_min = actual_cooldown // 60
     s["status_reason"] = f"冷卻中 ({cd_min}分鐘) - {reason}"
-    print(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN {cd_min}分鐘")
+    logger.info(f"⏳ [狀態] {sym} 平倉 ({reason}) → COOLDOWN {cd_min}分鐘")
     if is_stop_loss:
         s["stop_count"] += 1
         if s["stop_count"] == 1:
@@ -133,7 +136,7 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
             s["status"] = "BANNED"
             s["next_status_time"] = now + BAN_DURATION
             s["status_reason"] = f"封禁中 (24h，{MAX_STOPS_IN_WINDOW}次停損)"
-            print(f"🚫 [狀態] {sym} 1h內{MAX_STOPS_IN_WINDOW}次停損 → BANNED 24h")
+            logger.info(f"🚫 [狀態] {sym} 1h內{MAX_STOPS_IN_WINDOW}次停損 → BANNED 24h")
         elif s["stop_count"] >= MAX_STOPS_IN_WINDOW:
             s["stop_count"] = 1
             s["first_stop_time"] = now

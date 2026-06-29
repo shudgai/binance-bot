@@ -1,9 +1,12 @@
+import logging
 import os
 import math
 import ccxt
 import ccxt.pro as ccxtpro
 from dotenv import load_dotenv
 from core.config import USE_TESTNET
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -92,11 +95,11 @@ def check_binance_weight():
                 break
         if weight is not None:
             if weight > 900:
-                print(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/1200，觸發重度防護，冷卻 10 秒")
+                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/1200，觸發重度防護，冷卻 10 秒")
                 return 10.0
             elif weight > 700:
-                print(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/1200，觸發輕度防護，冷卻 3 秒")
+                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/1200，觸發輕度防護，冷卻 3 秒")
                 return 3.0
     except Exception as e:
-        print(f"⚠️ [API權重讀取失敗] {e}")
+        logger.info(f"⚠️ [API權重讀取失敗] {e}")
     return 0.0

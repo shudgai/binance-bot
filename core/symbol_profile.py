@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import time
@@ -8,6 +9,8 @@ from core.config import (
     SYMBOL_REVERSAL_SETTINGS as _DEFAULT_SYMBOL_REVERSAL_SETTINGS,
 )
 import core.config as _config
+
+logger = logging.getLogger(__name__)
 
 # These are mutable module-level vars that get overridden by load_symbol_config
 SYMBOL_EXIT_OVERRIDES = dict(_DEFAULT_SYMBOL_EXIT_OVERRIDES)
@@ -91,7 +94,7 @@ def load_symbol_config():
     except FileNotFoundError:
         return list(DEFAULT_SYMBOLS), {}
     except Exception as e:
-        print(f"⚠️ 讀取幣種清單失敗: {e}")
+        logger.info(f"⚠️ 讀取幣種清單失敗: {e}")
         return list(DEFAULT_SYMBOLS), {}
 
 
@@ -110,7 +113,7 @@ def load_symbol_pool():
     except FileNotFoundError:
         return list(DEFAULT_SYMBOLS)
     except Exception as e:
-        print(f"⚠️ 讀取幣種清單失敗: {e}")
+        logger.info(f"⚠️ 讀取幣種清單失敗: {e}")
         return list(DEFAULT_SYMBOLS)
 
 
@@ -364,7 +367,7 @@ def update_dynamic_personality(sym):
             if key in coin_conf:
                 s[key] = coin_conf[key]
         volume_ratio, atr_pct, rsi, range_width_pct = measure_personality_traits(sym)
-        print(f"🔧 [動態個性] {sym} 由 {old_personality} 變更為 {new_personality} | vol={volume_ratio:.2f} atr_pct={atr_pct:.4f} rsi={rsi:.1f} range={range_width_pct:.3f}")
+        logger.info(f"🔧 [動態個性] {sym} 由 {old_personality} 變更為 {new_personality} | vol={volume_ratio:.2f} atr_pct={atr_pct:.4f} rsi={rsi:.1f} range={range_width_pct:.3f}")
         return True
     return False
 
@@ -395,7 +398,7 @@ def filter_valid_symbols(exchange, symbols):
         if found:
             valid.append(sym)
         else:
-            print(f"⚠️ [過濾無效幣種] 交易所目前不支援/已下架此幣種，已自動移出監聽清單: {sym}")
+            logger.info(f"⚠️ [過濾無效幣種] 交易所目前不支援/已下架此幣種，已自動移出監聽清單: {sym}")
     return valid
 
 

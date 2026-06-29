@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import time
 import numpy as np
@@ -13,6 +14,8 @@ from core.state_manager import get_open_position_count, reset_coin_state
 from core.signal_engine import (compute_signal_strength, is_reversal_still_valid,
     is_eligible_for_reverse, check_pyramiding_eligibility, _load_disabled_symbols)
 from core.entry_filter import is_entry_allowed
+
+logger = logging.getLogger(__name__)
 
 
 def detect_divergence(sym):
@@ -134,7 +137,7 @@ async def check_entries():
             continue
     # [每日熔斷] 先確認是否已觸發當日封鎖
     if is_daily_loss_halted():
-        print(f"[每日熔斷] 今日累計虧損已超上限 ({abs(_bal._DAILY_REALIZED_LOSS)*100:.2f}% >= {DAILY_LOSS_LIMIT_PCT*100:.1f}%)，跳過所有新進場！")
+        logger.info(f"[每日熔斷] 今日累計虧損已超上限 ({abs(_bal._DAILY_REALIZED_LOSS)*100:.2f}% >= {DAILY_LOSS_LIMIT_PCT*100:.1f}%)，跳過所有新進場！")
         return
 
     open_count = get_open_position_count()
@@ -153,7 +156,7 @@ async def check_entries():
         if pending_rev:
             if time.time() - s.get("pending_reverse_time", 0) < 300:  # 5 分鐘內有效
                 if not s.get("is_ordering"):
-                    print(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
+                    logger.info(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
                     price = s["close_price"]
                     s["pending_reverse"] = None
                     s["is_ordering"] = True
@@ -186,10 +189,10 @@ async def check_entries():
         if s.get("pending_reverse_trigger"):
             pending_rev_data = s["pending_reverse_trigger"]
             if current_candle_time > pending_rev_data.get("time", 0):
-                print(f"⏳ [{sym}] 進入新 K 線，驗證自動反手趨勢持續性...")
+                logger.info(f"⏳ [{sym}] 進入新 K 線，驗證自動反手趨勢持續性...")
                 if await is_reversal_still_valid(sym, pending_rev_data["side"]):
                     src = pending_rev_data.get("source", "Signal")
-                    print(f"⚡ [{sym}] [Reversal_Confirmed] {src} 反手確認！平倉並反手建倉 ({pending_rev_data['side']})，強度 {pending_rev_data.get('strength',0):.1f}")
+                    logger.info(f"⚡ [{sym}] [Reversal_Confirmed] {src} 反手確認！平倉並反手建倉 ({pending_rev_data['side']})，強度 {pending_rev_data.get('strength',0):.1f}")
                     # 1. 平倉舊倉位
                     await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
                     await asyncio.sleep(1)
@@ -198,7 +201,7 @@ async def check_entries():
                     s["last_reverse_time"] = time.time()
                     await execute_order(sym, pending_rev_data["side"], s["close_price"])
                 else:
-                    print(f"❌ [{sym}] [Reversal_Cancelled] 觀察期間趨勢失效，取消反手，保留原倉位。")
+                    logger.info(f"❌ [{sym}] [Reversal_Cancelled] 觀察期間趨勢失效，取消反手，保留原倉位。")
 
                 s["pending_reverse_trigger"] = None
                 continue
@@ -238,10 +241,10 @@ async def check_entries():
                     trigger_low = prev_candle[3]
 
                     if s["pending_side"] == "buy" and current_price < trigger_high * 0.98:
-                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98% ({trigger_high*0.98:.4f}) 以上，疑似插針假突破，取消多單。")
+                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98% ({trigger_high*0.98:.4f}) 以上，疑似插針假突破，取消多單。")
                         is_valid = False
                     elif s["pending_side"] == "sell" and current_price > trigger_low * 1.02:
-                        print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 102% ({trigger_low*1.02:.4f}) 以下，疑似插針假跌破，取消空單。")
+                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 102% ({trigger_low*1.02:.4f}) 以下，疑似插針假跌破，取消空單。")
                         is_valid = False
 
                     # [新增] 量能續航檢查：跟進量必須 >= 訊號量的 60%
@@ -249,7 +252,7 @@ async def check_entries():
                         signal_vol = prev_candle[5]
                         follow_vol = s.get("current_vol", 0)
                         if signal_vol > 0 and follow_vol < signal_vol * 0.6:
-                            print(f"❌ [量能續航] {sym} 突破後量能萎縮 (跟進量 {follow_vol:.0f} < 訊號量 {signal_vol:.0f} × 60%)，疑似假突破，取消")
+                            logger.info(f"❌ [量能續航] {sym} 突破後量能萎縮 (跟進量 {follow_vol:.0f} < 訊號量 {signal_vol:.0f} × 60%)，疑似假突破，取消")
                             is_valid = False
 
                 if not is_valid:
@@ -264,7 +267,7 @@ async def check_entries():
 
                 if is_valid:
                     s["fake_breakout"] = None
-                    print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
+                    logger.info(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
                     side = s["pending_side"]
                     strength = s.get("pending_strength", 5.0)
                     route = s.get("pending_route", "confirmed")
@@ -274,37 +277,37 @@ async def check_entries():
                     atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
                     min_rr = s.get("min_rr", 1.0)
                     if expected_rr < min_rr:
-                        print(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
+                        logger.info(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
                         continue
 
                     expected_profit_pct = tp_dist / p
                     if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:
-                        print(f"🛑 [Filter:MinProfit] {sym} 預期獲利空間過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，利潤無法覆蓋手續費與摩擦成本，拒絕進場")
+                        logger.info(f"🛑 [Filter:MinProfit] {sym} 預期獲利空間過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，利潤無法覆蓋手續費與摩擦成本，拒絕進場")
                         continue
 
                     # 再測一次大環境 (MTF & RR)，因為換線了可能改變
                     if s.get("mtf_filter", True):
                         if strength > 15.0:
-                            print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
+                            logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
                         else:
                             ema50_1h = s.get("ema50_1h", 0.0)
                             if ema50_1h > 0:
                                 if side == "buy" and p <= s["ohlcv"][-2][4] and p < ema50_1h:
-                                    print(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
+                                    logger.info(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
                                     continue
                                 if side == "sell" and p > ema50_1h:
-                                    print(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
+                                    logger.info(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
                                     continue
 
                     # RSI 過熱/過冷保護：趨勢型訊號確認時，禁止追高做多或追低做空
                     if route == "a":
                         rsi_conf = s.get("rsi", 50.0)
                         if side == "buy" and rsi_conf > 68.0:
-                            print(f"🛑 [RSI過熱] {sym} 確認階段 RSI={rsi_conf:.1f}>68，趨勢多單追高風險過高，放棄")
+                            logger.info(f"🛑 [RSI過熱] {sym} 確認階段 RSI={rsi_conf:.1f}>68，趨勢多單追高風險過高，放棄")
                             s["pending_side"] = None
                             continue
                         if side == "sell" and rsi_conf < 32.0:
-                            print(f"🛑 [RSI過冷] {sym} 確認階段 RSI={rsi_conf:.1f}<32，趨勢空單追低風險過高，放棄")
+                            logger.info(f"🛑 [RSI過冷] {sym} 確認階段 RSI={rsi_conf:.1f}<32，趨勢空單追低風險過高，放棄")
                             s["pending_side"] = None
                             continue
 
@@ -312,12 +315,12 @@ async def check_entries():
                     rr_thresh = 0.9 if strength > 20.0 else (1.0 if strength > 15.0 else base_rr_thresh)
 
                     if expected_rr < rr_thresh:
-                        print(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
+                        logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
                         continue
 
                     expected_profit_pct = tp_dist / p if p > 0 else 0
                     if expected_profit_pct < 0.015:
-                        print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 1.5%)，無法覆蓋手續費與滑點，拒絕進場")
+                        logger.info(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 1.5%)，無法覆蓋手續費與滑點，拒絕進場")
                         continue
 
                     # [Layer 4] 動態空間過濾 (Adaptive Space Check)
@@ -351,17 +354,17 @@ async def check_entries():
                         if side == "buy" and p <= s["ohlcv"][-2][4] and s.get("bb_up", 0) > 0 and p < s.get("bb_up", 0):
                             space = s["bb_up"] - p
                             if space < sl_dist * space_multiplier:
-                                print(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
+                                logger.info(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
                                 continue
                         if side == "sell" and s.get("bb_low", 0) > 0 and p > s.get("bb_low", 0):
                             space = p - s["bb_low"]
                             if space < sl_dist * space_multiplier:
-                                print(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
+                                logger.info(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
                                 continue
                     candidates.append((sym, side, strength, route))
                     continue
                 else:
-                    print(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
+                    logger.info(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
                     s["pending_side"] = None
             else:
                 s["pending_side"] = None
@@ -397,17 +400,17 @@ async def check_entries():
             _macd_tiny = 1e-8
             if side == "buy":
                 if rsi <= 22:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 極端超賣 ({rsi:.1f} <= 22)，防接刀")
+                    logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 極端超賣 ({rsi:.1f} <= 22)，防接刀")
                     continue
                 if macd_hist < -_macd_tiny and rsi < 35:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 低 ({rsi:.1f}) 且 MACD 仍負 ({macd_hist:.6f})")
+                    logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 低 ({rsi:.1f}) 且 MACD 仍負 ({macd_hist:.6f})")
                     continue
             else:  # sell
                 if rsi >= 78:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 極端超買 ({rsi:.1f} >= 78)，防追高")
+                    logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 極端超買 ({rsi:.1f} >= 78)，防追高")
                     continue
                 if macd_hist > _macd_tiny and rsi > 65:
-                    print(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 高 ({rsi:.1f}) 且 MACD 仍正 ({macd_hist:.6f})")
+                    logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 高 ({rsi:.1f}) 且 MACD 仍正 ({macd_hist:.6f})")
                     continue
 
         # D. 真實性驗證 (Volume Confirmation) - 動態門檻
@@ -417,7 +420,7 @@ async def check_entries():
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
         _d_multiplier = 0.03 if _is_low_vol_ce else 0.04
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
-            print(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
+            logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             continue
 
         # E. 參與度過濾 (Participation Filter)
@@ -440,32 +443,32 @@ async def check_entries():
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check:
-                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
+                    logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
                     continue
                 if not rvol_check:
                     _rvol_pct = int(_rvol_multiplier * 100)
-                    print(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
+                    logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     continue
                 if not volume_price_sync:
-                    print(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
+                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry" and strength <= 15.0:
             if side == "buy" and rsi > 80:
-                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超買，拒絕追高做多")
+                logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超買，拒絕追高做多")
                 continue
             if side == "sell" and rsi < 25:
-                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超賣，拒絕殺低做空")
+                logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超賣，拒絕殺低做空")
                 continue
         elif route != "Exhaustion_Entry" and strength > 15.0:
             if side == "buy" and rsi > 88:
-                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超買頂部")
+                logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超買頂部")
                 continue
             if side == "sell" and rsi < 12:
-                print(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
+                logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
                 continue
 
-        print(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
+        logger.info(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
 
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
         if has_position:
@@ -478,7 +481,7 @@ async def check_entries():
                             "strength": strength,
                             "source": "Signal",
                         }
-                        print(f"⚡ [{sym}] [Pending_Reversal_Detected] 反轉訊號強度 {strength:.1f}，等待下一根 K 收盤確認...")
+                        logger.info(f"⚡ [{sym}] [Pending_Reversal_Detected] 反轉訊號強度 {strength:.1f}，等待下一根 K 收盤確認...")
                     continue
                 else:
                     continue
@@ -486,7 +489,7 @@ async def check_entries():
                 # 金字塔加倉邏輯 (順勢加碼)
                 is_eligible, cooldown_mins = check_pyramiding_eligibility(s)
                 if not is_eligible:
-                    print(f"⏳ [加碼防禦] {sym} 欲順勢加倉 {side}，但未達動態冷卻 ({cooldown_mins}m) 或已達上限，攔截加碼")
+                    logger.info(f"⏳ [加碼防禦] {sym} 欲順勢加倉 {side}，但未達動態冷卻 ({cooldown_mins}m) 或已達上限，攔截加碼")
                     continue
 
         if not is_entry_allowed(sym, side, route, strength):
@@ -505,7 +508,7 @@ async def check_entries():
                 min_flip = 1800
 
             if flip_elapsed < min_flip:
-                print(f"⏳ [Filter:Cooldown] [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
+                logger.info(f"⏳ [Filter:Cooldown] [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
                 continue
 
         # --- 同價位防雙巴鎖 (Price Zone Lock) ---
@@ -515,7 +518,7 @@ async def check_entries():
         if last_entry_price > 0 and last_entry_dir != "" and route != "Automatic_Reverse":
             price_diff_pct = abs(p - last_entry_price) / last_entry_price
             if price_diff_pct < 0.003 and side != last_entry_dir:
-                print(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
+                logger.info(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
                 continue
 
         # --- 動能背離過濾 (Divergence Filter) ---
@@ -523,29 +526,29 @@ async def check_entries():
         if route == "Automatic_Reverse":
             if (side == "buy" and cp <= s["ohlcv"][-2][4] and divergence_type == "bullish") or (side == "sell" and divergence_type == "bearish"):
                 strength *= 1.5
-                print(f"🌟 [Divergence_Boost] {sym} 偵測到強烈背離，權重提升至 {strength:.2f}")
+                logger.info(f"🌟 [Divergence_Boost] {sym} 偵測到強烈背離，權重提升至 {strength:.2f}")
             else:
                 strength *= 0.9
         else:
             if divergence_type == "bearish" and side == "buy":
-                print(f"🛑 [Filter:Divergence_Block] {sym} 趨勢多單偵測到看跌背離 (頂背離)，防範接刀追高！")
+                logger.info(f"🛑 [Filter:Divergence_Block] {sym} 趨勢多單偵測到看跌背離 (頂背離)，防範接刀追高！")
                 continue
             if divergence_type == "bullish" and side == "sell":
-                print(f"🛑 [Filter:Divergence_Block] {sym} 趨勢空單偵測到看漲背離 (底背離)，防範地板空！")
+                logger.info(f"🛑 [Filter:Divergence_Block] {sym} 趨勢空單偵測到看漲背離 (底背離)，防範地板空！")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
             if strength > 15.0 or route == "Automatic_Reverse":
-                print(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
+                logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
                 if ema50_1h > 0:
                     if side == "buy" and cp <= s["ohlcv"][-2][4] and p < ema50_1h:
-                        print(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
+                        logger.info(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
                         continue
                     if side == "sell" and p > ema50_1h:
-                        print(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
+                        logger.info(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
                         continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
@@ -557,32 +560,32 @@ async def check_entries():
             rr_thresh = base_rr_thresh
 
         if route != "Automatic_Reverse" and expected_rr < rr_thresh:
-            print(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
+            logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
             continue
 
         expected_profit_pct = tp_dist / p if p > 0 else 0
         if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:
-            print(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，無法覆蓋手續費與滑點，放棄暫存")
+            logger.info(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，無法覆蓋手續費與滑點，放棄暫存")
             continue
 
         # 絕對獲利空間硬門檻 1.5% (MinProfit Hard Gate)
         # 防止在極低波動（ATR 極小）時進場
         _HARD_MIN_PROFIT_PCT = 0.015  # 1.5% 硬門檻
         if expected_profit_pct < _HARD_MIN_PROFIT_PCT:
-            print(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
+            logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
             continue
 
         # --- Flip Buffer: 防止快速反手 ---
         last_entry_time = s.get("last_entry_time", 0.0)
         if route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
-            print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
+            logger.info(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
             continue
 
         # --- 錯誤方向禁止再進 (Wrong Direction Ban) ---
         _wd_time = s.get("wrong_dir_time", 0.0)
         _wd_side = s.get("wrong_dir_side", "")
         if _wd_side == side and time.time() - _wd_time < 1800:
-            print(f"⏳ [Wrong Dir Ban] {sym} 同方向 {side} 剛在 {time.time()-_wd_time:.0f}s 前開錯方向，冷卻中 (30min)")
+            logger.info(f"⏳ [Wrong Dir Ban] {sym} 同方向 {side} 剛在 {time.time()-_wd_time:.0f}s 前開錯方向，冷卻中 (30min)")
             continue
 
         # --- 假突破記憶檢查 (Fake Breakout Memory) ---
@@ -595,9 +598,9 @@ async def check_entries():
                 _boost_needed = 5.0
                 _effective_min = min_sig + _boost_needed
                 if strength < _effective_min:
-                    print(f"⏳ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR ({_current_dist*100:.3f}%)，強度 {strength:.1f} < {_effective_min:.1f}，暫停進場")
+                    logger.info(f"⏳ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR ({_current_dist*100:.3f}%)，強度 {strength:.1f} < {_effective_min:.1f}，暫停進場")
                     continue
-                print(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
+                logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
@@ -607,13 +610,13 @@ async def check_entries():
         s["pending_route"] = route
         s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
 
-        print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
+        logger.info(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
 
     if not candidates:
         return
 
     candidates.sort(key=lambda x: -x[2])
-    print(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
+    logger.info(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
     total_weight = sum(strength for _, _, strength, _ in candidates)
 
@@ -625,9 +628,9 @@ async def check_entries():
             if remaining_slots <= 0:
                 continue
             remaining_slots -= 1
-            print(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
+            logger.info(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
         else:
-            print(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
+            logger.info(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
 
         if not s.get("is_ordering"):
             s["is_ordering"] = True
@@ -637,7 +640,7 @@ async def check_entries():
             allocation_pct = min(raw_ratio, 0.6)  # 最高封頂 60%
 
             weight_label = f"{allocation_pct*100:.1f}%"
-            print(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%)，實際分配資金封頂為: {weight_label}")
+            logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%)，實際分配資金封頂為: {weight_label}")
 
             async def _entry_task(sym, side, price, alloc_pct):
                 try:

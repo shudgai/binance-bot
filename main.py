@@ -4,6 +4,7 @@ All trading logic lives in core/*.py modules.
 """
 import asyncio
 import fcntl
+import logging
 import os
 import sys
 
@@ -12,6 +13,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# ── Logging setup ──────────────────────────────────────────────
+# stdout 維持與舊版 print() 完全相同的輸出（無時間戳/等級前綴），因為
+# services/bot_manager_service.py 用 line.startswith("@@COIN_DEBUG@@") 等
+# 標記字串解析 stdout，任何額外前綴都會讓標記比對失敗，導致網頁系統日誌、
+# 持倉狀態同步整套機制中斷。檔案另外輸出完整時間戳記+等級供事後查閱。
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setFormatter(logging.Formatter("%(message)s"))
+
+_file_handler = logging.FileHandler(os.path.join(_LOG_DIR, "bot.log"), encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _file_handler])
+logger = logging.getLogger(__name__)
 
 # ── Single-instance lock ──────────────────────────────────────
 LOCK_FILE = "/tmp/binance_bot_32f2e2ed.lock"
@@ -49,10 +67,10 @@ def ensure_single_instance():
 
         if stale_pid and stale_pid != os.getpid():
             if _process_exists(stale_pid):
-                print(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。")
+                logger.info(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。")
                 sys.exit(0)
             else:
-                print(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並重新接管...")
+                logger.info(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並重新接管...")
                 try:
                     fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     lock_file_handle.seek(0)
@@ -63,9 +81,9 @@ def ensure_single_instance():
                 except IOError:
                     pass
 
-        print("🚨 錯誤: 偵測到系統中已有另一個機器人正在執行！")
-        print("💡 為了避免重複下單與邏輯衝突，本次啟動已自動攔截並退出。")
-        print(f"💡 提示: 若是意外關閉舊程式，請先手動刪除鎖定檔：\n   rm -f {LOCK_FILE}\n  然後再重新啟動。")
+        logger.info("🚨 錯誤: 偵測到系統中已有另一個機器人正在執行！")
+        logger.info("💡 為了避免重複下單與邏輯衝突，本次啟動已自動攔截並退出。")
+        logger.info(f"💡 提示: 若是意外關閉舊程式，請先手動刪除鎖定檔：\n   rm -f {LOCK_FILE}\n  然後再重新啟動。")
         sys.exit(1)
 
 
@@ -88,9 +106,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🛑 程式已被手動終止 (KeyboardInterrupt)")
-    except Exception as e:
-        import traceback
-        print(f"\n🚨 核心運行遭遇未捕獲異常: {e}", file=sys.stderr)
-        traceback.print_exc()
+        logger.info("\n🛑 程式已被手動終止 (KeyboardInterrupt)")
+    except Exception:
+        logger.exception("\n🚨 核心運行遭遇未捕獲異常")
     # exchange_futures.close() 已在 core.runner.main() 的 finally 中處理（同一 event loop）

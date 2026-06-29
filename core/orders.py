@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import time
 import json
@@ -17,6 +18,8 @@ from core.config import get_symbol_leverage
 from services.utils import paper_key
 from services.update_paper_state import update_paper_state
 from services.ai_manager import ai_engine
+
+logger = logging.getLogger(__name__)
 
 
 def _import_update_trailing_stop():
@@ -88,9 +91,9 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
     try:
         with open(history_file, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=4, ensure_ascii=False)
-        print(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
+        logger.info(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
     except Exception as e:
-        print(f"⚠️ [AI Memory] 紀錄失敗: {e}")
+        logger.info(f"⚠️ [AI Memory] 紀錄失敗: {e}")
 
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
@@ -106,7 +109,7 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
     # asyncio 雖然單執行緒，但 await 點會讓另一個 coroutine 插入執行，
     # 兩個呼叫者同時通過 qty 檢查後都去執行平倉 → 重複平倉。
     if s.get("_is_closing", False):
-        print(f"⚠️ [DuplicateClose] {sym} 已有平倉指令執行中，忽略重複呼叫 | reason={reason}")
+        logger.info(f"⚠️ [DuplicateClose] {sym} 已有平倉指令執行中，忽略重複呼叫 | reason={reason}")
         return
     s["_is_closing"] = True
     try:
@@ -123,16 +126,16 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     if abs(actual_qty) > 0.000001:
         expected_close_side = "sell" if actual_qty > 0 else "buy"
         if close_side != expected_close_side:
-            print(f"🚨 [CRITICAL_ERROR] {sym} 平倉方向衝突！持倉為 {'多' if actual_qty > 0 else '空'}，但指令要求 {close_side}。| reason={reason}")
-            print(f"🔄 [CRITICAL_ERROR] {sym} 正在自動修正指令為 {expected_close_side} 以確保正確平倉。")
+            logger.info(f"🚨 [CRITICAL_ERROR] {sym} 平倉方向衝突！持倉為 {'多' if actual_qty > 0 else '空'}，但指令要求 {close_side}。| reason={reason}")
+            logger.info(f"🔄 [CRITICAL_ERROR] {sym} 正在自動修正指令為 {expected_close_side} 以確保正確平倉。")
             close_side = expected_close_side  # 強制修正方向
 
     if not price or price <= 0:
         price = s.get("close_price", 0.0) or s.get("avg_price", 0.0)
         if price <= 0:
-            print(f"[REJECT_ZERO_PRICE] {sym} 平倉價格為 0，已攔截！")
+            logger.info(f"[REJECT_ZERO_PRICE] {sym} 平倉價格為 0，已攔截！")
             return
-        print(f"[WARN_ZERO_PRICE] {sym} 平倉價格補救為 {price:.6f}")
+        logger.info(f"[WARN_ZERO_PRICE] {sym} 平倉價格補救為 {price:.6f}")
     if abs(s["qty"]) < 0.000001:
         return
     pk = paper_key(sym)
@@ -174,7 +177,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
 
     sanitized_qty = await sanitize_order_qty(sym, qty)
     if sanitized_qty <= 0.0:
-        print(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
+        logger.info(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
         return
     qty = sanitized_qty
 
@@ -190,7 +193,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
             await exchange_futures.create_order(sym, type="limit", side=close_side, amount=qty,
                                         params={"reduceOnly": True, "marginMode": "isolated"})
         except Exception as e:
-            print(f"🚨 [平倉錯誤] {sym}: {e}")
+            logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
             return
 
     record_trade_result(
@@ -212,20 +215,20 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     try:
         accrue_daily_realized_pnl(profit_pct, real_avg * qty)
         if profit_pct < 0:
-            print(f"[每日熔斷追蹤] {sym} 虧損 {profit_pct*100:.2f}% | 今日累計: {_bal._DAILY_REALIZED_LOSS*100:.2f}% / {DAILY_LOSS_LIMIT_PCT*100:.1f}%")
+            logger.info(f"[每日熔斷追蹤] {sym} 虧損 {profit_pct*100:.2f}% | 今日累計: {_bal._DAILY_REALIZED_LOSS*100:.2f}% / {DAILY_LOSS_LIMIT_PCT*100:.1f}%")
     except Exception as _e:
-        print(f"[每日熔斷追蹤失敗] {_e}")
+        logger.info(f"[每日熔斷追蹤失敗] {_e}")
 
     remaining = abs(s["qty"]) - qty
     if remaining < 0.01:
         if remaining > 0.000001:
-            print(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
+            logger.info(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
         if s.get("exchange_stop_order_id") and not PAPER_TRADING:
             try:
                 await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
-                print(f"✅ [止損單取消] {sym} 部位已全平，撤銷交易所止損單")
+                logger.info(f"✅ [止損單取消] {sym} 部位已全平，撤銷交易所止損單")
             except Exception as ce:
-                print(f"⚠️ [取消止損單失敗] {sym}: {ce}")
+                logger.info(f"⚠️ [取消止損單失敗] {sym}: {ce}")
 
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=profit_pct)
         reset_coin_state(sym)
@@ -245,7 +248,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
                     first_entry["qty"] -= qty_to_remove
                     qty_to_remove = 0
 
-        print(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
+        logger.info(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
 
         if s.get("exchange_stop_order_id") and not PAPER_TRADING:
             try:
@@ -259,9 +262,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
                     params={"stopPrice": stop_price, "reduceOnly": True}
                 )
                 s["exchange_stop_order_id"] = new_stop["id"]
-                print(f"🛡️ [止損單更新] {sym} 部分平倉後更新止損單 @ {stop_price} (數量: {abs(s['qty'])})")
+                logger.info(f"🛡️ [止損單更新] {sym} 部分平倉後更新止損單 @ {stop_price} (數量: {abs(s['qty'])})")
             except Exception as ce:
-                print(f"⚠️ [更新止損單失敗] {sym}: {ce}")
+                logger.info(f"⚠️ [更新止損單失敗] {sym}: {ce}")
 
 
 def should_recover_from_reversal(sym, is_long):
@@ -292,18 +295,18 @@ def should_recover_from_reversal(sym, is_long):
 
 
 async def execute_panic_sell_all_positions():
-    print("🚨🚨 [緊急清倉] 開始強制市價平掉所有倉位！")
+    logger.info("🚨🚨 [緊急清倉] 開始強制市價平掉所有倉位！")
     for sym in ctx.ALL_SYMBOLS:
         s = ctx.STATES[sym]
         if abs(s["qty"]) > 0.000001:
             is_long = s["qty"] > 0
             cs = 'sell' if is_long else 'buy'
             p = s.get("close_price", s["avg_price"])
-            print(f"🚨 [緊急清倉] 正在平倉 {sym}...")
+            logger.info(f"🚨 [緊急清倉] 正在平倉 {sym}...")
             try:
                 await close_position(sym, cs, abs(s["qty"]), p, s["avg_price"], reason="[GLOBAL_MELTDOWN]", is_stop_loss=True)
             except Exception as e:
-                print(f"⚠️ [緊急清倉失敗] {sym}: {e}")
+                logger.info(f"⚠️ [緊急清倉失敗] {sym}: {e}")
 
 
 def get_total_wallet_balance():
@@ -347,8 +350,8 @@ def check_total_equity_protection():
     GLOBAL_LOSS_THRESHOLD = -4.0
 
     if loss_percentage <= GLOBAL_LOSS_THRESHOLD:
-        print(f"\n🚨🚨🚨 [全局風控熔斷] 警告！當前總未實現虧損已達 {loss_percentage:.2f}%")
-        print(f"🛑 超過安全防線 {GLOBAL_LOSS_THRESHOLD}%！觸發系統緊急黑天鵝熔斷機制...")
+        logger.info(f"\n🚨🚨🚨 [全局風控熔斷] 警告！當前總未實現虧損已達 {loss_percentage:.2f}%")
+        logger.info(f"🛑 超過安全防線 {GLOBAL_LOSS_THRESHOLD}%！觸發系統緊急黑天鵝熔斷機制...")
         return False
     return True
 
@@ -361,7 +364,7 @@ def _fill_paper_order(sym, fill_price):
     if not order:
         return
     if not fill_price or fill_price <= 0:
-        print(f"[REJECT_PAPER] {sym} _fill_paper_order fill_price=0，已攔截撤單")
+        logger.info(f"[REJECT_PAPER] {sym} _fill_paper_order fill_price=0，已攔截撤單")
         s["pending_paper_order"] = None
         return
     side = order["side"]
@@ -403,9 +406,9 @@ def _fill_paper_order(sym, fill_price):
                 s["trailing_stop_price"] = min(s["trailing_stop_price"], first_ep) if s["trailing_stop_price"] > 0 else first_ep
             s["is_breakeven_locked"] = True
         direction = "做多" if side == 'buy' else "做空"
-        print(f"✅ [Paper成交] {sym} {direction} {base_amt:.4f} @ {fill_price:.6f} (保證金:{margin:.2f} USDT)")
+        logger.info(f"✅ [Paper成交] {sym} {direction} {base_amt:.4f} @ {fill_price:.6f} (保證金:{margin:.2f} USDT)")
     except Exception as e:
-        print(f"🛑 [Paper成交失敗] {sym}: {e}")
+        logger.info(f"🛑 [Paper成交失敗] {sym}: {e}")
     finally:
         s["pending_paper_order"] = None
 
@@ -422,7 +425,7 @@ async def check_paper_pending_order(sym):
     elapsed = time.time() - order["placed_at"]
     if elapsed > order["timeout"]:
         s["pending_paper_order"] = None
-        print(f"⌛ [Paper超時撤單] {sym} {side} @ {limit_price:.6f} 超過 {order['timeout']}秒未成交，已撤單")
+        logger.info(f"⌛ [Paper超時撤單] {sym} {side} @ {limit_price:.6f} 超過 {order['timeout']}秒未成交，已撤單")
         return
     filled = (side == 'buy' and p >= limit_price) or (side == 'sell' and p <= limit_price)
     if filled:
@@ -441,21 +444,21 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     if _has_position:
         _current_direction = "buy" if _existing_qty > 0 else "sell"
         if side != _current_direction and not is_rescue_dca:
-            print(f"🛑 [Direction_Conflict] {sym} 已有 {_current_direction} 持倉 (qty={_existing_qty:.4f})，禁止發出 {side} 進場指令 (非救援模式)")
-            print(f"🛑 [Direction_Conflict] {sym} 若要反手，請先透過 close_position 平倉後再進場，避免方向衝突！")
+            logger.info(f"🛑 [Direction_Conflict] {sym} 已有 {_current_direction} 持倉 (qty={_existing_qty:.4f})，禁止發出 {side} 進場指令 (非救援模式)")
+            logger.info(f"🛑 [Direction_Conflict] {sym} 若要反手，請先透過 close_position 平倉後再進場，避免方向衝突！")
             return
 
     if not price or price <= 0:
         fallback = s.get("close_price", 0.0) or s.get("avg_price", 0.0)
         if fallback <= 0:
-            print(f"[REJECT_ZERO_PRICE] {sym} execute_order price=0 且無法補救，已攔截！")
+            logger.info(f"[REJECT_ZERO_PRICE] {sym} execute_order price=0 且無法補救，已攔截！")
             return
-        print(f"[WARN_ZERO_PRICE] {sym} execute_order price=0，補救為 {fallback:.6f}")
+        logger.info(f"[WARN_ZERO_PRICE] {sym} execute_order price=0，補救為 {fallback:.6f}")
         price = fallback
     pk = paper_key(sym)
     lev = get_symbol_leverage(sym)
     s["leverage"] = lev
-    print(f"@@LEVERAGE@@{lev}")
+    logger.info(f"@@LEVERAGE@@{lev}")
 
     if not is_rescue_dca:
         try:
@@ -471,24 +474,24 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if side == 'buy':
                 if asks == 0 or bids / asks < _flow_threshold:
-                    print(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
+                    logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
                     return
             else:
                 if bids == 0 or asks / bids < _flow_threshold:
-                    print(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
+                    logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
                     return
         except Exception as e:
-            print(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
+            logger.info(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:
         try:
             await exchange_futures.set_leverage(lev, convert_to_ccxt_symbol(sym))
         except Exception as e:
-            print(f"⚠️ [槓桿設定失敗] {sym}: {e}")
+            logger.info(f"⚠️ [槓桿設定失敗] {sym}: {e}")
 
     margin = compute_per_coin_margin(sym, allocation_pct)
 
     if margin <= 0:
-        print(f"⚠️ [風控] {sym} 無可用保證金")
+        logger.info(f"⚠️ [風控] {sym} 無可用保證金")
         return
 
     try:
@@ -496,7 +499,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         market_price = float(ticker.get('last') or 0)
     except Exception as e:
         market_price = 0.0
-        print(f"⚠️ [價格偏離檢查] {sym} fetch_ticker 失敗: {e}")
+        logger.info(f"⚠️ [價格偏離檢查] {sym} fetch_ticker 失敗: {e}")
 
     if market_price <= 0:
         # fetch_ticker 失敗時回落到即時交易流價格（獨立數據源，不依賴 OHLCV）
@@ -505,42 +508,42 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     if market_price > 0:
         deviation = abs(price - market_price) / market_price
         if deviation > 0.05:
-            print(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
+            logger.info(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
             # 順帶修正被污染的 close_price，避免後續繼續使用錯誤值
             s["close_price"] = market_price
             return
     else:
         # 完全無法取得市場價格，保守拒絕
-        print(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
+        logger.info(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
         return
 
     now = time.time()
     if s["entry_count"] > 0 and not is_rescue_dca:
         if now - s["last_entry_time"] < s["entry_cooldown_sec"]:
-            print(f"⏳ [加倉冷卻] {sym} 距離上次加倉不足 {s['entry_cooldown_sec']} 秒")
+            logger.info(f"⏳ [加倉冷卻] {sym} 距離上次加倉不足 {s['entry_cooldown_sec']} 秒")
             return
         if s["entry_count"] >= 3:
-            print(f"⚠️ [加倉上限] {sym} 已達絕對層數上限 (3層)")
+            logger.info(f"⚠️ [加倉上限] {sym} 已達絕對層數上限 (3層)")
             return
 
         avg_price = s.get("avg_price", 0.0)
         if avg_price > 0:
             profit_pct = (price - avg_price) / avg_price if side == 'buy' else (avg_price - price) / avg_price
             if profit_pct < 0.015:
-                print(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 1.5%，拒絕加倉以防拉高成本！")
+                logger.info(f"🛑 [金字塔防護] {sym} 目前利潤 {profit_pct*100:.2f}% 未達安全門檻 1.5%，拒絕加倉以防拉高成本！")
                 return
 
         last_entry_price = s.get("last_entry_price", avg_price)
         if last_entry_price > 0:
             reversal = (last_entry_price - price) / last_entry_price if side == 'buy' else (price - last_entry_price) / last_entry_price
             if reversal > 0.01:
-                print(f"🛑 [反轉過濾] {sym} 價格與上次加倉發生大幅反轉 ({reversal*100:.2f}% > 1%)，拒絕加倉！")
+                logger.info(f"🛑 [反轉過濾] {sym} 價格與上次加倉發生大幅反轉 ({reversal*100:.2f}% > 1%)，拒絕加倉！")
                 return
 
             current_vol = s.get("current_vol", 0.0)
             vol_ma20 = s.get("vol_ma20", 1e-8)
             if current_vol < vol_ma20 * 0.6:
-                print(f"🛑 [量能過濾] {sym} 當前量能低於均量 0.6 倍，動能不足拒絕加倉！")
+                logger.info(f"🛑 [量能過濾] {sym} 當前量能低於均量 0.6 倍，動能不足拒絕加倉！")
                 return
 
             if len(s.get("ohlcv", [])) >= 3:
@@ -572,25 +575,25 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
                 if side == 'buy' and is_bull1 and is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
                     if is_strong_long:
-                        print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢突破中，忽略實體與量能衰減")
+                        logger.info(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢突破中，忽略實體與量能衰減")
                     else:
-                        print(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                        logger.info(f"🛑 [斜率過濾] {sym} 價格創高但實體與量能雙雙衰減，動能不足拒絕加碼！")
                         return
                 if side == 'sell' and not is_bull1 and not is_bull2 and body1 < body2 * 0.8 and vol1 < vol2 * 0.8:
                     if is_strong_short:
-                        print(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢跌破中，忽略實體與量能衰減")
+                        logger.info(f"@@COIN_DEBUG@@ ⚡ [斜率過濾] {sym} 強勢跌破中，忽略實體與量能衰減")
                     else:
-                        print(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
+                        logger.info(f"🛑 [斜率過濾] {sym} 價格創低但實體與量能雙雙衰減，動能不足拒絕加碼！")
                         return
 
             if len(s.get("ohlcv", [])) >= 2:
                 current_close = s["ohlcv"][-1][4]
                 prev_close = s["ohlcv"][-2][4]
                 if side == 'buy' and current_close <= prev_close:
-                    print(f"🛑 [方向確認] {sym} 多單加倉失敗，當前收盤價未高於前K線，拒絕接刀！")
+                    logger.info(f"🛑 [方向確認] {sym} 多單加倉失敗，當前收盤價未高於前K線，拒絕接刀！")
                     return
                 if side == 'sell' and current_close >= prev_close:
-                    print(f"🛑 [方向確認] {sym} 空單加倉失敗，當前收盤價未低於前K線，拒絕接刀！")
+                    logger.info(f"🛑 [方向確認] {sym} 空單加倉失敗，當前收盤價未低於前K線，拒絕接刀！")
                     return
 
         current_atr = s.get("current_atr", 0.0)
@@ -604,7 +607,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             space_threshold = 1.0 * current_atr
 
         if last_entry_price > 0 and current_atr > 0 and price_diff < max(space_threshold, price * 0.005):
-            print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {max(space_threshold, price * 0.005):.4f}")
+            logger.info(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {max(space_threshold, price * 0.005):.4f}")
             return
 
         from core.indicators import _macd_vals
@@ -615,25 +618,25 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         is_strong_momentum_short = (side == 'sell' and rsi < 25 and macd_hist < 0 and macd_hist < prev_macd_hist)
 
         if is_strong_momentum_long or is_strong_momentum_short:
-            print(f"@@COIN_DEBUG@@ 🚀 [強勢豁免] {sym} RSI與MACD動能極強，豁免量能過濾直接加倉！")
+            logger.info(f"@@COIN_DEBUG@@ 🚀 [強勢豁免] {sym} RSI與MACD動能極強，豁免量能過濾直接加倉！")
         else:
             from core.entry_filter import is_entry_volume_confirmed
             if not is_entry_volume_confirmed(sym, side):
-                print(f"🛑 [動能關卡] {sym} 量能不足以支持加倉!")
+                logger.info(f"🛑 [動能關卡] {sym} 量能不足以支持加倉!")
                 return
 
         if (side == 'buy' and macd_hist <= 0) or (side == 'sell' and macd_hist >= 0):
-            print(f"🛑 [動能關卡] {sym} MACD動能不一致 (Hist: {macd_hist:.4f})，拒絕加倉!")
+            logger.info(f"🛑 [動能關卡] {sym} MACD動能不一致 (Hist: {macd_hist:.4f})，拒絕加倉!")
             return
 
         if abs(macd_hist) <= abs(prev_macd_hist):
-            print(f"🛑 [動能關卡] {sym} MACD動能未擴張 (Hist: {abs(macd_hist):.5f} <= Prev: {abs(prev_macd_hist):.5f})，拒絕加倉!")
+            logger.info(f"🛑 [動能關卡] {sym} MACD動能未擴張 (Hist: {abs(macd_hist):.5f} <= Prev: {abs(prev_macd_hist):.5f})，拒絕加倉!")
             return
 
         if s["avg_price"] > 0 and s["close_price"] > 0:
             profit_pct = (s["close_price"] - s["avg_price"]) / s["avg_price"] if side == 'buy' else (s["avg_price"] - s["close_price"]) / s["avg_price"]
             if profit_pct < 0.001:
-                print(f"🛑 [保本關卡] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
+                logger.info(f"🛑 [保本關卡] {sym} 目前尚未回到保本線以上，不加倉 (利潤: {profit_pct*100:.2f}%)")
                 return
 
     base_notional = margin * DUAL_SHOT_LEVERAGE
@@ -649,7 +652,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             bal = await exchange_futures.fetch_balance()
             total_usdt = float(bal.get("USDT", {}).get("total", balance))
             free_usdt = float(bal.get("USDT", {}).get("free", 0.0))
-            print(
+            logger.info(
                 f"🔥 [重裝雙發進場] {sym} 倉位計算中...\n"
                 f"   ➔ 當前錢包總權益 (total): {total_usdt:.4f} USDT\n"
                 f"   ➔ 單筆核配保證金 (= total/2): {required_margin:.4f} USDT\n"
@@ -657,12 +660,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 f"   ➔ 當前可用餘額 (free): {free_usdt:.4f} USDT"
             )
             if required_margin > free_usdt and free_usdt > 0:
-                print(f"⚠️ [資金關卡] {sym} 可用餘額 {free_usdt:.2f} < 所需保證金 {required_margin:.2f}，調整為可用餘額下單！")
+                logger.info(f"⚠️ [資金關卡] {sym} 可用餘額 {free_usdt:.2f} < 所需保證金 {required_margin:.2f}，調整為可用餘額下單！")
                 base_notional = free_usdt * DUAL_SHOT_LEVERAGE
         except Exception as e:
-            print(f"⚠️ [餘額檢查失敗] {e}")
+            logger.info(f"⚠️ [餘額檢查失敗] {e}")
     else:
-        print(
+        logger.info(
             f"🔥 [重裝雙發進場-Paper] {sym}\n"
             f"   ➔ 模擬錢包總權益: {balance:.4f} USDT\n"
             f"   ➔ 單筆核配保證金: {required_margin:.4f} USDT (= total/2)\n"
@@ -675,7 +678,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     # 單筆名義倉位上限：避免帳戶余額大時，買入 DOGE/XRP 等低單價幣產生天文數字的合約量
     MAX_NOTIONAL_PER_TRADE = 500.0  # USDT 名義上限
     if base_notional > MAX_NOTIONAL_PER_TRADE:
-        print(f"⚠️ [MAX_NOTIONAL] {sym} 名義倉位 {base_notional:.2f} USDT > 上限 {MAX_NOTIONAL_PER_TRADE} USDT，已自動縮減")
+        logger.info(f"⚠️ [MAX_NOTIONAL] {sym} 名義倉位 {base_notional:.2f} USDT > 上限 {MAX_NOTIONAL_PER_TRADE} USDT，已自動縮減")
         base_notional = MAX_NOTIONAL_PER_TRADE
 
     base_amt = base_notional / price
@@ -686,13 +689,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         min_qty = 6.0 / price
         min_qty = await sanitize_order_qty(sym, min_qty)
         if (min_qty * price) / lev > balance * 0.98:
-            print(f"⚠️ [風控] {sym} 資金不足以達到最小開倉額度 6 USDT (餘額: {balance:.2f})")
+            logger.info(f"⚠️ [風控] {sym} 資金不足以達到最小開倉額度 6 USDT (餘額: {balance:.2f})")
             return
         base_amt = min_qty
         actual_notional = base_amt * price
 
     if base_amt <= 0.0:
-        print(f"⚠️ [風控] {sym} 計算後開倉數量為 0")
+        logger.info(f"⚠️ [風控] {sym} 計算後開倉數量為 0")
         return
 
     if PAPER_TRADING:
@@ -705,9 +708,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
             }
             direction = "做多" if side == 'buy' else "做空"
-            print(f"⏳ [Paper限價掛出] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待最多{DUAL_SHOT_ORDER_TIMEOUT}秒成交)")
+            logger.info(f"⏳ [Paper限價掛出] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待最多{DUAL_SHOT_ORDER_TIMEOUT}秒成交)")
         except Exception as e:
-            print(f"🛑 [模擬掛單失敗] {sym}: {e}")
+            logger.info(f"🛑 [模擬掛單失敗] {sym}: {e}")
     else:
         try:
             try:
@@ -720,11 +723,11 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 if side == 'buy':
                     limit_price = bid1
                     order_type = 'limit'
-                    print(f"📌 [被動掛單] {sym} 掛買一 {limit_price:.6f} 等成交 (不追高)")
+                    logger.info(f"📌 [被動掛單] {sym} 掛買一 {limit_price:.6f} 等成交 (不追高)")
                 else:
                     limit_price = ask1
                     order_type = 'limit'
-                    print(f"📌 [被動掛單] {sym} 掛賣一 {limit_price:.6f} 等成交 (不殺低)")
+                    logger.info(f"📌 [被動掛單] {sym} 掛賣一 {limit_price:.6f} 等成交 (不殺低)")
             except Exception:
                 limit_price = price
                 order_type = 'limit'
@@ -745,7 +748,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 "sym": sym, "side": side, "qty": base_amt,
                 "price": limit_price, "timestamp": order_ts
             }
-            print(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price:.6f} (ID: {order_id})")
+            logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price:.6f} (ID: {order_id})")
 
             await asyncio.sleep(3)
             try:
@@ -759,13 +762,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if status == 'closed' or filled_qty >= base_amt * 0.99:
                 ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                 fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
-                print(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
+                logger.info(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
             elif filled_qty > 0:
                 fill_price = float(fetched.get('average') or limit_price)
                 base_amt = filled_qty
-                print(f"⚠️ [部分成交] {sym} 實際成交: {filled_qty:.4f} (OK率: {filled_qty/base_amt*100:.1f}%)")
+                logger.info(f"⚠️ [部分成交] {sym} 實際成交: {filled_qty:.4f} (OK率: {filled_qty/base_amt*100:.1f}%)")
             else:
-                print(f"⏳ [等待成交] {sym} 限價單 {order_id} 尚未成交，由逃期止單機制接管")
+                logger.info(f"⏳ [等待成交] {sym} 限價單 {order_id} 尚未成交，由逃期止單機制接管")
                 return
 
             old_qty = s["qty"]
@@ -776,9 +779,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     actual_qty = float(actual_pos.get('contracts', 0) or 0)
                     actual_side_sign = 1 if side == 'buy' else -1
                     s["qty"] = actual_qty * actual_side_sign
-                    print(f"📊 [持倉同步] {sym} 交易所實際持倉: {s['qty']:.4f}")
+                    logger.info(f"📊 [持倉同步] {sym} 交易所實際持倉: {s['qty']:.4f}")
             except Exception as pe:
-                print(f"⚠️ [持倉同步失敗] {sym}: {pe}")
+                logger.info(f"⚠️ [持倉同步失敗] {sym}: {pe}")
                 s["qty"] = old_qty
 
             old_qty = s["qty"]
@@ -788,7 +791,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["qty"] -= base_amt
 
             slippage = abs(fill_price - price) / price if price > 0 else 0
-            print(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
+            logger.info(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
 
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
@@ -836,19 +839,19 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     try:
                         await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
                     except Exception as ce:
-                        print(f"⚠️ [取消舊止損單失敗] {sym}: {ce}")
+                        logger.info(f"⚠️ [取消舊止損單失敗] {sym}: {ce}")
 
                 stop_order = await exchange_futures.create_order(
                     sym, type='STOP_MARKET', side=stop_side, amount=abs(s["qty"]),
                     params={'stopPrice': stop_price, 'reduceOnly': True}
                 )
                 s["exchange_stop_order_id"] = stop_order['id']
-                print(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {abs(s['qty'])})")
+                logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {abs(s['qty'])})")
             except Exception as se:
-                print(f"🚨 [交易所止損挂單失敗] {sym}: {se}")
+                logger.info(f"🚨 [交易所止損挂單失敗] {sym}: {se}")
 
         except Exception as e:
-            print(f"🚨 [開倉錯誤] {sym}: {e}")
+            logger.info(f"🚨 [開倉錯誤] {sym}: {e}")
 
 
 async def check_stale_limit_orders():
@@ -884,19 +887,19 @@ async def check_stale_limit_orders():
 
                 if order_status in ('closed', 'canceled'):
                     ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
-                    print(f"ℹ️ [超時撤單] {sym} 訂單 {order_id} 已為 {order_status} 狀態，跳過撤單。")
+                    logger.info(f"ℹ️ [超時撤單] {sym} 訂單 {order_id} 已為 {order_status} 狀態，跳過撤單。")
                     continue
 
                 await exchange_futures.cancel_order(order_id, sym)
                 cancel_ok = True
-                print(
+                logger.info(
                     f"⏳ [超時撤單] {sym} 限價單超時未成交 "
                     f"(已掛單 {elapsed:.1f} 秒 > {MAX_WAIT_SECONDS}s)。"
                     f"為防止穿價風險，執行自動撤單！ OrderID: {order_id} "
                     f"部分成交量: {filled_qty:.4f}/{original_qty:.4f}"
                 )
             except Exception as ce:
-                print(f"⚠️ [超時撤單失敗] {sym} {order_id}: {ce}")
+                logger.info(f"⚠️ [超時撤單失敗] {sym} {order_id}: {ce}")
 
             ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
 
@@ -915,12 +918,12 @@ async def check_stale_limit_orders():
                     actual_qty = float(actual_pos.get('contracts', 0) or 0)
                     side_sign = 1 if actual_pos.get('side', '') == 'long' else -1
                     s["qty"] = actual_qty * side_sign
-                    print(
+                    logger.info(
                         f"📊 [持倉同步] {sym} 撤銷後實際持倉: {s['qty']:.4f} "
                         f"(原始預期: {original_qty:.4f})"
                     )
                 else:
-                    print(
+                    logger.info(
                         f"🔄 [狀態重置] {sym} 限價單完全未成交 (filled=0)，"
                         f"撤單後清除追蹤狀態，機器人重回 ACTIVE 掃描模式。"
                     )
@@ -931,4 +934,4 @@ async def check_stale_limit_orders():
                         s["status"] = "ACTIVE"
 
             except Exception as pe:
-                print(f"⚠️ [持倉同步失敗] {sym}: {pe}")
+                logger.info(f"⚠️ [持倉同步失敗] {sym}: {pe}")

@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import inspect
 import json
@@ -21,6 +22,8 @@ from core.symbol_profile import (filter_valid_symbols, apply_symbol_profile, SYM
 from core.trade_signal import update_trade_signal
 from core.check_entries import compute_indicators, check_all_divergence_logic
 
+logger = logging.getLogger(__name__)
+
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -29,14 +32,14 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 def send_alert(message):
     """發送緊急告警到 Telegram"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print(f"⚠️ [通知失敗] 未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID，僅輸出到 Log: {message}")
+        logger.info(f"⚠️ [通知失敗] 未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID，僅輸出到 Log: {message}")
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"🚨 [機器人警報]\n{message}"}
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f"⚠️ [通知失敗] 無法發送 Telegram 訊息: {e}")
+        logger.info(f"⚠️ [通知失敗] 無法發送 Telegram 訊息: {e}")
 
 
 async def watch_symbol_trades(exchange, sym):
@@ -49,7 +52,7 @@ async def watch_symbol_trades(exchange, sym):
             elif trades:
                 update_trade_signal(sym, trades)
         except Exception as e:
-            print(f"⚠️ [成交流監聽異常] {sym}: {e}")
+            logger.info(f"⚠️ [成交流監聽異常] {sym}: {e}")
         await asyncio.sleep(3)
 
 
@@ -71,7 +74,7 @@ async def market_wind_loop(exchange):
         try:
             await update_market_wind(exchange)
         except Exception as e:
-            print(f"⚠️ [大盤風向更新失敗] {e}")
+            logger.info(f"⚠️ [大盤風向更新失敗] {e}")
         await asyncio.sleep(60)
 
 
@@ -87,11 +90,11 @@ async def handle_trading_error(sym):
         return
 
     s["error_strikes"] = s.get("error_strikes", 0) + 1
-    print(f"⚠️ [ERROR_STRIKE] {sym} 發生第 {s['error_strikes']} 次異常")
+    logger.info(f"⚠️ [ERROR_STRIKE] {sym} 發生第 {s['error_strikes']} 次異常")
 
     if s["error_strikes"] >= 3:
         s["is_banned"] = True
-        print(f"🚫 [BANNED] {sym} 因連續報錯被封鎖，將停止監控。")
+        logger.info(f"🚫 [BANNED] {sym} 因連續報錯被封鎖，將停止監控。")
 
     s["sync_required"] = True
     reset_coin_state(sym)
@@ -111,7 +114,7 @@ async def safe_execute(func, sym, *args):
         else:
             return func(sym, *args)
     except Exception as e:
-        print(f"🚨 [SAFE_SHIELD] {sym} 發生異常在 {func.__name__}: {e}")
+        logger.info(f"🚨 [SAFE_SHIELD] {sym} 發生異常在 {func.__name__}: {e}")
         await handle_trading_error(sym)
         return None
 
@@ -122,7 +125,7 @@ async def calibrate_with_exchange(exchange):
     若偵測到本地數據與交易所數據不符，強制覆蓋為交易所數據。
     """
     if PAPER_TRADING:
-        print("ℹ️ [CALIBRATION] 紙上交易模式，跳過交易所校準。")
+        logger.info("ℹ️ [CALIBRATION] 紙上交易模式，跳過交易所校準。")
         return
 
     try:
@@ -134,7 +137,7 @@ async def calibrate_with_exchange(exchange):
             real_qty = float(pos.get('contracts', 0.0) or pos.get('info', {}).get('positionAmt', 0.0))
             if abs(real_qty) > 0.000001:
                 if sym not in ctx.ALL_SYMBOLS:
-                    print(f"⚠️ [發現未監控持倉] 交易所內 {sym} 仍有實盤倉位，自動加回監控清單並在介面顯示！")
+                    logger.info(f"⚠️ [發現未監控持倉] 交易所內 {sym} 仍有實盤倉位，自動加回監控清單並在介面顯示！")
                     ctx.ALL_SYMBOLS.append(sym)
                     ctx.STATES[sym] = build_symbol_state(sym)
                     apply_symbol_profile(sym, SYMBOL_PROFILES.get(sym, {}))
@@ -143,15 +146,15 @@ async def calibrate_with_exchange(exchange):
                 current_qty = ctx.STATES[sym].get("qty", 0.0)
 
                 if abs(real_qty - current_qty) > (abs(current_qty) * 0.001) and abs(real_qty) > 0:
-                    print(f"⚖️ [CALIBRATION] 校準 {sym}: 內部 {current_qty} -> 交易所 {real_qty}")
+                    logger.info(f"⚖️ [CALIBRATION] 校準 {sym}: 內部 {current_qty} -> 交易所 {real_qty}")
                     ctx.STATES[sym]["qty"] = real_qty
                     if current_qty == 0:
                         ctx.STATES[sym]["entry_price"] = float(pos.get('entryPrice', pos.get('avg_price', 0.0)))
                         ctx.STATES[sym]["avg_price"] = ctx.STATES[sym]["entry_price"]
-                        print(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
+                        logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 
     except Exception as e:
-        print(f"⚠️ [CALIBRATION_FAIL] 無法連線交易所校準: {e}")
+        logger.info(f"⚠️ [CALIBRATION_FAIL] 無法連線交易所校準: {e}")
 
 
 async def main_loop(exchange):
@@ -166,19 +169,19 @@ async def main_loop(exchange):
     try:
         await asyncio.wait_for(exchange_futures.load_markets(), timeout=15)
     except Exception as e:
-        print(f"⚠️ load_markets 失敗 ({e})，使用預設市場清單")
+        logger.info(f"⚠️ load_markets 失敗 ({e})，使用預設市場清單")
 
     ctx.ALL_SYMBOLS = filter_valid_symbols(exchange, ctx.ALL_SYMBOLS)
     from core.symbol_profile import save_symbol_pool
     save_symbol_pool(ctx.ALL_SYMBOLS)
 
-    print(f"📋 監控幣種: {', '.join(ctx.ALL_SYMBOLS)}")
+    logger.info(f"📋 監控幣種: {', '.join(ctx.ALL_SYMBOLS)}")
     try:
         await asyncio.wait_for(initialize_atr_history(exchange), timeout=60)
     except (asyncio.TimeoutError, Exception) as e:
-        print(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
+        logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
 
-    print("🔍 [INIT] 正在啟動時校準倉位...")
+    logger.info("🔍 [INIT] 正在啟動時校準倉位...")
     await calibrate_with_exchange(exchange)
     await fetch_real_balance()
     await load_open_positions()
@@ -204,13 +207,13 @@ async def main_loop(exchange):
                 is_equity_safe = check_total_equity_protection()
                 if not is_equity_safe:
                     await execute_panic_sell_all_positions()
-                    print("🛑 [全局冷卻] 機器人進入 1 小時強制休眠，防禦連續虧損！")
+                    logger.info("🛑 [全局冷卻] 機器人進入 1 小時強制休眠，防禦連續虧損！")
                     setattr(sys.modules[__name__], 'GLOBAL_MELTDOWN_COOLING', True)
                     setattr(sys.modules[__name__], 'MELTDOWN_TIME', time.time())
 
             if getattr(sys.modules[__name__], 'GLOBAL_MELTDOWN_COOLING', False):
                 if time.time() - getattr(sys.modules[__name__], 'MELTDOWN_TIME', 0) > 3600:
-                    print("✅ [全局冷卻結束] 1小時防禦期滿，恢復正常運行。")
+                    logger.info("✅ [全局冷卻結束] 1小時防禦期滿，恢復正常運行。")
                     setattr(sys.modules[__name__], 'GLOBAL_MELTDOWN_COOLING', False)
                 else:
                     await asyncio.sleep(60)
@@ -218,7 +221,7 @@ async def main_loop(exchange):
 
             for sym in ctx.ALL_SYMBOLS:
                 if ctx.STATES[sym].get("sync_required"):
-                    print(f"🔄 [SYNC_REQUIRED] 正在重新校準 {sym}...")
+                    logger.info(f"🔄 [SYNC_REQUIRED] 正在重新校準 {sym}...")
                     await load_open_positions()
                     ctx.STATES[sym]["sync_required"] = False
 
@@ -233,7 +236,7 @@ async def main_loop(exchange):
                         continue
                     else:
                         ctx.STATES[sym]["status"] = "ACTIVE"
-                        print(f"✅ [冷卻結束] {sym} 恢復 ACTIVE 狀態")
+                        logger.info(f"✅ [冷卻結束] {sym} 恢復 ACTIVE 狀態")
 
                 await safe_execute(compute_indicators, sym)
 
@@ -241,14 +244,14 @@ async def main_loop(exchange):
             if time.time() % 300 < MAIN_LOOP_INTERVAL_SEC:
                 div_list = check_all_divergence_logic()
                 for msg in div_list:
-                    print(f"🌟 [自動背離掃描] {msg}")
+                    logger.info(f"🌟 [自動背離掃描] {msg}")
 
             # --- 狀態更新區塊 ---
             try:
                 update_states()
                 update_all_dynamic_personalities()
             except Exception as e:
-                print(f"⚠️ [狀態更新異常]: {e}")
+                logger.info(f"⚠️ [狀態更新異常]: {e}")
 
             # --- AI 大腦診斷 ---
             try:
@@ -272,7 +275,7 @@ async def main_loop(exchange):
             try:
                 await check_entries() # Check entries evaluates all at once currently. Let's keep it global for ranking, or wrap it in a PortfolioManager later.
             except Exception as e:
-                print(f"⚠️ [進場檢查異常]: {e}")
+                logger.info(f"⚠️ [進場檢查異常]: {e}")
                 traceback.print_exc()
 
             # 成功執行，重置連續錯誤計數器
@@ -284,24 +287,24 @@ async def main_loop(exchange):
             sleep_time = max(1.5, MAIN_LOOP_INTERVAL_SEC - elapsed) + weight_sleep
             await asyncio.sleep(sleep_time)
         except ccxt.DDoSProtection as e:
-            print(f"🚨 [API限流 429] 檢測到 DDoSProtection 限流，冷卻 10 秒: {e}")
+            logger.info(f"🚨 [API限流 429] 檢測到 DDoSProtection 限流，冷卻 10 秒: {e}")
             await asyncio.sleep(10)
         except ccxt.RateLimitExceeded as e:
-            print(f"🚨 [API限流 429] 檢測到 RateLimitExceeded 限流，冷卻 10 秒: {e}")
+            logger.info(f"🚨 [API限流 429] 檢測到 RateLimitExceeded 限流，冷卻 10 秒: {e}")
             await asyncio.sleep(10)
         except Exception as e:
             if "429" in str(e):
-                print(f"🚨 [API限流 429] 檢測到 429 錯誤，冷卻 10 秒: {e}")
+                logger.info(f"🚨 [API限流 429] 檢測到 429 錯誤，冷卻 10 秒: {e}")
                 await asyncio.sleep(10)
                 continue
             error_msg = f"發生未預期的錯誤：\n{str(e)}\n{traceback.format_exc()}"
-            print(f"❌ [系統錯誤] {error_msg}")
+            logger.info(f"❌ [系統錯誤] {error_msg}")
 
             try:
                 await load_open_positions()
-                print("♻️ 已重新載入真實部位完成")
+                logger.info("♻️ 已重新載入真實部位完成")
             except Exception as e2:
-                print(f"⚠️ 重新載入部位失敗: {e2}")
+                logger.info(f"⚠️ 重新載入部位失敗: {e2}")
 
             try:
                 send_alert(error_msg)
@@ -315,7 +318,7 @@ async def main_loop(exchange):
                 except NameError:
                     pass
                 cooldown = min(120, 15 * (ctx.CONSECUTIVE_ERRORS - 2))
-                print(f"🚨 [連續API錯誤風控] 已連續錯誤 {ctx.CONSECUTIVE_ERRORS} 次，觸發風控冷卻，暫停 {cooldown} 秒...")
+                logger.info(f"🚨 [連續API錯誤風控] 已連續錯誤 {ctx.CONSECUTIVE_ERRORS} 次，觸發風控冷卻，暫停 {cooldown} 秒...")
                 await asyncio.sleep(cooldown)
             else:
                 await asyncio.sleep(5)
@@ -327,7 +330,7 @@ async def periodic_htf_update(exchange):
         await fetch_all_sma200(exchange)
         await fetch_all_ema50_1h(exchange)
         await fetch_all_ema_15m(exchange)
-        print("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20 & EMA50")
+        logger.info("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20 & EMA50")
 
 
 def print_multi_status():
@@ -345,21 +348,21 @@ def print_multi_status():
             avg_price = s.get('avg_price', 0)
             active_positions.append(f"  🔥 持倉] {sym} | 方向:{direction} | 入場:{avg_price} | 獲利:{pnl}%")
 
-    print(f"[{now}] [__multi__] 📊 [現況]")
+    logger.info(f"[{now}] [__multi__] 📊 [現況]")
 
     if active_positions:
         for pos in active_positions:
-            print(pos)
+            logger.info(pos)
     else:
-        print("  ✨ 持倉] 目前無持倉")
+        logger.info("  ✨ 持倉] 目前無持倉")
 
     total_monitored = len(ctx.STATES)
     active_count = len(active_positions)
     cooldown_count = sum(1 for s in ctx.STATES.values() if s.get('status') == 'COOLDOWN')
     banned_count = sum(1 for s in ctx.STATES.values() if s.get('status') == 'BANNED')
 
-    print(f"  📊 統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
-    print("-" * 60)
+    logger.info(f"  📊 統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
+    logger.info("-" * 60)
 
 
 async def periodic_status_log():
@@ -408,9 +411,9 @@ async def main():
             try:
                 await main_loop(exchange_futures)
             except Exception as e:
-                print(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
+                logger.info(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
                 traceback.print_exc()
-                print("⏳ 將在 10 秒後由內部自動重啟主程序...")
+                logger.info("⏳ 將在 10 秒後由內部自動重啟主程序...")
                 await asyncio.sleep(10)
     finally:
         # 在同一個 event loop 內關閉 ccxt 連線，避免跨 loop 的資源殘留
