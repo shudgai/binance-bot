@@ -261,16 +261,18 @@ async def main_loop(exchange):
                 pass
 
             # --- 出場檢查區塊 (最關鍵的防禦) ---
+            from core.strategy.factory import StrategyFactory
             for sym in ctx.ALL_SYMBOLS:
                 if ctx.STATES[sym].get("status") != "ACTIVE":
                     continue
                 if PAPER_TRADING:
                     await check_paper_pending_order(sym)
-                await safe_execute(check_exits, sym)
+                strategy = StrategyFactory.create_strategy(sym)
+                await safe_execute(strategy.check_exit, sym) # Actually safe_execute expects a function and sym. 
 
             # --- 進場檢查區塊 ---
             try:
-                await check_entries()
+                await check_entries() # Check entries evaluates all at once currently. Let's keep it global for ranking, or wrap it in a PortfolioManager later.
             except Exception as e:
                 print(f"⚠️ [進場檢查異常]: {e}")
                 traceback.print_exc()

@@ -584,7 +584,7 @@ def api_toggle_coin(symbol: str):
 def api_get_coin_profiles():
     try:
         import ast, re
-        src_path = os.path.join(os.path.dirname(__file__), "heavy_dual_shot_core.py")
+        src_path = os.path.join(os.path.dirname(__file__), "core", "config.py")
         with open(src_path, "r", encoding="utf-8") as f:
             src = f.read()
         # 找 COIN_PROFILE_CONFIG = { ... \n} 區塊，支援尾隨逗號
