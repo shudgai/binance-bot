@@ -477,7 +477,9 @@ async def check_exits(sym):
                     s['is_breakeven_locked'] = True
                     print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
         else:
-            breakeven_price = avg * (1 - slippage_buffer)
+            # 空倉：保本線應在入場價上方（Universal SL 用 p >= sl，price 回升超過此點才退場）
+            # 錯誤寫法 avg*(1-buf) 把保本線設在入場價下方，在獲利區內就觸發退場
+            breakeven_price = avg * (1 + slippage_buffer)
             if s.get('stop_loss', float('inf')) > breakeven_price:
                 s['stop_loss'] = breakeven_price
                 if not s.get('is_breakeven_locked'):
