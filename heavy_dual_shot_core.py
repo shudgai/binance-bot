@@ -4282,15 +4282,15 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         _tb_score_gate = s.get("trend_bias_score", 0)
         # score 永遠是偶數 (0, ±2, ±4)，中性(0)時不進場，只在明確趨勢方向才開倉
         # require_strong_bias 幣種（如 SOL）需 4 項全符合 (score = ±4)，避免盤整洗盤
-        # 【徹底解決開錯方向】將趨勢過濾門檻拉到最高級別 (±4)
-        # 代表必須 EMA20, EMA50, EMA_1H, MACD 四個指標「全部」同向才能開倉，徹底過濾盤整假突破
+        # 【適度放寬但防禦死角】將趨勢過濾門檻放寬至 +2（四個指標中只要三個同向即可提早進場）
+        # 但如果是特別指定要嚴格過濾的幣種（require_strong_bias），則維持最高門檻 4
         _require_strong = COIN_PROFILE_CONFIG.get(sym, {}).get("require_strong_bias", False)
-        _tb_min_threshold = 4   # 原本是 2，現在強制要求 4 分滿分
+        _tb_min_threshold = 4 if _require_strong else 2
         if side == "buy" and _tb_score_gate < _tb_min_threshold:
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需滿分 +4 才做多 (Route:{route})")
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需 ≥ +{_tb_min_threshold} 才做多 (Route:{route})")
             return False
         if side == "sell" and _tb_score_gate > -_tb_min_threshold:
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≤-{_tb_min_threshold}才做空 (Route:{route})")
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需 ≤ -{_tb_min_threshold} 才做空 (Route:{route})")
             return False
 
     # =========================================================================
