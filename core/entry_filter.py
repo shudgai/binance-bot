@@ -234,14 +234,19 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = ctx.STATES[sym]
     cp = s["close_price"]
 
+    # 新幣沒設定檔 → 自動套用保守預設，避免 DEFAULT_LEVERAGE=5 失控
+    if sym not in COIN_PROFILE_CONFIG:
+        from core.config import DEFAULT_NEW_COIN_PROFILE
+        COIN_PROFILE_CONFIG[sym] = DEFAULT_NEW_COIN_PROFILE.copy()
+        print(f"⚠️ [AUTO_PROFILE] {sym} 補套預設風控（2x 槓桿 / hard_sl 1.5%）")
+
     if route == "Automatic_Reverse":
         print(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
         return True
 
     # =========================================================================
     # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
-    # BTC 4H + 1H 雙熊 → 啟動「熊市防禦模式」，封鎖所有做多訊號
-    # 除非滿足「極端超賣 RSI < 32」或「底背離確認」
+    # BTC 4H + 1H 雙熊 → 封鎖做多；BTC 4H 多頭 → 封鎖做空
     # =========================================================================
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
     btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
@@ -257,6 +262,24 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         reason = "極端超賣" if extreme_oversold else "底背離確認"
         print(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
     # 熊市防禦模式下，做空方向完全放行（不封鎖）
+
+    # =========================================================================
+    # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
+    # BTC 4H 多頭 → 封鎖所有做空訊號（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
+    # 豁免：RSI > 73 極端超買 / Exhaustion 路由且 RSI > 70
+    # =========================================================================
+    bull_defense_mode = (btc_4h == "BULL")
+    if bull_defense_mode and side == 'sell':
+        current_rsi_macro = s.get("current_rsi", 50.0)
+        is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
+        # RSI > 73 才算真正超買可逆勢做空（68 在上升趨勢很常見，不算超買）
+        if current_rsi_macro > 73.0:
+            print(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
+        elif is_reversal_route and current_rsi_macro > 70.0:
+            print(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
+        else:
+            print(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route})")
+            return False
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
@@ -326,7 +349,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         vol_ma20_q = s.get("vol_ma20", 0.0)
         if avg_body_size > 0 and vol_ma20_q > 0:
             # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
-            if current_body_size <= avg_body_size * 1.2 or eval_vol <= vol_ma20_q * 1.3:
+            if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * 1.0:
                 if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
                     print(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能嚴格門檻")
                 else:
@@ -421,7 +444,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # --- [BTC 4H 趨勢過濾] 硬性方向限制，避免逆勢開倉 ---
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
     if is_trend and btc_4h is not None:
-        _btc4h_override = 14.0
+        _btc4h_override = 20.0  # 需要非常強的訊號才能逆勢進場（改自 14.0）
         if side == 'buy' and btc_4h == "BEAR":
             if strength >= _btc4h_override:
                 print(f"@@COIN_DEBUG@@ ⚡ {sym} [4H逆勢覆蓋] 熊市但訊號強度 {strength:.1f} >= {_btc4h_override}，允許做多")
@@ -443,7 +466,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        _mtf_override_threshold = 11.0
+        _mtf_override_threshold = 16.0  # 需要強訊號才能繞過 1H EMA50 趨勢過濾（改自 11.0）
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:

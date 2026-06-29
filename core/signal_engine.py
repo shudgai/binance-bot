@@ -83,8 +83,8 @@ def compute_signal_strength(sym):
     long_macd_cross = prev_macd_line <= prev_macd_signal and macd_line > macd_signal
     short_macd_cross = prev_macd_line >= prev_macd_signal and macd_line < macd_signal
 
-    long_macd_hist_aligned = macd_hist > prev_macd_hist * 1.2
-    short_macd_hist_aligned = macd_hist < prev_macd_hist * 1.2
+    long_macd_hist_aligned  = macd_hist > 0 and macd_hist > prev_macd_hist
+    short_macd_hist_aligned = macd_hist < 0 and macd_hist < prev_macd_hist
 
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
@@ -323,13 +323,17 @@ async def is_reversal_still_valid(sym, pending_side):
     prev_candle = s["ohlcv"][-2]
     prev_close = prev_candle[4]
 
-    # 1. 大盤方向過濾：BTC 雙熊時不允許反手做多（除非極端超賣）
+    # 1. 大盤方向過濾：BTC 雙熊不允許做多反手；BTC 4H 多頭不允許做空反手
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
     btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
     rsi = s.get("current_rsi", 50.0)
     if pending_side == "buy" and btc_4h == "BEAR" and btc_1h == "BEAR":
         if rsi >= 32:
             print(f"🔴 [Reversal_MacroBlock] {sym} BTC 雙熊，做多反手需 RSI<32，目前 {rsi:.1f}")
+            return False
+    if pending_side == "sell" and btc_4h == "BULL":
+        if rsi <= 73.0:
+            print(f"🔵 [Reversal_BullBlock] {sym} BTC 4H 多頭，做空反手需 RSI>73，目前 {rsi:.1f}")
             return False
 
     # 2. 價格位置確認（防接刀 / 防地板空）

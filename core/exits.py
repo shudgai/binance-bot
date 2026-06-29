@@ -279,7 +279,7 @@ async def check_exits(sym):
                 momentum_failing = True
 
         if momentum_failing:
-            print(f"✅ [Momentum_Exit] {sym} 獲利達標 (3.0 ATR) 且動能衰竭，早期獲利平倉！")
+            print(f"✅ [Momentum_Exit] {sym} 獲利達標 (6.0 ATR) 且動能衰竭，早期獲利平倉！")
             cs = "sell" if is_long else "buy"
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
             return
@@ -703,7 +703,7 @@ async def check_exits(sym):
     if regime_decision == "BREAKOUT_REVERSAL":
         cs = 'sell' if is_long else 'buy'
         print(f"🚨 [市場 regime] {sym} {regime_reason}，立即平倉並考慮反手")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Breakout_Fail]_Fail]", is_stop_loss=True)
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Breakout_Fail]", is_stop_loss=True)
         s["highest_profit_pct"] = 0.0
 
         if _check_reversal_allowed(sym, s):
