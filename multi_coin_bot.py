@@ -167,16 +167,6 @@ exchange_futures = ccxtpro.binance({
     },
 })
 
-exchange_spot = ccxtpro.binance({
-    'apiKey': os.getenv('BINANCE_API_KEY') or None,
-    'secret': os.getenv('BINANCE_API_SECRET') or None,
-    'enableRateLimit': True,
-    'rateLimit': 1000,
-    'options': {
-        'defaultType': 'spot',
-        'watchOrderBookSnapshot': True,
-    },
-})
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
@@ -392,8 +382,7 @@ TIME_STOP_MINUTES = 30
 if USE_TESTNET:
     exchange_futures.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
     exchange_futures.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
-    exchange_spot.urls['api']['public'] = 'https://testnet.binance.vision/api/v3'
-    exchange_spot.urls['api']['private'] = 'https://testnet.binance.vision/api/v3'
+
 
 DEFAULT_SYMBOLS = [
     "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
@@ -976,7 +965,7 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 5
 SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 3.0
-HARD_STOP_LOSS_PCT = 0.02
+HARD_STOP_LOSS_PCT = 0.008
 
 def build_symbol_state(sym):
     conf = COIN_PROFILE_CONFIG.get(sym, {})
@@ -1713,8 +1702,8 @@ def update_trailing_stop(sym, current_price, is_long):
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
             s["trailing_highest"] = current_price
-            # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移
-            trail_sl = s["trailing_highest"] - (atr_val * trailing_multiplier)
+            # 修改：使用最高點而非當前價來計算停損，確保停損點只會上移，並加入最小安全距離
+            trail_sl = s["trailing_highest"] - max(atr_val * trailing_multiplier, current_price * 0.005)
             
             # --- 保本邏輯 ---
             trigger_mult = s.get("breakeven_trigger")
@@ -1737,8 +1726,8 @@ def update_trailing_stop(sym, current_price, is_long):
     else:
         if current_price < s.get("trailing_lowest", float('inf')):
             s["trailing_lowest"] = current_price
-            # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移
-            trail_sl = s["trailing_lowest"] + (atr_val * trailing_multiplier)
+            # 修改：使用最低點而非當前價來計算停損，確保停損點只會下移，並加入最小安全距離
+            trail_sl = s["trailing_lowest"] + max(atr_val * trailing_multiplier, current_price * 0.005)
             
             # --- 保本邏輯 ---
             trigger_mult = s.get("breakeven_trigger")
@@ -2584,10 +2573,16 @@ async def check_exits(sym):
         
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
 
+    p = s["close_price"]
+    avg = s["avg_price"]
+    is_long = s["qty"] > 0
+    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    cs = 'sell' if is_long else 'buy'
+
     # --- [優化] 進場後靜默區 (接刀防護) ---
     if hold_sec < 60 and profit_pct < -0.005:
         print(f"🔪 [接刀防護] {sym} 進場後 60 秒內瞬間跌破 0.5%，強制平倉並封禁 1 小時！ (淨利: {profit_pct*100:.2f}%)")
-        await close_position(sym, ("sell" if is_long else "buy"), abs(s["qty"]), p, avg, reason="Silence_Zone_Knife_Catch", is_stop_loss=True)
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="Silence_Zone_Knife_Catch", is_stop_loss=True)
         # 設置臨時封禁 1 小時
         s["status"] = "BANNED"
         s["next_status_time"] = time.time() + 3600
@@ -2599,12 +2594,6 @@ async def check_exits(sym):
     cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
     if hold_sec < cooldown_limit:
         return
-
-    p = s["close_price"]
-    avg = s["avg_price"]
-    is_long = s["qty"] > 0
-    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
-    cs = 'sell' if is_long else 'buy'
 
     # --- Slippage Compensation (淨利潤扣除 0.15% 摩擦成本) ---
     net_profit_pct = profit_pct - 0.0015
@@ -2729,6 +2718,17 @@ async def check_exits(sym):
             s["highest_profit_pct"] = 0.0
             return
 
+    # --- 試倉機制加倉 (Half-Size Confirm Add) ---
+    confirm_threshold = max(atr_pct * 0.5, 0.002)
+    if s.get("trade_status") == "HALF_ENTRY" and net_profit_pct >= confirm_threshold:
+        print(f"✅ [試倉確認] {sym} 獲利達 {confirm_threshold*100:.2f}% (動態ATR)，突破確立！執行加倉補滿原本 50% 倉位。")
+        s["trade_status"] = "NORMAL" # 先改狀態防重複觸發
+        # execute_order 是非同步，需用 await 呼叫
+        side = "buy" if is_long else "sell"
+        await execute_order(sym, side, p, route="Confirm_Add")
+        # 由於加倉會改變均價，重新計算獲利 (但不中斷檢查)
+        pass
+
     # ── Layer 3: 技術反轉 (Technical Reversal) ──
     macd_is_down = s.get("macd_line", 0) < s.get("macd_signal", 0)
     macd_is_up = s.get("macd_line", 0) > s.get("macd_signal", 0)
@@ -2841,7 +2841,7 @@ async def check_position_exits(exchange, sym):
     atr_val = s["current_atr"] if s.get("current_atr", 0.0) > 0 else (p * 0.01)
 
     # 初始的距離 (加入最小停損與停利距離保護)
-    sl_dist = max(atr_val * sl_multiplier, p * 0.012)
+    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
     tp_dist = max(atr_val * tp_multiplier, p * 0.015)
 
     # 定義初始 TP/SL 價格
@@ -3063,7 +3063,18 @@ async def execute_order(sym, side, price, route="UNKNOWN"):
         # 首次開倉：ATR 風險單位法 (Dynamic Position Sizing)
         # qty = (balance × RISK_PER_TRADE_PCT) / sl_distance
         base_amt = calculate_dynamic_qty(sym, price, side)
+        
+        # --- 50% 試倉機制 ---
+        base_amt = base_amt * 0.5
+        s["trade_status"] = "HALF_ENTRY"
+        
         base_amt = await sanitize_order_qty(sym, base_amt)
+    elif route == "Confirm_Add":
+        # 獲利加倉：補齊剩下的 50%
+        base_amt = calculate_dynamic_qty(sym, price, side)
+        base_amt = base_amt * 0.5
+        base_amt = await sanitize_order_qty(sym, base_amt)
+        s["trade_status"] = "NORMAL"
     else:
         # 加倉：沿用原有保守的固定比例法
         target_notional = margin * lev
@@ -3520,6 +3531,14 @@ def compute_signal_strength(sym):
     long_base_ok = route_a_long
     short_base_ok = route_a_short
 
+    # --- 大盤聯動過濾 (BTC Correlation Filter) ---
+    btc_change = MARKET_WIND.get("btc_change_15m", 0.0)
+    if btc_change < -0.003: # 大盤正在跌，禁止所有小幣做多
+        long_base_ok = False
+        if "buy" in str(route_a_long): pass # Just to suppress unused warning if any
+    if btc_change > 0.003: # 大盤正在漲，禁止所有小幣做空
+        short_base_ok = False
+
     if long_base_ok:
         route = "a"
         strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
@@ -3558,16 +3577,19 @@ def compute_signal_strength(sym):
             trend_ok = (ema50_1h == 0) or (close > ema50_1h)
             
             if trend_ok and (support_ok or reversal_ok or bounce_ok):
-                is_extreme = False
-                vol_ma20 = s.get("vol_ma20", 1)
-                if bounce_ok and c1[5] > vol_ma20 * 2.0:
-                    is_extreme = True
-                if reversal_ok and ((min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 1.5):
-                    is_extreme = True
-                
-                route_name = "Exhaustion_Entry_Extreme" if is_extreme else "Exhaustion_Entry"
-                print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok}, Extreme:{is_extreme}, VolCoef:{vol_threshold_coef:.2f})")
-                return ("buy", 15.0, route_name)
+                if btc_change < -0.003:
+                    print(f"🚫 [大盤聯動過濾] BTC 15m 下跌 {btc_change*100:.2f}%，擋下 {sym} 衰竭做多訊號")
+                else:
+                    is_extreme = False
+                    vol_ma20 = s.get("vol_ma20", 1)
+                    if bounce_ok and c1[5] > vol_ma20 * 2.0:
+                        is_extreme = True
+                    if reversal_ok and ((min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 1.5):
+                        is_extreme = True
+                    
+                    route_name = "Exhaustion_Entry_Extreme" if is_extreme else "Exhaustion_Entry"
+                    print(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok}, Extreme:{is_extreme}, VolCoef:{vol_threshold_coef:.2f})")
+                    return ("buy", 15.0, route_name)
                 
         # 空單：抓反彈頂部
         if c2[4] > c2[1] and c2_vol_low:  # c2 價漲且量縮
@@ -3580,16 +3602,19 @@ def compute_signal_strength(sym):
             trend_ok = (ema50_1h == 0) or (close < ema50_1h)
             
             if trend_ok and (support_ok or reversal_ok or bounce_ok):
-                is_extreme = False
-                vol_ma20 = s.get("vol_ma20", 1)
-                if bounce_ok and c1[5] > vol_ma20 * 2.0:
-                    is_extreme = True
-                if reversal_ok and ((c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 1.5):
-                    is_extreme = True
-                
-                route_name = "Exhaustion_Entry_Extreme" if is_extreme else "Exhaustion_Entry"
-                print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok}, Extreme:{is_extreme}, VolCoef:{vol_threshold_coef:.2f})")
-                return ("sell", 15.0, route_name)
+                if btc_change > 0.003:
+                    print(f"🚫 [大盤聯動過濾] BTC 15m 上漲 {btc_change*100:.2f}%，擋下 {sym} 衰竭做空訊號")
+                else:
+                    is_extreme = False
+                    vol_ma20 = s.get("vol_ma20", 1)
+                    if bounce_ok and c1[5] > vol_ma20 * 2.0:
+                        is_extreme = True
+                    if reversal_ok and ((c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 1.5):
+                        is_extreme = True
+                    
+                    route_name = "Exhaustion_Entry_Extreme" if is_extreme else "Exhaustion_Entry"
+                    print(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Support:{support_ok}, Rev:{reversal_ok}, Bounce:{bounce_ok}, Extreme:{is_extreme}, VolCoef:{vol_threshold_coef:.2f})")
+                    return ("sell", 15.0, route_name)
 
     return (None, 0, None)
 
@@ -3653,7 +3678,7 @@ async def check_entries():
                     sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
                     tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
                     
-                    sl_dist = max(atr_val * sl_multiplier, p * 0.012)
+                    sl_dist = max(atr_val * sl_multiplier, p * 0.005)
                     tp_dist = max(atr_val * tp_multiplier, p * 0.015)
                     
                     expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
@@ -3717,7 +3742,7 @@ async def check_entries():
         sl_multiplier = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
         tp_multiplier = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
         
-        sl_dist = max(atr_val * sl_multiplier, p * 0.012)
+        sl_dist = max(atr_val * sl_multiplier, p * 0.005)
         tp_dist = max(atr_val * tp_multiplier, p * 0.015)
         
         expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
@@ -4038,6 +4063,59 @@ async def periodic_status_log():
         open_str = ', '.join(f"{sym}({'多' if STATES[sym]['qty']>0 else '空'})" for sym in open_syms) if open_syms else "無"
         print(f"📊 [狀態] 監控池={active} 冷卻={cooldown} 禁賽={banned} | 當前持倉({len(open_syms)}/{MAX_POSITIONS}): {open_str}")
 
+async def watch_symbols_file():
+    global ALL_SYMBOLS, SYMBOL_PROFILES, STATES
+    last_mtime = 0
+    while True:
+        try:
+            if os.path.exists(CONFIG_FILE):
+                mtime = os.path.getmtime(CONFIG_FILE)
+                if last_mtime > 0 and mtime > last_mtime:
+                    print(f"🔄 [動態更新] 偵測到 {CONFIG_FILE} 發生變動，啟動熱更新！")
+                    # 1. 執行 cluster
+                    process = await asyncio.create_subprocess_exec(
+                        "python3", "scripts/auto_cluster_coins.py",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, stderr = await process.communicate()
+                    print(f"✅ [動態更新] 幣種重分群完成。")
+                    
+                    # 2. 重新讀取 config
+                    old_symbols = set(ALL_SYMBOLS)
+                    new_symbols, new_profiles = load_symbol_config()
+                    
+                    # 再次過濾有效幣種
+                    new_symbols = filter_valid_symbols(exchange_futures, new_symbols)
+                    
+                    # 3. 處理被移除的幣種
+                    for sym in list(old_symbols):
+                        if sym not in new_symbols:
+                            if STATES.get(sym) and abs(STATES[sym]["qty"]) > 0:
+                                print(f"⚠️ [動態更新] {sym} 已被移除，但仍有持倉，將保留至平倉為止。")
+                                new_symbols.append(sym)
+                            else:
+                                print(f"🛑 [動態更新] {sym} 已從監控池中剔除。")
+                                if sym in STATES:
+                                    del STATES[sym]
+                                
+                    ALL_SYMBOLS = new_symbols
+                    SYMBOL_PROFILES = new_profiles
+                    save_symbol_pool(ALL_SYMBOLS)
+                    
+                    # 4. 處理新增的幣種 (需要初始化狀態與 ATR)
+                    for sym in ALL_SYMBOLS:
+                        if sym not in STATES:
+                            print(f"🌟 [動態更新] 發現新幣種 {sym}，正在初始化狀態與 ATR...")
+                            STATES[sym] = build_symbol_state(sym)
+                            await fetch_historical_atr(exchange_futures, sym, days=4)
+                    print(f"✅ [動態更新] 熱更新完成！當前監控池: {ALL_SYMBOLS}")
+                last_mtime = mtime
+        except Exception as e:
+            print(f"⚠️ [動態更新] 檢查設定檔失敗: {e}")
+        
+        await asyncio.sleep(10)
+
 async def main():
     global ALL_SYMBOLS
     try:
@@ -4067,6 +4145,7 @@ async def main():
     asyncio.create_task(periodic_htf_update(exchange_futures))
     asyncio.create_task(periodic_status_log())
     asyncio.create_task(check_engine_stale_orders())  # 超時撤單掃描器 (60秒 / 30秒尋法)
+    asyncio.create_task(watch_symbols_file())  # 熱更新設定檔監聽
     
     while True:
         try:
@@ -4108,5 +4187,4 @@ if __name__ == "__main__":
             # 在退出前關閉交易所連接
             async def cleanup():
                 await exchange_futures.close()
-                await exchange_spot.close()
             asyncio.run(cleanup())
