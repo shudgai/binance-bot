@@ -331,13 +331,23 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         return False
 
     # 3. 15m 跨時框趨勢對齊 (Multi-Timeframe Alignment)
+    # 原本只是 WARNING，高強度訊號可完全繞過 → 改為硬性封鎖，需 RSI 確認超買/超賣才允許逆勢
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
+    current_rsi_mtf = s.get("current_rsi", 50.0)
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
-            print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — 由 RR/利潤門檻把關")
+            if current_rsi_mtf >= 65.0:
+                print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達超買，允許")
+            else:
+                print(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < 65（未超買），拒絕")
+                return False
         elif side == 'buy' and ema20_15m < ema50_15m:
-            print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — 由 RR/利潤門檻把關")
+            if current_rsi_mtf <= 35.0:
+                print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達超賣，允許")
+            else:
+                print(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > 35（未超賣），拒絕")
+                return False
 
     # 4. Pre-Entry Quality Filter：實體 + 量能同步爆發（過濾弱訊號假突破）
     _ohlcv_q = s.get("ohlcv", [])
