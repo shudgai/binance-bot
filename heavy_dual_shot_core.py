@@ -2963,10 +2963,10 @@ async def check_exits(sym):
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出
     _peak = s.get("highest_profit_pct", 0.0)
-    # --- 【修改 3】SafePocket 獲利門檻調升至 3% ---
-    # 只有當峰値獲利 >= 3% 後，才啟動 SafePocket，防止獲利初期過於敏感
-    _SAFE_POCKET_MIN_PEAK = 0.03  # 3% 預期獲利门檻
-    _SAFE_POCKET_MIN_HOLD_SEC = 600  # 持倉至少 10 分鐘
+    # --- 【修改 3】SafePocket 獲利門檻調低至 1% ---
+    # 只要曾有 1% 獲利，遇到回撤 30% 就強制入袋，確保利潤停在相對高點
+    _SAFE_POCKET_MIN_PEAK = 0.01  # 1% 預期獲利門檻
+    _SAFE_POCKET_MIN_HOLD_SEC = 300  # 持倉至少 5 分鐘
     if (hold_sec >= _SAFE_POCKET_MIN_HOLD_SEC and           # 持倉至少 10 分鐘
         _peak >= _SAFE_POCKET_MIN_PEAK and                  # 曾觸及 3% 峰値獲利
         0.001 < profit_pct < min_tp_pct and                 # 仍有微利，但未達 TP 目標
@@ -3046,9 +3046,9 @@ async def check_exits(sym):
                 # "volume decay + 70% of target" = early harvest
                 # "volume decay + small profit" = midgame pause, hold position
                 _vd_progress = profit_pct / min_tp_pct if min_tp_pct > 0 else 0.0
-                # 若是強勢趨勢，將出場門檻提高到 0.85，讓利潤有機會擴大
+                # 若是強勢趨勢，將出場門檻設為 0.60，否則 0.40，讓它在量縮時能提早停在高點
                 is_strong = s.get("current_strength", 0.0) >= 15.0 or s.get("pending_route", "") == "Standard"
-                vd_threshold = 0.85 if is_strong else 0.70
+                vd_threshold = 0.60 if is_strong else 0.40
                 
                 if _vd_progress >= vd_threshold:
                     cs = 'sell' if is_long else 'buy'
@@ -3067,12 +3067,12 @@ async def check_exits(sym):
     _hp = s.get("highest_profit_pct", 0.0)
     ts_activation_pct = max(0.020 / _lev, atr_pct * 0.3)
     # 動態縮緊（ATR 分層）：與 update_trailing_stop 一致，利潤越高追蹤網越緊
-    # 使用 ATR% 而非固定百分比，自動適應高/低波動幣種
-    if _hp >= 0.05:     ts_retracement_pct = atr_pct * 0.4   # > 5%：極度縮緊
-    elif _hp >= 0.02:   ts_retracement_pct = atr_pct * 0.7   # 2-5%：縮緊
-    elif _hp >= 0.008:  ts_retracement_pct = atr_pct * 1.0   # 0.8-2%：標準 ATR
-    else:               ts_retracement_pct = atr_pct * 1.3   # < 0.8%：較寬，防雜訊洗出場
-    ts_retracement_pct = max(ts_retracement_pct, 0.0008)      # 絕對下限 0.08%
+    # 【高點停利修正】大幅縮緊回撤容忍度，貼緊價格高點
+    if _hp >= 0.05:     ts_retracement_pct = atr_pct * 0.2   # > 5%：極度縮緊 (0.2x ATR)
+    elif _hp >= 0.02:   ts_retracement_pct = atr_pct * 0.4   # 2-5%：緊貼 (0.4x ATR)
+    elif _hp >= 0.008:  ts_retracement_pct = atr_pct * 0.6   # 0.8-2%：縮緊 (0.6x ATR)
+    else:               ts_retracement_pct = atr_pct * 0.9   # < 0.8%：較寬 (0.9x ATR)
+    ts_retracement_pct = max(ts_retracement_pct, 0.0006)      # 絕對下限 0.06%
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
