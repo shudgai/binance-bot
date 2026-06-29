@@ -2575,12 +2575,15 @@ async def check_exits(sym):
         
         # 恢復反手救援機制：趨勢既然已經明確反轉，直接啟動反手把虧損賺回來
         last_reverse = s.get("last_reverse_time", 0)
+        _gap_pct = abs(profit_pct)
         if time.time() - last_reverse > 1800:
-            s["pending_reverse"] = "sell" if is_long else "buy"
-            s["pending_reverse_time"] = time.time()
-            s["last_reverse_time"] = time.time()
-            s["pending_reverse_source"] = "Trend_Flip"
-            print(f"🔄 [Trend_Flip_Reverse] {sym} 啟動反手救援，準備開{'空' if is_long else '多'}！")
+            if _gap_pct > 0.025:
+                print(f"🛑 [Trend_Flip_Cancel] {sym} 價格乖離過大 (虧損達 {_gap_pct*100:.1f}%)，追單易被雙巴，放棄反手！")
+            else:
+                _rev_side = "sell" if is_long else "buy"
+                print(f"🔄 [Trend_Flip_Reverse] {sym} 啟動【即時】反手救援，直接開{_rev_side}！")
+                s["last_reverse_time"] = time.time()
+                asyncio.create_task(execute_order(sym, _rev_side, p, is_flip_reverse=True))
         else:
             print(f"⏸️ [Trend_Flip_Wait] {sym} 距上次反手 < 30m，為防反覆震盪，暫不反手。")
         return
@@ -2665,12 +2668,15 @@ async def check_exits(sym):
         
         # 恢復反手救援機制：硬止損通常代表方向完全看錯，順勢反手
         last_reverse = s.get("last_reverse_time", 0)
+        _gap_pct = abs(profit_pct)
         if time.time() - last_reverse > 1800:
-            s["pending_reverse"] = "sell" if is_long else "buy"
-            s["pending_reverse_time"] = time.time()
-            s["last_reverse_time"] = time.time()
-            s["pending_reverse_source"] = "Hard_SL"
-            print(f"🔄 [Hard_SL_Reverse] {sym} 觸發硬止損，啟動反手救援，準備開{'空' if is_long else '多'}！")
+            if _gap_pct > 0.030:
+                print(f"🛑 [Hard_SL_Cancel] {sym} 價格乖離過大 (虧損達 {_gap_pct*100:.1f}%)，已錯過最佳轉折點，放棄反手防雙巴！")
+            else:
+                _rev_side = "sell" if is_long else "buy"
+                print(f"🔄 [Hard_SL_Reverse] {sym} 觸發硬止損，啟動【即時】反手救援，直接開{_rev_side}！")
+                s["last_reverse_time"] = time.time()
+                asyncio.create_task(execute_order(sym, _rev_side, p, is_flip_reverse=True))
         else:
             print(f"⏸️ [Hard_SL_Wait] {sym} 距上次反手 < 30m，冷卻中暫不反手。")
         return
