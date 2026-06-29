@@ -3082,13 +3082,13 @@ async def check_exits(sym):
     _hp = s.get("highest_profit_pct", 0.0)
     # 【提早啟動追蹤停利】啟動門檻從 0.5% (2.0%÷4x) 降為 0.25% (1.0%÷4x)，且設定絕對上限 0.5%
     ts_activation_pct = min(max(0.010 / _lev, atr_pct * 0.2), 0.005)
-    # 動態縮緊（ATR 分層）：與 update_trailing_stop 一致，利潤越高追蹤網越緊
-    # 【極致高點停利】根據使用者需求：利潤要停在最高點，大幅縮緊回撤容忍度
-    if _hp >= 0.03:     ts_retracement_pct = atr_pct * 0.1   # > 3%：極度貼緊 (0.1x ATR)
-    elif _hp >= 0.01:   ts_retracement_pct = atr_pct * 0.2   # 1-3%：超緊貼 (0.2x ATR)
-    elif _hp >= 0.005:  ts_retracement_pct = atr_pct * 0.3   # 0.5-1%：緊貼 (0.3x ATR)
-    else:               ts_retracement_pct = atr_pct * 0.4   # < 0.5%：微幅回撤即出場 (0.4x ATR)
-    ts_retracement_pct = max(ts_retracement_pct, 0.0004)      # 絕對下限 0.04% (極小回撤)
+    # 【最高利潤 80% 停利法】使用者指定：最高利潤降至 80% 就停利 (允許回吐 20% 的利潤)
+    # 這樣利潤往上跑時防護網會跟著上移，而且按比例鎖定。
+    ts_retracement_pct = _hp * 0.20
+    
+    # 為了避免剛啟動防護時 (例如獲利 0.5%) 20% 的回撤空間太小 (只有 0.1%) 容易被手續費或微小雜訊洗掉，
+    # 設定一個最小的回撤下限 0.15%
+    ts_retracement_pct = max(ts_retracement_pct, 0.0015)
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
