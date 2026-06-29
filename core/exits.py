@@ -9,6 +9,7 @@ from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRE
     SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER)
 from core.indicators import _get_atr, _macd_vals, calculate_ema, calculate_macd
 from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier
+from core.calc import profit_pct as _profit_pct
 
 
 def update_trailing_stop(sym, current_price, is_long):
@@ -37,7 +38,7 @@ def update_trailing_stop(sym, current_price, is_long):
     else:
         liq_price = avg_price * (1 + 1.0 / leverage) / (1 + mm_ratio) if leverage > 0 else 0.0
 
-    profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+    profit_pct = _profit_pct(current_price, avg_price, is_long)
     s["highest_profit_pct"] = max(s.get("highest_profit_pct", 0.0), profit_pct)
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
@@ -174,7 +175,7 @@ def detect_market_regime(sym, current_price, avg_price, is_long):
 
     is_ranging = range_width_pct < 0.025 and atr_pct < 0.015
     if is_ranging:
-        profit_pct = (current_price - avg_price) / avg_price if is_long else (avg_price - current_price) / avg_price
+        profit_pct = _profit_pct(current_price, avg_price, is_long)
         if profit_pct >= 0.005:
             return "RANGE_PROFIT_TAKE", f"盤整區間內已獲利 {profit_pct * 100:.2f}%"
 
