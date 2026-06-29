@@ -2963,14 +2963,14 @@ async def check_exits(sym):
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出
     _peak = s.get("highest_profit_pct", 0.0)
-    # --- 【修改 3】SafePocket 獲利門檻調低至 1% ---
-    # 只要曾有 1% 獲利，遇到回撤 30% 就強制入袋，確保利潤停在相對高點
-    _SAFE_POCKET_MIN_PEAK = 0.01  # 1% 預期獲利門檻
-    _SAFE_POCKET_MIN_HOLD_SEC = 300  # 持倉至少 5 分鐘
-    if (hold_sec >= _SAFE_POCKET_MIN_HOLD_SEC and           # 持倉至少 10 分鐘
-        _peak >= _SAFE_POCKET_MIN_PEAK and                  # 曾觸及 3% 峰値獲利
-        0.001 < profit_pct < min_tp_pct and                 # 仍有微利，但未達 TP 目標
-        not s.get("is_breakeven_locked", False)):            # 保本線未鎖（鎖了SL已在保本，不需此邏輯）
+    # --- 【微利入袋修正】SafePocket 獲利門檻調低至 0.4% ---
+    # 只要曾有 0.4% 獲利，遇到回撤 30% 就強制入袋，確保小利潤也能落袋
+    _SAFE_POCKET_MIN_PEAK = 0.004  # 0.4% 預期獲利門檻
+    _SAFE_POCKET_MIN_HOLD_SEC = 180  # 縮短為 3 分鐘即可啟動
+    if (hold_sec >= _SAFE_POCKET_MIN_HOLD_SEC and
+        _peak >= _SAFE_POCKET_MIN_PEAK and
+        0.001 < profit_pct < min_tp_pct and
+        not s.get("is_breakeven_locked", False)):
 
         _drawdown_from_peak = (_peak - profit_pct) / _peak if _peak > 0 else 0
         _sl_dist_atr = abs(p - sl) / atr_val if atr_val > 0 else 99
@@ -2981,7 +2981,7 @@ async def check_exits(sym):
             _c_prev = s["ohlcv"][-3][4]
             _trending_to_sl = (_c_last < _c_prev) if is_long else (_c_last > _c_prev)
 
-        if _drawdown_from_peak >= 0.3 and profit_pct >= 0.004 and _sl_dist_atr < 1.5 and _trending_to_sl:
+        if _drawdown_from_peak >= 0.3 and profit_pct >= 0.002 and _sl_dist_atr < 1.5 and _trending_to_sl:
             _is_profit_locked = s.get("highest_profit_pct", 0) >= MIN_PROFIT_LOCK_THRESHOLD
             if _is_profit_locked and profit_pct > PROTECTED_PROFIT_FLOOR:
                 print(f"🛡️ [SafePocket保護] {sym} 獲利鎖定 (峰值:{_peak*100:.2f}% 現:{profit_pct*100:.2f}%>{PROTECTED_PROFIT_FLOOR*100:.2f}%)，維持持倉")
@@ -3065,7 +3065,8 @@ async def check_exits(sym):
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
-    ts_activation_pct = max(0.020 / _lev, atr_pct * 0.3)
+    # 【提早啟動追蹤停利】啟動門檻從 0.5% (2.0%÷4x) 降為 0.25% (1.0%÷4x)
+    ts_activation_pct = max(0.010 / _lev, atr_pct * 0.2)
     # 動態縮緊（ATR 分層）：與 update_trailing_stop 一致，利潤越高追蹤網越緊
     # 【高點停利修正】大幅縮緊回撤容忍度，貼緊價格高點
     if _hp >= 0.05:     ts_retracement_pct = atr_pct * 0.2   # > 5%：極度縮緊 (0.2x ATR)
