@@ -2960,14 +2960,25 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
-    # ── 假突破/動能失效停損 (Breakout Failure Exit / Time Stop) ──
-    # 情境：進場後超過 15 分鐘（1 根 15m K線的時間），價格完全沒有發動（峰值利潤不到 0.3%），而且目前還處於虧損狀態。
-    # 既然原本預期的突破或順勢沒有發生，與其傻傻等待打到原本設定的動態停損（例如 -0.3% ~ -0.5%），
-    # 不如直接「時間停損」提早撤退，把資金抽出來，將虧損降到極低的微損。
-    if hold_sec >= 900 and profit_pct < 0 and s.get("highest_profit_pct", 0.0) < 0.003:
+    # ── 假突破/動能失效 多階段極速停損 (Multi-stage Fast Time Stop) ──
+    # 針對使用者需求：既然是突破或順勢進場，就不應該拖泥帶水。只要出現以下「無動能」跡象，立刻提早認錯：
+    _peak_p = s.get("highest_profit_pct", 0.0)
+    _time_stop_reason = ""
+
+    # 階段 1：極速拒絕 (3分鐘內被急殺)
+    if hold_sec >= 180 and profit_pct < -0.003 and _peak_p < 0.001:
+        _time_stop_reason = "3分鐘極速拒絕"
+    # 階段 2：毫無動能且持續失血 (5分鐘)
+    elif hold_sec >= 300 and profit_pct < -0.002 and _peak_p < 0.0015:
+        _time_stop_reason = "5分鐘動能失效失血"
+    # 階段 3：死水一灘 (10分鐘還沒回本)
+    elif hold_sec >= 600 and profit_pct < 0 and _peak_p < 0.002:
+        _time_stop_reason = "10分鐘死水不漲"
+
+    if _time_stop_reason:
         cs = 'sell' if is_long else 'buy'
-        print(f"⏱️ [動能失效/時間停損] {sym} 進場 15 分鐘未見突破 (峰值僅 {s.get('highest_profit_pct', 0.0)*100:.2f}%) 且目前處於虧損 ({profit_pct*100:.2f}%)，提早撤退！")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Stop_Exit]")
+        print(f"⏱️ [極速假突破停損] {sym} {_time_stop_reason} (峰值僅 {_peak_p*100:.2f}%)，目前虧損 {profit_pct*100:.2f}%，不等停損點了，直接撤退！")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Fast_Time_Stop]")
         s["highest_profit_pct"] = 0.0
         return
 
