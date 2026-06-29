@@ -2960,6 +2960,22 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
+    # ── 微利停滯出場 (Stagnant_Profit_Exit) ──
+    # 如果持倉超過 15 分鐘，且一直卡在微利狀態 (例如 0.2% ~ 0.6%) 上不去，
+    # 同時技術指標 (趨勢分數或EMA20) 開始轉弱，就主動平倉入袋，不用等跌回停損。
+    if hold_sec >= 900 and 0.0015 <= profit_pct < min_tp_pct and not s.get("is_breakeven_locked", False):
+        _current_score = s.get("trend_bias_score", 0)
+        _trend_weakened = (_current_score <= 0) if is_long else (_current_score >= 0)
+        _ema20 = s.get("ema20", 0.0)
+        _price_broken_ema20 = (p < _ema20) if is_long else (p > _ema20)
+        
+        if _trend_weakened or _price_broken_ema20:
+            cs = 'sell' if is_long else 'buy'
+            print(f"⏱️ [微利停滯出場] {sym} 持倉 {hold_sec//60:.0f} 分鐘，利潤停滯在 {profit_pct*100:.2f}% 且動能轉弱，提前入袋！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnant_Profit_Exit]")
+            s["highest_profit_pct"] = 0.0
+            return
+
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出
     _peak = s.get("highest_profit_pct", 0.0)
