@@ -517,6 +517,16 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
         return False
 
+    # --- 同向虧損冷卻（全強度適用，不受訊號強度限制）---
+    # 原實作埋在 strength > 15 分支裡，導致弱訊號完全繞過 4 小時冷卻保護
+    if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
+        _last_loss = s.get("last_loss_time_short", 0) if side == "sell" else s.get("last_loss_time_long", 0)
+        _cooldown_elapsed = time.time() - _last_loss
+        if _cooldown_elapsed < 14400:  # 4 小時
+            _remaining = (14400 - _cooldown_elapsed) / 60
+            print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向虧損冷卻] 同向({side})虧損後冷卻剩餘 {_remaining:.1f} 分鐘，攔截")
+            return False
+
     # 量能確認過濾器 (衰竭進場策略 Exhaustion_Entry 允許低量能)
     if route != "Exhaustion_Entry" and strength <= 15.0 and not is_entry_volume_confirmed(sym, side):
         return False
