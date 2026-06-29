@@ -368,7 +368,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if avg_body_size > 0 and vol_ma20_q > 0:
             # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
             if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * 1.0:
-                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse"):
+                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
                     logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能嚴格門檻")
                 else:
                     logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x)，拒絕進場")
