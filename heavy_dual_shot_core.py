@@ -2961,9 +2961,9 @@ async def check_exits(sym):
         s["has_been_negative"] = True
 
     # ── 微利停滯出場 (Stagnant_Profit_Exit) ──
-    # 如果持倉超過 15 分鐘，且一直卡在微利狀態 (例如 0.2% ~ 0.6%) 上不去，
+    # 如果持倉超過 5 分鐘，且一直卡在微利狀態 (例如 0.2% ~ 0.6%) 上不去，
     # 同時技術指標 (趨勢分數或EMA20) 開始轉弱，就主動平倉入袋，不用等跌回停損。
-    if hold_sec >= 900 and 0.0015 <= profit_pct < min_tp_pct and not s.get("is_breakeven_locked", False):
+    if hold_sec >= 300 and 0.0015 <= profit_pct < min_tp_pct and not s.get("is_breakeven_locked", False):
         _current_score = s.get("trend_bias_score", 0)
         _trend_weakened = (_current_score <= 0) if is_long else (_current_score >= 0)
         _ema20 = s.get("ema20", 0.0)
