@@ -3,6 +3,7 @@ main.py — Thin entry-point (refactored)
 All trading logic lives in core/*.py modules.
 """
 import asyncio
+import atexit
 import fcntl
 import logging
 import os
@@ -42,6 +43,18 @@ def _process_exists(pid):
     except OSError:
         return False
     return True
+
+
+def _release_lock():
+    if lock_file_handle:
+        try:
+            fcntl.flock(lock_file_handle, fcntl.LOCK_UN)
+            lock_file_handle.close()
+        except Exception:
+            pass
+
+
+atexit.register(_release_lock)
 
 
 def ensure_single_instance():
@@ -96,7 +109,6 @@ if __name__ == "__main__":
     from core.symbol_profile import load_symbol_pool, load_symbol_profiles
     from core.config import DEFAULT_SYMBOLS
     from core.runner import main
-    from core.exchange_client import exchange_futures
 
     # Initialise shared state
     symbols = load_symbol_pool() or list(DEFAULT_SYMBOLS)
