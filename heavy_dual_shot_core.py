@@ -4437,14 +4437,28 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
                     print(f"🛑 [WEAK_SLOPE_SKIP] {sym} 做空訊號但 EMA20 趨勢太過平緩 (斜率: {slope_pct*100:.4f}% > -{slope_threshold*100:.4f}%)，拒絕上車")
                     return False
         
-    # 2. RSI 方向保護：超賣禁空、超買禁多
+    # 2. RSI 與 EMA 短線乖離保護 (Anti-FOMO 假突破防護核心)
+    # 針對使用者需求：既然是順勢突破，就必須買在「剛發動」的時候，而不是「已經噴上天」的時候。
     current_rsi = s.get("current_rsi", 50.0)
-    if side == 'sell' and current_rsi < 30.0:
-        print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 超賣區 ({current_rsi:.1f} < 30.0)，禁止做空（市場可能即將反彈）。")
-        return False
-    if side == 'buy' and current_rsi > 70.0 and strength < 20.0:
-        print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 超買區 ({current_rsi:.1f} > 70.0) 且強度不足({strength:.1f} < 20.0)，禁止追高做多。")
-        return False
+    ema20_now = s.get("ema20", 0.0)
+    is_trend_route = route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
+    
+    if is_trend_route:
+        # A. RSI 嚴格限制：禁止追高/殺低
+        if side == 'sell' and current_rsi < 35.0:
+            print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 已進入低檔 ({current_rsi:.1f} < 35.0)，追空容易遇到假跌破反抽，拒絕進場。")
+            return False
+        if side == 'buy' and current_rsi > 65.0:
+            print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 已過度加熱 ({current_rsi:.1f} > 65.0)，追多極易買在假突破最高點，拒絕進場。")
+            return False
+            
+        # B. EMA 乖離率限制 (Price Distance from EMA20)
+        # 如果價格離短線均線太遠，代表已經漲/跌了一大波，隨時會拉回
+        if ema20_now > 0:
+            dist_pct = abs(cp - ema20_now) / ema20_now
+            if dist_pct > 0.012:  # 距離超過 1.2% 視為過度延伸
+                print(f"🛑 [REJECT] [Filter:EMA_Overextend] {sym} 價格距離 EMA20 過遠 ({dist_pct*100:.2f}% > 1.2%)，短線乖離過大，追單被洗風險極高，拒絕進場。")
+                return False
         
     # 3. BB 假突破防護：趨勢路由不在超買/超賣區開倉（非反轉路由適用）
     # 豁免：訊號強度 > 20 視為強勢突破，允許在 BB 外側進場（如 AAVE 極強行情）
