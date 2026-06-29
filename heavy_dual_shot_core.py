@@ -2704,7 +2704,8 @@ async def check_exits(sym):
                 return
 
     loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.004, is_long)
-    _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
+    # [徹底解決虧損放大] 全面強制關閉 DCA 攤平機制。做錯方向就直接認錯，絕不加碼
+    _disable_dca = True 
     if not _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
         # 全局風控前置檢查：若整體虧損已接近熔斷線，禁止 DCA 加碼
         # （DCA 加倍倉位 → 推高整體虧損 → 剛好觸發熔斷 → DCA 費用白費）
@@ -4281,11 +4282,12 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         _tb_score_gate = s.get("trend_bias_score", 0)
         # score 永遠是偶數 (0, ±2, ±4)，中性(0)時不進場，只在明確趨勢方向才開倉
         # require_strong_bias 幣種（如 SOL）需 4 項全符合 (score = ±4)，避免盤整洗盤
-        # 【修正】對稱性：做多/做空使用相同門檻 ±2，避免空單信號過於容易觸發
+        # 【徹底解決開錯方向】將趨勢過濾門檻拉到最高級別 (±4)
+        # 代表必須 EMA20, EMA50, EMA_1H, MACD 四個指標「全部」同向才能開倉，徹底過濾盤整假突破
         _require_strong = COIN_PROFILE_CONFIG.get(sym, {}).get("require_strong_bias", False)
-        _tb_min_threshold = 2 if _require_strong else 2   # 統一為 ±2，對稱過濾（原做空只需 0）
+        _tb_min_threshold = 4   # 原本是 2，現在強制要求 4 分滿分
         if side == "buy" and _tb_score_gate < _tb_min_threshold:
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≥+{_tb_min_threshold}才做多 (Route:{route})")
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需滿分 +4 才做多 (Route:{route})")
             return False
         if side == "sell" and _tb_score_gate > -_tb_min_threshold:
             print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≤-{_tb_min_threshold}才做空 (Route:{route})")
