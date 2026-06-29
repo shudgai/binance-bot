@@ -1,14 +1,14 @@
 {
   "symbols": [
-    "SOLUSDT",
     "ETHUSDT",
-    "BNBUSDT",
-    "XRPUSDT",
-    "DOGEUSDT",
+    "NEARUSDT",
     "SUIUSDT",
-    "HYPEUSDT",
     "INJUSDT",
+    "HYPEUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
     "LINKUSDT",
-    "NEARUSDT"
+    "GUAUSDT",
+    "SIRENUSDT"
   ]
 }
