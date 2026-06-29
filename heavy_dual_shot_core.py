@@ -2961,19 +2961,31 @@ async def check_exits(sym):
         s["has_been_negative"] = True
 
     # ── 假突破/動能失效 多階段極速停損 (Multi-stage Fast Time Stop) ──
-    # 針對使用者需求：既然是突破或順勢進場，就不應該拖泥帶水。只要出現以下「無動能」跡象，立刻提早認錯：
+    # 針對使用者需求：既然是突破或順勢進場，就不應該拖泥帶水。但為了避免把「正常的突破後回踩（Retest）」誤認為假突破，
+    # 必須加入【技術指標反轉確認】：只有當「時間過太久 + 帳面虧損 + 趨勢指標真的轉弱」這三個條件同時成立時，才判定為假突破。
     _peak_p = s.get("highest_profit_pct", 0.0)
     _time_stop_reason = ""
+    
+    # 【技術確認】當前的趨勢分數是否已經轉弱（原本進場至少要有 +2/-2）
+    _current_score = s.get("trend_bias_score", 0)
+    _trend_weakened = (_current_score <= 0) if is_long else (_current_score >= 0)
+    # 【技術確認】價格是否跌破短線防守線 EMA20
+    _ema20 = s.get("ema20", 0.0)
+    _price_broken_ema20 = (p < _ema20) if is_long else (p > _ema20)
+    
+    # 只要符合任何一項技術破壞（趨勢轉弱 或 跌破短均線），就允許時間停損發動
+    _technical_failure = _trend_weakened or _price_broken_ema20
 
-    # 階段 1：極速拒絕 (3分鐘內被急殺)
-    if hold_sec >= 180 and profit_pct < -0.003 and _peak_p < 0.001:
-        _time_stop_reason = "3分鐘極速拒絕"
-    # 階段 2：毫無動能且持續失血 (5分鐘)
-    elif hold_sec >= 300 and profit_pct < -0.002 and _peak_p < 0.0015:
-        _time_stop_reason = "5分鐘動能失效失血"
-    # 階段 3：死水一灘 (10分鐘還沒回本)
-    elif hold_sec >= 600 and profit_pct < 0 and _peak_p < 0.002:
-        _time_stop_reason = "10分鐘死水不漲"
+    if _technical_failure:
+        # 階段 1：極速拒絕 (3分鐘內被急殺)
+        if hold_sec >= 180 and profit_pct < -0.003 and _peak_p < 0.001:
+            _time_stop_reason = "3分鐘極速拒絕且技術轉弱"
+        # 階段 2：毫無動能且持續失血 (5分鐘)
+        elif hold_sec >= 300 and profit_pct < -0.002 and _peak_p < 0.0015:
+            _time_stop_reason = "5分鐘動能失效且技術轉弱"
+        # 階段 3：死水一灘 (10分鐘還沒回本)
+        elif hold_sec >= 600 and profit_pct < 0 and _peak_p < 0.002:
+            _time_stop_reason = "10分鐘死水不漲且技術轉弱"
 
     if _time_stop_reason:
         cs = 'sell' if is_long else 'buy'
