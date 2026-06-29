@@ -2548,6 +2548,34 @@ async def check_exits(sym):
     is_long = s["qty"] > 0
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
+    # --- 🚨 假突破立即停損 (False Breakout Exit) ---
+    # 使用者要求：如果不小心開了假突破，先確定是否假突破，確定後馬上停損不用等。
+    # 定義：持倉 15 分鐘內，處於明顯虧損 (至少 -0.4%)，且動能指標 (RSI, MACD) 與價格結構雙雙反轉
+    if hold_sec < 900 and profit_pct < -0.004:
+        is_false_breakout = False
+        _cur_rsi = s.get("current_rsi", 50)
+        _macd_h = s.get("macd_hist", 0)
+        _macd_h_prev = s.get("prev_macd_hist", 0)
+        _bb_up = s.get("bb_up", 0)
+        _bb_low = s.get("bb_low", 0)
+        _bb_mid = (_bb_up + _bb_low) / 2 if _bb_up > 0 else p
+        
+        if is_long:
+            # 多單假突破：跌破布林中軌，且 RSI 急跌 (< 45) 或 MACD 柱狀圖轉弱
+            if p < _bb_mid and (_cur_rsi < 45 or _macd_h < _macd_h_prev):
+                is_false_breakout = True
+        else:
+            # 空單假突破：突破布林中軌，且 RSI 急漲 (> 55) 或 MACD 柱狀圖轉強
+            if p > _bb_mid and (_cur_rsi > 55 or _macd_h > _macd_h_prev):
+                is_false_breakout = True
+                
+        if is_false_breakout:
+            cs = "sell" if is_long else "buy"
+            _dir_str = "多" if is_long else "空"
+            print(f"🚨 [假突破斬立決] {sym} {_dir_str}單開倉 {int(hold_sec)}s 即面臨 {profit_pct*100:.2f}% 虧損，且價格跌回均線與動能破敗(RSI={_cur_rsi:.1f})，確認假突破，無須等待立刻停損！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[False_Breakout_Cut]")
+            return
+
     # ── R:R 最低獲利門檻 ────────────────────────────────────────────
     # 確保每筆獲利 ≥ 預期停損 × rr_threshold，防止「多贏抵不過一虧」
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
@@ -4309,12 +4337,26 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         # 但如果是特別指定要嚴格過濾的幣種（require_strong_bias），則維持最高門檻 4
         _require_strong = COIN_PROFILE_CONFIG.get(sym, {}).get("require_strong_bias", False)
         _tb_min_threshold = 4 if _require_strong else 2
-        if side == "buy" and _tb_score_gate < _tb_min_threshold:
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需 ≥ +{_tb_min_threshold} 才做多 (Route:{route})")
-            return False
-        if side == "sell" and _tb_score_gate > -_tb_min_threshold:
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需 ≤ -{_tb_min_threshold} 才做空 (Route:{route})")
-            return False
+        
+        # [動能必考題] 為了在放寬門檻(+2)的同時維持勝率，強制要求 MACD 動能必須同向
+        _macd_h = s.get("macd_hist", 0.0)
+        
+        if side == "buy":
+            if _tb_score_gate < _tb_min_threshold:
+                print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需 ≥ +{_tb_min_threshold} 才做多 (Route:{route})")
+                return False
+            # 只有在非嚴格模式(門檻=2)時，才需要額外的必考題過濾 (門檻=4本身就包含MACD了)
+            if not _require_strong and _macd_h <= 0:
+                print(f"🛑 [TrendBias_Gate_MACD] {sym} 雖然分數達標(+{_tb_score_gate})，但 MACD 動能未大於 0 ({_macd_h:.4f})，拒絕做多")
+                return False
+                
+        if side == "sell":
+            if _tb_score_gate > -_tb_min_threshold:
+                print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需 ≤ -{_tb_min_threshold} 才做空 (Route:{route})")
+                return False
+            if not _require_strong and _macd_h >= 0:
+                print(f"🛑 [TrendBias_Gate_MACD] {sym} 雖然分數達標({_tb_score_gate})，但 MACD 動能未小於 0 ({_macd_h:.4f})，拒絕做空")
+                return False
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
