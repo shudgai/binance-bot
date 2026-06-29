@@ -81,30 +81,10 @@ def daily_reset_daemon():
         time.sleep(wait_seconds)
         daily_market_clean_and_reset(is_manual=False)
 
-def _spot_sltp_daemon():
-    """Background thread: check spot SL/TP every 10 seconds."""
-    import time as _time
-    while True:
-        try:
-            from services.spot_service import check_sltp, get_open_trades
-            if get_open_trades():
-                closed = check_sltp(client)
-                for c in closed:
-                    sign = "+" if c["pnl"] >= 0 else ""
-                    add_system_log(
-                        f"[SpotBot] {c['coin']} {c['reason']} | PnL {sign}{c['pnl']:.4f} USDT",
-                        "success" if c["pnl"] >= 0 else "warning"
-                    )
-        except Exception as e:
-            pass
-        _time.sleep(10)
-
 @app.on_event("startup")
 async def startup_event():
     # 啟動 6:00 AM 定時器
     threading.Thread(target=daily_reset_daemon, daemon=True).start()
-    # 現貨 SL/TP 監控
-    threading.Thread(target=_spot_sltp_daemon, daemon=True).start()
     # 後端重啟後自動恢復機器人
     from services.bot_manager_service import auto_restore_bot_on_startup
     auto_restore_bot_on_startup()
@@ -187,11 +167,11 @@ def api_get_logs():
 
 @app.get("/api/sl-states")
 def api_sl_states():
-    return bot_status.get("sl_states", {})
+    return get_bot_status().get("sl_states", {})
 
 @app.get("/api/trend-bias")
 def api_trend_bias():
-    return bot_status.get("trend_bias", {})
+    return get_bot_status().get("trend_bias", {})
 
 @app.get("/api/radar/scan")
 def api_radar_scan():
@@ -607,186 +587,6 @@ def get_open_orders(symbol: str):
         return {"status": "success", "data": orders}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-
-# ─────────────────────────────────────────────────────────────
-#  現貨轉換 (Spot Convert) API
-# ─────────────────────────────────────────────────────────────
-from services.spot_service import (
-    get_state        as spot_get_state,
-    get_balances     as spot_get_balances,
-    get_history      as spot_get_history,
-    get_open_trades  as spot_get_open_trades,
-    get_spot_price,
-    get_quote        as spot_get_quote,
-    execute_convert  as spot_execute_convert,
-    register_open_trade,
-    check_sltp,
-    reset_spot, SUPPORTED_COINS,
-)
-
-@app.get("/spot")
-def spot_page():
-    return FileResponse(os.path.join(os.path.dirname(__file__), "..", "web", "spot.html"))
-
-@app.get("/api/spot/coins")
-def api_spot_coins():
-    return {"coins": SUPPORTED_COINS}
-
-@app.get("/api/spot/balance")
-def api_spot_balance():
-    state    = spot_get_state()
-    balances = state.get("balances", {})
-    avg_p    = state.get("avg_prices", {})
-    prices   = {}
-    for coin in list(SUPPORTED_COINS) + list(balances.keys()):
-        if coin not in prices:
-            p = get_spot_price(coin, client)
-            prices[coin] = p if p else (1.0 if coin == "USDT" else 0.0)
-    return {"balances": balances, "prices": prices, "avg_prices": avg_p}
-
-@app.get("/api/spot/quote")
-def api_spot_quote(from_coin: str, to_coin: str, amount: float):
-    return spot_get_quote(from_coin, to_coin, amount, client)
-
-class SpotConvertRequest(BaseModel):
-    from_coin: str
-    to_coin: str
-    amount: float
-    action: str = "convert"
-
-@app.post("/api/spot/convert")
-def api_spot_convert(req: SpotConvertRequest):
-    return spot_execute_convert(req.from_coin, req.to_coin, req.amount, client, req.action)
-
-class SpotBuyRequest(BaseModel):
-    coin: str
-    usdt_amount: float
-    sl_pct:    float = 0.0   # 0 = no SL/TP monitoring
-    tp_pct:    float = 0.0
-    trail_pct: float = 1.5
-
-@app.post("/api/spot/buy")
-def api_spot_buy(req: SpotBuyRequest):
-    result = spot_execute_convert("USDT", req.coin, req.usdt_amount, client, "buy")
-    if result["success"] and (req.sl_pct > 0 or req.tp_pct > 0):
-        entry = result["trade"]["to_price_usdt"]
-        qty   = result["trade"]["to_amount"]
-        register_open_trade(req.coin, qty, entry, req.sl_pct, req.tp_pct, req.trail_pct)
-    return result
-
-class SpotSellRequest(BaseModel):
-    coin: str
-    coin_amount: float
-
-@app.post("/api/spot/sell")
-def api_spot_sell(req: SpotSellRequest):
-    return spot_execute_convert(req.coin, "USDT", req.coin_amount, client, "sell")
-
-@app.get("/api/spot/open-trades")
-def api_spot_open_trades():
-    trades = spot_get_open_trades()
-    # Enrich with current prices
-    enriched = {}
-    for coin, t in trades.items():
-        price = get_spot_price(coin, client) or 0
-        pnl   = (price - t["entry_price"]) * t["qty"]
-        pnl_pct = (price - t["entry_price"]) / t["entry_price"] * 100 if t["entry_price"] else 0
-        enriched[coin] = {**t, "current_price": price, "pnl": pnl, "pnl_pct": pnl_pct}
-    return {"open_trades": enriched}
-
-@app.delete("/api/spot/open-trades/{coin}")
-def api_spot_close_trade(coin: str):
-    """Force close a monitored trade (market sell all)."""
-    from services.spot_service import get_balances as _gb
-    qty = _gb().get(coin, 0.0)
-    if qty <= 0:
-        return {"success": False, "error": "無持倉"}
-    result = spot_execute_convert(coin, "USDT", qty, client, "sell")
-    return result
-
-@app.get("/api/spot/history")
-def api_spot_history():
-    return {"history": spot_get_history()}
-
-class SpotResetRequest(BaseModel):
-    initial_usdt: float = 10000.0
-
-@app.post("/api/spot/reset")
-def api_spot_reset(req: SpotResetRequest):
-    return reset_spot(req.initial_usdt)
-
-
-SPOT_SIGNAL_COINS = [
-    "ETH","BNB","SOL","XRP","ADA","DOGE","DOT","LTC","LINK",
-    "SUI","AVAX","NEAR","APT","ARB","OP","INJ","HYPE","AAVE",
-]
-
-# Simple in-memory cache to avoid hammering Binance every call
-_signals_cache = {"data": {}, "ts": 0}
-
-def _compute_rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return 50.0
-    gains, losses = 0.0, 0.0
-    for i in range(len(closes) - period, len(closes)):
-        d = closes[i] - closes[i-1]
-        if d >= 0: gains += d
-        else: losses -= d
-    rs = gains / max(losses, 1e-8)
-    return 100.0 - 100.0 / (1.0 + rs)
-
-def _compute_ema(closes, period):
-    k = 2.0 / (period + 1)
-    ema = closes[0]
-    for c in closes[1:]:
-        ema = c * k + ema * (1 - k)
-    return ema
-
-def _compute_macd_bull(closes):
-    if len(closes) < 26:
-        return True
-    fast = _compute_ema(closes, 12)
-    slow = _compute_ema(closes, 26)
-    fast2 = _compute_ema(closes[:-1], 12)
-    slow2 = _compute_ema(closes[:-1], 26)
-    return (fast - slow) > (fast2 - slow2)
-
-@app.get("/api/spot/signals")
-def api_spot_signals():
-    global _signals_cache
-    now = time.time()
-    if now - _signals_cache["ts"] < 25:   # cache for 25s
-        return {"success": True, "signals": _signals_cache["data"], "cached": True}
-    result = {}
-    for coin in SPOT_SIGNAL_COINS:
-        sym = coin + "USDT"
-        try:
-            klines = get_klines(sym, "5m", 60)
-            if not klines or len(klines) < 20:
-                continue
-            closes = [float(k["close"]) for k in klines]
-            rsi      = _compute_rsi(closes, 14)
-            macd_bull = _compute_macd_bull(closes)
-            price    = closes[-1]
-            sma20    = sum(closes[-20:]) / 20
-            if rsi > 52 and macd_bull:
-                trend = "long"
-            elif rsi < 48 and not macd_bull:
-                trend = "short"
-            else:
-                trend = "neutral"
-            result[coin] = {
-                "rsi":       round(rsi, 1),
-                "macd_bull": macd_bull,
-                "trend":     trend,
-                "price":     price,
-                "above_bb":  price > sma20,
-            }
-        except Exception:
-            pass
-    _signals_cache = {"data": result, "ts": now}
-    return {"success": True, "signals": result, "cached": False}
 
 
 if __name__ == "__main__":

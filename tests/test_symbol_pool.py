@@ -1,22 +1,31 @@
 import unittest
+import sys
+import os
 from unittest.mock import patch
-import multi_coin_bot
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.ctx import STATES, init_states
+import core.ctx as ctx
+from core.state_manager import reset_coin_state
+from core.symbol_profile import apply_symbol_pool_change, save_symbol_pool
 
 
 class SymbolPoolTests(unittest.TestCase):
-    @patch("multi_coin_bot.save_symbol_pool")
+    @patch("core.symbol_profile.save_symbol_pool")
     def test_locked_symbol_stays_when_pool_is_replaced(self, mock_save):
         sym = "XRPUSDT"
-        multi_coin_bot.reset_coin_state(sym)
-        s = multi_coin_bot.STATES[sym]
+        init_states([sym, "DOGEUSDT", "ADAUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        reset_coin_state(sym)
+        s = STATES[sym]
         s["qty"] = 0.01
         s["avg_price"] = 100.0
         s["open_time"] = 1.0
 
         original = ["XRPUSDT", "DOGEUSDT", "ADAUSDT"]
-        multi_coin_bot.ALL_SYMBOLS = list(original)
+        ctx.ALL_SYMBOLS = list(original)
 
-        updated = multi_coin_bot.apply_symbol_pool_change(["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        updated = apply_symbol_pool_change(["BTCUSDT", "ETHUSDT", "SOLUSDT"])
 
         self.assertIn("XRPUSDT", updated)
         self.assertNotIn("DOGEUSDT", updated)

@@ -8,7 +8,7 @@ main.py                  # Entry point (single-instance lock + bootstrap)
 │   ├── __init__.py      #   Public API docstring — AI entry point
 │   ├── ctx.py           #   Global state: STATES[sym], ALL_SYMBOLS, MARKET_WIND
 │   ├── config.py        #   COIN_PROFILE_CONFIG, leverage/risk/timer constants
-│   ├── exchange_client.py # ccxt.pro Binance futures + spot clients
+│   ├── exchange_client.py # ccxt.pro Binance futures client
 │   ├── runner.py        #   Main loop orchestrator (~25s tick)
 │   ├── market_data.py   #   OHLCV, ATR, SMA, EMA fetching + caching
 │   ├── indicators.py    #   EMA, MACD, RSI, ATR, ADX, Bollinger, SL/TP calc
@@ -37,18 +37,15 @@ main.py                  # Entry point (single-instance lock + bootstrap)
 │   ├── scanner.py       #   Volume scanner for new coins
 │   ├── stream_price.py  #   WebSocket price monitor
 │   ├── line_notifier.py #   LINE notify alerts
-│   ├── spot_service.py  #   Spot wallet tracking
 │   ├── binance_service.py # Price/ticker helpers
 │   └── utils.py         #   parse_symbol, paper_key
 ├── data/                # Runtime state (JSON files)
 │   ├── paper_state.json #   Paper trading wallet + positions + trades
 │   ├── bot_symbols.json #   Active symbol list + radar profiles
 │   ├── atr_history_cache.json # Cached ATR history
-│   ├── spot_state.json  #   Spot balance state
 │   └── bot_running_state.json # Persisted run flag
 ├── web/                 # Frontend assets
 │   ├── index.html
-│   ├── spot.html
 │   └── templates/
 ├── config/
 │   └── coin_profiles.json
@@ -158,5 +155,4 @@ flowchart TD
 | `data/paper_state.json` | Wallet balance, positions[], trades[] | `update_paper_state.py` |
 | `data/bot_symbols.json` | Active symbols list + radar profiles | `bot_manager_service.py` / `radar_service.py` |
 | `data/atr_history_cache.json` | Persisted ATR arrays per symbol | `runner.py` (periodic_status_log) |
-| `data/spot_state.json` | Spot balances | `spot_service.py` |
 | `data/bot_running_state.json` | `{"is_running": bool}` | `bot_manager_service.py` |

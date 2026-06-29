@@ -106,7 +106,7 @@ if __name__ == "__main__":
     from core.symbol_profile import load_symbol_pool, load_symbol_profiles
     from core.config import DEFAULT_SYMBOLS
     from core.runner import main
-    from core.exchange_client import exchange_futures, exchange_spot
+    from core.exchange_client import exchange_futures
     import core.ctx as ctx
 
     # Initialise shared state
@@ -121,5 +121,4 @@ if __name__ == "__main__":
     finally:
         async def _cleanup():
             await exchange_futures.close()
-            await exchange_spot.close()
         asyncio.run(_cleanup())

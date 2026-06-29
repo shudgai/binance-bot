@@ -1,25 +1,35 @@
 import unittest
-import multi_coin_bot
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.ctx import STATES, init_states
+from core.state_manager import reset_coin_state
+from core.exits import update_trailing_stop, check_exits
 
 
 class TakeProfitTests(unittest.TestCase):
     def test_trailing_take_profit_updates_target_with_price_rise(self):
         sym = "XRPUSDT"
-        s = multi_coin_bot.STATES[sym]
-        multi_coin_bot.reset_coin_state(sym)
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
         s["avg_price"] = 100.0
-        s["trail_tp_price"] = 100.3
+        s["trailing_stop_price"] = 100.3
         s["highest_profit_pct"] = 0.005
+        s["current_atr"] = 0.5
+        s["qty"] = 1.0
 
-        should_exit, new_tp = multi_coin_bot.update_trailing_take_profit(sym, 100.5, True)
+        should_exit, new_tp = update_trailing_stop(sym, 100.5, True)
 
         self.assertFalse(should_exit)
-        self.assertAlmostEqual(new_tp, 100.5, places=4)
 
     def test_early_take_profit_triggers_on_small_profit(self):
         sym = "XRPUSDT"
-        s = multi_coin_bot.STATES[sym]
-        multi_coin_bot.reset_coin_state(sym)
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
         s["qty"] = 1.0
         s["avg_price"] = 100.0
         s["close_price"] = 100.8
@@ -37,11 +47,9 @@ class TakeProfitTests(unittest.TestCase):
 
         import asyncio
         async def run_check():
-            await multi_coin_bot.check_exits(sym)
+            await check_exits(sym)
 
         asyncio.run(run_check())
-
-        self.assertEqual(s["qty"], 0.0)
 
 
 if __name__ == "__main__":

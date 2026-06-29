@@ -18,22 +18,9 @@ exchange_futures = ccxtpro.binance({
     },
 })
 
-exchange_spot = ccxtpro.binance({
-    'apiKey': os.getenv('BINANCE_API_KEY') or None,
-    'secret': os.getenv('BINANCE_API_SECRET') or None,
-    'enableRateLimit': True,
-    'rateLimit': 1000,
-    'options': {
-        'defaultType': 'spot',
-        'watchOrderBookSnapshot': True,
-    },
-})
-
 if USE_TESTNET:
     exchange_futures.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
     exchange_futures.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
-    exchange_spot.urls['api']['public'] = 'https://testnet.binance.vision/api/v3'
-    exchange_spot.urls['api']['private'] = 'https://testnet.binance.vision/api/v3'
 
 _PRECISION_CACHE = {}
 

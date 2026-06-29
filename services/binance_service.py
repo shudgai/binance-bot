@@ -34,6 +34,8 @@ def get_contract_step(symbol):
     return 0.001
 
 def round_step(qty, step):
+    if qty <= 0 or step <= 0:
+        return 0.0
     precision = int(round(-__import__('math').log10(step)))
     return round(round(qty / step) * step, precision)
 

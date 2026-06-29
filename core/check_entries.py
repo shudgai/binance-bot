@@ -244,7 +244,26 @@ async def check_entries():
                         print(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 102% ({trigger_low*1.02:.4f}) 以下，疑似插針假跌破，取消空單。")
                         is_valid = False
 
+                    # [新增] 量能續航檢查：跟進量必須 >= 訊號量的 60%
+                    if is_valid:
+                        signal_vol = prev_candle[5]
+                        follow_vol = s.get("current_vol", 0)
+                        if signal_vol > 0 and follow_vol < signal_vol * 0.6:
+                            print(f"❌ [量能續航] {sym} 突破後量能萎縮 (跟進量 {follow_vol:.0f} < 訊號量 {signal_vol:.0f} × 60%)，疑似假突破，取消")
+                            is_valid = False
+
+                if not is_valid:
+                    # 記錄假突破事件，同區間再次觸發時提高閾值
+                    if s.get("pending_side"):
+                        s["fake_breakout"] = {
+                            "time": time.time(),
+                            "side": s["pending_side"],
+                            "level_high": prev_candle[2],
+                            "level_low": prev_candle[3],
+                        }
+
                 if is_valid:
+                    s["fake_breakout"] = None
                     print(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
                     side = s["pending_side"]
                     strength = s.get("pending_strength", 5.0)
@@ -558,6 +577,28 @@ async def check_entries():
         if route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
             print(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
             continue
+
+        # --- 錯誤方向禁止再進 (Wrong Direction Ban) ---
+        _wd_time = s.get("wrong_dir_time", 0.0)
+        _wd_side = s.get("wrong_dir_side", "")
+        if _wd_side == side and time.time() - _wd_time < 1800:
+            print(f"⏳ [Wrong Dir Ban] {sym} 同方向 {side} 剛在 {time.time()-_wd_time:.0f}s 前開錯方向，冷卻中 (30min)")
+            continue
+
+        # --- 假突破記憶檢查 (Fake Breakout Memory) ---
+        _fb = s.get("fake_breakout")
+        if _fb and time.time() - _fb["time"] < 14400 and route not in ("Extreme_Reversal", "Automatic_Reverse"):
+            _fb_level = _fb["level_high"] if _fb["side"] == "buy" else _fb["level_low"]
+            _current_dist = abs(p - _fb_level) / max(_fb_level, 1e-8)
+            _atr_fb = s.get("current_atr", 0)
+            if _current_dist < (_atr_fb * 2 / max(p, 1e-8)) and side == _fb["side"]:
+                _boost_needed = 5.0
+                _effective_min = min_sig + _boost_needed
+                if strength < _effective_min:
+                    print(f"⏳ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR ({_current_dist*100:.3f}%)，強度 {strength:.1f} < {_effective_min:.1f}，暫停進場")
+                    continue
+                print(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
+                strength *= 0.85
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         s["pending_side"] = side

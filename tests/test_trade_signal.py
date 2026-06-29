@@ -1,12 +1,21 @@
 import unittest
-import multi_coin_bot
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.ctx import STATES, init_states
+from core.state_manager import reset_coin_state
+from core.exits import detect_market_regime
+from core.signal_engine import compute_signal_strength
 
 
 class TradeSignalTests(unittest.TestCase):
     def test_trade_signal_triggers_breakout_reversal(self):
         sym = "XRPUSDT"
-        s = multi_coin_bot.STATES[sym]
-        multi_coin_bot.reset_coin_state(sym)
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
         s["ohlcv"] = [
             [0, 100, 100, 99, 100, 1200],
             [0, 101, 101, 100, 101, 1300],
@@ -36,15 +45,16 @@ class TradeSignalTests(unittest.TestCase):
         s["trade_signal_strength"] = 3.0
         s["trade_signal_reason"] = "即時成交異常"
 
-        decision, reason = multi_coin_bot.detect_market_regime(sym, 121.0, 120.0, False)
+        decision, reason = detect_market_regime(sym, 121.0, 120.0, False)
 
         self.assertEqual(decision, "BREAKOUT_REVERSAL")
         self.assertIn("即時大額成交", reason)
 
     def test_compute_signal_strength_rejects_counter_trend_signal(self):
         sym = "XRPUSDT"
-        s = multi_coin_bot.STATES[sym]
-        multi_coin_bot.reset_coin_state(sym)
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
         s["close_price"] = 100.0
         s["prev_close"] = 99.0
         s["current_rsi"] = 35.0
@@ -57,7 +67,8 @@ class TradeSignalTests(unittest.TestCase):
         s["prev_macd_line"] = 0.05
         s["prev_macd_signal"] = 0.1
 
-        side, strength = multi_coin_bot.compute_signal_strength(sym)
+        res = compute_signal_strength(sym)
+        side, strength = res[0], res[1]
 
         self.assertIsNone(side)
         self.assertEqual(strength, 0)

@@ -32,7 +32,7 @@ def compute_signal_strength(sym):
         is_hooking_up = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
         if not macd_trending_down and not is_hooking_up:
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) < {rsi_extreme_low} 且未見轉折向上，拒絕進場防接刀")
-            return (None, 0)
+            return (None, 0, None)
 
     if rsi > rsi_extreme_high:
         s["is_extreme_high_rsi"] = True

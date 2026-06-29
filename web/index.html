@@ -1372,6 +1372,7 @@ createApp({
                     : (data.watch_symbols && data.watch_symbols.length > 0 ? data.watch_symbols : null);
 
                 if (symbolList) {
+                    console.log(`[fetchBotStatus] symbolList(${symbolList.length}):`, symbolList.slice(0,5));
                     // BTCUSDT 不是交易幣，過濾掉；ETHUSDT 現在是交易幣，保留
                     const filteredSymbols = symbolList.filter(s => s !== 'BTCUSDT');
                     const newCoins = filteredSymbols.map(sym => {
@@ -1803,9 +1804,18 @@ createApp({
                 const res = await fetch(`${API_BASE}/prices`);
                 if (res.ok) {
                     const resp = await res.json();
-                    applyPricesBatch(resp.data || resp);
+                    const prices = resp.data || resp;
+                    console.log(`[fetchPricesBatch] prices=${Object.keys(prices).length}, coins=${coins.value.length}, active=${activeSymbol.value}`);
+                    if (coins.value.length === 0) {
+                        console.warn('[fetchPricesBatch] coins.value is EMPTY — no prices will render');
+                    } else if (!prices[coins.value[0]?.symbol]) {
+                        console.warn(`[fetchPricesBatch] first coin "${coins.value[0]?.symbol}" NOT found in prices dict`);
+                    }
+                    applyPricesBatch(prices);
+                } else {
+                    console.warn('[fetchPricesBatch] HTTP', res.status);
                 }
-            } catch(e) {}
+            } catch(e) { console.warn('[fetchPricesBatch] error', e); }
         };
 
         const startHTTPFallback = () => {
@@ -1846,6 +1856,7 @@ createApp({
                 try {
                     const raw = JSON.parse(event.data);
                     const dataArray = Array.isArray(raw) ? raw : [raw];
+                    console.log(`[WS] received ${dataArray.length} items`);
                     let receivedAny = false;
 
                     for (const data of dataArray) {
@@ -1980,8 +1991,8 @@ createApp({
             klineInterval        = setInterval(loadKlines, 60000);
             openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
             slInterval           = setInterval(fetchSlStates, 3000);
-            setInterval(fetchPricesBatch, 5000);
-            setInterval(fetchTrendBias, 10000);
+            pricesInterval        = setInterval(fetchPricesBatch, 5000);
+            trendBiasInterval     = setInterval(fetchTrendBias, 10000);
             fetchSlStates();
             fetchTrendBias();
         });
@@ -1996,6 +2007,7 @@ createApp({
             clearInterval(tradesInterval); clearInterval(rateInterval);
             clearInterval(logsInterval);   clearInterval(klineInterval);
             clearInterval(allPositionsInterval); clearInterval(openOrdersInterval); clearInterval(slInterval);
+            clearInterval(pricesInterval); clearInterval(trendBiasInterval);
         });
 
         // ── Submit limit / market order from the new panel ──────────

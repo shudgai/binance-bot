@@ -165,6 +165,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
             s["last_loss_time_long"] = time.time()
         else:
             s["last_loss_time_short"] = time.time()
+        s["consecutive_losses"] = s.get("consecutive_losses", 0) + 1
+    else:
+        s["consecutive_losses"] = 0
 
     full_reason = f"{pnl_tag} {reason}".strip()
     s["last_exit_time"] = time.time()
@@ -424,6 +427,7 @@ async def check_paper_pending_order(sym):
     filled = (side == 'buy' and p >= limit_price) or (side == 'sell' and p <= limit_price)
     if filled:
         _fill_paper_order(sym, limit_price)
+        return
 
 
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False):
@@ -463,7 +467,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             _atr_avg_of = float(np.mean(_atr_hist_of)) if len(_atr_hist_of) > 0 else 0.0
             _atr_cur_of = _s.get("current_atr", 0.0)
             _is_low_vol_of = (_atr_avg_of > 0 and _atr_cur_of <= _atr_avg_of)
-            _flow_threshold = 0.85 if _is_low_vol_of else 0.95
+            _flow_threshold = 0.92 if _is_low_vol_of else 0.98
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if side == 'buy':
                 if asks == 0 or bids / asks < _flow_threshold:
@@ -591,8 +595,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
         current_atr = s.get("current_atr", 0.0)
         last_entry_price = s.get("last_entry_price", s.get("avg_price", 0.0))
-        if last_entry_price > 0 and current_atr > 0:
-            price_diff = abs(price - last_entry_price)
+        price_diff = abs(price - last_entry_price) if last_entry_price > 0 else 0.0
         personality = s.get("personality", "balanced")
         profile_type = COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", "")
         if profile_type in ["Core_Trend", "High_Beta_Momentum"]:
@@ -600,9 +603,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         else:
             space_threshold = 1.0 * current_atr
 
-        if price_diff < max(space_threshold, price * 0.005):
-                print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {max(space_threshold, price * 0.005):.4f}")
-                return
+        if last_entry_price > 0 and current_atr > 0 and price_diff < max(space_threshold, price * 0.005):
+            print(f"🛑 [空間關卡] {sym} 加倉距離不足! 差距: {price_diff:.4f} < 門檻: {max(space_threshold, price * 0.005):.4f}")
+            return
 
         from core.indicators import _macd_vals
         macd_hist, prev_macd_hist = _macd_vals(s)
@@ -695,7 +698,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     if PAPER_TRADING:
         try:
             spread_pct = 0.0003
-            limit_price = price * (1 + spread_pct) if side == 'buy' else price * (1 - spread_pct)
+            current_market_price = s.get("close_price", price)
+            limit_price = current_market_price * (1 - spread_pct) if side == 'buy' else current_market_price * (1 + spread_pct)
             s["pending_paper_order"] = {
                 "side": side, "limit_price": limit_price, "qty": base_amt,
                 "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
@@ -714,13 +718,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 bid1 = float(bids[0][0]) if bids else price
 
                 if side == 'buy':
-                    limit_price = ask1 if ask1 > price else price
-                    order_type = 'STOP_MARKET' if limit_price > price else 'limit'
-                    print(f"📌 [Right-Side Stop] {sym} 順勢多單，設定 {order_type} @ {limit_price:.6f}")
+                    limit_price = bid1
+                    order_type = 'limit'
+                    print(f"📌 [被動掛單] {sym} 掛買一 {limit_price:.6f} 等成交 (不追高)")
                 else:
-                    limit_price = bid1 if bid1 < price else price
-                    order_type = 'STOP_MARKET' if limit_price < price else 'limit'
-                    print(f"📌 [Right-Side Stop] {sym} 順勢空單，設定 {order_type} @ {limit_price:.6f}")
+                    limit_price = ask1
+                    order_type = 'limit'
+                    print(f"📌 [被動掛單] {sym} 掛賣一 {limit_price:.6f} 等成交 (不殺低)")
             except Exception:
                 limit_price = price
                 order_type = 'limit'
@@ -764,6 +768,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 print(f"⏳ [等待成交] {sym} 限價單 {order_id} 尚未成交，由逃期止單機制接管")
                 return
 
+            old_qty = s["qty"]
             try:
                 positions = await exchange_futures.fetch_positions([sym])
                 actual_pos = next((p for p in positions if p.get('symbol') == sym and abs(float(p.get('contracts', 0) or 0)) > 0), None)
@@ -772,19 +777,15 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     actual_side_sign = 1 if side == 'buy' else -1
                     s["qty"] = actual_qty * actual_side_sign
                     print(f"📊 [持倉同步] {sym} 交易所實際持倉: {s['qty']:.4f}")
-                else:
-                    old_qty = s["qty"]
-                    if side == 'buy':
-                        s["qty"] += base_amt
-                    else:
-                        s["qty"] -= base_amt
             except Exception as pe:
                 print(f"⚠️ [持倉同步失敗] {sym}: {pe}")
-                old_qty = s["qty"]
-                if side == 'buy':
-                    s["qty"] += base_amt
-                else:
-                    s["qty"] -= base_amt
+                s["qty"] = old_qty
+
+            old_qty = s["qty"]
+            if side == 'buy':
+                s["qty"] += base_amt
+            else:
+                s["qty"] -= base_amt
 
             slippage = abs(fill_price - price) / price if price > 0 else 0
             print(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")

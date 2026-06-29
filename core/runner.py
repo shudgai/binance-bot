@@ -11,7 +11,7 @@ import requests
 
 from core import ctx
 from core.config import (PAPER_TRADING, MAX_POSITIONS, MAIN_LOOP_INTERVAL_SEC)
-from core.exchange_client import exchange_futures, exchange_spot, check_binance_weight
+from core.exchange_client import exchange_futures, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state
 from core.balance import fetch_real_balance
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
@@ -51,6 +51,9 @@ async def watch_symbol_trades(exchange, sym):
         except Exception as e:
             print(f"⚠️ [成交流監聽異常] {sym}: {e}")
         await asyncio.sleep(3)
+
+
+async def ensure_watch_tasks(exchange):
     desired_symbols = set(ctx.ALL_SYMBOLS)
     current_symbols = set(ctx.WATCH_TASKS.keys())
 
@@ -60,12 +63,7 @@ async def watch_symbol_trades(exchange, sym):
             task.cancel()
 
     for sym in desired_symbols - current_symbols:
-        ctx.WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(sym, exchange))
-
-
-async def ensure_watch_tasks(exchange):
-    """No-op stub kept for compatibility."""
-    pass
+        ctx.WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(exchange, sym))
 
 
 async def market_wind_loop(exchange):
