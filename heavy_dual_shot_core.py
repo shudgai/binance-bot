@@ -3082,12 +3082,19 @@ async def check_exits(sym):
     _hp = s.get("highest_profit_pct", 0.0)
     # 【提早啟動追蹤停利】啟動門檻從 0.5% (2.0%÷4x) 降為 0.25% (1.0%÷4x)，且設定絕對上限 0.5%
     ts_activation_pct = min(max(0.010 / _lev, atr_pct * 0.2), 0.005)
-    # 【最高利潤 80% 停利法】使用者指定：最高利潤降至 80% 就停利 (允許回吐 20% 的利潤)
-    # 這樣利潤往上跑時防護網會跟著上移，而且按比例鎖定。
-    ts_retracement_pct = _hp * 0.20
+    # 【動態鎖利法】利潤越高，防護網收得越緊（回吐 % 越小）
+    if _hp >= 0.08:
+        giveback_ratio = 0.10  # 利潤 > 8%：只允許回吐 10%（鎖住 90% 利潤）
+    elif _hp >= 0.04:
+        giveback_ratio = 0.15  # 利潤 > 4%：允許回吐 15%（鎖住 85% 利潤）
+    elif _hp >= 0.02:
+        giveback_ratio = 0.20  # 利潤 > 2%：允許回吐 20%（鎖住 80% 利潤）
+    else:
+        giveback_ratio = 0.30  # 利潤 < 2%：允許回吐 30%（給予足夠空間發展）
+        
+    ts_retracement_pct = _hp * giveback_ratio
     
-    # 為了避免剛啟動防護時 (例如獲利 0.5%) 20% 的回撤空間太小 (只有 0.1%) 容易被手續費或微小雜訊洗掉，
-    # 設定一個最小的回撤下限 0.15%
+    # 為了避免剛啟動防護時 (例如獲利 0.5%) 回撤空間太小容易被微小雜訊洗掉，設定一個最小的安全下限
     ts_retracement_pct = max(ts_retracement_pct, 0.0015)
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
