@@ -2960,6 +2960,17 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
+    # ── 假突破/動能失效停損 (Breakout Failure Exit / Time Stop) ──
+    # 情境：進場後超過 15 分鐘（1 根 15m K線的時間），價格完全沒有發動（峰值利潤不到 0.3%），而且目前還處於虧損狀態。
+    # 既然原本預期的突破或順勢沒有發生，與其傻傻等待打到原本設定的動態停損（例如 -0.3% ~ -0.5%），
+    # 不如直接「時間停損」提早撤退，把資金抽出來，將虧損降到極低的微損。
+    if hold_sec >= 900 and profit_pct < 0 and s.get("highest_profit_pct", 0.0) < 0.003:
+        cs = 'sell' if is_long else 'buy'
+        print(f"⏱️ [動能失效/時間停損] {sym} 進場 15 分鐘未見突破 (峰值僅 {s.get('highest_profit_pct', 0.0)*100:.2f}%) 且目前處於虧損 ({profit_pct*100:.2f}%)，提早撤退！")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Stop_Exit]")
+        s["highest_profit_pct"] = 0.0
+        return
+
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出
     _peak = s.get("highest_profit_pct", 0.0)
