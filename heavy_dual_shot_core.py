@@ -165,7 +165,7 @@ COIN_PROFILE_CONFIG = {
     "ETHUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
 
     # SOL｜趨勢旗艦 — 生態系龍頭，趨勢確認後動能強；硬停損守住不爆倉
-    "SOLUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015},
+    "SOLUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015, "require_strong_bias": True},
 
     # AVAX｜均衡生態 — 中等流動性L1，跟大盤趨勢；寬於ETH但不躁進
     "AVAXUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 0.35, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 17.0},
@@ -4233,11 +4233,16 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
         _tb_score_gate = s.get("trend_bias_score", 0)
         # score 永遠是偶數 (0, ±2, ±4)，中性(0)時不進場，只在明確趨勢方向才開倉
-        if side == "buy" and _tb_score_gate <= 0:
-            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢不偏多，拒絕做多 (Route:{route})")
+        # require_strong_bias 幣種（如 SOL）需 4 項全符合 (score = ±4)，避免盤整洗盤
+        _require_strong = COIN_PROFILE_CONFIG.get(sym, {}).get("require_strong_bias", False)
+        _tb_min_threshold = 2 if _require_strong else 0   # strong: score>2 才做多; default: score>0
+        if side == "buy" and _tb_score_gate <= _tb_min_threshold:
+            _needed = _tb_min_threshold + 2
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≥+{_needed}才做多 (Route:{route})")
             return False
-        if side == "sell" and _tb_score_gate >= 0:
-            print(f"🛑 [TrendBias_Gate] {sym} trend_bias_score={_tb_score_gate:+d}，趨勢不偏空，拒絕做空 (Route:{route})")
+        if side == "sell" and _tb_score_gate >= -_tb_min_threshold:
+            _needed = _tb_min_threshold + 2
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≤-{_needed}才做空 (Route:{route})")
             return False
 
     # =========================================================================
