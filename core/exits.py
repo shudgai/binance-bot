@@ -62,12 +62,14 @@ def update_trailing_stop(sym, current_price, is_long):
             personality = s.get("personality", "balanced")
             profile_type = s.get("profile_type", "")
             if personality == "aggressive" or "High_Beta" in profile_type:
-                if _hp_f > 0.05:    trailing_multiplier = 0.6  # 放寬以擴大利潤
-                elif _hp_f > 0.02:  trailing_multiplier = 0.9
-                else:               trailing_multiplier = 1.3  # 給予更多呼吸空間
-            else:
                 if _hp_f > 0.05:    trailing_multiplier = 0.4
-                elif _hp_f > 0.02:  trailing_multiplier = 0.7
+                elif _hp_f > 0.03:  trailing_multiplier = 0.6
+                elif _hp_f > 0.02:  trailing_multiplier = 0.8
+                else:               trailing_multiplier = 1.3
+            else:
+                if _hp_f > 0.05:    trailing_multiplier = 0.3
+                elif _hp_f > 0.03:  trailing_multiplier = 0.45
+                elif _hp_f > 0.02:  trailing_multiplier = 0.6
                 else:               trailing_multiplier = 1.0
             # 最小距離防護：確保至少 0.25% 緩衝
             _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
@@ -108,12 +110,14 @@ def update_trailing_stop(sym, current_price, is_long):
             personality = s.get("personality", "balanced")
             profile_type = s.get("profile_type", "")
             if personality == "aggressive" or "High_Beta" in profile_type:
-                if _hp_fs > 0.05:   trailing_multiplier = 0.6
-                elif _hp_fs > 0.02: trailing_multiplier = 0.9
+                if _hp_fs > 0.05:   trailing_multiplier = 0.4
+                elif _hp_fs > 0.03: trailing_multiplier = 0.6
+                elif _hp_fs > 0.02: trailing_multiplier = 0.8
                 else:               trailing_multiplier = 1.3
             else:
-                if _hp_fs > 0.05:   trailing_multiplier = 0.4
-                elif _hp_fs > 0.02: trailing_multiplier = 0.7
+                if _hp_fs > 0.05:   trailing_multiplier = 0.3
+                elif _hp_fs > 0.03: trailing_multiplier = 0.45
+                elif _hp_fs > 0.02: trailing_multiplier = 0.6
                 else:               trailing_multiplier = 1.0
             # 最小距離防護
             _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
@@ -900,7 +904,6 @@ async def check_exits(sym):
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Stagnation_2]")
                 s["highest_profit_pct"] = 0.0
                 return
-            s["highest_profit_pct"] = 0.0
             s["has_partial_closed"] = False
             return
 
