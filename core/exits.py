@@ -317,24 +317,20 @@ async def check_exits(sym):
             _wrong_dir = True
             _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
 
-        # 方向錯誤 + 動能確認檢查（1-5 分鐘，虧 > 0.2%）
-        if not _wrong_dir and 60 < _obs_time < 300 and profit_pct < -0.002:
+        # 方向錯誤 + 動能確認檢查（2-8 分鐘，虧 > 0.3%，MACD AND EMA20 同時確認）
+        # 原本 1-5 分鐘 + 虧 0.2% + OR 條件 → 雜訊觸發太多，震盪市場中被頻繁砍倉
+        if not _wrong_dir and 120 < _obs_time < 480 and profit_pct < -0.003:
             _macd_obs = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
             _prev_macd_obs = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
             _ema20_obs = s.get("ema20", 0.0)
             _macd_bearish = (_macd_obs < 0 and _macd_obs < _prev_macd_obs) if is_long else (_macd_obs > 0 and _macd_obs > _prev_macd_obs)
             _ema20_wrong = (_ema20_obs > 0 and p < _ema20_obs) if is_long else (_ema20_obs > 0 and p > _ema20_obs)
-            if _macd_bearish or _ema20_wrong:
+            if _macd_bearish and _ema20_wrong:  # 需雙重確認（原本 OR → 改 AND）
                 _wrong_dir = True
-                _reason = f"方向錯誤+動能確認 (MACD:{_macd_bearish} EMA20:{_ema20_wrong})"
+                _reason = f"方向錯誤+雙重確認 (MACD:{_macd_bearish} EMA20:{_ema20_wrong})"
 
-        # 價格停滯檢查（進場 2-5 分鐘，利潤在 -0.1%~0% 之間，沒往預期走）
-        if not _wrong_dir and 120 < _obs_time < 300 and -0.001 <= profit_pct <= 0:
-            _wrong_dir = True
-            _reason = f"進場後價格停滯 ({_obs_time:.0f}s 利潤 {profit_pct*100:.2f}%)"
-            _stagnation = True
-        else:
-            _stagnation = False
+        # 價格停滯檢查：移除（0~-0.1% 是震盪市場正常雜訊，2 分鐘停滯就砍導致大量手續費損耗）
+        _stagnation = False
 
         if _wrong_dir:
             print(f"🚨 [Post_Entry_Early_Exit] {sym} {_reason}，快速撤退！")
