@@ -665,12 +665,12 @@ async def check_exits(sym):
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
     ts_activation_pct = max(0.030 / _lev, atr_pct * 0.5)
-    # 動態縮緊（ATR 分層）：利潤越高追蹤網越緊
-    if _hp >= 0.05:     ts_retracement_pct = atr_pct * 0.8   # > 5%：放寬至 0.8 ATR
-    elif _hp >= 0.02:   ts_retracement_pct = atr_pct * 1.2   # 2-5%：放寬至 1.2 ATR
-    elif _hp >= 0.008:  ts_retracement_pct = atr_pct * 1.5   # 0.8-2%：放寬至 1.5 ATR
-    else:               ts_retracement_pct = atr_pct * 1.5   # < 0.8%：放寬至 1.5 ATR
-    ts_retracement_pct = max(ts_retracement_pct, 0.0008)      # 絕對下限 0.08%
+    # 動態追蹤距離：利潤越高給越大空間讓行情繼續跑，避免 5%+ 大行情被雜訊洗出場
+    if _hp >= 0.05:     ts_retracement_pct = atr_pct * 1.5   # > 5%：保留充足空間繼續跑（原 0.8 太緊）
+    elif _hp >= 0.02:   ts_retracement_pct = atr_pct * 1.2   # 2-5%：適中空間
+    elif _hp >= 0.008:  ts_retracement_pct = atr_pct * 1.5   # 0.8-2%：早期利潤也留呼吸空間
+    else:               ts_retracement_pct = atr_pct * 1.5   # < 0.8%：剛啟動
+    ts_retracement_pct = max(ts_retracement_pct, 0.0015)      # 絕對下限 0.15%（原 0.08% 太小）
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
@@ -762,10 +762,6 @@ async def check_exits(sym):
         print(f"📉 [反轉出場] {sym} MACD連續兩根確認反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=is_sl)
         return
-
-    is_strong = (is_long and s["current_rsi"] > 50) or (not is_long and s["current_rsi"] <= 50)
-
-    is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or (not is_long and s["macd_line"] < s["macd_signal"])
 
     atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
 

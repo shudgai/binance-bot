@@ -639,14 +639,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if side == 'buy':
         if prev_macd_line <= prev_macd_signal and macd_line > macd_signal:
             macd_score = 5.0
-        elif macd_hist > prev_macd_hist:
+        elif macd_hist > 0 and macd_hist > prev_macd_hist:   # 需 MACD 為正才算多頭動能加分
             macd_score = 3.0
         if current_rsi > 48.0:
             rsi_score = 4.0
     else:
         if prev_macd_line >= prev_macd_signal and macd_line < macd_signal:
             macd_score = 5.0
-        elif macd_hist < prev_macd_hist:
+        elif macd_hist < 0 and macd_hist < prev_macd_hist:   # 需 MACD 為負才算空頭動能加分
             macd_score = 3.0
         if current_rsi < 52.0:
             rsi_score = 4.0
