@@ -4329,17 +4329,21 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # BTC 4H + 1H 雙牛 → 封鎖所有做空訊號（與 MACRO_BLOCK 對稱）
     # 除非滿足「極端超買 RSI > 68」或「反轉路由」
     # =========================================================================
-    bull_defense_mode = (btc_4h == "BULL" and btc_1h == "BULL")
+    # BTC 4H 多頭即封鎖空單（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
+    bull_defense_mode = (btc_4h == "BULL")
     if bull_defense_mode and side == 'sell':
         current_rsi_macro = s.get("current_rsi", 50.0)
         _tb_score_macro   = s.get("trend_bias_score", 0)
         is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
         is_strong_pullback = (route == "Pullback" and _tb_score_macro <= -4)
-        if current_rsi_macro > 68.0 or is_reversal_route or is_strong_pullback:
-            _reason = "RSI超買" if current_rsi_macro > 68.0 else ("強空趨勢回調" if is_strong_pullback else "反轉路由")
-            print(f"⚡ [BULL_EXEMPT] {sym} BTC 雙牛但 {_reason} (score={_tb_score_macro:+d})，豁免允許空單")
+        # RSI > 73 才算真正超買可逆勢做空（68 在上升趨勢中很常見，不算超買）
+        if current_rsi_macro > 73.0 or is_strong_pullback:
+            _reason = "RSI極端超買" if current_rsi_macro > 73.0 else "強空趨勢回調"
+            print(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但 {_reason} (score={_tb_score_macro:+d})，豁免允許空單")
+        elif is_reversal_route and current_rsi_macro > 70.0:
+            print(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但 Exhaustion且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
         else:
-            print(f"🔵 [BULL_DEFENSE] {sym} BTC 4H+1H 雙牛，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route})")
+            print(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route})")
             return False
 
     # =========================================================================
