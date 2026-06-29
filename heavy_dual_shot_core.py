@@ -2550,29 +2550,26 @@ async def check_exits(sym):
 
     # --- 🚨 假突破立即停損 (False Breakout Exit) ---
     # 使用者要求：如果不小心開了假突破，先確定是否假突破，確定後馬上停損不用等。
-    # 定義：持倉 15 分鐘內，處於明顯虧損 (至少 -0.4%)，且動能指標 (RSI, MACD) 與價格結構雙雙反轉
+    # 定義：持倉 15 分鐘內，處於明顯虧損 (至少 -0.4%)，且動能指標 (RSI, MACD) 反轉
     if hold_sec < 900 and profit_pct < -0.004:
         is_false_breakout = False
         _cur_rsi = s.get("current_rsi", 50)
         _macd_h = s.get("macd_hist", 0)
         _macd_h_prev = s.get("prev_macd_hist", 0)
-        _bb_up = s.get("bb_up", 0)
-        _bb_low = s.get("bb_low", 0)
-        _bb_mid = (_bb_up + _bb_low) / 2 if _bb_up > 0 else p
         
         if is_long:
-            # 多單假突破：跌破布林中軌，且 RSI 急跌 (< 45) 或 MACD 柱狀圖轉弱
-            if p < _bb_mid and (_cur_rsi < 45 or _macd_h < _macd_h_prev):
+            # 多單假突破：RSI 急跌 (< 48) 或 MACD 柱狀圖轉弱 (怕停損太大，移除跌破均線的緩慢條件)
+            if _cur_rsi < 48 or _macd_h < _macd_h_prev:
                 is_false_breakout = True
         else:
-            # 空單假突破：突破布林中軌，且 RSI 急漲 (> 55) 或 MACD 柱狀圖轉強
-            if p > _bb_mid and (_cur_rsi > 55 or _macd_h > _macd_h_prev):
+            # 空單假突破：RSI 急漲 (> 52) 或 MACD 柱狀圖轉強
+            if _cur_rsi > 52 or _macd_h > _macd_h_prev:
                 is_false_breakout = True
                 
         if is_false_breakout:
             cs = "sell" if is_long else "buy"
             _dir_str = "多" if is_long else "空"
-            print(f"🚨 [假突破斬立決] {sym} {_dir_str}單開倉 {int(hold_sec)}s 即面臨 {profit_pct*100:.2f}% 虧損，且價格跌回均線與動能破敗(RSI={_cur_rsi:.1f})，確認假突破，無須等待立刻停損！")
+            print(f"🚨 [假突破斬立決] {sym} {_dir_str}單開倉 {int(hold_sec)}s 即面臨 {profit_pct*100:.2f}% 虧損，且動能破敗(RSI={_cur_rsi:.1f})，確認假突破，無須等待立刻停損！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[False_Breakout_Cut]")
             return
 
@@ -4279,6 +4276,12 @@ def is_entry_pin_safe(sym, side):
 def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     s = STATES[sym]
     cp = s["close_price"]
+
+    # 無風控配置的幣種（如雷達選入但未在 COIN_PROFILE_CONFIG 的新幣）禁止開倉
+    # 原因：會使用 DEFAULT_LEVERAGE=5 且無 hard_sl_pct，風險不可控
+    if sym not in COIN_PROFILE_CONFIG:
+        print(f"🚫 [NO_PROFILE] {sym} 無風控配置，禁止開倉（DEFAULT_LEVERAGE=5 風險過高）")
+        return False
 
     if route == "Automatic_Reverse":
         print(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
