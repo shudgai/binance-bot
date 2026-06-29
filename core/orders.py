@@ -199,7 +199,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         exit_reason=full_reason,
         profit_pct=profit_pct,
         current_atr=s.get("current_atr", 0.0),
-        max_profit_reached=s.get("max_profit", 0.0),
+        max_profit_reached=s.get("highest_profit_pct", 0.0),
         expected_entry=real_avg,
         expected_exit=price,
         actual_entry=real_avg,

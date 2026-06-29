@@ -605,6 +605,7 @@ async def check_entries():
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
         s["pending_route"] = route
+        s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
 
         print(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
 
