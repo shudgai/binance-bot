@@ -1212,20 +1212,21 @@ def update_trade_signal(sym, trade):
 
         # 即時保本鎖定：達到 0.3% 利潤門檻立刻移動 SL 到成本
         if rt_profit >= 0.003 and not s.get("is_breakeven_locked", False):
-            _buf = 0.003  # 0.3%：覆蓋來回手續費(~0.2%)與滑點，確保保本出場仍淨獲利
-            # 多空保本線都設在進場價上方 avg*(1+buf)：
-            # 多單：SL 往上移到 avg*1.003（若反轉跌回此位即平倉，確保費後正報酬）
-            # 空單：SL 也在 avg*1.003（若反轉漲回此位即平倉），而非錯誤的 avg*(1-buf)
-            _be = avg_p * (1 + _buf)
+            _buf = 0.0015  # 降到 0.15% 覆蓋成本即可，給予價格呼吸空間
             _sl_now = s.get("stop_loss", 0)
-            if _is_long and (_sl_now == 0 or _be > _sl_now):
-                s["stop_loss"] = _be
-                s["is_breakeven_locked"] = True
-                print(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
-            elif not _is_long and (_sl_now == 0 or _be < _sl_now):
-                s["stop_loss"] = _be
-                s["is_breakeven_locked"] = True
-                print(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
+            
+            if _is_long:
+                _be = avg_p * (1 + _buf) # 多單保本：成本價往上拉一點
+                if _sl_now == 0 or _be > _sl_now:
+                    s["stop_loss"] = _be
+                    s["is_breakeven_locked"] = True
+                    print(f"⚡ [即時保本-多] {sym} 達到 {rt_profit*100:.2f}%，SL鎖定 {_be:.4f}")
+            else:
+                _be = avg_p * (1 - _buf) # 空單保本：成本價往下拉一點 (修正點！)
+                if _sl_now == 0 or _be < _sl_now or _sl_now == float('inf'):
+                    s["stop_loss"] = _be
+                    s["is_breakeven_locked"] = True
+                    print(f"⚡ [即時保本-空] {sym} 達到 {rt_profit*100:.2f}%，SL鎖定 {_be:.4f}")
 
         # ── TrailTP 即時同步至 stop_loss（每個 trade tick 執行）──
         # update_trailing_stop 只在開倉時被呼叫，必須在 trade handler 也同步
@@ -2561,18 +2562,27 @@ async def check_exits(sym):
     # ────────────────────────────────────────────────────────────────
 
     # --- Trend_Flip_Exit：趨勢轉向主動止血 ---
-    # 若持倉方向已與 trend_bias_score 完全相反（多單但 score ≤ -2，或空單但 score ≥ +2）
-    # 且持倉已虧損 → 不等 SL，主動平倉止血，避免損失繼續擴大
+    # 若持倉方向已與 trend_bias_score 相反（多單但 score <= -1，或空單但 score >= +1）
+    # 且持倉已虧損 -> 不等 SL，主動平倉止血，避免損失繼續擴大（提高敏感度，原為 2/-2）
     _tb_sc_now = s.get("trend_bias_score", 0)
-    _flip_long  = is_long     and _tb_sc_now <= -2  # 多單但趨勢轉空
-    _flip_short = not is_long and _tb_sc_now >=  2  # 空單但趨勢轉多
+    _flip_long  = is_long     and _tb_sc_now <= -1  # 多單但趨勢轉空
+    _flip_short = not is_long and _tb_sc_now >=  1  # 空單但趨勢轉多
     if (_flip_long or _flip_short) and profit_pct < -0.002 and hold_sec > 120:
         cs = "sell" if is_long else "buy"
         _dir_str = f"空(score={_tb_sc_now})" if _flip_long else f"多(score={_tb_sc_now})"
         print(f"🔀 [Trend_Flip_Exit] {sym} 趨勢已轉{_dir_str}，{'多' if is_long else '空'}單虧損 {profit_pct*100:.2f}%，主動平倉止血")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Flip]")
-        # 平倉後不急著反手，讓幣種進入冷卻期，等正常掃描找到好位置再進場
-        print(f"⏸️ [Trend_Flip_Wait] {sym} 止血平倉，等待價格回調至更好位置再進場")
+        
+        # 恢復反手救援機制：趨勢既然已經明確反轉，直接啟動反手把虧損賺回來
+        last_reverse = s.get("last_reverse_time", 0)
+        if time.time() - last_reverse > 1800:
+            s["pending_reverse"] = "sell" if is_long else "buy"
+            s["pending_reverse_time"] = time.time()
+            s["last_reverse_time"] = time.time()
+            s["pending_reverse_source"] = "Trend_Flip"
+            print(f"🔄 [Trend_Flip_Reverse] {sym} 啟動反手救援，準備開{'空' if is_long else '多'}！")
+        else:
+            print(f"⏸️ [Trend_Flip_Wait] {sym} 距上次反手 < 30m，為防反覆震盪，暫不反手。")
         return
 
     # --- 時間停利 (Time-Based Take Profit) ---
@@ -2652,8 +2662,17 @@ async def check_exits(sym):
         cs = 'sell' if is_long else 'buy'
         print(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
-        # 硬止損後不急著反手：讓幣種進冷卻期，等正常掃描找到回調位置再進場
-        print(f"⏸️ [Hard_SL_Wait] {sym} 硬止損出場，等待價格回調再尋找入場機會")
+        
+        # 恢復反手救援機制：硬止損通常代表方向完全看錯，順勢反手
+        last_reverse = s.get("last_reverse_time", 0)
+        if time.time() - last_reverse > 1800:
+            s["pending_reverse"] = "sell" if is_long else "buy"
+            s["pending_reverse_time"] = time.time()
+            s["last_reverse_time"] = time.time()
+            s["pending_reverse_source"] = "Hard_SL"
+            print(f"🔄 [Hard_SL_Reverse] {sym} 觸發硬止損，啟動反手救援，準備開{'空' if is_long else '多'}！")
+        else:
+            print(f"⏸️ [Hard_SL_Wait] {sym} 距上次反手 < 30m，冷卻中暫不反手。")
         return
 
     # --- 進場後觀察期快速撤退 (Post-Entry Observation Exit) ---
@@ -2818,7 +2837,7 @@ async def check_exits(sym):
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
     # 【手術四】保本觸發門檻提高至最低 1.0%，給倉位足夠呼吸空間
     # 原 0.3% 太低：利潤剛 0.3% 就鎖保本，任何微小回撤就被洗出場
-    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.010)
+    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.006)
     
     # --- 保本緩衝：改用 ATR 動態計算，最低 1.2%，避免空單因緩衝太小立即觸發保本 ---
     # 原固定 0.5% 在低 ATR 幣種幾乎等同即時停損，特別傷害空單
@@ -2829,22 +2848,17 @@ async def check_exits(sym):
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         # 2. 計算移動保本線
         if is_long:
-            breakeven_price = avg * (1 + slippage_buffer)
-            # 做多時：如果算出新的保本價比原本的止損價還高，才往上鎖定
+            breakeven_price = avg * (1 + 0.001) # 多單利潤回吐防線設在成本價上方
             if breakeven_price > s.get('stop_loss', 0):
                 s['stop_loss'] = breakeven_price
-                if not s.get('is_breakeven_locked'):
-                    s['is_breakeven_locked'] = True
-                    print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+                s['is_breakeven_locked'] = True
+                print(f"🛡️ [{sym}] 獲利達標，移動多單保本線已鎖定在：{breakeven_price:.4f}")
         else:
-            # 做空保本線在進場價「上方」avg*(1+buf)：若價格反彈到此才出場（不虧超過手續費）
-            breakeven_price = avg * (1 + slippage_buffer)
-            # 做空 SL 從 avg+sl_dist（上方遠）往下縮到 avg*(1+buf)（上方近進場價）
+            breakeven_price = avg * (1 - 0.001) # 空單利潤回吐防線設在成本價下方 (修正點！)
             if s.get('stop_loss', float('inf')) > breakeven_price:
                 s['stop_loss'] = breakeven_price
-                if not s.get('is_breakeven_locked'):
-                    s['is_breakeven_locked'] = True
-                    print(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+                s['is_breakeven_locked'] = True
+                print(f"🛡️ [{sym}] 獲利達標，移動空單保本線已鎖定在：{breakeven_price:.4f}")
                     
     # 前 5 分鐘保護期：ATR 動態 SL 先使用較寬鬆的距離，避免進場後立即被雜訊掃出
     _hold_sec_sl = time.time() - s.get("open_time", time.time())
@@ -4284,10 +4298,9 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
     current_atr_v = s.get("current_atr", 0.0)
     is_low_vol_mode = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
-    # [放寬] 量能硬門檻：高波動 0.8→0.4，低波動 0.6→0.3
-    # 策略：僅攔截真正死水行情，讓更多訊號通過，由後端 RR/ATR/利潤 守門
-    # 低波動模式下自動減半量能門櫛，避免死水行情下封磁所有訊號
-    vol_multiplier = (0.35 if is_low_vol_mode else 0.5)
+    # [收緊] 量能硬門檻：高波動 0.6，低波動 0.45（原 0.5/0.35，避免過多假突破）
+    # 策略：濾掉邊緣訊號，要求突破必須伴隨一定程度的實體量能
+    vol_multiplier = (0.45 if is_low_vol_mode else 0.6)
     dynamic_vol_threshold = volume_ma20 * vol_multiplier
     if current_volume <= dynamic_vol_threshold:
         mode_label = "低波動模式 35%" if is_low_vol_mode else "高波動模式 50%"
@@ -4490,9 +4503,15 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
 
     # --- [BTC 1H 趨勢大盤過濾] ---
     btc_1h = MARKET_WIND.get("btc_trend_1h")
-    if is_trend and btc_1h is not None:
+    if is_trend and btc_1h is not None and route == "Standard":
         if side == 'buy' and btc_1h == "BEAR":
-            print(f"⚠️ [BTC 1H 大盤過濾] BTC 1H 確認為熊市跌勢，但已依指示放寬，允許小幣逆勢做多")
+            if strength < 24.0:
+                print(f"🛑 [BTC_1H_BLOCK] {sym} BTC 1H 確認為熊市跌勢，禁止小幣順勢多單 (強度 {strength:.1f} < 24)")
+                return False
+        if side == 'sell' and btc_1h == "BULL":
+            if strength < 24.0:
+                print(f"🛑 [BTC_1H_BLOCK] {sym} BTC 1H 確認為牛市漲勢，禁止小幣順勢空單 (強度 {strength:.1f} < 24)")
+                return False
 
     # --- [過熱噴發過濾 (Moving Average Deviation Filter)] ---
     # 升級版：分層門檻 + 適用範圍擴大到所有路由
