@@ -39,6 +39,7 @@ class Order:
     highest_price_reached: float = 0.0
     is_trailing_active: bool = False
     entry_price: float = 0.0
+    placed_at: float = 0.0            # Unix timestamp (seconds) when order was sent to exchange
 
 class OrderTracker:
     def __init__(self):
@@ -503,6 +504,123 @@ class ExecutionEngine:
         logger.info(f"   - Re-fill Attempts       : {self.refill_attempts}")
         logger.info("==============================================")
 
+    async def cancel_stale_pending_orders(
+        self,
+        max_wait_seconds: float = 60.0,
+        paper_trading: bool = False
+    ) -> list:
+        """
+        超時撤單掃描器 (Stale Pending Order Sweeper)
+        ─────────────────────────────────────────────
+        掃描 ExecutionEngine.pending_orders 列表中所有 PENDING / PARTIAL 狀態的訂單。
+        若掛單時間超過 max_wait_seconds 且交易所回報仍未完全成交，
+        則發送撤單指令，並回報已清理的 (symbol, filled_qty) 列表給呼叫方。
+
+        呼叫方 (multi_coin_bot) 應根據回傳值更新 STATES[sym] 的 qty 與狀態欄位。
+
+        Returns:
+            List[dict]: 每筆撤單的摘要 {'symbol', 'order_id', 'filled_qty', 'side'}
+        """
+        import time as _time
+
+        if paper_trading:
+            return []  # 紙交易模式不需要對交易所發送真實撤單
+
+        if not self.exchange:
+            logger.warning("[StaleSweeper] 無交易所實例，跳過超時撤單掃描。")
+            return []
+
+        now = _time.time()
+        cancelled_results = []
+
+        with self.sync_lock:
+            candidates = [
+                o for o in self.pending_orders
+                if o.status in (OrderStatus.PENDING, OrderStatus.PARTIAL)
+                and o.placed_at > 0
+                and (now - o.placed_at) > max_wait_seconds
+            ]
+
+        for order in candidates:
+            sym = order.symbol
+            oid = order.order_id
+            elapsed = now - order.placed_at
+
+            try:
+                # ── Step 1: 先查單，避免撤已成交的單 ──────────────────
+                try:
+                    fetched = await self.exchange.fetch_order(oid, sym)
+                    live_status = fetched.get('status', 'open')
+                    filled_qty = float(fetched.get('filled', 0.0) or 0.0)
+                except Exception:
+                    live_status = 'open'
+                    filled_qty = order.filled_quantity
+
+                if live_status in ('closed', 'canceled'):
+                    logger.info(
+                        f"[StaleSweeper] {sym} 訂單 {oid} 已為 {live_status}，"
+                        f"從 pending_orders 移除，無需撤單。"
+                    )
+                    self.tracker.update_order(
+                        oid,
+                        OrderStatus.FILLED if live_status == 'closed' else OrderStatus.CANCELED,
+                        filled_qty
+                    )
+                    with self.sync_lock:
+                        self.pending_orders = [o for o in self.pending_orders if o.order_id != oid]
+                    cancelled_results.append({
+                        'symbol': sym, 'order_id': oid,
+                        'filled_qty': filled_qty, 'side': order.side,
+                        'action': 'already_done'
+                    })
+                    continue
+
+                # ── Step 2: 超時仍為 open → 發送撤單 ──────────────────
+                logger.warning(
+                    f"⏳ [StaleSweeper] {sym} 限價單 {oid} 已掛單 {elapsed:.1f}s "
+                    f"> {max_wait_seconds}s，部分成交量: {filled_qty:.4f}/{order.original_quantity:.4f}。"
+                    f" 執行防禦性撤單！"
+                )
+                try:
+                    await self.exchange.cancel_order(oid, sym)
+                    logger.info(f"✅ [StaleSweeper] {sym} 訂單 {oid} 撤單成功。")
+                except Exception as ce:
+                    logger.error(f"⚠️ [StaleSweeper] {sym} 訂單 {oid} 撤單失敗: {ce}")
+
+                # ── Step 3: 更新 OrderTracker 狀態 ────────────────────
+                self.tracker.update_order(oid, OrderStatus.CANCELED, filled_qty)
+                with self.sync_lock:
+                    self.pending_orders = [o for o in self.pending_orders if o.order_id != oid]
+
+                # ── Step 4: 從交易所同步真實持倉（處理部分成交殘留）──
+                actual_filled = filled_qty  # fallback
+                try:
+                    positions = await self.exchange.fetch_positions([sym])
+                    actual_pos = next(
+                        (p for p in positions
+                         if p.get('symbol') == sym
+                         and abs(float(p.get('contracts', 0) or 0)) > 0),
+                        None
+                    )
+                    if actual_pos:
+                        actual_filled = float(actual_pos.get('contracts', 0) or 0)
+                        logger.info(
+                            f"📊 [StaleSweeper] {sym} 撤單後交易所實際持倉: {actual_filled:.4f} 張"
+                        )
+                except Exception as pe:
+                    logger.error(f"⚠️ [StaleSweeper] {sym} 持倉同步失敗: {pe}")
+
+                cancelled_results.append({
+                    'symbol': sym, 'order_id': oid,
+                    'filled_qty': actual_filled, 'side': order.side,
+                    'action': 'cancelled'
+                })
+
+            except Exception as e:
+                logger.error(f"❌ [StaleSweeper] 處理 {sym} {oid} 時發生未預期例外: {e}")
+
+        return cancelled_results
+
     async def _place_simulated_order(
         self,
         order_id: str,
@@ -581,6 +699,8 @@ class ExecutionEngine:
                 avg_price=price
             )
 
+        import time as _time
+        placed_ts = _time.time()  # 記錄送單時間，供超時撤單 sweeper 使用
         logger.info(f"🚀 Placing real order via CCXT: {symbol} | {side} | Qty: {qty} | Price: {price}")
         
         try:
@@ -613,7 +733,8 @@ class ExecutionEngine:
                 status=status,
                 original_quantity=qty,
                 filled_quantity=filled_qty,
-                avg_price=avg_price
+                avg_price=avg_price,
+                placed_at=placed_ts
             )
 
         except ccxt.InsufficientFunds as e:

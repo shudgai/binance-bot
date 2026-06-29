@@ -1,5 +1,5 @@
 #!/bin/bash
-cd /home/shudgai999/project/binance-bot || exit 1
+cd /home/shudgai999/project/binance-bot-live || exit 1
 SESSION="binance_bot"
 PID_FILE="/tmp/multi_coin_bot.pid"
 DIR_NAME=$(basename "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")
