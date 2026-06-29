@@ -2961,9 +2961,9 @@ async def check_exits(sym):
         s["has_been_negative"] = True
 
     # ── 停滯出場 (Stagnant_Profit_Exit) ──
-    # 如果持倉超過 5 分鐘，且處於獲利狀態 (>= 0.15%)，
+    # 如果持倉超過 10 分鐘，且處於獲利狀態 (>= 0.15%)，
     # 只要技術指標 (趨勢分數或EMA20) 開始轉弱（代表價格漲/跌不動了），就主動平倉入袋，釋放資金。
-    if hold_sec >= 300 and profit_pct >= 0.0015:
+    if hold_sec >= 600 and profit_pct >= 0.0015:
         _current_score = s.get("trend_bias_score", 0)
         _trend_weakened = (_current_score <= 0) if is_long else (_current_score >= 0)
         _ema20 = s.get("ema20", 0.0)
