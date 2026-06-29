@@ -2842,9 +2842,9 @@ async def check_exits(sym):
     # 避免 0.15% 微利就觸發保本，導致價格彈回後立即出場（手續費白白損失）
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    # 【保本提早觸發修正】將最低觸發門檻從 0.6% 降至 0.3%
-    # 只要有利潤超過 0.3%，就先鎖定保本，防止獲利單變成虧損單
-    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.003)
+    # 【手術四】保本觸發門檻提高至最低 1.0%，給倉位足夠呼吸空間
+    # 原 0.3% 太低：利潤剛 0.3% 就鎖保本，任何微小回撤就被洗出場
+    breakeven_threshold = max(entry_atr_pct * _be_mult, 0.006)
     
     # --- 保本緩衝：改用 ATR 動態計算，最低 1.2%，避免空單因緩衝太小立即觸發保本 ---
     # 原固定 0.5% 在低 ATR 幣種幾乎等同即時停損，特別傷害空單
@@ -2960,40 +2960,6 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
-    # ── 假突破/動能失效 多階段極速停損 (Multi-stage Fast Time Stop) ──
-    # 針對使用者需求：既然是突破或順勢進場，就不應該拖泥帶水。但為了避免把「正常的突破後回踩（Retest）」誤認為假突破，
-    # 必須加入【技術指標反轉確認】：只有當「時間過太久 + 帳面虧損 + 趨勢指標真的轉弱」這三個條件同時成立時，才判定為假突破。
-    _peak_p = s.get("highest_profit_pct", 0.0)
-    _time_stop_reason = ""
-    
-    # 【技術確認】當前的趨勢分數是否已經轉弱（原本進場至少要有 +2/-2）
-    _current_score = s.get("trend_bias_score", 0)
-    _trend_weakened = (_current_score <= 0) if is_long else (_current_score >= 0)
-    # 【技術確認】價格是否跌破短線防守線 EMA20
-    _ema20 = s.get("ema20", 0.0)
-    _price_broken_ema20 = (p < _ema20) if is_long else (p > _ema20)
-    
-    # 只要符合任何一項技術破壞（趨勢轉弱 或 跌破短均線），就允許時間停損發動
-    _technical_failure = _trend_weakened or _price_broken_ema20
-
-    if _technical_failure:
-        # 階段 1：極速拒絕 (3分鐘內被急殺)
-        if hold_sec >= 180 and profit_pct < -0.003 and _peak_p < 0.001:
-            _time_stop_reason = "3分鐘極速拒絕且技術轉弱"
-        # 階段 2：毫無動能且持續失血 (5分鐘)
-        elif hold_sec >= 300 and profit_pct < -0.002 and _peak_p < 0.0015:
-            _time_stop_reason = "5分鐘動能失效且技術轉弱"
-        # 階段 3：死水一灘 (10分鐘還沒回本)
-        elif hold_sec >= 600 and profit_pct < 0 and _peak_p < 0.002:
-            _time_stop_reason = "10分鐘死水不漲且技術轉弱"
-
-    if _time_stop_reason:
-        cs = 'sell' if is_long else 'buy'
-        print(f"⏱️ [極速假突破停損] {sym} {_time_stop_reason} (峰值僅 {_peak_p*100:.2f}%)，目前虧損 {profit_pct*100:.2f}%，不等停損點了，直接撤退！")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Fast_Time_Stop]")
-        s["highest_profit_pct"] = 0.0
-        return
-
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出
     _peak = s.get("highest_profit_pct", 0.0)
@@ -3099,8 +3065,7 @@ async def check_exits(sym):
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
-    # 【提早啟動追蹤停利】啟動門檻從 0.5% (2.0%÷4x) 降為 0.25% (1.0%÷4x)
-    ts_activation_pct = max(0.010 / _lev, atr_pct * 0.2)
+    ts_activation_pct = max(0.020 / _lev, atr_pct * 0.3)
     # 動態縮緊（ATR 分層）：與 update_trailing_stop 一致，利潤越高追蹤網越緊
     # 【高點停利修正】大幅縮緊回撤容忍度，貼緊價格高點
     if _hp >= 0.05:     ts_retracement_pct = atr_pct * 0.2   # > 5%：極度縮緊 (0.2x ATR)
@@ -4437,28 +4402,14 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
                     print(f"🛑 [WEAK_SLOPE_SKIP] {sym} 做空訊號但 EMA20 趨勢太過平緩 (斜率: {slope_pct*100:.4f}% > -{slope_threshold*100:.4f}%)，拒絕上車")
                     return False
         
-    # 2. RSI 與 EMA 短線乖離保護 (Anti-FOMO 假突破防護核心)
-    # 針對使用者需求：既然是順勢突破，就必須買在「剛發動」的時候，而不是「已經噴上天」的時候。
+    # 2. RSI 方向保護：超賣禁空、超買禁多
     current_rsi = s.get("current_rsi", 50.0)
-    ema20_now = s.get("ema20", 0.0)
-    is_trend_route = route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
-    
-    if is_trend_route:
-        # A. RSI 嚴格限制：禁止追高/殺低 (適度放寬)
-        if side == 'sell' and current_rsi < 30.0 and strength < 15.0:
-            print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 已進入低檔 ({current_rsi:.1f} < 30.0) 且動能一般，追空容易遇到假跌破反抽，拒絕進場。")
-            return False
-        if side == 'buy' and current_rsi > 70.0 and strength < 15.0:
-            print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 已過度加熱 ({current_rsi:.1f} > 70.0) 且動能一般，追多極易買在假突破最高點，拒絕進場。")
-            return False
-            
-        # B. EMA 乖離率限制 (Price Distance from EMA20)
-        # 如果價格離短線均線太遠，代表已經漲/跌了一大波，隨時會拉回
-        if ema20_now > 0:
-            dist_pct = abs(cp - ema20_now) / ema20_now
-            if dist_pct > 0.025:  # 放寬到 2.5% 視為過度延伸 (幣圈波動較大)
-                print(f"🛑 [REJECT] [Filter:EMA_Overextend] {sym} 價格距離 EMA20 過遠 ({dist_pct*100:.2f}% > 2.5%)，短線乖離過大，追單被洗風險極高，拒絕進場。")
-                return False
+    if side == 'sell' and current_rsi < 30.0:
+        print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 超賣區 ({current_rsi:.1f} < 30.0)，禁止做空（市場可能即將反彈）。")
+        return False
+    if side == 'buy' and current_rsi > 70.0 and strength < 20.0:
+        print(f"🛑 [REJECT] [Filter:RSI_Direction] {sym} RSI 超買區 ({current_rsi:.1f} > 70.0) 且強度不足({strength:.1f} < 20.0)，禁止追高做多。")
+        return False
         
     # 3. BB 假突破防護：趨勢路由不在超買/超賣區開倉（非反轉路由適用）
     # 豁免：訊號強度 > 20 視為強勢突破，允許在 BB 外側進場（如 AAVE 極強行情）
