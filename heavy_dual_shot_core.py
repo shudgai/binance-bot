@@ -1038,11 +1038,11 @@ def _calc_sl_tp(sym, side, s, p, route="Standard"):
     sl_dist = max(sl_dist, p * _SL_FLOOR_PCT)
     tp_dist = max(tp_dist, p * _TP_FLOOR_PCT)
 
-    # Layer-C: Forced R:R Floor
-    MIN_RR_FLOOR = 1.5
+    # Layer-C: Forced R:R Floor — 使用幣種 rr_threshold（至少 1.5）
+    MIN_RR_FLOOR = max(COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.5), 1.5)
     min_tp_dist = sl_dist * MIN_RR_FLOOR
     if tp_dist < min_tp_dist:
-        print(f"[R:R_Adjustment] {sym} TP {tp_dist:.4f} < SL x{MIN_RR_FLOOR}, expanding to {min_tp_dist:.4f}")
+        print(f"[R:R_Adjustment] {sym} TP {tp_dist:.4f} < SL x{MIN_RR_FLOOR:.1f}, expanding to {min_tp_dist:.4f}")
         tp_dist = min_tp_dist
 
     expected_rr = tp_dist / sl_dist if sl_dist > 0 else 0
@@ -2799,7 +2799,16 @@ async def check_exits(sym):
     # ── 加入最低距離保護 (Minimum Distance Floor) ──
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)   # 最低 1.2%（原 1.5%，更易觸及）
-    
+
+    # ── 強制 R:R 保護層（與 _calc_sl_tp 的 MIN_RR_FLOOR 對齊）──
+    # 確保 tp_dist 永遠 >= sl_dist × 幣種 rr_threshold（至少 1.5）
+    # 防止低波動縮小 tp_base 或逆勢縮小 sl_mult 後，導致停利距離 < 停損距離
+    _rr_floor = max(COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.5), 1.5)
+    _min_tp_dist = sl_dist * _rr_floor
+    if tp_dist < _min_tp_dist:
+        print(f"[RR_Floor] {sym} tp_dist({tp_dist:.5f}) < sl_dist({sl_dist:.5f})×{_rr_floor:.1f}={_min_tp_dist:.5f}，強制擴大 TP")
+        tp_dist = _min_tp_dist
+
     tp = avg + tp_dist if is_long else avg - tp_dist
 
     # ── 動態保本防護 (Dynamic Breakeven) ──
@@ -2811,11 +2820,11 @@ async def check_exits(sym):
     # 原 0.3% 太低：利潤剛 0.3% 就鎖保本，任何微小回撤就被洗出場
     breakeven_threshold = max(entry_atr_pct * _be_mult, 0.010)
     
-    # --- 【修改建議 3】保本緩衝調升至 0.3% ---
-    # 0.3% = 手續費來回(0.1%) + 滑點(0.1%) + 淨利緩衝(0.1%)
-    # 確保鎖定的保本線能覆蓋來回手續費與滑點後仍有實質淨利
-    # 確保保本線在手續費、滑點、以及一個微小的「波動緩衝」之上，減少微小波動洗出場
-    slippage_buffer = 0.005
+    # --- 保本緩衝：改用 ATR 動態計算，最低 1.2%，避免空單因緩衝太小立即觸發保本 ---
+    # 原固定 0.5% 在低 ATR 幣種幾乎等同即時停損，特別傷害空單
+    # 新策略：max(1x ATR% , 1.2%)，確保有足夠呼吸空間
+    _atr_pct_buf = (atr_val / avg) if avg > 0 else 0.012
+    slippage_buffer = max(_atr_pct_buf, 0.012)  # 至少 1.2%（原 0.5%）
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         # 2. 計算移動保本線
@@ -4252,15 +4261,14 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
         _tb_score_gate = s.get("trend_bias_score", 0)
         # score 永遠是偶數 (0, ±2, ±4)，中性(0)時不進場，只在明確趨勢方向才開倉
         # require_strong_bias 幣種（如 SOL）需 4 項全符合 (score = ±4)，避免盤整洗盤
+        # 【修正】對稱性：做多/做空使用相同門檻 ±2，避免空單信號過於容易觸發
         _require_strong = COIN_PROFILE_CONFIG.get(sym, {}).get("require_strong_bias", False)
-        _tb_min_threshold = 2 if _require_strong else 0   # strong: score>2 才做多; default: score>0
-        if side == "buy" and _tb_score_gate <= _tb_min_threshold:
-            _needed = _tb_min_threshold + 2
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≥+{_needed}才做多 (Route:{route})")
+        _tb_min_threshold = 2 if _require_strong else 2   # 統一為 ±2，對稱過濾（原做空只需 0）
+        if side == "buy" and _tb_score_gate < _tb_min_threshold:
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≥+{_tb_min_threshold}才做多 (Route:{route})")
             return False
-        if side == "sell" and _tb_score_gate >= -_tb_min_threshold:
-            _needed = _tb_min_threshold + 2
-            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≤-{_needed}才做空 (Route:{route})")
+        if side == "sell" and _tb_score_gate > -_tb_min_threshold:
+            print(f"🛑 [TrendBias_Gate] {sym} score={_tb_score_gate:+d}，需≤-{_tb_min_threshold}才做空 (Route:{route})")
             return False
 
     # =========================================================================
@@ -4429,31 +4437,34 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     # Extreme_Reversal 豁免：反轉策略本質上就是逆勢進場，MTF趨勢對齊反而是錯誤的限制
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
-    # MTF 15m 趨勢對齊：硬封鎖（Standard 路由；強度 >= 22 或反轉路由豁免）
+    # MTF 15m 趨勢對齊：硬封鎖（Standard 路由；強度 >= 26 或反轉路由豁免）
+    # 【修正】門檻從22→26，防止在上漲趨勢中輕易開空/在下跌趨勢中輕易開多
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse"):
         if side == 'sell' and ema20_15m > ema50_15m:
-            if strength >= 22.0:
-                print(f"⚡ [MTF_Trend_Override] {sym} 15m 趨勢向上但強度{strength:.1f}≥22，允許開空")
+            if strength >= 26.0:
+                print(f"⚡ [MTF_Trend_Override] {sym} 15m 趨勢向上但強度{strength:.1f}≥26，允許開空")
             else:
-                print(f"🛑 [MTF_Trend_Block] {sym} 15m EMA20({ema20_15m:.4f})>EMA50({ema50_15m:.4f}) 趨勢向上，禁止開空 (強度{strength:.1f}<22)")
+                print(f"🛑 [MTF_Trend_Block] {sym} 15m EMA20({ema20_15m:.4f})>EMA50({ema50_15m:.4f}) 趨勢向上，禁止開空 (強度{strength:.1f}<26)")
                 return False
         elif side == 'buy' and ema20_15m < ema50_15m:
-            if strength >= 22.0:
-                print(f"⚡ [MTF_Trend_Override] {sym} 15m 趨勢向下但強度{strength:.1f}≥22，允許開多")
+            if strength >= 26.0:
+                print(f"⚡ [MTF_Trend_Override] {sym} 15m 趨勢向下但強度{strength:.1f}≥26，允許開多")
             else:
-                print(f"🛑 [MTF_Trend_Block] {sym} 15m EMA20({ema20_15m:.4f})<EMA50({ema50_15m:.4f}) 趨勢向下，禁止開多 (強度{strength:.1f}<22)")
+                print(f"🛑 [MTF_Trend_Block] {sym} 15m EMA20({ema20_15m:.4f})<EMA50({ema50_15m:.4f}) 趨勢向下，禁止開多 (強度{strength:.1f}<26)")
                 return False
             
-    # 4. 收盤確認 (Candle Close Check) — Extreme_Reversal 豁免（極端超賣/超買反轉本就逆勢進場）
+    # 4. 收盤確認 (Candle Close Check) — 改為 AND 條件，防止上漲中局部回調開空
+    # 【修正】空單：必須「同時」 close < prev_close (相對前根下跌) AND close < open (本根陰線)
+    # 原 OR 條件讓上漲趨勢中任何陰K都能通過空單確認，導致開倉立即綠卻被上漲吃掉
     if route not in ("Extreme_Reversal", "Exhaustion_Entry") and strength < 25.0 and len(s["ohlcv"]) >= 2:
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
-        if side == 'buy' and not (close_price > prev_close or close_price > open_price):
-            print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} <= 前收: {prev_close:.4f} 且 <= 開盤: {open_price:.4f})。")
+        if side == 'buy' and not (close_price > prev_close and close_price > open_price):
+            print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 做多：收盤 {close_price:.4f} 未能同時 > 前收 {prev_close:.4f} 且 > 開盤 {open_price:.4f}")
             return False
-        elif side == 'sell' and not (close_price < prev_close or close_price < open_price):
-            print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})。")
+        elif side == 'sell' and not (close_price < prev_close and close_price < open_price):
+            print(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 做空：收盤 {close_price:.4f} 未能同時 < 前收 {prev_close:.4f} 且 < 開盤 {open_price:.4f}")
             return False
 
     # [新增] MTF Correlation Lock (4H)
@@ -4516,16 +4527,16 @@ def is_entry_allowed(sym, side, route="Standard", strength=0.0):
     btc_4h = MARKET_WIND.get("btc_trend_4h")
     if is_trend and btc_4h is not None and route == "Standard":
         if side == 'buy' and btc_4h == "BEAR":
-            is_reversal_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry") or strength > 20.0
+            is_reversal_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry") or strength > 24.0
             if is_reversal_exempt:
-                print(f"⚡ [BTC_4H_EXEMPT] {sym} BTC 4H 熊市但強度 {strength:.1f}>20 或反轉路由，豁免允許多單")
+                print(f"⚡ [BTC_4H_EXEMPT] {sym} BTC 4H 熊市但強度 {strength:.1f}>24 或反轉路由，豁免允許多單")
             else:
                 print(f"🔴 [BTC_4H_BLOCK] {sym} BTC 4H 熊市，封鎖 route-a 做多訊號 (強度 {strength:.1f})")
                 return False
         if side == 'sell' and btc_4h == "BULL":
-            is_reversal_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry") or strength > 20.0
+            is_reversal_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry") or strength > 24.0
             if is_reversal_exempt:
-                print(f"⚡ [BTC_4H_EXEMPT] {sym} BTC 4H 牛市但強度 {strength:.1f}>20 或反轉路由，豁免允許空單")
+                print(f"⚡ [BTC_4H_EXEMPT] {sym} BTC 4H 牛市但強度 {strength:.1f}>24 或反轉路由，豁免允許空單")
             else:
                 print(f"🔴 [BTC_4H_BLOCK] {sym} BTC 4H 牛市，封鎖 route-a 做空訊號 (強度 {strength:.1f})")
                 return False
@@ -5582,8 +5593,14 @@ async def check_entries():
                     # [Layer 3] 嚴格K線：放寬容忍度至實體的 150%
                     body = prev_open - prev_close
                     lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 2.5:
+                    # 【修正】加入相對下跌確認：訊號K不只是本根陰，還必須相對前前根也收低
+                    # 防止上漲趨勢中一根局部回調陰K觸發空單（開倉立即綠但很快被上漲吞回）
+                    _prev_prev_close = s["ohlcv"][-3][4] if len(s["ohlcv"]) >= 3 else prev_open
+                    _relative_down = prev_close < _prev_prev_close  # 相對前根確實下跌
+                    if body > 0 and lower_shadow < body * 2.5 and _relative_down:
                         is_valid = True
+                    elif body > 0 and lower_shadow < body * 2.5 and not _relative_down:
+                        print(f"🛑 [PendingCandle_Reject] {sym} 空單確認K陰線但收盤({prev_close:.4f})>=前前根({_prev_prev_close:.4f})，上漲中局部回調，拒絕進場")
                         
                 if is_valid:
                     # [新增] Second-Bar Confirmation
@@ -5887,20 +5904,21 @@ async def check_entries():
         _SCORE_EXEMPT = ("Automatic_Reverse", "Extreme_Reversal", "Exhaustion_Entry")
 
         # [方案A] Trend Score 對齊要求
+        # 【修正】做多/做空使用對稱門檻 ±2，強度≥20（原22）可突破，降低假空信號
         if not has_position:
             if route not in _SCORE_EXEMPT:
-                # 一般路由：trend_score 必須支持方向；強度≥22 可突破
+                # 一般路由：trend_score 必須支持方向；強度≥20 可突破
                 if side == "sell" and _tb_score > -2:
-                    if strength >= 22.0:
-                        print(f"⚡ [TrendAlign_Override] {sym} score={_tb_score:+d} 但強度{strength:.1f}≥22，允許開空")
+                    if strength >= 20.0:
+                        print(f"⚡ [TrendAlign_Override] {sym} score={_tb_score:+d} 但強度{strength:.1f}≥20，允許開空")
                     else:
-                        print(f"🛑 [TrendAlign] {sym} 空單需 score≤-2，當前 {_tb_score:+d} (強度{strength:.1f}<22)")
+                        print(f"🛑 [TrendAlign] {sym} 空單需 score≤-2，當前 {_tb_score:+d} (強度{strength:.1f}<20)")
                         continue
                 elif side == "buy" and _tb_score < 2:
-                    if strength >= 22.0:
-                        print(f"⚡ [TrendAlign_Override] {sym} score={_tb_score:+d} 但強度{strength:.1f}≥22，允許開多")
+                    if strength >= 20.0:
+                        print(f"⚡ [TrendAlign_Override] {sym} score={_tb_score:+d} 但強度{strength:.1f}≥20，允許開多")
                     else:
-                        print(f"🛑 [TrendAlign] {sym} 多單需 score≥+2，當前 {_tb_score:+d} (強度{strength:.1f}<22)")
+                        print(f"🛑 [TrendAlign] {sym} 多單需 score≥+2，當前 {_tb_score:+d} (強度{strength:.1f}<20)")
                         continue
             elif route == "Exhaustion_Entry":
                 # Exhaustion：趨勢明確時（score ≥ +2 或 ≤ -2），禁止開逆勢單
