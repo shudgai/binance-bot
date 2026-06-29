@@ -5,9 +5,7 @@ All trading logic lives in core/*.py modules.
 import asyncio
 import fcntl
 import os
-import signal
 import sys
-import time
 
 from dotenv import load_dotenv
 
@@ -28,41 +26,8 @@ def _process_exists(pid):
     return True
 
 
-def _terminate_process(pid):
-    try:
-        os.kill(pid, signal.SIGTERM)
-        time.sleep(0.2)
-        if _process_exists(pid):
-            os.kill(pid, signal.SIGKILL)
-        return True
-    except Exception:
-        return False
-
-
 def ensure_single_instance():
     global lock_file_handle
-
-    def _create_lock():
-        global lock_file_handle
-        try:
-            if lock_file_handle:
-                try:
-                    lock_file_handle.close()
-                except Exception:
-                    pass
-            try:
-                os.remove(LOCK_FILE)
-            except Exception:
-                pass
-            lock_file_handle = open(LOCK_FILE, "a+")
-            fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            lock_file_handle.seek(0)
-            lock_file_handle.truncate()
-            lock_file_handle.write(str(os.getpid()))
-            lock_file_handle.flush()
-            return True
-        except IOError:
-            return False
 
     lock_file_handle = open(LOCK_FILE, "a+")
     try:
@@ -72,13 +37,14 @@ def ensure_single_instance():
         lock_file_handle.write(str(os.getpid()))
         lock_file_handle.flush()
         return
+
     except IOError:
         lock_file_handle.seek(0)
         pid_text = lock_file_handle.read().strip()
         stale_pid = None
         try:
             stale_pid = int(pid_text)
-        except Exception:
+        except ValueError:
             pass
 
         if stale_pid and stale_pid != os.getpid():
@@ -86,14 +52,20 @@ def ensure_single_instance():
                 print(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。")
                 sys.exit(0)
             else:
-                print(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並繼續啟動...")
-
-            if _create_lock():
-                return
+                print(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並重新接管...")
+                try:
+                    fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_file_handle.seek(0)
+                    lock_file_handle.truncate()
+                    lock_file_handle.write(str(os.getpid()))
+                    lock_file_handle.flush()
+                    return
+                except IOError:
+                    pass
 
         print("🚨 錯誤: 偵測到系統中已有另一個機器人正在執行！")
         print("💡 為了避免重複下單與邏輯衝突，本次啟動已自動攔截並退出。")
-        print("💡 提示: 若是意外關閉舊程式，請先刪除過期的鎖定檔 /tmp/binance_bot_v2.lock，再重新啟動。")
+        print(f"💡 提示: 若是意外關閉舊程式，請先手動刪除鎖定檔：\n   rm -f {LOCK_FILE}\n  然後再重新啟動。")
         sys.exit(1)
 
 
@@ -107,7 +79,6 @@ if __name__ == "__main__":
     from core.config import DEFAULT_SYMBOLS
     from core.runner import main
     from core.exchange_client import exchange_futures
-    import core.ctx as ctx
 
     # Initialise shared state
     symbols = load_symbol_pool() or list(DEFAULT_SYMBOLS)
@@ -117,8 +88,16 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("🛑 程式已被手動終止")
+        print("\n🛑 程式已被手動終止 (KeyboardInterrupt)")
+    except Exception as e:
+        print(f"\n🚨 核心運行遭遇未捕獲異常: {e}", file=sys.stderr)
     finally:
-        async def _cleanup():
-            await exchange_futures.close()
-        asyncio.run(_cleanup())
+        print("⏳ 正在釋放交易所 API 連線資源...")
+        try:
+            # 用全新 event loop 避免與已結束的 asyncio.run() 衝突
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(exchange_futures.close())
+            loop.close()
+            print("✅ 資源釋放完畢，安全退出。")
+        except Exception as e:
+            print(f"⚠️ 釋放資源時發生異常 (可能已在核心內部關閉): {e}", file=sys.stderr)
