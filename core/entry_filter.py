@@ -335,15 +335,20 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
     current_rsi_mtf = s.get("current_rsi", 50.0)
+    _mtf_strong_override = strength >= 22.0  # 強訊號直接豁免 15m 逆向封鎖
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
-            if current_rsi_mtf >= 65.0:
+            if _mtf_strong_override:
+                print(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 強度 {strength:.1f} ≥ 22，強勢覆蓋")
+            elif current_rsi_mtf >= 65.0:
                 print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達超買，允許")
             else:
                 print(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < 65（未超買），拒絕")
                 return False
         elif side == 'buy' and ema20_15m < ema50_15m:
-            if current_rsi_mtf <= 35.0:
+            if _mtf_strong_override:
+                print(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 強度 {strength:.1f} ≥ 22，強勢覆蓋")
+            elif current_rsi_mtf <= 35.0:
                 print(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達超賣，允許")
             else:
                 print(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > 35（未超賣），拒絕")
@@ -476,7 +481,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        _mtf_override_threshold = 16.0  # 需要強訊號才能繞過 1H EMA50 趨勢過濾（改自 11.0）
+        _mtf_override_threshold = 14.0  # 需要強訊號才能繞過 1H EMA50 趨勢過濾（改自 16.0）
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
@@ -532,8 +537,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
         _last_loss = s.get("last_loss_time_short", 0) if side == "sell" else s.get("last_loss_time_long", 0)
         _cooldown_elapsed = time.time() - _last_loss
-        if _cooldown_elapsed < 14400:  # 4 小時
-            _remaining = (14400 - _cooldown_elapsed) / 60
+        if _cooldown_elapsed < 3600:  # 1 小時（原 4 小時）
+            _remaining = (3600 - _cooldown_elapsed) / 60
             print(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向虧損冷卻] 同向({side})虧損後冷卻剩餘 {_remaining:.1f} 分鐘，攔截")
             return False
 
