@@ -215,7 +215,7 @@ COIN_PROFILE_CONFIG = {
     "DOGEUSDT": {"sl_atr_multiplier": 4.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 0.4, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 2.0, "min_signal_strength": 19.0},
 
     # ══ 雷達選入的新幣種（保守設定，2x槓桿、嚴格門檻）══
-    "GUAUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 20.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015},
+    "GUAUSDT":   {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 20.0, "disable_rescue_dca": True, "hard_sl_pct": 0.010},
     "SIRENUSDT": {"sl_atr_multiplier": 3.5, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.3, "breakeven_trigger": 0.5, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 20.0, "disable_rescue_dca": True, "hard_sl_pct": 0.015},
 
 }
