@@ -4,7 +4,7 @@ import numpy as np
 
 from core import ctx
 from core.config import (PAPER_TRADING, SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER,
-    COIN_PROFILE_CONFIG)
+    COIN_PROFILE_CONFIG, USE_BTC_MACRO_FILTER)
 from core.indicators import _get_atr, _macd_vals, calculate_macd
 from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier, SYMBOL_PROFILES
 from core.balance import is_daily_loss_halted, get_fee_overhead
@@ -441,13 +441,18 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20 = s.get("ema20", 0.0)
     if ema20 > 0:
         ema_dev = (cp - ema20) / ema20  # 正 = 在 EMA 上方，負 = 下方
-        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許較大偏離（6%），普通路由 3.5%
-        _ema_hard_limit = 0.04 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.015
+        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許 4%，強訊號(≥24)允許 3%，普通路由 1.5%
+        if route in ("Extreme_Reversal", "Exhaustion_Entry"):
+            _ema_hard_limit = 0.04
+        elif strength >= 24.0:
+            _ema_hard_limit = 0.03   # 極強訊號豁免：動能幣偏離 1.5% 是正常範圍
+        else:
+            _ema_hard_limit = 0.015
         if side == "buy" and ema_dev > _ema_hard_limit:
-            logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱噴發，等回測")
+            logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.1f}%)，過熱噴發，等回測")
             return False
         if side == "sell" and ema_dev < -_ema_hard_limit:
-            logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 空單但現價低於 EMA20 {abs(ema_dev)*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱下挫，等回測")
+            logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 空單但現價低於 EMA20 {abs(ema_dev)*100:.1f}% (> {_ema_hard_limit*100:.1f}%)，過熱下挫，等回測")
             return False
     if is_trend:
         pass  # is_trend 已由上方統一的 EMA 距離過濾處理，不需重複
