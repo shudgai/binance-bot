@@ -297,103 +297,12 @@ async def check_entries():
 
                 if is_valid:
                     s["fake_breakout"] = None
-                    logger.info(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤無反轉且通過防二次誘騙)")
+                    logger.info(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤通過)")
                     side = s["pending_side"]
                     strength = s.get("pending_strength", 5.0)
                     route = s.get("pending_route", "confirmed")
                     s["pending_side"] = None
-
-                    p = s["close_price"]
-                    atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-                    min_rr = s.get("min_rr", 1.5)
-                    if expected_rr < min_rr:
-                        logger.info(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
-                        continue
-
-                    expected_profit_pct = tp_dist / p
-                    if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:
-                        logger.info(f"🛑 [Filter:MinProfit] {sym} 預期獲利空間過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，利潤無法覆蓋手續費與摩擦成本，拒絕進場")
-                        continue
-
-                    # 再測一次大環境 (MTF & RR)，因為換線了可能改變
-                    if s.get("mtf_filter", True):
-                        if strength > 15.0:
-                            logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高，跳過 MTF 趨勢過濾直接允許進場")
-                        else:
-                            ema50_1h = s.get("ema50_1h", 0.0)
-                            if ema50_1h > 0:
-                                if side == "buy" and p <= s["ohlcv"][-2][4] and p < ema50_1h:
-                                    logger.info(f"📉 [1H 過濾] {sym} 確認階段：1H 趨勢向下，捨棄訊號")
-                                    continue
-                                if side == "sell" and p > ema50_1h:
-                                    logger.info(f"📈 [1H 過濾] {sym} 確認階段：1H 趨勢向上，捨棄訊號")
-                                    continue
-
-                    # RSI 過熱/過冷保護：趨勢型訊號確認時，禁止追高做多或追低做空
-                    # 強度 > 20 的強勢訊號跳過此過濾（老版行為：無上限 RSI 限制）
-                    if route not in ["Exhaustion_Entry", "Extreme_Reversal"] and strength <= 20.0:
-                        rsi_conf = s.get("current_rsi", 50.0)
-                        if side == "buy" and rsi_conf >= 68.0:
-                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}>=68 且強度≤20，動能強但不追高，標記為等待回踩 EMA20。")
-                            s["waiting_pullback"] = {"side": side, "strength": strength, "route": route, "time": time.time(), "signal_price": p}
-                            s["pending_side"] = None
-                            continue
-                        if side == "sell" and rsi_conf <= 32.0:
-                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}<=32 且強度≤20，動能弱但不殺低，標記為等待回抽 EMA20。")
-                            s["waiting_pullback"] = {"side": side, "strength": strength, "route": route, "time": time.time(), "signal_price": p}
-                            s["pending_side"] = None
-                            continue
-
-                    base_rr_thresh = COIN_PROFILE_CONFIG.get(sym, {}).get("rr_threshold", 1.1)
-                    rr_thresh = 0.9 if strength > 20.0 else (1.0 if strength > 15.0 else base_rr_thresh)
-
-                    if expected_rr < rr_thresh:
-                        logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄")
-                        continue
-
-                    expected_profit_pct = tp_dist / p if p > 0 else 0
-                    if expected_profit_pct < 0.015:
-                        logger.info(f"@@COIN_DEBUG@@ ⛔ [Block] {sym} 獲利空間過小 {expected_profit_pct*100:.2f}% < 1.5%，放棄")
-                        continue
-
-                    # [Layer 4] 動態空間過濾 (Adaptive Space Check)
-                    macd_hist = s.get("macd_hist", 0.0)
-                    prev_macd_hist = s.get("prev_macd_hist", 0.0)
-                    rsi = s.get("current_rsi", 50.0)
-                    current_atr = s.get("current_atr", 0.0)
-                    atr_ma20 = s.get("atr_ma20", 0.0)
-                    recent_candles = s.get("ohlcv", [])
-                    if len(recent_candles) >= 20:
-                        highs = np.array([x[2] for x in recent_candles])
-                        lows = np.array([x[3] for x in recent_candles])
-                        range_width_pct = (np.max(highs) - np.min(lows)) / np.min(lows)
-                    else:
-                        range_width_pct = 1.0
-
-                    space_multiplier = 0.2
-
-                    is_strong_trend = abs(macd_hist) > abs(prev_macd_hist) and (
-                        (side == "buy" and p <= s["ohlcv"][-2][4] and rsi > 60.0) or (side == "sell" and rsi < 40.0)
-                    )
-
-                    is_consolidation = (atr_ma20 > 0 and current_atr < atr_ma20 * 0.8) and range_width_pct < 0.02
-
-                    if is_strong_trend or route == "Automatic_Reverse":
-                        space_multiplier = 0.0
-                    elif is_consolidation:
-                        space_multiplier = 0.5
-
-                    if not is_strong_trend:
-                        if side == "buy" and p <= s["ohlcv"][-2][4] and s.get("bb_up", 0) > 0 and p < s.get("bb_up", 0):
-                            space = s["bb_up"] - p
-                            if space < sl_dist * space_multiplier:
-                                logger.info(f"@@COIN_DEBUG@@ ⛔ [Block] {sym} 做多空間不足 {space:.4f} < {sl_dist * space_multiplier:.4f}（布林上軌太近），放棄")
-                                continue
-                        if side == "sell" and s.get("bb_low", 0) > 0 and p > s.get("bb_low", 0):
-                            space = p - s["bb_low"]
-                            if space < sl_dist * space_multiplier:
-                                logger.info(f"@@COIN_DEBUG@@ ⛔ [Block] {sym} 做空空間不足 {space:.4f} < {sl_dist * space_multiplier:.4f}（布林下軌太近），放棄")
-                                continue
+                    # 所有關卡在進入 pending 前已完成篩選，確認後直接放行
                     candidates.append((sym, side, strength, route))
                     continue
                 else:
@@ -617,13 +526,13 @@ async def check_entries():
         # --- 錯誤方向禁止再進 (Wrong Direction Ban) ---
         _wd_time = s.get("wrong_dir_time", 0.0)
         _wd_side = s.get("wrong_dir_side", "")
-        if _wd_side == side and time.time() - _wd_time < 1800:
-            logger.info(f"⏳ [Wrong Dir Ban] {sym} 同方向 {side} 剛在 {time.time()-_wd_time:.0f}s 前開錯方向，冷卻中 (30min)")
+        if _wd_side == side and time.time() - _wd_time < 300:
+            logger.info(f"⏳ [Wrong Dir Ban] {sym} 同方向 {side} 剛在 {time.time()-_wd_time:.0f}s 前開錯方向，冷卻中 (5min)")
             continue
 
         # --- 假突破記憶檢查 (Fake Breakout Memory) ---
         _fb = s.get("fake_breakout")
-        if _fb and time.time() - _fb["time"] < 14400 and route not in ("Extreme_Reversal", "Automatic_Reverse"):
+        if _fb and time.time() - _fb["time"] < 1800 and route not in ("Extreme_Reversal", "Automatic_Reverse"):
             _fb_level = _fb["level_high"] if _fb["side"] == "buy" else _fb["level_low"]
             _current_dist = abs(p - _fb_level) / max(_fb_level, 1e-8)
             _atr_fb = s.get("current_atr", 0)
