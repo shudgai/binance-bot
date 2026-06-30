@@ -86,9 +86,9 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 12   # 總幣數上限（UI 顯示）
-CORE_SELECT_COUNT  = 10   # 從核心池選出的幣數
-HOT_MOVERS_COUNT   = 2    # 熱門動能幣最多加入數量
+RADAR_SELECT_COUNT = 12   # 核心池固定選出幣數
+HOT_MOVERS_COUNT   = 2    # 額外加入的熱門動能幣（最多）
+CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
 
 # 熱門幣保守 profile（只走有強訊號的機會）
 HOT_MOVER_PROFILE_BASE = {
@@ -196,7 +196,7 @@ def auto_radar_switch(force_start=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
-        add_system_log(f"📡 [雷達掃描] 核心 {CORE_SELECT_COUNT} 幣 + 熱門動能最多 {HOT_MOVERS_COUNT} 幣（共 {RADAR_SELECT_COUNT} 個）...", "warning")
+        add_system_log(f"📡 [雷達掃描] 核心 {RADAR_SELECT_COUNT} 幣固定 + 熱門動能最多 {HOT_MOVERS_COUNT} 幣加碼...", "warning")
 
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
