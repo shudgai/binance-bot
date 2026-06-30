@@ -505,6 +505,31 @@ async def check_exits(sym):
     if not s.get("is_breakeven_locked"):
         s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
 
+    # ── 峰值比例鎖利 (Peak Profit Lock) ──
+    # 保本線只鎖到 entry+0.25%，但峰值 2% 時 SL 仍在 0%，中間 2% 完全無保護
+    # 當峰值 ≥ 1.5%：SL 推進到 entry + peak*0.5（鎖住一半利潤）
+    # 當峰值 ≥ 2.5%：SL 推進到 entry + peak*0.6（鎖住六成利潤）
+    _peak_lock = s.get("highest_profit_pct", 0.0)
+    if _peak_lock >= 0.015:
+        _lock_ratio = 0.60 if _peak_lock >= 0.025 else 0.50
+        _locked_gain = _peak_lock * _lock_ratio
+        if is_long:
+            _peak_sl = avg * (1 + _locked_gain)
+            if _peak_sl > s.get("stop_loss", 0):
+                _prev_sl = s.get("stop_loss", 0)
+                s["stop_loss"] = _peak_sl
+                if not s.get("_peak_lock_logged") or abs(_peak_sl - _prev_sl) > avg * 0.0005:
+                    s["_peak_lock_logged"] = True
+                    logger.info(f"🔒 [PeakLock] {sym} 峰值 {_peak_lock*100:.2f}%，SL 推至 {_peak_sl:.4f}（鎖住 {_lock_ratio*100:.0f}%）")
+        else:
+            _peak_sl = avg * (1 - _locked_gain)
+            if _peak_sl < s.get("stop_loss", float('inf')):
+                _prev_sl = s.get("stop_loss", float('inf'))
+                s["stop_loss"] = _peak_sl
+                if not s.get("_peak_lock_logged") or abs(_peak_sl - _prev_sl) > avg * 0.0005:
+                    s["_peak_lock_logged"] = True
+                    logger.info(f"🔒 [PeakLock] {sym} 峰值 {_peak_lock*100:.2f}%，SL 推至 {_peak_sl:.4f}（鎖住 {_lock_ratio*100:.0f}%）")
+
     sl = s.get("stop_loss", avg)
 
     if s.get("entry_count", 0) >= 2:
