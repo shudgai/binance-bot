@@ -366,11 +366,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     # 4. Pre-Entry Quality Filter：實體 + 量能同步爆發（過濾弱訊號假突破）
     _ohlcv_q = s.get("ohlcv", [])
-    if len(_ohlcv_q) >= 20:
-        past_20_candles = _ohlcv_q[-20:]
-        avg_body_size = float(np.mean([abs(c[4] - c[1]) for c in past_20_candles]))
-        current_body_size = abs(past_20_candles[-1][4] - past_20_candles[-1][1])
-        eval_vol = s.get("current_vol", _ohlcv_q[-2][5] if len(_ohlcv_q) > 1 else 0)
+    if len(_ohlcv_q) >= 21:
+        # 使用前20根已收盤 K 線計算平均實體大小
+        closed_candles = _ohlcv_q[-21:-1]
+        avg_body_size = float(np.mean([abs(c[4] - c[1]) for c in closed_candles]))
+        # 評估已收盤的訊號 K 線 (ohlcv[-2])
+        signal_candle = _ohlcv_q[-2]
+        current_body_size = abs(signal_candle[4] - signal_candle[1])
+        eval_vol = signal_candle[5]
         vol_ma20_q = s.get("vol_ma20", 0.0)
         if avg_body_size > 0 and vol_ma20_q > 0:
             # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
