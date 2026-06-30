@@ -470,7 +470,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             _atr_avg_of = float(np.mean(_atr_hist_of)) if len(_atr_hist_of) > 0 else 0.0
             _atr_cur_of = _s.get("current_atr", 0.0)
             _is_low_vol_of = (_atr_avg_of > 0 and _atr_cur_of <= _atr_avg_of)
-            _flow_threshold = 0.92 if _is_low_vol_of else 0.98
+            _flow_threshold = 0.75 if _is_low_vol_of else 0.80
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if side == 'buy':
                 if asks == 0 or bids / asks < _flow_threshold:
