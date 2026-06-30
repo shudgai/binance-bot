@@ -433,7 +433,8 @@ async def check_paper_pending_order(sym):
         return
     filled = (side == 'buy' and p <= limit_price) or (side == 'sell' and p >= limit_price)
     if filled:
-        _fill_paper_order(sym, limit_price)
+        actual_fill_price = min(limit_price, p) if side == 'buy' else max(limit_price, p)
+        _fill_paper_order(sym, actual_fill_price)
         return
 
 
