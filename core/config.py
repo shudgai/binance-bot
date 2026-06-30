@@ -180,3 +180,9 @@ PRICE_MOVEMENT_THRESHOLD  = 0.0015
 
 TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
+
+# 進場掛單模式配置：'market' (市價), 'passive' (被動掛買一賣一), 'pullback' (回踩掛單), 'chase' (對手價追價)
+ENTRY_ORDER_MODE = "pullback"
+ENTRY_PULLBACK_ATR_MULT = 0.15
+ENTRY_CHASE_OFFSET_PCT = 0.0005
+

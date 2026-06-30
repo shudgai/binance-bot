@@ -6,9 +6,11 @@ import os
 from datetime import datetime
 
 from core import ctx
+
 from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
-    DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS)
+    DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
+    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT)
 from core.exchange_client import exchange_futures, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
@@ -425,7 +427,7 @@ async def check_paper_pending_order(sym):
         s["pending_paper_order"] = None
         logger.info(f"⌛ [Paper超時撤單] {sym} {side} @ {limit_price:.6f} 超過 {order['timeout']}秒未成交，已撤單")
         return
-    filled = (side == 'buy' and p >= limit_price) or (side == 'sell' and p <= limit_price)
+    filled = (side == 'buy' and p <= limit_price) or (side == 'sell' and p >= limit_price)
     if filled:
         _fill_paper_order(sym, limit_price)
         return
@@ -698,45 +700,97 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     if PAPER_TRADING:
         try:
-            spread_pct = 0.0003
             current_market_price = s.get("close_price", price)
-            limit_price = current_market_price * (1 - spread_pct) if side == 'buy' else current_market_price * (1 + spread_pct)
-            s["pending_paper_order"] = {
-                "side": side, "limit_price": limit_price, "qty": base_amt,
-                "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
-            }
-            direction = "做多" if side == 'buy' else "做空"
-            logger.info(f"⏳ [Paper限價掛出] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待最多{DUAL_SHOT_ORDER_TIMEOUT}秒成交)")
+            if ENTRY_ORDER_MODE == 'market':
+                _fill_paper_order(sym, current_market_price)
+                logger.info(f"✅ [Paper市價成交] {sym} {side} {base_amt:.4f} @ {current_market_price:.6f}")
+                return
+            elif ENTRY_ORDER_MODE == 'chase':
+                fill_price = current_market_price * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else current_market_price * (1 - ENTRY_CHASE_OFFSET_PCT)
+                _fill_paper_order(sym, fill_price)
+                logger.info(f"✅ [Paper追價成交] {sym} {side} {base_amt:.4f} @ {fill_price:.6f}")
+                return
+            elif ENTRY_ORDER_MODE == 'pullback':
+                atr = s.get("current_atr", 0.0)
+                if atr <= 0:
+                    atr = current_market_price * 0.015
+                limit_price = current_market_price - atr * ENTRY_PULLBACK_ATR_MULT if side == 'buy' else current_market_price + atr * ENTRY_PULLBACK_ATR_MULT
+                s["pending_paper_order"] = {
+                    "side": side, "limit_price": limit_price, "qty": base_amt,
+                    "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
+                }
+                direction = "做多" if side == 'buy' else "做空"
+                logger.info(f"⏳ [Paper回踩掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f}, 等待回踩)")
+                return
+            else:
+                spread_pct = 0.0003
+                limit_price = current_market_price * (1 - spread_pct) if side == 'buy' else current_market_price * (1 + spread_pct)
+                s["pending_paper_order"] = {
+                    "side": side, "limit_price": limit_price, "qty": base_amt,
+                    "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
+                }
+                direction = "做多" if side == 'buy' else "做空"
+                logger.info(f"⏳ [Paper被動掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待成交)")
+                return
         except Exception as e:
             logger.info(f"🛑 [模擬掛單失敗] {sym}: {e}")
+            return
     else:
         try:
+            order_type = 'limit'
+            limit_price = price
             try:
                 ob = await exchange_futures.fetch_order_book(sym, limit=5)
                 asks = ob.get('asks', [])
                 bids = ob.get('bids', [])
                 ask1 = float(asks[0][0]) if asks else price
                 bid1 = float(bids[0][0]) if bids else price
+                
+                prec = await get_contract_precision(sym)
+                tick_size = prec['tick_size']
 
-                if side == 'buy':
-                    limit_price = bid1
-                    order_type = 'limit'
-                    logger.info(f"📌 [被動掛單] {sym} 掛買一 {limit_price:.6f} 等成交 (不追高)")
+                if ENTRY_ORDER_MODE == 'market':
+                    order_type = 'market'
+                    limit_price = None
+                    logger.info(f"📌 [市價下單] {sym} 執行市價進場")
+                elif ENTRY_ORDER_MODE == 'chase':
+                    limit_price = ask1 if side == 'buy' else bid1
+                    if side == 'buy':
+                        limit_price = limit_price * (1 + ENTRY_CHASE_OFFSET_PCT)
+                    else:
+                        limit_price = limit_price * (1 - ENTRY_CHASE_OFFSET_PCT)
+                    limit_price = round_step(limit_price, tick_size)
+                    logger.info(f"📌 [追價掛單] {sym} 掛對手價 {limit_price:.6f} 確保成交")
+                elif ENTRY_ORDER_MODE == 'pullback':
+                    atr = s.get("current_atr", 0.0)
+                    if atr <= 0:
+                        atr = price * 0.015
+                    if side == 'buy':
+                        limit_price = price - atr * ENTRY_PULLBACK_ATR_MULT
+                    else:
+                        limit_price = price + atr * ENTRY_PULLBACK_ATR_MULT
+                    limit_price = round_step(limit_price, tick_size)
+                    logger.info(f"📌 [回踩掛單] {sym} 掛單價 {limit_price:.6f} (信號價: {price:.6f})")
                 else:
-                    limit_price = ask1
-                    order_type = 'limit'
-                    logger.info(f"📌 [被動掛單] {sym} 掛賣一 {limit_price:.6f} 等成交 (不殺低)")
-            except Exception:
+                    if side == 'buy':
+                        limit_price = bid1
+                        logger.info(f"📌 [被動掛單] {sym} 掛買一 {limit_price:.6f} 等成交")
+                    else:
+                        limit_price = ask1
+                        logger.info(f"📌 [被動掛單] {sym} 掛賣一 {limit_price:.6f} 等成交")
+            except Exception as e:
+                logger.info(f"⚠️ [計算掛單價失敗] 降級使用信號價: {e}")
                 limit_price = price
-                order_type = 'limit'
+                if ENTRY_ORDER_MODE == 'market':
+                    order_type = 'market'
+                    limit_price = None
 
             params = {'marginMode': 'isolated', 'timeInForce': 'GTC'}
-            if order_type == 'STOP_MARKET':
-                params['stopPrice'] = limit_price
+            if order_type == 'market':
                 params.pop('timeInForce', None)
 
             order = await exchange_futures.create_order(
-                sym, type=order_type, side=side, amount=abs(base_amt), price=limit_price if order_type != 'STOP_MARKET' else None,
+                sym, type=order_type, side=side, amount=abs(base_amt), price=limit_price,
                 params=params
             )
             order_id = order['id']
@@ -744,9 +798,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
             ctx.PENDING_LIMIT_ORDERS[order_id] = {
                 "sym": sym, "side": side, "qty": base_amt,
-                "price": limit_price, "timestamp": order_ts
+                "price": limit_price or price, "timestamp": order_ts
             }
-            logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price:.6f} (ID: {order_id})")
+            logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type})")
 
             await asyncio.sleep(3)
             try:

@@ -329,14 +329,20 @@ async def check_exits(sym):
         _wrong_dir = False
         _reason = ""
 
-        # 快速強烈反轉檢查（3 分鐘內虧 > 0.5%，價格直接往反方向噴）
-        if _obs_time < 180 and profit_pct < -0.005:
+        # 根據幣種屬性動態調整觀察期閾值，防止高波動幣種被正常噪聲秒割
+        _profile_type = s.get("profile_type", COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", ""))
+        is_volatile_coin = _profile_type in ["Speculative_Risk", "High_Beta_Momentum"]
+        _strong_rev_limit = -0.010 if is_volatile_coin else -0.005
+        _vol_reversal_limit = -0.0050 if is_volatile_coin else -0.0025
+
+        # 快速強烈反轉檢查（3 分鐘內虧 > 0.5% 或投機幣 > 1.0%，價格直接往反方向噴）
+        if _obs_time < 180 and profit_pct < _strong_rev_limit:
             _wrong_dir = True
             _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
 
         # [NEW] 爆量反噬秒砍機制 (Instant Cut on Momentum Shift)
-        # 如果進場後 5 分鐘內，遭遇爆量反向實體 K 線吞噬，直接在 -0.25% 停損，不硬扛
-        if not _wrong_dir and _obs_time < 300 and profit_pct <= -0.0025:
+        # 如果進場後 5 分鐘內，遭遇爆量反向實體 K 線吞噬，直接在指定限額（普通 -0.25%/投機 -0.5%）停損，不硬扛
+        if not _wrong_dir and _obs_time < 300 and profit_pct <= _vol_reversal_limit:
             _vol_now = s.get("current_vol", 0.0)
             _vol_ma = s.get("vol_ma20", 1e-8)
             if _vol_now > _vol_ma * 1.5:  # 爆量 1.5 倍
