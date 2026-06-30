@@ -185,11 +185,14 @@ def compute_signal_strength(sym):
     sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
 
+    # 強度 ≥ 25 的極強訊號豁免 K 線方向確認（動能強到K線偶爾反向仍可進）
+    # 強度 < 25 仍需最後 K 線確認，防止在價格明確反向時開錯方向
+    _bypass_candle = raw_long_str >= 25.0 or raw_short_str >= 25.0
+
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
-    # last_candle 改為加分條件（+2），不再是硬性前提
-    # 原因：小幅拉回時當前K線短暫反向，導致所有訊號同時失效，機器人完全靜默
     route_a_long = (
         macd_ok_long and
+        (last_candle_long or _bypass_candle) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -198,6 +201,7 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         macd_ok_short and
+        (last_candle_short or _bypass_candle) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -215,7 +219,8 @@ def compute_signal_strength(sym):
         near_ema20_pullback and
         macd_ok_long and
         rsi_direction_long and
-        rsi_ok_long
+        rsi_ok_long and
+        last_candle_long
     )
 
     route_b_short = (
@@ -224,7 +229,8 @@ def compute_signal_strength(sym):
         near_ema20_pullback and
         macd_ok_short and
         rsi_direction_short and
-        rsi_ok_short
+        rsi_ok_short and
+        last_candle_short
     )
 
     long_base_ok  = route_a_long or route_b_long

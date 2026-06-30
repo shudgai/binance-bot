@@ -206,7 +206,7 @@ async def check_exits(sym):
 
     if s.get("current_atr", 0.0) <= 0:
         return
-    hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 9999
+    hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 0
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
     current_atr = s.get("current_atr", 0.0)
