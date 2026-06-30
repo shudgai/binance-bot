@@ -338,12 +338,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
     current_rsi_mtf = s.get("current_rsi", 50.0)
-    # 強度門檻：每隻幣依自己訊號強度決定，不依賴 BTC 方向
-    _mtf_strong_override = strength >= 18.0
+    # 逆勢必須極強才允許突破 15m 趨勢封鎖；強度 22 時仍有失敗案例，提高到 24 減少逆勢開倉
+    _mtf_strong_override = strength >= 24.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
             if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 自身強度 {strength:.1f} ≥ 18，幣自主覆蓋")
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 24，允許逆勢")
             elif current_rsi_mtf >= 65.0:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達超買，允許")
             else:
@@ -351,7 +351,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 return False
         elif side == 'buy' and ema20_15m < ema50_15m:
             if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 自身強度 {strength:.1f} ≥ 18，幣自主覆蓋")
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 極強訊號 {strength:.1f} ≥ 24，允許逆勢")
             elif current_rsi_mtf <= 35.0:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達超賣，允許")
             else:

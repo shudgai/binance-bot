@@ -233,25 +233,27 @@ def compute_signal_strength(sym):
     short_base_ok = route_a_short or route_b_short
     route_tag     = "b" if (route_b_long or route_b_short) else "a"
 
-    if long_base_ok:
-        route = route_tag
-        strength = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
-        if long_macd_cross:
-            strength += 5.0
-        if route_tag == "b":
-            strength += 2.0
-        strength += long_trend_score + sma200_bonus_long
-        return ("buy", strength if strength >= 10.0 else 0.0, route)
+    if long_base_ok or short_base_ok:
+        long_str = 0.0
+        short_str = 0.0
 
-    if short_base_ok:
-        route = route_tag
-        strength = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-        if short_macd_cross:
-            strength += 5.0
-        if route_tag == "b":
-            strength += 2.0
-        strength += short_trend_score + sma200_bonus_short
-        return ("sell", strength if strength >= 10.0 else 0.0, route)
+        if long_base_ok:
+            long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
+            if long_macd_cross:  long_str += 5.0
+            if route_tag == "b": long_str += 2.0
+            long_str += long_trend_score + sma200_bonus_long
+
+        if short_base_ok:
+            short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
+            if short_macd_cross:  short_str += 5.0
+            if route_tag == "b":  short_str += 2.0
+            short_str += short_trend_score + sma200_bonus_short
+
+        # 多空同時成立時比強度取勝，不再永遠偏向多單
+        if long_str >= short_str and long_base_ok:
+            return ("buy",  long_str  if long_str  >= 10.0 else 0.0, route_tag)
+        elif short_base_ok:
+            return ("sell", short_str if short_str >= 10.0 else 0.0, route_tag)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
     if len(s["ohlcv"]) >= 50:
@@ -270,6 +272,8 @@ def compute_signal_strength(sym):
         recent_high_50 = max([x[2] for x in s["ohlcv"][-50:]])
         sma200 = s.get("sma200_15m", 0)
 
+        _exh_btc_4h = ctx.MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
+
         # 多單：抓回檔底部
         if c2[4] < c2[1] and c2_vol_low:
             bb_low = s.get("bb_low", 0)
@@ -284,7 +288,7 @@ def compute_signal_strength(sym):
             pa_ok = price_rebound and has_lower_wick and crossed_midpoint
             bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
-            trend_ok = True
+            trend_ok = (_exh_btc_4h != "BEAR")  # 宏觀雙熊不做多底接
 
             if trend_ok and support_ok and (pa_ok or bounce_ok):
                 logger.info(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
@@ -304,7 +308,7 @@ def compute_signal_strength(sym):
             pa_ok = price_rebound and has_upper_wick and crossed_midpoint
             bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
-            trend_ok = True
+            trend_ok = (_exh_btc_4h != "BULL")  # 宏觀多頭不做空高空
 
             if trend_ok and resistance_ok and (pa_ok or bounce_ok):
                 logger.info(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")

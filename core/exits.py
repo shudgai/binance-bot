@@ -473,7 +473,14 @@ async def check_exits(sym):
 
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.0025)
+    _entry_route = s.get("entry_reason", "a")
+    # 按路由設定不同保本門檻：反轉單見好就收，趨勢單給較大空間
+    if _entry_route == "Extreme_Reversal":
+        breakeven_threshold = 0.005   # 反轉單：0.5% 即啟動保本
+    elif _entry_route == "Exhaustion_Entry":
+        breakeven_threshold = 0.004   # 量能衰竭：0.4% 啟動保本
+    else:
+        breakeven_threshold = max(entry_atr_pct * _be_mult, 0.0015)  # 趨勢單：ATR 計算
 
     slippage_buffer = 0.0025  # 0.25%：覆蓋來回手續費(0.1%)＋滑點(0.1%)＋緩衝，讓更多短波行情能鎖住獲利
 
@@ -557,11 +564,12 @@ async def check_exits(sym):
         s["has_been_negative"] = True
 
     # ── 微利停利 (MicroTP_Exit) ──
-    # 峰值 0.10-0.25%（低於保本線門檻），已從峰值回落 0.03% 且方向衰退 → 趁有利潤時鎖定
+    # 峰值 0.08-0.45%（追蹤止損保護不足的小利區間），回落 0.03% 且方向衰退 → 鎖利出場
+    # 0.30% 峰值的追蹤止損距離 0.25%，緩衝只剩 0.05%，靠此機制提前鎖住
     _micro_peak = s.get("highest_profit_pct", 0.0)
     if (0 < hold_sec < 900 and
-            0.001 <= _micro_peak < 0.0025 and
-            profit_pct >= 0.0005 and
+            0.0008 <= _micro_peak < 0.0045 and
+            profit_pct >= 0.0003 and
             profit_pct < _micro_peak - 0.0003):
         _ohlcv_m = s.get("ohlcv", [])
         if len(_ohlcv_m) >= 3:
@@ -573,6 +581,23 @@ async def check_exits(sym):
                 logger.info(f"🎯 [微利停利] {sym} 峰值 {_micro_peak*100:.2f}% 開始回落 → 現 {profit_pct*100:.2f}%，鎖定微利出場")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MicroTP_Exit]")
                 return
+
+    # ── 中段獲利回撤保護 (Retracement_Guard) ──
+    # MicroTP 蓋 < 0.45%，ATR 追蹤在小獲利時距離太寬，這段填補 0.45%–3.0% 的空窗
+    # 觸發條件：仍在獲利中，且已從峰值回撤 30%（反轉單 35%）
+    _rg_peak = s.get("highest_profit_pct", 0.0)
+    if (0.0045 <= _rg_peak < 0.030 and profit_pct >= 0.0005):
+        _retrace_ratio = (_rg_peak - profit_pct) / _rg_peak
+        _retrace_limit = 0.35 if _entry_route == "Extreme_Reversal" else 0.30
+        if _retrace_ratio >= _retrace_limit:
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"🎯 [回撤保護] {sym} 峰值 {_rg_peak*100:.2f}% "
+                f"回撤 {_retrace_ratio*100:.0f}% ≥ {_retrace_limit*100:.0f}% "
+                f"→ 現 {profit_pct*100:.2f}%，鎖利出場"
+            )
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Retracement_Guard]")
+            return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)

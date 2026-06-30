@@ -74,9 +74,15 @@ def compute_indicators(sym):
     if len(closes) > RSI_PERIOD:
         deltas = np.diff(closes[-(RSI_PERIOD + 1):])
         gains = deltas[deltas > 0].mean() if np.any(deltas > 0) else 1e-10
-        losses = -deltas[deltas < 0].mean() if np.any(deltas < 0) else 1e-10
-        rs = gains / losses
-        s["current_rsi"] = 100.0 - (100.0 / (1.0 + rs))
+        if np.any(deltas < 0):
+            losses = -deltas[deltas < 0].mean()
+            rs = gains / losses
+            # 正常計算，但 cap 99 避免數學上的 100 誤觸 Extreme_Reversal
+            s["current_rsi"] = min(99.0, 100.0 - (100.0 / (1.0 + rs)))
+        elif np.any(deltas > 0):
+            s["current_rsi"] = 99.0  # 期間內全為漲K，但不等同真正超買
+        else:
+            s["current_rsi"] = 50.0  # 無波動
         if "rsi_history" not in s:
             s["rsi_history"] = []
         s["rsi_history"].append(s["current_rsi"])
