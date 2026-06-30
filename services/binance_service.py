@@ -120,6 +120,7 @@ def get_hot_movers(
             candidates.append({"symbol": sym, "price": price, "q_vol": q_vol, "change_pct": chg})
 
         candidates.sort(key=lambda x: x["change_pct"], reverse=True)
+        print(f"[HotMovers] 掃到 {len(candidates)} 個候選（漲{min_change_pct}-{max_change_pct}% vol>${min_vol_usdt/1e6:.0f}M），回傳前 {limit} 個")
         return candidates[:limit]
     except Exception as e:
         print(f"[HotMovers] 掃描失敗: {e}")

@@ -239,12 +239,12 @@ def auto_radar_switch(force_start=False):
             )
 
         # ── 熱門動能幣掃描 ───────────────────────────────────────────────
-        # 防範：成交量>$10M、漲幅5-25%（未過熱）、確認有永續合約、不在核心池或黑名單
+        # 防範：成交量>$5M、漲幅8-40%（動能強但未極端拉爆）、確認永續合約
         ignore_for_hot = set(CORE_SYMBOLS) | set(BLACKLIST.keys()) | set(open_syms)
         hot_raw = _get_hot_movers(
-            min_vol_usdt=10_000_000,
-            min_change_pct=5.0,
-            max_change_pct=25.0,
+            min_vol_usdt=5_000_000,
+            min_change_pct=8.0,
+            max_change_pct=40.0,
             limit=HOT_MOVERS_COUNT,
             ignore_list=list(ignore_for_hot),
         )
@@ -266,7 +266,7 @@ def auto_radar_switch(force_start=False):
                     f"{sym.replace('USDT','')} +{h['change_pct']:.1f}%24h → lev2x SL3x TP6x [熱門動能/保守]"
                 )
         else:
-            add_system_log("🔥 [熱門動能] 無符合條件幣種（需 24h漲5-25%、成交量>$10M）", "info")
+            add_system_log("🔥 [熱門動能] 無符合條件幣種（需 24h漲8-40%、成交量>$5M）", "info")
 
         _save_radar_profiles(dynamic_profiles)
         add_system_log(f"🤖 [AI個性] 已為 {len(dynamic_profiles)} 幣設定個性:", "info")
