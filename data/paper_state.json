@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 150.42291077131415,
+    "balance_usdt": 150.45614127202842,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -21,14 +21,20 @@
             "entries": []
         },
         "SIREN:USDT": {
-            "qty": -3867.0,
+            "qty": 0.0,
             "avg_price": 0.03645325714285714,
+            "realized_pnl": 0.16727537142856316,
+            "entries": []
+        },
+        "AAVE:USDT": {
+            "qty": -1.5,
+            "avg_price": 84.86151428571429,
             "realized_pnl": 0.0,
             "entries": [
                 {
-                    "price": 0.03645325714285714,
-                    "qty": 3867.0,
-                    "time": 1782860353964,
+                    "price": 84.86151428571429,
+                    "qty": 1.5,
+                    "time": 1782860658898,
                     "side": "sell"
                 }
             ]
@@ -104,6 +110,26 @@
             "realized_pnl": 0.08157428571426699,
             "is_close": true,
             "fee": 0.112669
+        },
+        {
+            "symbol": "AAVE:USDT",
+            "price": 84.86151428571429,
+            "qty": 1.5,
+            "time": 1782860658898,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.06364613571428572,
+            "is_close": false
+        },
+        {
+            "symbol": "SIREN:USDT",
+            "price": 0.03641,
+            "qty": 3867.0,
+            "time": 1782860873470,
+            "isBuyer": true,
+            "realized_pnl": 0.16727537142856316,
+            "is_close": true,
+            "fee": 0.070398735
         }
     ]
 }
