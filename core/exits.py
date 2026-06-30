@@ -542,16 +542,14 @@ async def check_exits(sym):
     _lock_desc = ""
     
     if _peak_lock >= 0.015:
-        # 獲利達 1.5% -> 最低保障鎖死 1.2%
-        # 若是一直往上跑 -> 從最高點回落 0.2% 就鎖死
         _locked_gain = max(0.012, _peak_lock - 0.002)
         _lock_desc = f"動態高點鎖利 ({_locked_gain*100:.2f}%)"
     elif _peak_lock >= 0.008:
-        _locked_gain = 0.006  # 獲利達 0.8% -> 鎖死 0.6%
-        _lock_desc = "半路鎖0.6%"
+        _locked_gain = max(0.006, _peak_lock - 0.002)
+        _lock_desc = f"半路鎖利 ({_locked_gain*100:.2f}%)"
     elif _peak_lock >= 0.004:
-        _locked_gain = 0.002  # 獲利達 0.4% -> 移至保本點 +0.2%
-        _lock_desc = "保本鎖0.2%"
+        _locked_gain = max(0.002, _peak_lock - 0.002)
+        _lock_desc = f"保本鎖利 ({_locked_gain*100:.2f}%)"
 
     if _locked_gain > 0:
         if is_long:

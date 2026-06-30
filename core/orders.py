@@ -327,8 +327,10 @@ def check_total_equity_protection():
         qty = s.get("qty", 0.0)
         if abs(qty) > 0.000001:
             has_positions = True
-            p = s.get("close_price", s.get("avg_price", 0.0))
+            p = s.get("close_price", 0.0)
             avg = s.get("avg_price", 0.0)
+            if p <= 0.0:
+                p = avg
             if qty > 0:
                 pnl = (p - avg) * abs(qty)
             else:
