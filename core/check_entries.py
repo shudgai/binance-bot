@@ -428,11 +428,9 @@ async def check_entries():
                 else:
                     continue
             else:
-                # 金字塔加倉邏輯 (順勢加碼)
-                is_eligible, cooldown_mins = check_pyramiding_eligibility(s)
-                if not is_eligible:
-                    logger.info(f"⏳ [加碼防禦] {sym} 欲順勢加倉 {side}，但未達動態冷卻 ({cooldown_mins}m) 或已達上限，攔截加碼")
-                    continue
+                # 金字塔加倉功能已完全禁用，直接忽略順勢加倉訊號
+                logger.info(f"🛑 [加碼已停用] {sym} 欲順勢加倉 {side}，但金字塔加倉已禁用，忽略此訊號。")
+                continue
 
         if not is_entry_allowed(sym, side, route, strength):
             continue
@@ -486,7 +484,7 @@ async def check_entries():
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
                 if ema50_1h > 0:
-                    if side == "buy" and cp <= s["ohlcv"][-2][4] and p < ema50_1h:
+                    if side == "buy" and p < ema50_1h:
                         logger.info(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
                         continue
                     if side == "sell" and p > ema50_1h:

@@ -54,8 +54,8 @@ class EntryRiskTests(unittest.TestCase):
              patch("core.orders.exchange_futures", mock_exchange):
             asyncio.run(execute_order(sym, "buy", 110.0))
 
-        self.assertGreater(s["entry_count"], 1)
-        self.assertAlmostEqual(s["avg_price"], 108.18, places=2)
+        self.assertEqual(s["entry_count"], 1)
+        self.assertEqual(s["avg_price"], 100.0)
 
     def test_losing_position_skips_additional_entry(self):
         sym = "XRPUSDT"

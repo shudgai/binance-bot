@@ -108,8 +108,8 @@ def compute_signal_strength(sym):
     is_below_sma200 = sma200 > 0 and close < sma200 * 1.001
     sma200_neutral   = sma200 == 0
 
-    close_near_ema20_long  = ema20 <= 0 or close <= ema20 * 1.08
-    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.92
+    close_near_ema20_long  = ema20 <= 0 or close <= ema20 * 1.04
+    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.96
     is_in_bb_zone_long  = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
     is_in_bb_zone_short = s.get("bb_up",  0) > 0 and close >= s["bb_up"]  * 0.99
 
@@ -379,14 +379,14 @@ async def is_reversal_still_valid(sym, pending_side):
             return False
 
     # 4. 反手空間防護 (Space Buffer for Reverse)
-    # 確保進場點不是在「剛好轉折」的最高/最低點追價
+    # 確保進場點不是在「剛好轉折」的最高/最低點過度追價 (限制在 0.5% 內)
     if pending_side == "buy":
-        if current_price > prev_close:
-            logger.info(f"🛑 [Reversal_Chase_High] {sym} 反手做多：現價 ({current_price:.4f}) > 前收 ({prev_close:.4f})，在轉折點過高處追價，拒絕")
+        if current_price > prev_close * 1.005:
+            logger.info(f"🛑 [Reversal_Chase_High] {sym} 反手做多：現價 ({current_price:.4f}) > 前收 1.005倍 ({prev_close * 1.005:.4f})，在轉折點過高處追價，拒絕")
             return False
     elif pending_side == "sell":
-        if current_price < prev_close:
-            logger.info(f"🛑 [Reversal_Chase_Low] {sym} 反手做空：現價 ({current_price:.4f}) < 前收 ({prev_close:.4f})，在轉折點過低處追價，拒絕")
+        if current_price < prev_close * 0.995:
+            logger.info(f"🛑 [Reversal_Chase_Low] {sym} 反手做空：現價 ({current_price:.4f}) < 前收 0.995倍 ({prev_close * 0.995:.4f})，在轉折點過低處追價，拒絕")
             return False
 
     return True

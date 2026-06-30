@@ -134,7 +134,7 @@ def update_trailing_stop(sym, current_price, is_long):
 
             trail_sl = min(trail_sl, dynamic_sl)
 
-        safe_max_sl = liq_price * 0.8
+        safe_max_sl = liq_price * 0.98
         new_sl = min(trail_sl, safe_max_sl)
 
         if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
