@@ -642,6 +642,7 @@ async def check_exits(sym):
     _rg_peak = s.get("highest_profit_pct", 0.0)
     if (0.0045 <= _rg_peak < 0.030 and profit_pct >= 0.0005):
         _retrace_ratio = (_rg_peak - profit_pct) / _rg_peak
+        _entry_route = s.get("entry_reason", "a")
         _retrace_limit = 0.35 if _entry_route == "Extreme_Reversal" else 0.30
         if _retrace_ratio >= _retrace_limit:
             cs = "sell" if is_long else "buy"
