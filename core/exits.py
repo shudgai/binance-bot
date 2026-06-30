@@ -334,19 +334,19 @@ async def check_exits(sym):
             _wrong_dir = True
             _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
 
-        # 小利峰值反轉：曾觸及 0.08-0.30% 微利，但已跌回虧損 → 方向失敗，不等 MACD 確認
-        # 峰值本就很小，繼續持有只會擴大損失，不如在費用損耗最小的時候撤出
+        # 峰值反轉：曾觸及有意義的利潤(0.4-1.0%)後反轉跌回虧損才撤
+        # 0.08-0.30% 的峰值是正常震盪噪音，不應觸發退場（ORDI 28 秒被踢出的原因）
         _peak_now = s.get("highest_profit_pct", 0.0)
         if (not _wrong_dir and
                 _obs_time < 600 and
-                0.0008 <= _peak_now < 0.003 and
-                profit_pct < -0.001):
+                0.004 <= _peak_now < 0.010 and
+                profit_pct < -0.002):
             _wrong_dir = True
-            _reason = f"小利峰值反轉 (峰: {_peak_now*100:.2f}% → 現: {profit_pct*100:.2f}%)"
+            _reason = f"峰值反轉 (峰: {_peak_now*100:.2f}% → 現: {profit_pct*100:.2f}%)"
 
-        # 方向錯誤 + 動能確認檢查（2-8 分鐘，虧 > 0.3%，MACD AND EMA20 同時確認）
-        # 原本 1-5 分鐘 + 虧 0.2% + OR 條件 → 雜訊觸發太多，震盪市場中被頻繁砍倉
-        if not _wrong_dir and 120 < _obs_time < 480 and profit_pct < -0.003:
+        # 方向錯誤 + 動能確認檢查（5-15 分鐘，虧 > 0.5%，MACD AND EMA20 同時確認）
+        # 給足 5 分鐘讓市場噪音平息，0.5% 才算真正逆向
+        if not _wrong_dir and 300 < _obs_time < 900 and profit_pct < -0.005:
             _macd_obs = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
             _prev_macd_obs = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
             _ema20_obs = s.get("ema20", 0.0)
@@ -946,9 +946,9 @@ async def check_exits(sym):
 
         entry_layers = len(s.get("entries", []))
         if is_strong:
-            time_decay_limit = 2700 if entry_layers <= 1 else 5400
+            time_decay_limit = 5400 if entry_layers <= 1 else 7200
         else:
-            time_decay_limit = 1200 if entry_layers <= 1 else 2700
+            time_decay_limit = 2400 if entry_layers <= 1 else 5400
 
         if hold_sec > time_decay_limit:
             cs = 'sell' if is_long else 'buy'
