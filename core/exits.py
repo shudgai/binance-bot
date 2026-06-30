@@ -320,6 +320,16 @@ async def check_exits(sym):
             _wrong_dir = True
             _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
 
+        # 小利峰值反轉：曾觸及 0.08-0.30% 微利，但已跌回虧損 → 方向失敗，不等 MACD 確認
+        # 峰值本就很小，繼續持有只會擴大損失，不如在費用損耗最小的時候撤出
+        _peak_now = s.get("highest_profit_pct", 0.0)
+        if (not _wrong_dir and
+                _obs_time < 600 and
+                0.0008 <= _peak_now < 0.003 and
+                profit_pct < -0.001):
+            _wrong_dir = True
+            _reason = f"小利峰值反轉 (峰: {_peak_now*100:.2f}% → 現: {profit_pct*100:.2f}%)"
+
         # 方向錯誤 + 動能確認檢查（2-8 分鐘，虧 > 0.3%，MACD AND EMA20 同時確認）
         # 原本 1-5 分鐘 + 虧 0.2% + OR 條件 → 雜訊觸發太多，震盪市場中被頻繁砍倉
         if not _wrong_dir and 120 < _obs_time < 480 and profit_pct < -0.003:
@@ -545,6 +555,24 @@ async def check_exits(sym):
         s["highest_profit_pct"] = profit_pct
     if profit_pct < 0:
         s["has_been_negative"] = True
+
+    # ── 微利停利 (MicroTP_Exit) ──
+    # 峰值 0.10-0.25%（低於保本線門檻），已從峰值回落 0.03% 且方向衰退 → 趁有利潤時鎖定
+    _micro_peak = s.get("highest_profit_pct", 0.0)
+    if (0 < hold_sec < 900 and
+            0.001 <= _micro_peak < 0.0025 and
+            profit_pct >= 0.0005 and
+            profit_pct < _micro_peak - 0.0003):
+        _ohlcv_m = s.get("ohlcv", [])
+        if len(_ohlcv_m) >= 3:
+            _c_last = _ohlcv_m[-2][4]
+            _c_prev = _ohlcv_m[-3][4]
+            _dir_declining = (_c_last < _c_prev) if is_long else (_c_last > _c_prev)
+            if _dir_declining:
+                cs = "sell" if is_long else "buy"
+                logger.info(f"🎯 [微利停利] {sym} 峰值 {_micro_peak*100:.2f}% 開始回落 → 現 {profit_pct*100:.2f}%，鎖定微利出場")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MicroTP_Exit]")
+                return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)

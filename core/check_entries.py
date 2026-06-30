@@ -320,7 +320,7 @@ async def check_entries():
 
                     expected_profit_pct = tp_dist / p if p > 0 else 0
                     if expected_profit_pct < 0.015:
-                        logger.info(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < 1.5%)，無法覆蓋手續費與滑點，拒絕進場")
+                        logger.info(f"@@COIN_DEBUG@@ ⛔ [Block] {sym} 獲利空間過小 {expected_profit_pct*100:.2f}% < 1.5%，放棄")
                         continue
 
                     # [Layer 4] 動態空間過濾 (Adaptive Space Check)
@@ -354,12 +354,12 @@ async def check_entries():
                         if side == "buy" and p <= s["ohlcv"][-2][4] and s.get("bb_up", 0) > 0 and p < s.get("bb_up", 0):
                             space = s["bb_up"] - p
                             if space < sl_dist * space_multiplier:
-                                logger.info(f"⚠️ [動態空間過濾] {sym} 做多距布林上軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
+                                logger.info(f"@@COIN_DEBUG@@ ⛔ [Block] {sym} 做多空間不足 {space:.4f} < {sl_dist * space_multiplier:.4f}（布林上軌太近），放棄")
                                 continue
                         if side == "sell" and s.get("bb_low", 0) > 0 and p > s.get("bb_low", 0):
                             space = p - s["bb_low"]
                             if space < sl_dist * space_multiplier:
-                                logger.info(f"⚠️ [動態空間過濾] {sym} 做空距布林下軌僅 {space:.4f} < {space_multiplier}*SL({sl_dist * space_multiplier:.4f})，拒絕進場")
+                                logger.info(f"@@COIN_DEBUG@@ ⛔ [Block] {sym} 做空空間不足 {space:.4f} < {sl_dist * space_multiplier:.4f}（布林下軌太近），放棄")
                                 continue
                     candidates.append((sym, side, strength, route))
                     continue
@@ -531,10 +531,10 @@ async def check_entries():
                 strength *= 0.9
         else:
             if divergence_type == "bearish" and side == "buy":
-                logger.info(f"🛑 [Filter:Divergence_Block] {sym} 趨勢多單偵測到看跌背離 (頂背離)，防範接刀追高！")
+                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 頂背離阻擋做多 → 訊號取消")
                 continue
             if divergence_type == "bullish" and side == "sell":
-                logger.info(f"🛑 [Filter:Divergence_Block] {sym} 趨勢空單偵測到看漲背離 (底背離)，防範地板空！")
+                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 底背離阻擋做空 → 訊號取消")
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
