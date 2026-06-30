@@ -295,18 +295,25 @@ def should_recover_from_reversal(sym, is_long):
 
 
 async def execute_panic_sell_all_positions():
-    logger.info("🚨🚨 [緊急清倉] 開始強制市價平掉所有倉位！")
+    logger.info("🚨🚨 [緊急清倉] 開始強制平掉虧損倉位（有利潤者保留）！")
     for sym in ctx.ALL_SYMBOLS:
         s = ctx.STATES[sym]
-        if abs(s["qty"]) > 0.000001:
-            is_long = s["qty"] > 0
-            cs = 'sell' if is_long else 'buy'
-            p = s.get("close_price", s["avg_price"])
-            logger.info(f"🚨 [緊急清倉] 正在平倉 {sym}...")
-            try:
-                await close_position(sym, cs, abs(s["qty"]), p, s["avg_price"], reason="[GLOBAL_MELTDOWN]", is_stop_loss=True)
-            except Exception as e:
-                logger.info(f"⚠️ [緊急清倉失敗] {sym}: {e}")
+        qty = abs(s.get("qty", 0.0))
+        if qty < 0.000001:
+            continue
+        is_long = s["qty"] > 0
+        cs = 'sell' if is_long else 'buy'
+        p = s.get("close_price", s["avg_price"])
+        avg = s.get("avg_price", 0.0)
+        unrealized = (p - avg) * qty if is_long else (avg - p) * qty
+        if unrealized >= 0:
+            logger.info(f"✅ [緊急清倉] {sym} 未虧損 (未實現={unrealized:.4f} USDT)，保留持倉")
+            continue
+        logger.info(f"🚨 [緊急清倉] 平倉虧損倉位 {sym} (未實現={unrealized:.4f} USDT)...")
+        try:
+            await close_position(sym, cs, qty, p, s["avg_price"], reason="[GLOBAL_MELTDOWN]", is_stop_loss=True)
+        except Exception as e:
+            logger.info(f"⚠️ [緊急清倉失敗] {sym}: {e}")
 
 
 
