@@ -45,19 +45,19 @@ def is_valid_candle(sym, side):
         return False
     # --------------------------
 
-    pin_threshold = 4.0
+    pin_threshold = 2.0
     candle_range = max(high - low, 1e-8)
     body_ratio = body / candle_range
     if body_ratio < 0.35 or s.get("current_vol", 0.0) < max(100.0, s.get("vol_ma20", 0.0) * 0.5):
-        pin_threshold = 3.0
+        pin_threshold = 1.5
     ema20 = s.get("ema20", 0.0)
     if ema20 > 0:
         if side == 'buy' and close_price < ema20:
-            pin_threshold = 3.0
+            pin_threshold = 1.5
         if side == 'sell' and close_price > ema20:
-            pin_threshold = 3.0
+            pin_threshold = 1.5
 
-    enabled = pin_threshold < 4.0
+    enabled = pin_threshold < 2.0
 
     # [新增] MACD 動能強勁且持續放大時，放寬容錯空間
     macd_hist = s.get("macd_hist", 0.0)
@@ -78,7 +78,7 @@ def is_valid_candle(sym, side):
         is_strong_macd = True
 
     if is_strong_macd:
-        pin_threshold = max(pin_threshold, 5.0)
+        pin_threshold = max(pin_threshold, 2.5)
         enabled = False
 
     if enabled:
@@ -146,8 +146,8 @@ def is_entry_volume_confirmed(sym, side):
     # [新增] 大盤量能過濾：環境感知
     market_dynamic_factor = get_dynamic_volume_factor(ctx.STATES)
     if market_dynamic_factor == 1.0:
-        vol_factor = 0.15
-        logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 0.15x")
+        vol_factor = 0.5
+        logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} 整體市場量縮，動態放寬量能門檻至 0.5x")
     else:
         # [新增] RSI 強勢放寬量能門檻 vs 極端狂熱提高門檻
         rsi = s.get("current_rsi", 50.0)
@@ -155,8 +155,8 @@ def is_entry_volume_confirmed(sym, side):
             vol_factor = vol_factor * 1.2
             logger.info(f"@@COIN_DEBUG@@ ⚠️ {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) 處於狂熱頂點，強制提高量能門檻至 {vol_factor:.2f}x 防追高")
         elif rsi > 70 or rsi < 30:
-            vol_factor = 0.15
-            logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 0.15x")
+            vol_factor = 0.5
+            logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} 行情強勢 (RSI: {rsi:.1f})，動態放寬量能門檻至 0.5x")
         else:
             # [新增] 根據 ATR 高低自動動態調整倍數
             atr_24h_avg = s.get("atr_24h_avg", 0.0)
@@ -434,8 +434,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20 = s.get("ema20", 0.0)
     if ema20 > 0:
         ema_dev = (cp - ema20) / ema20  # 正 = 在 EMA 上方，負 = 下方
-        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許較大偏離（8%），普通路由 5%
-        _ema_hard_limit = 0.08 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.05
+        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許較大偏離（6%），普通路由 3.5%
+        _ema_hard_limit = 0.06 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.035
         if side == "buy" and ema_dev > _ema_hard_limit:
             logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱噴發，等回測")
             return False
