@@ -173,9 +173,9 @@ def compute_signal_strength(sym):
     ema50_gate_long  = ema50 <= 0 or close > ema50
     ema50_gate_short = ema50 <= 0 or close < ema50
 
-    # Gate 2: RSI 方向區間
-    rsi_direction_long  = rsi > 35.0
-    rsi_direction_short = rsi < 65.0
+    # Gate 2: RSI 方向區間（25-75，填補 Extreme_Reversal ≤20 和正常多頭 >35 之間的 20-35 死區）
+    rsi_direction_long  = rsi > 25.0
+    rsi_direction_short = rsi < 75.0
 
     # Gate 3: MACD 方向一致即可
     macd_ok_long  = long_macd_cross  or macd_hist > 0
@@ -186,9 +186,10 @@ def compute_signal_strength(sym):
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
+    # last_candle 改為加分條件（+2），不再是硬性前提
+    # 原因：小幅拉回時當前K線短暫反向，導致所有訊號同時失效，機器人完全靜默
     route_a_long = (
         macd_ok_long and
-        last_candle_long and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -197,7 +198,6 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         macd_ok_short and
-        last_candle_short and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -215,8 +215,7 @@ def compute_signal_strength(sym):
         near_ema20_pullback and
         macd_ok_long and
         rsi_direction_long and
-        rsi_ok_long and
-        last_candle_long
+        rsi_ok_long
     )
 
     route_b_short = (
@@ -225,8 +224,7 @@ def compute_signal_strength(sym):
         near_ema20_pullback and
         macd_ok_short and
         rsi_direction_short and
-        rsi_ok_short and
-        last_candle_short
+        rsi_ok_short
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -239,14 +237,16 @@ def compute_signal_strength(sym):
 
         if long_base_ok:
             long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
-            if long_macd_cross:  long_str += 5.0
-            if route_tag == "b": long_str += 2.0
+            if long_macd_cross:    long_str += 5.0
+            if route_tag == "b":   long_str += 2.0
+            if last_candle_long:   long_str += 2.0   # K線方向確認加分（非硬性）
             long_str += long_trend_score + sma200_bonus_long
 
         if short_base_ok:
             short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-            if short_macd_cross:  short_str += 5.0
-            if route_tag == "b":  short_str += 2.0
+            if short_macd_cross:   short_str += 5.0
+            if route_tag == "b":   short_str += 2.0
+            if last_candle_short:  short_str += 2.0  # K線方向確認加分（非硬性）
             short_str += short_trend_score + sma200_bonus_short
 
         # 多空同時成立時比強度取勝，不再永遠偏向多單
