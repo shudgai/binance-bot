@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 import time
 from core.config import (
     PAPER_TRADING, DUAL_SHOT_MAX_SLOTS, DUAL_SHOT_LEVERAGE,

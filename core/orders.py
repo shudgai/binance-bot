@@ -10,7 +10,7 @@ from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIME
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS)
 from core.exchange_client import exchange_futures, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol
-from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl
+from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
 from core.state_manager import mark_exit, reset_coin_state, build_symbol_state
 from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES
@@ -190,8 +190,8 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
     else:
         try:
-            await exchange_futures.create_order(sym, type="limit", side=close_side, amount=qty,
-                                        params={"reduceOnly": True, "marginMode": "isolated"})
+            await exchange_futures.create_order(sym, type="market", side=close_side, amount=qty,
+                                        params={"reduceOnly": True})
         except Exception as e:
             logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
             return
@@ -309,17 +309,6 @@ async def execute_panic_sell_all_positions():
                 logger.info(f"⚠️ [緊急清倉失敗] {sym}: {e}")
 
 
-def get_total_wallet_balance():
-    if PAPER_TRADING:
-        try:
-            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), 'r') as f:
-                st = json.load(f)
-                realized = sum(v.get('realized_pnl', 0.0) for v in st.get('positions', {}).values())
-                return 1500.0 + realized
-        except:
-            return 1500.0
-    else:
-        return 1500.0
 
 
 def check_total_equity_protection():
@@ -347,7 +336,7 @@ def check_total_equity_protection():
         return True
 
     loss_percentage = (total_unrealized_pnl / total_balance) * 100
-    GLOBAL_LOSS_THRESHOLD = -4.0
+    GLOBAL_LOSS_THRESHOLD = -15.0
 
     if loss_percentage <= GLOBAL_LOSS_THRESHOLD:
         logger.info(f"\n🚨🚨🚨 [全局風控熔斷] 警告！當前總未實現虧損已達 {loss_percentage:.2f}%")
