@@ -250,16 +250,16 @@ async def check_entries():
 
                 is_valid = False
                 if s["pending_side"] == "buy":
-                    # [Layer 3] 嚴格K線：放寬容忍度至實體的 150%
+                    # 實體收多 + 上影線不超過實體 1.5 倍（排除插針假突破）
                     body = prev_close - prev_open
                     upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 2.5:
+                    if body > 0 and upper_shadow < body * 1.5:
                         is_valid = True
                 elif s["pending_side"] == "sell":
-                    # [Layer 3] 嚴格K線：放寬容忍度至實體的 150%
+                    # 實體收空 + 下影線不超過實體 1.5 倍（排除插針假跌破）
                     body = prev_open - prev_close
                     lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 2.5:
+                    if body > 0 and lower_shadow < body * 1.5:
                         is_valid = True
 
                 if is_valid:
@@ -303,7 +303,7 @@ async def check_entries():
 
                     p = s["close_price"]
                     atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-                    min_rr = s.get("min_rr", 1.0)
+                    min_rr = s.get("min_rr", 1.5)
                     if expected_rr < min_rr:
                         logger.info(f"🛑 [Filter:RiskReward] {sym} 預期盈虧比太差 ({expected_rr:.2f} < {min_rr:.1f})，放棄進場")
                         continue
@@ -584,9 +584,9 @@ async def check_entries():
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
         atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-        base_rr_thresh = s.get("min_rr", 1.3)
+        base_rr_thresh = s.get("min_rr", 1.5)
 
-        rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
+        rr_thresh = 1.2 if strength > 20.0 else (1.3 if strength > 15.0 else base_rr_thresh)
         if base_rr_thresh >= 2.0:
             rr_thresh = base_rr_thresh
 

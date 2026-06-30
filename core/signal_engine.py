@@ -192,7 +192,7 @@ def compute_signal_strength(sym):
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         macd_ok_long and
-        (last_candle_long or _bypass_candle) and
+        (last_two_candles_long or _bypass_candle) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -201,7 +201,7 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         macd_ok_short and
-        (last_candle_short or _bypass_candle) and
+        (last_two_candles_short or _bypass_candle) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -220,7 +220,7 @@ def compute_signal_strength(sym):
         macd_ok_long and
         rsi_direction_long and
         rsi_ok_long and
-        last_candle_long
+        last_two_candles_long
     )
 
     route_b_short = (
@@ -230,7 +230,7 @@ def compute_signal_strength(sym):
         macd_ok_short and
         rsi_direction_short and
         rsi_ok_short and
-        last_candle_short
+        last_two_candles_short
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -245,14 +245,14 @@ def compute_signal_strength(sym):
             long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
             if long_macd_cross:    long_str += 5.0
             if route_tag == "b":   long_str += 2.0
-            if last_candle_long:   long_str += 2.0   # K線方向確認加分（非硬性）
+            if last_two_candles_long:  long_str += 2.0   # 連2根確認加分
             long_str += long_trend_score + sma200_bonus_long
 
         if short_base_ok:
             short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-            if short_macd_cross:   short_str += 5.0
-            if route_tag == "b":   short_str += 2.0
-            if last_candle_short:  short_str += 2.0  # K線方向確認加分（非硬性）
+            if short_macd_cross:       short_str += 5.0
+            if route_tag == "b":       short_str += 2.0
+            if last_two_candles_short: short_str += 2.0  # 連2根確認加分
             short_str += short_trend_score + sma200_bonus_short
 
         # 多空同時成立時比強度取勝，不再永遠偏向多單
