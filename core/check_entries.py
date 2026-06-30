@@ -250,29 +250,31 @@ async def check_entries():
 
                 is_valid = False
                 if s["pending_side"] == "buy":
-                    # 實體收多 + 上影線不超過實體 1.5 倍（排除插針假突破）
+                    # 實體收多 + 上影線不超過實體 2.0 倍（1.5x 過嚴，正常 5m K 線常有 1.2-1.8x 影線）
                     body = prev_close - prev_open
                     upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 1.5:
+                    if body > 0 and upper_shadow < body * 2.0:
                         is_valid = True
                 elif s["pending_side"] == "sell":
-                    # 實體收空 + 下影線不超過實體 1.5 倍（排除插針假跌破）
+                    # 實體收空 + 下影線不超過實體 2.0 倍
                     body = prev_open - prev_close
                     lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 1.5:
+                    if body > 0 and lower_shadow < body * 2.0:
                         is_valid = True
 
                 if is_valid:
-                    # [新增] Second-Bar Confirmation
+                    # Second-Bar Confirmation：對比訊號K收盤價（非最高/低點）
+                    # 原邏輯用 trigger_high * 0.985：下根開盤在 CLOSE 附近往往低於 HIGH 1-2%，
+                    # 導致大量有效訊號被誤判為假突破。改用收盤價作基準更合理。
                     current_price = s["close_price"]
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
 
-                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.985:
-                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98.5% ({trigger_high*0.985:.4f}) 以上，疑似插針假突破，取消多單。")
+                    if s["pending_side"] == "buy" and current_price < prev_close * 0.990:
+                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 已跌破訊號K收盤 {prev_close:.4f} 的 99%，疑似反轉，取消多單。")
                         is_valid = False
-                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.015:
-                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 101.5% ({trigger_low*1.015:.4f}) 以下，疑似插針假跌破，取消空單。")
+                    elif s["pending_side"] == "sell" and current_price > prev_close * 1.010:
+                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 已突破訊號K收盤 {prev_close:.4f} 的 101%，疑似反轉，取消空單。")
                         is_valid = False
 
                     # [新增] 量能續航檢查：跟進量必須 >= 訊號量的 20%
