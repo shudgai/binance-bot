@@ -442,7 +442,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if ema20 > 0:
         ema_dev = (cp - ema20) / ema20  # 正 = 在 EMA 上方，負 = 下方
         # 門檻：Extreme_Reversal/Exhaustion_Entry 允許較大偏離（6%），普通路由 3.5%
-        _ema_hard_limit = 0.06 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.035
+        _ema_hard_limit = 0.04 if route in ("Extreme_Reversal", "Exhaustion_Entry") else 0.015
         if side == "buy" and ema_dev > _ema_hard_limit:
             logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.0f}%)，過熱噴發，等回測")
             return False

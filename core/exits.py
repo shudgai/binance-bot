@@ -492,6 +492,27 @@ async def check_exits(sym):
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
 
+    breakeven_threshold = 0.0035  # 所有單：0.35% 即啟動保本
+
+    fee_buffer = 0.001  # 0.1% 獲利以覆蓋雙向手續費與微幅點差
+
+    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
+        if is_long:
+            breakeven_price = avg * (1 + fee_buffer)
+            if breakeven_price > s.get('stop_loss', 0):
+                s['stop_loss'] = breakeven_price
+                if not s.get('is_breakeven_locked'):
+                    s['is_breakeven_locked'] = True
+                    logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+        else:
+            # 空倉：保本線應在入場價下方（Universal SL 用 p >= sl，price 回升超過此點才退場）
+            breakeven_price = avg * (1 - fee_buffer)
+            if s.get('stop_loss', float('inf')) > breakeven_price:
+                s['stop_loss'] = breakeven_price
+                if not s.get('is_breakeven_locked'):
+                    s['is_breakeven_locked'] = True
+                    logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+
     MIN_EXIT_RR = 1.3
     min_tp_dist = sl_dist * MIN_EXIT_RR
     if tp_dist < min_tp_dist:
@@ -500,37 +521,6 @@ async def check_exits(sym):
         logger.info(f"⚠️ [Exit RR Fix] {sym} 停利距離 {orig_tp_dist/avg*100:.2f}% < 停損 {sl_dist/avg*100:.2f}%×{MIN_EXIT_RR}，已強制拉至 {tp_dist/avg*100:.2f}%")
 
     tp = avg + tp_dist if is_long else avg - tp_dist
-
-    _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
-    entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    _entry_route = s.get("entry_reason", "a")
-    # 按路由設定不同保本門檻：反轉單見好就收，趨勢單給較大空間
-    if _entry_route == "Extreme_Reversal":
-        breakeven_threshold = 0.005   # 反轉單：0.5% 即啟動保本
-    elif _entry_route == "Exhaustion_Entry":
-        breakeven_threshold = 0.004   # 量能衰竭：0.4% 啟動保本
-    else:
-        breakeven_threshold = max(entry_atr_pct * _be_mult, 0.0015)  # 趨勢單：ATR 計算
-
-    slippage_buffer = 0.0025  # 0.25%：覆蓋來回手續費(0.1%)＋滑點(0.1%)＋緩衝，讓更多短波行情能鎖住獲利
-
-    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
-        if is_long:
-            breakeven_price = avg * (1 + slippage_buffer)
-            if breakeven_price > s.get('stop_loss', 0):
-                s['stop_loss'] = breakeven_price
-                if not s.get('is_breakeven_locked'):
-                    s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
-        else:
-            # 空倉：保本線應在入場價上方（Universal SL 用 p >= sl，price 回升超過此點才退場）
-            # 錯誤寫法 avg*(1-buf) 把保本線設在入場價下方，在獲利區內就觸發退場
-            breakeven_price = avg * (1 + slippage_buffer)
-            if s.get('stop_loss', float('inf')) > breakeven_price:
-                s['stop_loss'] = breakeven_price
-                if not s.get('is_breakeven_locked'):
-                    s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
 
     if not s.get("is_breakeven_locked"):
         s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
