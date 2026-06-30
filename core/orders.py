@@ -163,7 +163,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     else:
         pnl_tag = "[大虧]"
 
-    if profit_pct < -0.002:
+    if profit_pct < -0.001 or is_stop_loss:
         if close_side == "sell":
             s["last_loss_time_long"] = time.time()
         else:
