@@ -328,16 +328,16 @@ async def check_entries():
                                     continue
 
                     # RSI 過熱/過冷保護：趨勢型訊號確認時，禁止追高做多或追低做空
-                    # 改為：進入「等待回踩 (Waiting Pullback)」狀態
-                    if route not in ["Exhaustion_Entry", "Extreme_Reversal"]:
+                    # 強度 > 20 的強勢訊號跳過此過濾（老版行為：無上限 RSI 限制）
+                    if route not in ["Exhaustion_Entry", "Extreme_Reversal"] and strength <= 20.0:
                         rsi_conf = s.get("current_rsi", 50.0)
                         if side == "buy" and rsi_conf >= 68.0:
-                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}>=68，動能強但不追高，標記為等待回踩 EMA20。")
+                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}>=68 且強度≤20，動能強但不追高，標記為等待回踩 EMA20。")
                             s["waiting_pullback"] = {"side": side, "strength": strength, "route": route, "time": time.time(), "signal_price": p}
                             s["pending_side"] = None
                             continue
                         if side == "sell" and rsi_conf <= 32.0:
-                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}<=32，動能弱但不殺低，標記為等待回抽 EMA20。")
+                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}<=32 且強度≤20，動能弱但不殺低，標記為等待回抽 EMA20。")
                             s["waiting_pullback"] = {"side": side, "strength": strength, "route": route, "time": time.time(), "signal_price": p}
                             s["pending_side"] = None
                             continue
