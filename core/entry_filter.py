@@ -258,11 +258,17 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         current_rsi_macro = s.get("current_rsi", 50.0)
         divergence_confirmed = (s.get("divergence", "none") == "bullish")
         extreme_oversold    = (current_rsi_macro < 32.0)
-        if not extreme_oversold and not divergence_confirmed:
+        ultra_strong        = (strength >= 24.0)  # 幣種自身訊號極強，走自己的行情
+        if not extreme_oversold and not divergence_confirmed and not ultra_strong:
             logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"
-                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離)")
+                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < 24)")
             return False
-        reason = "極端超賣" if extreme_oversold else "底背離確認"
+        if ultra_strong:
+            reason = f"幣種極強訊號 {strength:.1f} ≥ 24，走自己行情"
+        elif extreme_oversold:
+            reason = "極端超賣"
+        else:
+            reason = "底背離確認"
         logger.info(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
     # 熊市防禦模式下，做空方向完全放行（不封鎖）
 
