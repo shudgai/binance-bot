@@ -357,14 +357,18 @@ async def check_exits(sym):
                         _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
 
         # 峰值反轉：曾觸及有意義的利潤(0.4-1.0%)後反轉跌回虧損才撤
-        # 0.08-0.30% 的峰值是正常震盪噪音，不應觸發退場（ORDI 28 秒被踢出的原因）
+        # 峰值反轉（ATR 相對門檻）：峰值須達 1.2 倍 ATR（最少 0.5%，最多 1.5%）才算有意義反轉
+        # ORDI ATR~1% → 門檻 1.2%；NEAR ATR~0.4% → 門檻 0.5%（固定地板）
         _peak_now = s.get("highest_profit_pct", 0.0)
+        _entry_atr = s.get("entry_atr", 0.0)
+        _atr_pct = (_entry_atr / avg) if (avg > 0 and _entry_atr > 0) else 0.005
+        _min_peak_t2 = min(max(0.005, _atr_pct * 1.2), 0.015)
         if (not _wrong_dir and
                 _obs_time < 600 and
-                0.004 <= _peak_now < 0.010 and
+                _min_peak_t2 <= _peak_now < _min_peak_t2 * 2.5 and
                 profit_pct < -0.002):
             _wrong_dir = True
-            _reason = f"峰值反轉 (峰: {_peak_now*100:.2f}% → 現: {profit_pct*100:.2f}%)"
+            _reason = f"峰值反轉 (峰: {_peak_now*100:.2f}%≥{_min_peak_t2*100:.1f}%ATR門 → 現: {profit_pct*100:.2f}%)"
 
         # 方向錯誤 + 動能確認檢查（5-15 分鐘，虧 > 0.5%，MACD AND EMA20 同時確認）
         # 給足 5 分鐘讓市場噪音平息，0.5% 才算真正逆向
