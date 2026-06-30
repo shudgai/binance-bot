@@ -86,7 +86,7 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 8
+RADAR_SELECT_COUNT = 12
 
 # 雷達掃描冷卻
 last_radar_scan = 0

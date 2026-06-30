@@ -463,9 +463,9 @@ async def check_exits(sym):
 
     _be_mult = COIN_PROFILE_CONFIG.get(sym, {}).get("breakeven_trigger", 0.5)
     entry_atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
-    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.005)
+    breakeven_threshold = max(entry_atr_pct * _be_mult, min_tp_pct * 0.3, 0.0025)
 
-    slippage_buffer = 0.005  # 0.5% 緩衝：覆蓋來回手續費(0.1%)＋滑點(0.1%)＋波動緩衝，避免微小波動洗出保本
+    slippage_buffer = 0.0025  # 0.25%：覆蓋來回手續費(0.1%)＋滑點(0.1%)＋緩衝，讓更多短波行情能鎖住獲利
 
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         if is_long:

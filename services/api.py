@@ -71,23 +71,58 @@ def daily_reset_daemon():
     while True:
         now = datetime.datetime.now(tz)
         target = now.replace(hour=6, minute=0, second=0, microsecond=0)
-        
+
         # If today's 6 AM is already past, target tomorrow's 6 AM
         if now >= target:
             target += datetime.timedelta(days=1)
-            
+
         wait_seconds = (target - now).total_seconds()
-        
+
         time.sleep(wait_seconds)
         daily_market_clean_and_reset(is_manual=False)
+
+
+def _periodic_radar_daemon():
+    """每 4 小時重新掃描 ATR 排名，更新監控幣池與動態個性參數。
+    啟動時跳過第一輪（_startup_radar_restore 已掃過一次）。"""
+    INTERVAL = 4 * 3600
+    time.sleep(INTERVAL)
+    while True:
+        try:
+            add_system_log("⏰ [定期雷達] 4 小時定期 ATR 重掃，更新監控幣池...", "info")
+            auto_radar_switch(force_start=False)
+        except Exception as e:
+            add_system_log(f"🚨 [定期雷達] 掃描失敗: {e}", "danger")
+        time.sleep(INTERVAL)
+
+
+def _startup_radar_restore():
+    """啟動時先跑雷達選出最強幣種，再依儲存狀態決定是否恢復機器人。
+    取代 auto_restore_bot_on_startup，確保每次重啟都使用最新的 RADAR_SELECT_COUNT。"""
+    time.sleep(3)  # 等 uvicorn 完全就緒
+    try:
+        from services.bot_manager_service import BOT_STATE_PATH, bot_status
+        was_running = False
+        if os.path.exists(BOT_STATE_PATH):
+            with open(BOT_STATE_PATH, "r") as f:
+                saved = json.load(f)
+            was_running = saved.get("is_running", False)
+            bot_status["trade_amount"] = saved.get("trade_amount", bot_status.get("trade_amount", 150.0))
+        auto_radar_switch(force_start=was_running)
+    except Exception as e:
+        add_system_log(f"⚠️ [啟動雷達] 失敗，改用舊幣池恢復: {e}", "warning")
+        from services.bot_manager_service import auto_restore_bot_on_startup
+        auto_restore_bot_on_startup()
+
 
 @app.on_event("startup")
 async def startup_event():
     # 啟動 6:00 AM 定時器
     threading.Thread(target=daily_reset_daemon, daemon=True).start()
-    # 後端重啟後自動恢復機器人
-    from services.bot_manager_service import auto_restore_bot_on_startup
-    auto_restore_bot_on_startup()
+    # 每 4 小時定期 ATR 雷達重掃
+    threading.Thread(target=_periodic_radar_daemon, daemon=True).start()
+    # 啟動時跑雷達更新幣池（選最強 RADAR_SELECT_COUNT 隻）再恢復機器人
+    threading.Thread(target=_startup_radar_restore, daemon=True).start()
 
 @app.get("/")
 def read_root():
