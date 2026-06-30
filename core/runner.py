@@ -285,7 +285,36 @@ async def main_loop(exchange):
 
             elapsed = time.time() - loop_start
             sleep_time = max(1.5, MAIN_LOOP_INTERVAL_SEC - elapsed) + weight_sleep
-            await asyncio.sleep(sleep_time)
+
+            # ── 持倉間歇快速出場檢查 ──
+            # 主迴圈 25s 一輪，但 1-秒內的利潤高點根本看不到
+            # 有持倉時：每 5s 抓一次 ticker 最新價 + 跑出場判斷，縮短反應窗口
+            _mini_iv = 5.0
+            _remaining = sleep_time
+            from core.strategy.factory import StrategyFactory
+            while _remaining > _mini_iv:
+                await asyncio.sleep(_mini_iv)
+                _remaining -= _mini_iv
+                _open_syms = [s for s in ctx.ALL_SYMBOLS
+                              if abs(ctx.STATES[s].get("qty", 0)) > 0.000001]
+                if not _open_syms:
+                    continue
+                try:
+                    for _sym in _open_syms:
+                        try:
+                            _tk = await exchange_futures.fetch_ticker(_sym)
+                            if _tk and _tk.get("last"):
+                                ctx.STATES[_sym]["close_price"] = float(_tk["last"])
+                        except Exception:
+                            pass
+                    for _sym in _open_syms:
+                        if ctx.STATES[_sym].get("status") == "ACTIVE":
+                            _strat = StrategyFactory.create_strategy(_sym)
+                            await safe_execute(_strat.check_exit, _sym)
+                except Exception as _e:
+                    logger.debug(f"[快速出場] 例外: {_e}")
+            if _remaining > 0:
+                await asyncio.sleep(_remaining)
         except ccxt.DDoSProtection as e:
             logger.info(f"🚨 [API限流 429] 檢測到 DDoSProtection 限流，冷卻 10 秒: {e}")
             await asyncio.sleep(10)
