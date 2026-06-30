@@ -624,13 +624,13 @@ async def check_exits(sym):
         s["has_been_negative"] = True
 
     # ── 微利停利 (MicroTP_Exit) ──
-    # 峰值 0.08-0.45%（追蹤止損保護不足的小利區間），回落 0.03% 且方向衰退 → 鎖利出場
-    # 0.30% 峰值的追蹤止損距離 0.25%，緩衝只剩 0.05%，靠此機制提前鎖住
+    # 峰值 0.5-1.2%（手續費覆蓋後真正有利潤的區間），回落 0.05% 且方向衰退 → 鎖利出場
+    # 0.08-0.45% 的峰值是噪音，不值得鎖，讓 ATR SL 或 Time_Decay 處理
     _micro_peak = s.get("highest_profit_pct", 0.0)
     if (0 < hold_sec < 900 and
-            0.0008 <= _micro_peak < 0.0045 and
-            profit_pct >= 0.0003 and
-            profit_pct < _micro_peak - 0.0003):
+            0.005 <= _micro_peak < 0.012 and
+            profit_pct >= 0.002 and
+            profit_pct < _micro_peak - 0.0005):
         _ohlcv_m = s.get("ohlcv", [])
         if len(_ohlcv_m) >= 3:
             _c_last = _ohlcv_m[-2][4]
