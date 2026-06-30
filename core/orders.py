@@ -148,9 +148,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
 
-    fee_buffer = 0.001  # 0.1% 覆蓋雙向手續費與微幅差價
+    fee_buffer = 0.0035  # 0.35% 最低利潤門檻（覆蓋雙向手續費並確保基本淨利潤，與保本線一致）
     if profit_pct < fee_buffer and reason != "[GLOBAL_MELTDOWN]":
-        logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達手續費門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
+        logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
 
     atr_val = s.get("entry_atr", s.get("current_atr", price * 0.01))
