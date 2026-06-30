@@ -424,6 +424,14 @@ async def sync_paper_state():
                 qty = float(pos.get("qty", 0.0))
                 ctx.STATES[sym]["qty"] = qty
                 ctx.STATES[sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+                if qty > 0.000001:
+                    entries = pos.get("entries", [])
+                    if entries:
+                        ctx.STATES[sym]["open_time"] = float(entries[0].get("time", time.time() * 1000)) / 1000.0
+                    elif ctx.STATES[sym].get("open_time", 0) <= 0:
+                        ctx.STATES[sym]["open_time"] = time.time()
+                else:
+                    ctx.STATES[sym]["open_time"] = 0.0
         except:
             pass
 
