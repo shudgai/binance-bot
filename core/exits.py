@@ -632,43 +632,16 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
-    _pt_peak = s.get("highest_close_pct", 0.0)
-
-    # ── 三層 ATR 比例鎖利 (Tiered ATR Profit Lock) ──
-    # 依照幣種 ATR 動態縮放退出閾值，取代固定 0.2% PeakTrail
-    # Tier1 ≥ 1.5ATR：利潤跌至 0.5ATR 以下 → 保本出場
-    # Tier2 ≥ 2.5ATR：利潤跌至峰值 50%（趨勢 OK）或 30%（趨勢差）以下 → 出場
-    # Tier3 ≥ 4.0ATR：利潤跌至峰值 60%（趨勢 OK）或 40%（趨勢差）以下 → 出場
-    _atr_pct = (s.get("entry_atr", atr_val) / avg) if (avg > 0 and atr_val > 0) else 0.002
-    _is_trend_ok = (is_long and s["macd_line"] > s["macd_signal"]) or \
-                   (not is_long and s["macd_line"] < s["macd_signal"])
-    _tier3 = max(_atr_pct * 4.0, 0.012)
-    _tier2 = max(_atr_pct * 2.5, 0.006)
-    _tier1 = max(_atr_pct * 1.5, 0.0035)
-
-    if _pt_peak >= _tier3 and profit_pct < _pt_peak * (0.6 if _is_trend_ok else 0.4):
+    # ── 峰值追蹤停利 (PeakTrail) ──
+    # 當利潤達到 0.3% 以上，且自高點回落達 0.2% 時，鎖利平倉
+    _pt_peak = s.get("highest_profit_pct", 0.0)
+    if _pt_peak >= 0.003 and (_pt_peak - profit_pct) >= 0.002:
         cs = "sell" if is_long else "buy"
         logger.info(
-            f"🛡️ [大行情鎖利] {sym} 峰值 {_pt_peak*100:.2f}%(≥4ATR={_tier3*100:.2f}%) "
-            f"回落至 {profit_pct*100:.2f}%，大行情保護出場"
+            f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
+            f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ 0.20%，鎖利出場"
         )
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tier3_Lock]")
-        return
-    elif _pt_peak >= _tier2 and profit_pct < _pt_peak * (0.5 if _is_trend_ok else 0.3):
-        cs = "sell" if is_long else "buy"
-        logger.info(
-            f"🛡️ [中利鎖利] {sym} 峰值 {_pt_peak*100:.2f}%(≥2.5ATR={_tier2*100:.2f}%) "
-            f"回落至 {profit_pct*100:.2f}%，中利保護出場"
-        )
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tier2_Lock]")
-        return
-    elif _pt_peak >= _tier1 and profit_pct < max(_atr_pct * 0.5, 0.0015):
-        cs = "sell" if is_long else "buy"
-        logger.info(
-            f"🛡️ [基本鎖利] {sym} 峰值 {_pt_peak*100:.2f}%(≥1.5ATR={_tier1*100:.2f}%) "
-            f"現利 {profit_pct*100:.2f}% 跌至低位，基本保護出場"
-        )
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tier1_Lock]")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
         return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
