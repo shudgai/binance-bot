@@ -622,15 +622,17 @@ async def check_exits(sym):
                     sl = new_sl
                     logger.info(f"⚠️ [事件觸發防護] {sym} 持倉>30分且大盤逆風，強制縮短停損至 {sl_base_raw*shrink_ratio:.2f} ATR (新停損價: {sl:.4f})")
 
-    if profit_pct > s["highest_profit_pct"]:
+    if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
+        s["peak_time"] = time.time()   # 記錄每次創新高的時間
     if profit_pct < 0:
         s["has_been_negative"] = True
+
+    _pt_peak = s.get("highest_profit_pct", 0.0)
 
     # ── 峰值追蹤停利 (PeakTrail) ──
     # 趨勢持續向上時不平倉；一旦從最高點回落 0.2%（價格幅度），立即鎖利出場
     # 最低峰值門檻 0.3%（確保平倉後仍有利潤；0.3%-0.2%=0.1% > 手續費緩衝）
-    _pt_peak = s.get("highest_profit_pct", 0.0)
     if _pt_peak >= 0.003 and (_pt_peak - profit_pct) >= 0.002:
         cs = "sell" if is_long else "buy"
         logger.info(
@@ -638,6 +640,18 @@ async def check_exits(sym):
             f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ 0.20%，鎖利出場"
         )
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
+        return
+
+    # ── 峰值停滯停利 (PeakStagnation) ──
+    # 已有利潤但持續無法創新高（趨勢動能耗盡），10 分鐘沒突破就停利離場
+    _peak_age = time.time() - s.get("peak_time", time.time())
+    if _pt_peak >= 0.003 and _peak_age >= 600 and profit_pct >= 0.0005:
+        cs = "sell" if is_long else "buy"
+        logger.info(
+            f"🎯 [峰值停滯停利] {sym} 峰值 {_pt_peak*100:.2f}% 已達 {_peak_age/60:.0f} 分鐘無法突破，"
+            f"現利 {profit_pct*100:.2f}%，動能耗盡，停利出場"
+        )
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakStagnation]")
         return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
