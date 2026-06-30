@@ -268,19 +268,19 @@ async def check_entries():
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
 
-                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.995:
-                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 99.5% ({trigger_high*0.995:.4f}) 以上，疑似插針假突破，取消多單。")
+                    if s["pending_side"] == "buy" and current_price < trigger_high * 0.985:
+                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線高點 {trigger_high} 的 98.5% ({trigger_high*0.985:.4f}) 以上，疑似插針假突破，取消多單。")
                         is_valid = False
-                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.005:
-                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 100.5% ({trigger_low*1.005:.4f}) 以下，疑似插針假跌破，取消空單。")
+                    elif s["pending_side"] == "sell" and current_price > trigger_low * 1.015:
+                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price} 未能維持在觸發 K 線低點 {trigger_low} 的 101.5% ({trigger_low*1.015:.4f}) 以下，疑似插針假跌破，取消空單。")
                         is_valid = False
 
-                    # [新增] 量能續航檢查：跟進量必須 >= 訊號量的 60%
+                    # [新增] 量能續航檢查：跟進量必須 >= 訊號量的 20%
                     if is_valid:
                         signal_vol = prev_candle[5]
                         follow_vol = s.get("current_vol", 0)
-                        if signal_vol > 0 and follow_vol < signal_vol * 0.6:
-                            logger.info(f"❌ [量能續航] {sym} 突破後量能萎縮 (跟進量 {follow_vol:.0f} < 訊號量 {signal_vol:.0f} × 60%)，疑似假突破，取消")
+                        if signal_vol > 0 and follow_vol < signal_vol * 0.2:
+                            logger.info(f"❌ [量能續航] {sym} 突破後量能萎縮 (跟進量 {follow_vol:.0f} < 訊號量 {signal_vol:.0f} × 20%)，疑似假突破，取消")
                             is_valid = False
 
                 if not is_valid:

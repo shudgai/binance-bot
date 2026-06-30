@@ -547,8 +547,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
         _last_loss = s.get("last_loss_time_short", 0) if side == "sell" else s.get("last_loss_time_long", 0)
         _cooldown_elapsed = time.time() - _last_loss
-        if _cooldown_elapsed < 3600:  # 1 小時（原 4 小時）
-            _remaining = (3600 - _cooldown_elapsed) / 60
+        if _cooldown_elapsed < 60:  # 1 分鐘（放寬便於驗證）
+            _remaining = (60 - _cooldown_elapsed) / 60
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向虧損冷卻] 同向({side})虧損後冷卻剩餘 {_remaining:.1f} 分鐘，攔截")
             return False
 
