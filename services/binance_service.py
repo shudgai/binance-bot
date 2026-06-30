@@ -51,6 +51,80 @@ import time
 _last_prices = {}
 _last_prices_time = 0
 
+_valid_futures_symbols: set = set()
+_valid_futures_cache_time: float = 0.0
+
+
+def _get_valid_futures_symbols() -> set:
+    """取得所有 USDT 永續合約幣種，快取 1 小時。"""
+    global _valid_futures_symbols, _valid_futures_cache_time
+    if time.time() - _valid_futures_cache_time < 3600:
+        return _valid_futures_symbols
+    try:
+        info = client.futures_exchange_info()
+        syms = {
+            s["symbol"]
+            for s in info.get("symbols", [])
+            if s.get("contractType") == "PERPETUAL"
+            and s.get("quoteAsset") == "USDT"
+            and s.get("status") == "TRADING"
+        }
+        _valid_futures_symbols = syms
+        _valid_futures_cache_time = time.time()
+    except Exception as e:
+        print(f"[FuturesInfo] 取得合約清單失敗: {e}")
+    return _valid_futures_symbols
+
+
+def get_hot_movers(
+    min_vol_usdt: float = 10_000_000,
+    min_change_pct: float = 5.0,
+    max_change_pct: float = 25.0,
+    min_price: float = 0.01,
+    limit: int = 3,
+    ignore_list=None,
+) -> list:
+    """全市場掃描有動能但未過熱的合約幣種。
+    防範機制：
+    · min_vol_usdt   24h 成交量 ≥ $10M   — 過濾低流動性幣
+    · max_change_pct 24h 漲幅 ≤ 25%       — 不追已過熱（防抄頂）
+    · min_price      價格 ≥ $0.01          — 過濾超微幣（精度/點差風險）
+    · valid_futures  確認為有效 USDT 永續合約
+    """
+    try:
+        valid = _get_valid_futures_symbols()
+        tickers = client.futures_ticker()
+        exclude = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT", "BTCDOMUSDT"}
+        if ignore_list:
+            exclude.update(ignore_list)
+
+        candidates = []
+        for t in tickers:
+            sym = t["symbol"]
+            if sym in exclude or not sym.endswith("USDT") or sym not in valid:
+                continue
+            try:
+                price = float(t.get("lastPrice",          0))
+                q_vol = float(t.get("quoteVolume",        0))
+                chg   = float(t.get("priceChangePercent", 0))
+            except (ValueError, TypeError):
+                continue
+
+            if price < min_price:
+                continue
+            if q_vol < min_vol_usdt:
+                continue
+            if not (min_change_pct <= chg <= max_change_pct):
+                continue
+
+            candidates.append({"symbol": sym, "price": price, "q_vol": q_vol, "change_pct": chg})
+
+        candidates.sort(key=lambda x: x["change_pct"], reverse=True)
+        return candidates[:limit]
+    except Exception as e:
+        print(f"[HotMovers] 掃描失敗: {e}")
+        return []
+
 def get_all_prices():
     global _last_prices, _last_prices_time
     now = time.time()

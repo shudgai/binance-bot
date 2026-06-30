@@ -4,7 +4,7 @@ import time
 import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
-from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins
+from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins, get_hot_movers as _get_hot_movers
 from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
@@ -86,7 +86,26 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 12
+RADAR_SELECT_COUNT = 12   # 總幣數上限（UI 顯示）
+CORE_SELECT_COUNT  = 10   # 從核心池選出的幣數
+HOT_MOVERS_COUNT   = 2    # 熱門動能幣最多加入數量
+
+# 熱門幣保守 profile（只走有強訊號的機會）
+HOT_MOVER_PROFILE_BASE = {
+    "sl_atr_multiplier":       3.0,
+    "tp_atr_multiplier":       6.0,
+    "leverage":                2,
+    "hard_sl_pct":             0.025,
+    "min_signal_strength":     20.0,
+    "disable_rescue_dca":      True,
+    "trailing_activation_atr": 0.8,
+    "trailing_distance_atr":   0.7,
+    "profile_type":            "Speculative_Risk",
+    "mtf_filter":              True,
+    "rr_threshold":            2.0,
+    "breakeven_trigger":       0.5,
+    "volume_threshold_factor": 1.2,
+}
 
 # 雷達掃描冷卻
 last_radar_scan = 0
@@ -177,7 +196,7 @@ def auto_radar_switch(force_start=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
-        add_system_log(f"📡 [雷達掃描] 從 {len(CORE_SYMBOLS)} 個核心幣種中，依 ATR% 選出最強 {RADAR_SELECT_COUNT} 個...", "warning")
+        add_system_log(f"📡 [雷達掃描] 核心 {CORE_SELECT_COUNT} 幣 + 熱門動能最多 {HOT_MOVERS_COUNT} 幣（共 {RADAR_SELECT_COUNT} 個）...", "warning")
 
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
@@ -189,7 +208,7 @@ def auto_radar_switch(force_start=False):
 
         clean_blacklist()
         scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
-        top_symbols, full_ranking = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT)
+        top_symbols, full_ranking = get_atr_ranked_coins(scan_pool, limit=CORE_SELECT_COUNT)
 
         if not top_symbols:
             add_system_log("⚠️ [雷達掃描] 無法計算 ATR 排名，維持原狀", "warning")
@@ -205,11 +224,7 @@ def auto_radar_switch(force_start=False):
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 強制保留持倉幣種: {', '.join(all_preserved)}", "warning")
 
-        final_symbols = all_preserved + top_symbols
-        if len(final_symbols) > RADAR_SELECT_COUNT + 2:
-            final_symbols = final_symbols[:RADAR_SELECT_COUNT + 2]
-
-        # ── AI 輔助自動分析：為每個入選幣種計算動態個性，寫入 bot_symbols.json ──
+        # ── AI 輔助自動分析：為核心幣種計算動態個性 ──
         rank_map = {r["symbol"]: (i + 1, r["atr_pct"], r["price"]) for i, r in enumerate(full_ranking)}
         dynamic_profiles = {}
         analysis_lines = []
@@ -222,10 +237,47 @@ def auto_radar_switch(force_start=False):
                 f"{sym.replace('USDT','')} ATR{atr_pct:.2f}% → "
                 f"lev{prof['leverage']}x SL{prof['sl_atr_multiplier']}x TP{prof['tp_atr_multiplier']}x [{tag}]"
             )
+
+        # ── 熱門動能幣掃描 ───────────────────────────────────────────────
+        # 防範：成交量>$10M、漲幅5-25%（未過熱）、確認有永續合約、不在核心池或黑名單
+        ignore_for_hot = set(CORE_SYMBOLS) | set(BLACKLIST.keys()) | set(open_syms)
+        hot_raw = _get_hot_movers(
+            min_vol_usdt=10_000_000,
+            min_change_pct=5.0,
+            max_change_pct=25.0,
+            limit=HOT_MOVERS_COUNT,
+            ignore_list=list(ignore_for_hot),
+        )
+        hot_symbols = [h["symbol"] for h in hot_raw]
+        if hot_symbols:
+            hot_info = "  ".join(
+                f"{h['symbol'].replace('USDT','')} +{h['change_pct']:.1f}% vol${h['q_vol']/1e6:.0f}M"
+                for h in hot_raw
+            )
+            add_system_log(f"🔥 [熱門動能] 發現 {len(hot_symbols)} 個新星: {hot_info}", "warning")
+            for idx, h in enumerate(hot_raw):
+                sym = h["symbol"]
+                prof = dict(HOT_MOVER_PROFILE_BASE)
+                prof["_radar_atr_pct"] = 0.0
+                prof["_radar_rank"]    = len(full_ranking) + idx + 1
+                prof["_radar_tag"]     = f"熱門動能/24h+{h['change_pct']:.1f}%"
+                dynamic_profiles[sym] = prof
+                analysis_lines.append(
+                    f"{sym.replace('USDT','')} +{h['change_pct']:.1f}%24h → lev2x SL3x TP6x [熱門動能/保守]"
+                )
+        else:
+            add_system_log("🔥 [熱門動能] 無符合條件幣種（需 24h漲5-25%、成交量>$10M）", "info")
+
         _save_radar_profiles(dynamic_profiles)
-        add_system_log(f"🤖 [AI個性] 已為 {len(dynamic_profiles)} 幣自動設定個性:", "info")
+        add_system_log(f"🤖 [AI個性] 已為 {len(dynamic_profiles)} 幣設定個性:", "info")
         for line in analysis_lines:
             add_system_log(f"   ↳ {line}", "info")
+
+        # 合併最終幣列（持倉保護 + 核心 + 熱門，不超上限）
+        new_hot = [s for s in hot_symbols if s not in all_preserved + top_symbols]
+        final_symbols = all_preserved + top_symbols + new_hot
+        if len(final_symbols) > RADAR_SELECT_COUNT + 2:
+            final_symbols = final_symbols[:RADAR_SELECT_COUNT + 2]
 
         # 排序讓比較不受順序影響
         if sorted(final_symbols) == sorted(current_syms):
@@ -234,7 +286,8 @@ def auto_radar_switch(force_start=False):
                 start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
             return final_symbols
 
-        add_system_log(f"🎯 [雷達鎖定] ATR最強 {RADAR_SELECT_COUNT} 幣: {', '.join(top_symbols)}", "success")
+        hot_str = f" + 熱門 {', '.join(hot_symbols)}" if hot_symbols else ""
+        add_system_log(f"🎯 [雷達鎖定] 核心 {', '.join(top_symbols)}{hot_str}", "success")
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(all_preserved)}", "warning")
         bot_status["active_symbols"] = final_symbols

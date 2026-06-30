@@ -4,8 +4,8 @@ import time
 import numpy as np
 
 from core import ctx
-from core.config import (COIN_PROFILE_CONFIG, MAX_POSITIONS, DUAL_SHOT_MIN_PROFIT_ROOM,
-    RSI_PERIOD, DAILY_LOSS_LIMIT_PCT)
+from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE, MAX_POSITIONS,
+    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT)
 from core.indicators import (_get_atr, _macd_vals, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -383,7 +383,7 @@ async def check_entries():
         side, strength, route = side_strength
 
         # [Layer 0] 每幣種最低信號強度門檻
-        min_sig = COIN_PROFILE_CONFIG.get(sym, {}).get("min_signal_strength", 10.0)
+        min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
         if strength < min_sig:
             continue
 
