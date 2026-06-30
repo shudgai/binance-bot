@@ -61,6 +61,7 @@ def ensure_single_instance():
     global lock_file_handle
 
     lock_file_handle = open(LOCK_FILE, "a+")
+    os.chmod(LOCK_FILE, 0o600)
     try:
         fcntl.flock(lock_file_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         lock_file_handle.seek(0)
