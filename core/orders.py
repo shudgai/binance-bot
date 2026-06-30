@@ -714,13 +714,16 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 atr = s.get("current_atr", 0.0)
                 if atr <= 0:
                     atr = current_market_price * 0.015
-                limit_price = current_market_price - atr * ENTRY_PULLBACK_ATR_MULT if side == 'buy' else current_market_price + atr * ENTRY_PULLBACK_ATR_MULT
+                # 高波動幣（ATR > 0.8%）用 1.5 倍回踩深度，確保買在更低點
+                _atr_pct = atr / current_market_price if current_market_price > 0 else 0.015
+                _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
+                limit_price = current_market_price - atr * _pb_mult if side == 'buy' else current_market_price + atr * _pb_mult
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
                 }
                 direction = "做多" if side == 'buy' else "做空"
-                logger.info(f"⏳ [Paper回踩掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f}, 等待回踩)")
+                logger.info(f"⏳ [Paper回踩掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
                 return
             else:
                 spread_pct = 0.0003
@@ -765,12 +768,15 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     atr = s.get("current_atr", 0.0)
                     if atr <= 0:
                         atr = price * 0.015
+                    # 高波動幣（ATR > 0.8%）用 1.5 倍回踩深度，確保買在更低點
+                    _atr_pct = atr / price if price > 0 else 0.015
+                    _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
                     if side == 'buy':
-                        limit_price = price - atr * ENTRY_PULLBACK_ATR_MULT
+                        limit_price = price - atr * _pb_mult
                     else:
-                        limit_price = price + atr * ENTRY_PULLBACK_ATR_MULT
+                        limit_price = price + atr * _pb_mult
                     limit_price = round_step(limit_price, tick_size)
-                    logger.info(f"📌 [回踩掛單] {sym} 掛單價 {limit_price:.6f} (信號價: {price:.6f})")
+                    logger.info(f"📌 [回踩掛單] {sym} 掛單價 {limit_price:.6f} (信號價: {price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
                 else:
                     if side == 'buy':
                         limit_price = bid1
