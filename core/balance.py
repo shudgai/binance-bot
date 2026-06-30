@@ -71,6 +71,8 @@ def compute_per_coin_margin(sym=None, allocation_pct=None):
     if balance <= 0:
         return 0
     allocated_margin = balance / DUAL_SHOT_MAX_SLOTS
+    if allocation_pct is not None:
+        allocated_margin *= allocation_pct
     return allocated_margin * 0.999
 
 

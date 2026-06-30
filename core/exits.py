@@ -319,98 +319,100 @@ async def check_exits(sym):
 
     # --- 進場後觀察期快速撤退 (Post-Entry Observation Exit) ---
     # 首次進場後 1-5 分鐘：檢測三種「開錯方向」情境
-    # 1. 虧損 > 0.2% 且 MACD 或 EMA20 任一確認反方向
-    # 2. 進場後 2 分鐘價格完全沒往預期方向走（停滯）
-    # 3. 進場後 3 分鐘內虧損 > 0.5%（強烈反轉）不等確認直接撤
-    # 目的：不等 SL 觸發，主動剪掉「沒力氣的訊號」
-    if s.get("entry_count", 0) == 1 and abs(s.get("qty", 0.0)) > 0.000001:
-        _obs_time = time.time() - s.get("open_time", time.time())
-        _entry_price = s.get("first_entry_price", avg)
-        _wrong_dir = False
-        _reason = ""
+    # (已依使用者要求關閉，讓單子有時間等獲利)
+    # if s.get("entry_count", 0) == 1 and abs(s.get("qty", 0.0)) > 0.000001:
+    #     _obs_time = time.time() - s.get("open_time", time.time())
+    #     _entry_price = s.get("first_entry_price", avg)
+    #     _wrong_dir = False
+    #     _reason = ""
+    # 
+    #     _profile_type = s.get("profile_type", COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", ""))
+    #     is_volatile_coin = _profile_type in ["Speculative_Risk", "High_Beta_Momentum"]
+    #     _strong_rev_limit = -0.010 if is_volatile_coin else -0.005
+    #     _vol_reversal_limit = -0.0050 if is_volatile_coin else -0.0025
+    # 
+    #     if _obs_time < 180 and profit_pct < _strong_rev_limit:
+    #         _wrong_dir = True
+    #         _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
+    # 
+    #     if not _wrong_dir and _obs_time < 300 and profit_pct <= _vol_reversal_limit:
+    #         _vol_now = s.get("current_vol", 0.0)
+    #         _vol_ma = s.get("vol_ma20", 1e-8)
+    #         if _vol_now > _vol_ma * 1.5: 
+    #             if len(s.get("ohlcv", [])) >= 2:
+    #                 _c_now = s["ohlcv"][-1]
+    #                 if is_long and _c_now[4] < _c_now[1] and (_c_now[1] - _c_now[4]) / _c_now[1] > 0.002:
+    #                     _wrong_dir = True
+    #                     _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
+    #                 elif not is_long and _c_now[4] > _c_now[1] and (_c_now[4] - _c_now[1]) / _c_now[1] > 0.002:
+    #                     _wrong_dir = True
+    #                     _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
+    # 
+    #     _peak_now = s.get("highest_profit_pct", 0.0)
+    #     _entry_atr = s.get("entry_atr", 0.0)
+    #     _atr_pct = (_entry_atr / avg) if (avg > 0 and _entry_atr > 0) else 0.005
+    #     _min_peak_t2 = min(max(0.005, _atr_pct * 1.2), 0.015)
+    #     if (not _wrong_dir and
+    #             _obs_time < 600 and
+    #             _min_peak_t2 <= _peak_now < _min_peak_t2 * 2.5 and
+    #             profit_pct < -0.002):
+    #         _wrong_dir = True
+    #         _reason = f"峰值反轉 (峰: {_peak_now*100:.2f}%≥{_min_peak_t2*100:.1f}%ATR門 → 現: {profit_pct*100:.2f}%)"
+    # 
+    #     if not _wrong_dir and 300 < _obs_time < 900 and profit_pct < -0.005:
+    #         _macd_obs = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+    #         _prev_macd_obs = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+    #         _ema20_obs = s.get("ema20", 0.0)
+    #         _macd_bearish = (_macd_obs < 0 and _macd_obs < _prev_macd_obs) if is_long else (_macd_obs > 0 and _macd_obs > _prev_macd_obs)
+    #         _ema20_wrong = (_ema20_obs > 0 and p < _ema20_obs) if is_long else (_ema20_obs > 0 and p > _ema20_obs)
+    #         if _macd_bearish and _ema20_wrong: 
+    #             _wrong_dir = True
+    #             _reason = f"方向錯誤+雙重確認 (MACD:{_macd_bearish} EMA20:{_ema20_wrong})"
+    # 
+    #     _stagnation = False
+    # 
+    #     if _wrong_dir:
+    #         logger.info(f"🚨 [Post_Entry_Early_Exit] {sym} {_reason}，快速撤退！")
+    #         cs = "sell" if is_long else "buy"
+    #         s["wrong_dir_time"] = time.time()
+    #         s["wrong_dir_side"] = s.get("last_entry_direction", cs)
+    #         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Post_Entry_Early_Exit]", is_stop_loss=True)
+    #         if not _stagnation and _check_reversal_allowed(sym, s):
+    #             rev_side = "buy" if not is_long else "sell"
+    #             logger.info(f"🔄 [Early_Exit_Reverse] {sym} 方向錯誤確認，順勢反手 {rev_side}")
+    #             if s.get("consecutive_losses", 0) >= 2:
+    #                 s["reversal_ban_until"] = time.time() + 14400
+    #             s["pending_reverse"] = rev_side
+    #             s["pending_reverse_time"] = time.time()
+    #             s["last_reverse_time"] = time.time()
+    #         return
 
-        # 根據幣種屬性動態調整觀察期閾值，防止高波動幣種被正常噪聲秒割
-        _profile_type = s.get("profile_type", COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", ""))
-        is_volatile_coin = _profile_type in ["Speculative_Risk", "High_Beta_Momentum"]
-        _strong_rev_limit = -0.010 if is_volatile_coin else -0.005
-        _vol_reversal_limit = -0.0050 if is_volatile_coin else -0.0025
-
-        # 快速強烈反轉檢查（3 分鐘內虧 > 0.5% 或投機幣 > 1.0%，價格直接往反方向噴）
-        if _obs_time < 180 and profit_pct < _strong_rev_limit:
-            _wrong_dir = True
-            _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
-
-        # [NEW] 爆量反噬秒砍機制 (Instant Cut on Momentum Shift)
-        # 如果進場後 5 分鐘內，遭遇爆量反向實體 K 線吞噬，直接在指定限額（普通 -0.25%/投機 -0.5%）停損，不硬扛
-        if not _wrong_dir and _obs_time < 300 and profit_pct <= _vol_reversal_limit:
-            _vol_now = s.get("current_vol", 0.0)
-            _vol_ma = s.get("vol_ma20", 1e-8)
-            if _vol_now > _vol_ma * 1.5:  # 爆量 1.5 倍
-                if len(s.get("ohlcv", [])) >= 2:
-                    _c_now = s["ohlcv"][-1]
-                    # 判斷是否為反向大實體 K 線 (跌幅/漲幅 > 0.2%)
-                    if is_long and _c_now[4] < _c_now[1] and (_c_now[1] - _c_now[4]) / _c_now[1] > 0.002:
-                        _wrong_dir = True
-                        _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
-                    elif not is_long and _c_now[4] > _c_now[1] and (_c_now[4] - _c_now[1]) / _c_now[1] > 0.002:
-                        _wrong_dir = True
-                        _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
-
-        # 峰值反轉：曾觸及有意義的利潤(0.4-1.0%)後反轉跌回虧損才撤
-        # 峰值反轉（ATR 相對門檻）：峰值須達 1.2 倍 ATR（最少 0.5%，最多 1.5%）才算有意義反轉
-        # ORDI ATR~1% → 門檻 1.2%；NEAR ATR~0.4% → 門檻 0.5%（固定地板）
-        _peak_now = s.get("highest_profit_pct", 0.0)
-        _entry_atr = s.get("entry_atr", 0.0)
-        _atr_pct = (_entry_atr / avg) if (avg > 0 and _entry_atr > 0) else 0.005
-        _min_peak_t2 = min(max(0.005, _atr_pct * 1.2), 0.015)
-        if (not _wrong_dir and
-                _obs_time < 600 and
-                _min_peak_t2 <= _peak_now < _min_peak_t2 * 2.5 and
-                profit_pct < -0.002):
-            _wrong_dir = True
-            _reason = f"峰值反轉 (峰: {_peak_now*100:.2f}%≥{_min_peak_t2*100:.1f}%ATR門 → 現: {profit_pct*100:.2f}%)"
-
-        # 方向錯誤 + 動能確認檢查（5-15 分鐘，虧 > 0.5%，MACD AND EMA20 同時確認）
-        # 給足 5 分鐘讓市場噪音平息，0.5% 才算真正逆向
-        if not _wrong_dir and 300 < _obs_time < 900 and profit_pct < -0.005:
-            _macd_obs = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
-            _prev_macd_obs = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
-            _ema20_obs = s.get("ema20", 0.0)
-            _macd_bearish = (_macd_obs < 0 and _macd_obs < _prev_macd_obs) if is_long else (_macd_obs > 0 and _macd_obs > _prev_macd_obs)
-            _ema20_wrong = (_ema20_obs > 0 and p < _ema20_obs) if is_long else (_ema20_obs > 0 and p > _ema20_obs)
-            if _macd_bearish and _ema20_wrong:  # 需雙重確認（原本 OR → 改 AND）
-                _wrong_dir = True
-                _reason = f"方向錯誤+雙重確認 (MACD:{_macd_bearish} EMA20:{_ema20_wrong})"
-
-        # 價格停滯檢查：移除（0~-0.1% 是震盪市場正常雜訊，2 分鐘停滯就砍導致大量手續費損耗）
-        _stagnation = False
-
-        if _wrong_dir:
-            logger.info(f"🚨 [Post_Entry_Early_Exit] {sym} {_reason}，快速撤退！")
-            cs = "sell" if is_long else "buy"
-            s["wrong_dir_time"] = time.time()
-            s["wrong_dir_side"] = s.get("last_entry_direction", cs)
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Post_Entry_Early_Exit]", is_stop_loss=True)
-
-            # 快速強烈反轉 / 方向錯誤有動能確認 → 價格明顯往反方向走，順勢反手
-            # 價格停滯不算（沒方向訊號）
-            if not _stagnation and _check_reversal_allowed(sym, s):
-                rev_side = "buy" if not is_long else "sell"
-                logger.info(f"🔄 [Early_Exit_Reverse] {sym} 方向錯誤確認，順勢反手 {rev_side}")
-                if s.get("consecutive_losses", 0) >= 2:
-                    s["reversal_ban_until"] = time.time() + 14400
-                s["pending_reverse"] = rev_side
-                s["pending_reverse_time"] = time.time()
-                s["last_reverse_time"] = time.time()
-            return
-
-    loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
+    base_loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
+    atr_val = s.get("entry_atr", s.get("current_atr", p * 0.01))
+    # 彈性距離：如果波動率(ATR)很大，就把攤平距離拉遠，避免太早攤平
+    loss_limit = max(base_loss_limit, atr_val * 0.6)
+    
     _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
     if not _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
-        logger.info(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損突破 {loss_limit*100:.4f}%，啟動緊急救援加碼！")
-        cs = "buy" if is_long else "sell"
-        await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
-        return
+        # 防呆：檢查是否正在急跌/急漲 (Falling Knife)
+        macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+        prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+        
+        is_falling_knife = False
+        if is_long and macd_hist < 0 and macd_hist < prev_macd_hist:
+            is_falling_knife = True
+        elif not is_long and macd_hist > 0 and macd_hist > prev_macd_hist:
+            is_falling_knife = True
+            
+        if is_falling_knife:
+            if s.get("knife_warning_logged", 0) < time.time() - 30:
+                logger.info(f"🔪 [接刀保護] {sym} 走勢太兇猛，暫緩攤平！等待動能衰減... (目前虧損: {profit_pct*100:.2f}%)")
+                s["knife_warning_logged"] = time.time()
+        else:
+            logger.info(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損 {profit_pct*100:.2f}% (大於門檻 {loss_limit*100:.2f}%) 且急勢已緩，啟動彈性救援加碼！")
+            cs = "buy" if is_long else "sell"
+            await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
+            return
     elif _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
         logger.info(f"ℹ️ [DCA_Disabled] {sym} 虧損 {profit_pct*100:.2f}% 但此幣種已停用 Rescue DCA，等待 ATR-SL 出場")
 
@@ -634,15 +636,15 @@ async def check_exits(sym):
 
     # ── 峰值追蹤停利 (PeakTrail) ──
     # 當利潤達到 0.3% 以上，且自高點回落達 0.2% 時，鎖利平倉
-    _pt_peak = s.get("highest_profit_pct", 0.0)
-    if _pt_peak >= 0.003 and (_pt_peak - profit_pct) >= 0.002:
-        cs = "sell" if is_long else "buy"
-        logger.info(
-            f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
-            f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ 0.20%，鎖利出場"
-        )
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
-        return
+    # _pt_peak = s.get("highest_profit_pct", 0.0)
+    # if _pt_peak >= 0.003 and (_pt_peak - profit_pct) >= 0.002:
+    #     cs = "sell" if is_long else "buy"
+    #     logger.info(
+    #         f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
+    #         f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ 0.20%，鎖利出場"
+    #     )
+    #     await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
+    #     return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)
