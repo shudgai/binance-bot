@@ -435,24 +435,23 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Timeout]", is_stop_loss=True)
             return
 
-        # 第三道防線：救援期間動能衰減提早止損
-        # 超過3分鐘且仍虧損，且 MACD 反向擴張或價格破 EMA20 → 立即出場，不等逾時
-        if time_since_last_entry > 180 and profit_pct < -0.001:
-            macd_hist_r = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
-            prev_macd_hist_r = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
-            ema20_r = s.get("ema20", 0.0)
-            is_momentum_dead = False
-            if is_long:
-                if (macd_hist_r < 0 and macd_hist_r < prev_macd_hist_r) or (ema20_r > 0 and p < ema20_r):
-                    is_momentum_dead = True
-            else:
-                if (macd_hist_r > 0 and macd_hist_r > prev_macd_hist_r) or (ema20_r > 0 and p > ema20_r):
-                    is_momentum_dead = True
-            if is_momentum_dead:
-                logger.info(f"🚨 [RESCUE_MOMENTUM_DECAY] {sym} 救援期間動能已死(MACD反向或破EMA20)，提早止損！(套牢:{profit_pct*100:.2f}%)")
-                cs = "sell" if is_long else "buy"
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Momentum_Decay]", is_stop_loss=True)
-                return
+        # 第三道防線：救援期間動能衰減提早止損 (已依使用者要求關閉，讓單子有時間等獲利)
+        # if time_since_last_entry > 180 and profit_pct < -0.001:
+        #     macd_hist_r = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+        #     prev_macd_hist_r = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+        #     ema20_r = s.get("ema20", 0.0)
+        #     is_momentum_dead = False
+        #     if is_long:
+        #         if (macd_hist_r < 0 and macd_hist_r < prev_macd_hist_r) or (ema20_r > 0 and p < ema20_r):
+        #             is_momentum_dead = True
+        #     else:
+        #         if (macd_hist_r > 0 and macd_hist_r > prev_macd_hist_r) or (ema20_r > 0 and p > ema20_r):
+        #             is_momentum_dead = True
+        #     if is_momentum_dead:
+        #         logger.info(f"🚨 [RESCUE_MOMENTUM_DECAY] {sym} 救援期間動能已死(MACD反向或破EMA20)，提早止損！(套牢:{profit_pct*100:.2f}%)")
+        #         cs = "sell" if is_long else "buy"
+        #         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Momentum_Decay]", is_stop_loss=True)
+        #         return
 
         rescue_floor = get_effective_exit_setting(sym, "rescue_tp_floor_pct", 0.005, is_long)
         rescue_trail_atr = get_effective_exit_setting(sym, "rescue_trailing_atr", 1.5, is_long)
@@ -543,14 +542,18 @@ async def check_exits(sym):
     _locked_gain = 0.0
     _lock_desc = ""
     
+    # 動態回撤容忍度：利潤越高/波動越大，給予更合理的呼吸空間，防止被微幅波動洗出場
+    atr_pct = atr_val / avg if avg > 0 else 0.005
+    _pullback_buffer = max(0.004, atr_pct * 0.8)  # 至少 0.4% 或 0.8 倍 ATR 的回撤空間
+    
     if _peak_lock >= 0.015:
-        _locked_gain = max(0.012, _peak_lock - 0.002)
+        _locked_gain = max(0.010, _peak_lock - _pullback_buffer)
         _lock_desc = f"動態高點鎖利 ({_locked_gain*100:.2f}%)"
     elif _peak_lock >= 0.008:
-        _locked_gain = max(0.006, _peak_lock - 0.002)
+        _locked_gain = max(0.005, _peak_lock - _pullback_buffer)
         _lock_desc = f"半路鎖利 ({_locked_gain*100:.2f}%)"
     elif _peak_lock >= 0.004:
-        _locked_gain = max(0.002, _peak_lock - 0.002)
+        _locked_gain = max(0.001, _peak_lock - _pullback_buffer)
         _lock_desc = f"保本鎖利 ({_locked_gain*100:.2f}%)"
 
     if _locked_gain > 0:
@@ -865,11 +868,11 @@ async def check_exits(sym):
     macd_is_up = (s["macd_line"] > s["macd_signal"]) and (s.get("prev_macd_line", 0.0) > s.get("prev_macd_signal", 0.0))
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
-    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct < early_exit_limit or profit_pct > 0.015):
+    # 僅在獲利大於 1.5% 時允許 MACD 反向反轉出場，虧損時不主動提早平倉，讓單子有時間等回調
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct > 0.015):
         cs = 'sell' if is_long else 'buy'
-        is_sl = profit_pct < 0.0
-        logger.info(f"📉 [反轉出場] {sym} MACD連續兩根確認反向且達門檻，立即平倉 (損益: {profit_pct*100:.2f}%)")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=is_sl)
+        logger.info(f"📉 [反轉出場] {sym} MACD連續兩根確認反向且達 1.5% 門檻，立即平倉鎖利 (損益: {profit_pct*100:.2f}%)")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=False)
         return
 
     atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002

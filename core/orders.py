@@ -606,16 +606,16 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     # 參考近期K線低點，確保買在相對低點
                     if len(s.get("ohlcv", [])) >= 2:
                         recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
-                        # 不要低得太誇張，最多抓到 atr 1.5 倍的深度
-                        limit_price = max(recent_low, current_market_price - atr * 1.5)
-                        limit_price = min(limit_price, current_market_price - atr * 0.3)
+                        # 不要低得太誇張，最多抓到 atr 3倍的回踩深度
+                        limit_price = max(recent_low, current_market_price - atr * (_pb_mult * 3))
+                        limit_price = min(limit_price, current_market_price - atr * _pb_mult)
                 else:
                     limit_price = current_market_price + atr * _pb_mult
                     # 參考近期K線高點，確保賣在相對高點
                     if len(s.get("ohlcv", [])) >= 2:
                         recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
-                        limit_price = min(recent_high, current_market_price + atr * 1.5)
-                        limit_price = max(limit_price, current_market_price + atr * 0.3)
+                        limit_price = min(recent_high, current_market_price + atr * (_pb_mult * 3))
+                        limit_price = max(limit_price, current_market_price + atr * _pb_mult)
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
@@ -674,14 +674,14 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         limit_price = price - atr * _pb_mult
                         if len(s.get("ohlcv", [])) >= 2:
                             recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
-                            limit_price = max(recent_low, price - atr * 1.5)
-                            limit_price = min(limit_price, price - atr * 0.3)
+                            limit_price = max(recent_low, price - atr * (_pb_mult * 3))
+                            limit_price = min(limit_price, price - atr * _pb_mult)
                     else:
                         limit_price = price + atr * _pb_mult
                         if len(s.get("ohlcv", [])) >= 2:
                             recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
-                            limit_price = min(recent_high, price + atr * 1.5)
-                            limit_price = max(limit_price, price + atr * 0.3)
+                            limit_price = min(recent_high, price + atr * (_pb_mult * 3))
+                            limit_price = max(limit_price, price + atr * _pb_mult)
                     limit_price = round_step(limit_price, tick_size)
                     logger.info(f"📌 [回踩掛單] {sym} 掛單價 {limit_price:.6f} (信號價: {price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
                 else:
