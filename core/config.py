@@ -92,7 +92,7 @@ PERSONALITY_TEMPLATES = {
         "add_entry_pct": 0.15,
         "sl_atr_multiplier": 1.5,
         "tp_atr_multiplier": 3.0,
-        "hard_stop_loss_pct": 0.01,
+        "hard_stop_loss_pct": 0.025,
     },
     "balanced": {
         "personality": "balanced",
@@ -104,7 +104,7 @@ PERSONALITY_TEMPLATES = {
         "add_entry_pct": 0.25,
         "sl_atr_multiplier": 1.2,
         "tp_atr_multiplier": 2.4,
-        "hard_stop_loss_pct": 0.01,
+        "hard_stop_loss_pct": 0.025,
     },
     "aggressive": {
         "personality": "aggressive",
@@ -116,7 +116,7 @@ PERSONALITY_TEMPLATES = {
         "add_entry_pct": 0.4,
         "sl_atr_multiplier": 1.0,
         "tp_atr_multiplier": 2.0,
-        "hard_stop_loss_pct": 0.01,
+        "hard_stop_loss_pct": 0.025,
     },
     "adaptive": {
         "personality": "adaptive",
@@ -128,7 +128,7 @@ PERSONALITY_TEMPLATES = {
         "add_entry_pct": 0.25,
         "sl_atr_multiplier": 1.2,
         "tp_atr_multiplier": 2.4,
-        "hard_stop_loss_pct": 0.01,
+        "hard_stop_loss_pct": 0.025,
     },
 }
 
@@ -171,7 +171,7 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 3.0
-HARD_STOP_LOSS_PCT = 0.015
+HARD_STOP_LOSS_PCT = 0.025
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.004
 PROTECTED_PROFIT_FLOOR   = 0.0025
