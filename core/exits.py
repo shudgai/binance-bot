@@ -44,6 +44,20 @@ def update_trailing_stop(sym, current_price, is_long):
     profit_pct = _profit_pct(current_price, avg_price, is_long)
     s["highest_profit_pct"] = max(s.get("highest_profit_pct", 0.0), profit_pct)
 
+    # ── 盤中尖峰偵測：用K線 HIGH/LOW 更新峰值 ──
+    # 收盤價無法反映 K 線內的瞬間高點（如開倉後 1 秒衝到 4% 又立刻跌回）
+    # 從最近一根 K 線的最高/最低價計算盤中最大可能利潤，讓 PeakLock 能正確啟動
+    _ohlcv_q = s.get("ohlcv", [])
+    if _ohlcv_q and avg_price > 0:
+        _last_c = _ohlcv_q[-1]
+        if is_long:
+            _intra_peak = (_last_c[2] - avg_price) / avg_price  # HIGH
+        else:
+            _intra_peak = (avg_price - _last_c[3]) / avg_price  # LOW
+        if _intra_peak > s["highest_profit_pct"]:
+            s["highest_profit_pct"] = _intra_peak
+            logger.debug(f"[IntraBar] {sym} 盤中峰值 {_intra_peak*100:.2f}%（K線高低價）")
+
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
 
     if is_long:
