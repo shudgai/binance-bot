@@ -148,6 +148,10 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
 
+    if profit_pct <= 0 and reason != "[GLOBAL_MELTDOWN]":
+        logger.info(f"⏳ [平倉攔截] {sym} 目前無利潤 ({profit_pct*100:.4f}%)，根據設定必須等到有利潤再平倉！已拒絕平倉 | 原因={reason}")
+        return
+
     atr_val = s.get("entry_atr", s.get("current_atr", price * 0.01))
     sl_mult = s.get("sl_atr_multiplier", 1.5)
     initial_risk_pct = (sl_mult * atr_val) / real_avg if real_avg > 0 else 0.01

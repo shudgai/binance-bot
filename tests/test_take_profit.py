@@ -51,6 +51,27 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
+    def test_exit_blocked_on_negative_profit(self):
+        from core.orders import close_position
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 99.0  # negative profit
+
+        import asyncio
+        # Mock actual trade executions
+        from unittest.mock import patch, AsyncMock
+        mock_exchange = AsyncMock()
+        with patch("core.orders.exchange_futures", mock_exchange):
+            asyncio.run(close_position(sym, "sell", 1.0, 99.0, 100.0, reason="test_negative"))
+            
+        # The position should still have qty because the close was blocked
+        self.assertEqual(s["qty"], 1.0)
+        self.assertFalse(mock_exchange.create_order.called)
+
 
 if __name__ == "__main__":
     unittest.main()
