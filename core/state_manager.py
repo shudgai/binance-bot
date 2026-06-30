@@ -152,6 +152,7 @@ def reset_coin_state(sym):
     s["trailing_highest"] = 0.0
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
+    s["highest_close_pct"] = 0.0
     s["peak_time"] = 0.0
     s["has_partial_closed"] = False
     s["is_breakeven_locked"] = False

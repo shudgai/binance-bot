@@ -625,10 +625,14 @@ async def check_exits(sym):
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
         s["peak_time"] = time.time()   # 記錄每次創新高的時間
+    # 純收盤價峰值（不含盤中尖峰），供三層 ATR 鎖利使用
+    # highest_profit_pct 包含 intra-candle HIGH，會被高 ATR 幣的噪音誤觸鎖利
+    if profit_pct > s.get("highest_close_pct", 0.0):
+        s["highest_close_pct"] = profit_pct
     if profit_pct < 0:
         s["has_been_negative"] = True
 
-    _pt_peak = s.get("highest_profit_pct", 0.0)
+    _pt_peak = s.get("highest_close_pct", 0.0)
 
     # ── 三層 ATR 比例鎖利 (Tiered ATR Profit Lock) ──
     # 依照幣種 ATR 動態縮放退出閾值，取代固定 0.2% PeakTrail
