@@ -334,6 +334,22 @@ async def check_exits(sym):
             _wrong_dir = True
             _reason = f"快速強烈反轉 ({_obs_time:.0f}s 虧 {profit_pct*100:.2f}%)"
 
+        # [NEW] 爆量反噬秒砍機制 (Instant Cut on Momentum Shift)
+        # 如果進場後 5 分鐘內，遭遇爆量反向實體 K 線吞噬，直接在 -0.25% 停損，不硬扛
+        if not _wrong_dir and _obs_time < 300 and profit_pct <= -0.0025:
+            _vol_now = s.get("current_vol", 0.0)
+            _vol_ma = s.get("vol_ma20", 1e-8)
+            if _vol_now > _vol_ma * 1.5:  # 爆量 1.5 倍
+                if len(s.get("ohlcv", [])) >= 2:
+                    _c_now = s["ohlcv"][-1]
+                    # 判斷是否為反向大實體 K 線 (跌幅/漲幅 > 0.2%)
+                    if is_long and _c_now[4] < _c_now[1] and (_c_now[1] - _c_now[4]) / _c_now[1] > 0.002:
+                        _wrong_dir = True
+                        _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
+                    elif not is_long and _c_now[4] > _c_now[1] and (_c_now[4] - _c_now[1]) / _c_now[1] > 0.002:
+                        _wrong_dir = True
+                        _reason = f"爆量反噬秒砍 (量:{_vol_now/_vol_ma:.1f}x, 虧:{profit_pct*100:.2f}%)"
+
         # 峰值反轉：曾觸及有意義的利潤(0.4-1.0%)後反轉跌回虧損才撤
         # 0.08-0.30% 的峰值是正常震盪噪音，不應觸發退場（ORDI 28 秒被踢出的原因）
         _peak_now = s.get("highest_profit_pct", 0.0)
@@ -519,14 +535,25 @@ async def check_exits(sym):
     if not s.get("is_breakeven_locked"):
         s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
 
-    # ── 峰值比例鎖利 (Peak Profit Lock) ──
-    # 保本線只鎖到 entry+0.25%，但峰值 2% 時 SL 仍在 0%，中間 2% 完全無保護
-    # 當峰值 ≥ 1.5%：SL 推進到 entry + peak*0.5（鎖住一半利潤）
-    # 當峰值 ≥ 2.5%：SL 推進到 entry + peak*0.6（鎖住六成利潤）
+    # ── 階梯式收網與峰值比例鎖利 (Tiered Peak Profit Lock) ──
+    # 取代原本單一的鎖利邏輯，改為更敏銳的階梯式保護
     _peak_lock = s.get("highest_profit_pct", 0.0)
-    if _peak_lock >= 0.008:
-        _lock_ratio = 0.60 if _peak_lock >= 0.025 else 0.50
-        _locked_gain = _peak_lock * _lock_ratio
+    _locked_gain = 0.0
+    _lock_desc = ""
+    if _peak_lock >= 0.025:
+        _locked_gain = _peak_lock * 0.70
+        _lock_desc = f"鎖70% ({_locked_gain*100:.2f}%)"
+    elif _peak_lock >= 0.015:
+        _locked_gain = 0.010
+        _lock_desc = "強勢鎖1.0%"
+    elif _peak_lock >= 0.008:
+        _locked_gain = 0.004
+        _lock_desc = "半路鎖0.4%"
+    elif _peak_lock >= 0.004:
+        _locked_gain = 0.001
+        _lock_desc = "底線保本0.1%"
+
+    if _locked_gain > 0:
         if is_long:
             _peak_sl = avg * (1 + _locked_gain)
             if _peak_sl > s.get("stop_loss", 0):
@@ -534,7 +561,7 @@ async def check_exits(sym):
                 s["stop_loss"] = _peak_sl
                 if not s.get("_peak_lock_logged") or abs(_peak_sl - _prev_sl) > avg * 0.0005:
                     s["_peak_lock_logged"] = True
-                    logger.info(f"🔒 [PeakLock] {sym} 峰值 {_peak_lock*100:.2f}%，SL 推至 {_peak_sl:.4f}（鎖住 {_lock_ratio*100:.0f}%）")
+                    logger.info(f"🔒 [PeakLock階梯] {sym} 峰值 {_peak_lock*100:.2f}%，SL 推至 {_peak_sl:.4f}（{_lock_desc}）")
         else:
             _peak_sl = avg * (1 - _locked_gain)
             if _peak_sl < s.get("stop_loss", float('inf')):
@@ -542,7 +569,7 @@ async def check_exits(sym):
                 s["stop_loss"] = _peak_sl
                 if not s.get("_peak_lock_logged") or abs(_peak_sl - _prev_sl) > avg * 0.0005:
                     s["_peak_lock_logged"] = True
-                    logger.info(f"🔒 [PeakLock] {sym} 峰值 {_peak_lock*100:.2f}%，SL 推至 {_peak_sl:.4f}（鎖住 {_lock_ratio*100:.0f}%）")
+                    logger.info(f"🔒 [PeakLock階梯] {sym} 峰值 {_peak_lock*100:.2f}%，SL 推至 {_peak_sl:.4f}（{_lock_desc}）")
 
     sl = s.get("stop_loss", avg)
 
@@ -646,6 +673,14 @@ async def check_exits(sym):
         else:
             sl = min(sl, s["trailing_stop_price"])
         s["stop_loss"] = sl
+
+    # ── 時間停滯出場 (Time-based Stagnation Exit) ──
+    # 如果進場超過 15 分鐘（900秒），利潤卻小於 0.3%，且沒有觸發保本，視為動能耗盡
+    if hold_sec >= 900 and -0.005 < profit_pct < 0.003 and s.get("highest_profit_pct", 0.0) < 0.004:
+        cs = "sell" if is_long else "buy"
+        logger.info(f"⏳ [時間停滯出場] {sym} 進場已達 {hold_sec/60:.0f} 分鐘，利潤僅 {profit_pct*100:.2f}%，動能枯竭，提前退場")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Stagnation]")
+        return
 
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出

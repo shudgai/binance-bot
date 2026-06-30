@@ -189,6 +189,28 @@ async def check_entries():
         if not has_position and open_count >= MAX_POSITIONS:
             continue
 
+        # --- [NEW] 等待回踩 (Pullback Entry) 處理 ---
+        if not has_position and s.get("waiting_pullback"):
+            wp = s["waiting_pullback"]
+            _wait_time = time.time() - wp["time"]
+            if _wait_time > 3600:  # 1 小時沒回踩就放棄
+                logger.info(f"⌛ [回踩過期] {sym} 經過 1 小時未回到支撐/壓力位，取消回踩計畫。")
+                s["waiting_pullback"] = None
+            else:
+                p = s["close_price"]
+                ema20 = s.get("ema20", 0.0)
+                if ema20 > 0:
+                    # 判斷是否回踩到 EMA20 (允許 0.2% 誤差)
+                    if wp["side"] == "buy" and p <= ema20 * 1.002:
+                        logger.info(f"🎯 [回踩進場] {sym} 成功回踩 (現價 {p:.4f} 接近 EMA20 {ema20:.4f})，準備建多單！")
+                        candidates.append((sym, wp["side"], wp["strength"], wp["route"]))
+                        s["waiting_pullback"] = None
+                    elif wp["side"] == "sell" and p >= ema20 * 0.998:
+                        logger.info(f"🎯 [回踩進場] {sym} 成功回抽 (現價 {p:.4f} 接近 EMA20 {ema20:.4f})，準備建空單！")
+                        candidates.append((sym, wp["side"], wp["strength"], wp["route"]))
+                        s["waiting_pullback"] = None
+                continue  # 處於等回踩狀態時，跳過底下一般的新訊號判定
+
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
         # --- [新增] 自動反手訊號緩衝與 K 線收盤確認機制 ---
@@ -306,14 +328,17 @@ async def check_entries():
                                     continue
 
                     # RSI 過熱/過冷保護：趨勢型訊號確認時，禁止追高做多或追低做空
-                    if route == "a":
-                        rsi_conf = s.get("rsi", 50.0)
-                        if side == "buy" and rsi_conf > 68.0:
-                            logger.info(f"🛑 [RSI過熱] {sym} 確認階段 RSI={rsi_conf:.1f}>68，趨勢多單追高風險過高，放棄")
+                    # 改為：進入「等待回踩 (Waiting Pullback)」狀態
+                    if route not in ["Exhaustion_Entry", "Extreme_Reversal"]:
+                        rsi_conf = s.get("current_rsi", 50.0)
+                        if side == "buy" and rsi_conf >= 68.0:
+                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}>=68，動能強但不追高，標記為等待回踩 EMA20。")
+                            s["waiting_pullback"] = {"side": side, "strength": strength, "route": route, "time": time.time(), "signal_price": p}
                             s["pending_side"] = None
                             continue
-                        if side == "sell" and rsi_conf < 32.0:
-                            logger.info(f"🛑 [RSI過冷] {sym} 確認階段 RSI={rsi_conf:.1f}<32，趨勢空單追低風險過高，放棄")
+                        if side == "sell" and rsi_conf <= 32.0:
+                            logger.info(f"⏳ [等待回踩] {sym} RSI={rsi_conf:.1f}<=32，動能弱但不殺低，標記為等待回抽 EMA20。")
+                            s["waiting_pullback"] = {"side": side, "strength": strength, "route": route, "time": time.time(), "signal_price": p}
                             s["pending_side"] = None
                             continue
 
