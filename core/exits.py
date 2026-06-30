@@ -627,42 +627,18 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
-    # ── 微利停利 (MicroTP_Exit) ──
-    # 峰值 0.5-1.2%（手續費覆蓋後真正有利潤的區間），回落 0.05% 且方向衰退 → 鎖利出場
-    # 0.08-0.45% 的峰值是噪音，不值得鎖，讓 ATR SL 或 Time_Decay 處理
-    _micro_peak = s.get("highest_profit_pct", 0.0)
-    if (0 < hold_sec < 900 and
-            0.005 <= _micro_peak < 0.012 and
-            profit_pct >= 0.002 and
-            profit_pct < _micro_peak - 0.0005):
-        _ohlcv_m = s.get("ohlcv", [])
-        if len(_ohlcv_m) >= 3:
-            _c_last = _ohlcv_m[-2][4]
-            _c_prev = _ohlcv_m[-3][4]
-            _dir_declining = (_c_last < _c_prev) if is_long else (_c_last > _c_prev)
-            if _dir_declining:
-                cs = "sell" if is_long else "buy"
-                logger.info(f"🎯 [微利停利] {sym} 峰值 {_micro_peak*100:.2f}% 開始回落 → 現 {profit_pct*100:.2f}%，鎖定微利出場")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MicroTP_Exit]")
-                return
-
-    # ── 中段獲利回撤保護 (Retracement_Guard) ──
-    # MicroTP 蓋 < 0.45%，ATR 追蹤在小獲利時距離太寬，這段填補 0.45%–3.0% 的空窗
-    # 觸發條件：仍在獲利中，且已從峰值回撤 30%（反轉單 35%）
-    _rg_peak = s.get("highest_profit_pct", 0.0)
-    if (0.0045 <= _rg_peak < 0.030 and profit_pct >= 0.0005):
-        _retrace_ratio = (_rg_peak - profit_pct) / _rg_peak
-        _entry_route = s.get("entry_reason", "a")
-        _retrace_limit = 0.35 if _entry_route == "Extreme_Reversal" else 0.30
-        if _retrace_ratio >= _retrace_limit:
-            cs = "sell" if is_long else "buy"
-            logger.info(
-                f"🎯 [回撤保護] {sym} 峰值 {_rg_peak*100:.2f}% "
-                f"回撤 {_retrace_ratio*100:.0f}% ≥ {_retrace_limit*100:.0f}% "
-                f"→ 現 {profit_pct*100:.2f}%，鎖利出場"
-            )
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Retracement_Guard]")
-            return
+    # ── 峰值追蹤停利 (PeakTrail) ──
+    # 趨勢持續向上時不平倉；一旦從最高點回落 0.2%（價格幅度），立即鎖利出場
+    # 最低峰值門檻 0.3%（確保平倉後仍有利潤；0.3%-0.2%=0.1% > 手續費緩衝）
+    _pt_peak = s.get("highest_profit_pct", 0.0)
+    if _pt_peak >= 0.003 and (_pt_peak - profit_pct) >= 0.002:
+        cs = "sell" if is_long else "buy"
+        logger.info(
+            f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
+            f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ 0.20%，鎖利出場"
+        )
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
+        return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)
