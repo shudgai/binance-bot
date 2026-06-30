@@ -510,7 +510,7 @@ async def check_exits(sym):
     # 當峰值 ≥ 1.5%：SL 推進到 entry + peak*0.5（鎖住一半利潤）
     # 當峰值 ≥ 2.5%：SL 推進到 entry + peak*0.6（鎖住六成利潤）
     _peak_lock = s.get("highest_profit_pct", 0.0)
-    if _peak_lock >= 0.015:
+    if _peak_lock >= 0.008:
         _lock_ratio = 0.60 if _peak_lock >= 0.025 else 0.50
         _locked_gain = _peak_lock * _lock_ratio
         if is_long:
