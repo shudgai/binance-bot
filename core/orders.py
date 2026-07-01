@@ -149,7 +149,8 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
 
     fee_buffer = 0.0035  # 0.35% 最低利潤門檻（覆蓋雙向手續費並確保基本淨利潤，與保本線一致）
-    if profit_pct < fee_buffer and reason != "[GLOBAL_MELTDOWN]":
+    allowed_loss_exits = ["[GLOBAL_MELTDOWN]", "[Hard_SL]", "[Rescue_Timeout]"]
+    if profit_pct < fee_buffer and reason not in allowed_loss_exits:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
 

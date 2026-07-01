@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 150.45614127202842,
+    "balance_usdt": 150.14037244702843,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -36,6 +36,45 @@
                     "qty": 1.5,
                     "time": 1782860658898,
                     "side": "sell"
+                }
+            ]
+        },
+        "APT:USDT": {
+            "qty": -318.5,
+            "avg_price": 0.5697,
+            "realized_pnl": 0.0,
+            "entries": [
+                {
+                    "price": 0.5697,
+                    "qty": 318.5,
+                    "time": 1782863062747,
+                    "side": "sell"
+                }
+            ]
+        },
+        "ARB:USDT": {
+            "qty": 2957.4,
+            "avg_price": 0.0761,
+            "realized_pnl": 0.0,
+            "entries": [
+                {
+                    "price": 0.0761,
+                    "qty": 2957.4,
+                    "time": 1782864377418,
+                    "side": "buy"
+                }
+            ]
+        },
+        "SUI:USDT": {
+            "qty": 325.8,
+            "avg_price": 0.6907,
+            "realized_pnl": 0.0,
+            "entries": [
+                {
+                    "price": 0.6907,
+                    "qty": 325.8,
+                    "time": 1782864439074,
+                    "side": "buy"
                 }
             ]
         }
@@ -130,6 +169,36 @@
             "realized_pnl": 0.16727537142856316,
             "is_close": true,
             "fee": 0.070398735
+        },
+        {
+            "symbol": "APT:USDT",
+            "price": 0.5697,
+            "qty": 318.5,
+            "time": 1782863062747,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.09072472499999999,
+            "is_close": false
+        },
+        {
+            "symbol": "ARB:USDT",
+            "price": 0.0761,
+            "qty": 2957.4,
+            "time": 1782864377418,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.11252907000000001,
+            "is_close": false
+        },
+        {
+            "symbol": "SUI:USDT",
+            "price": 0.6907,
+            "qty": 325.8,
+            "time": 1782864439074,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.11251503,
+            "is_close": false
         }
     ]
 }
