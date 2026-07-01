@@ -445,7 +445,7 @@ async def check_entries():
             if is_stop_loss:
                 min_flip = 60
             else:
-                min_flip = 1800
+                min_flip = s.get("min_flip_time", 300)
 
             if flip_elapsed < min_flip:
                 logger.info(f"⏳ [Filter:Cooldown] [獲利防反手] {sym} 欲 {side}，但距離上次做 {last_trade_side} 僅 {flip_elapsed:.0f}s (獲利後需冷卻 {min_flip}s)，保護利潤不接刀！")
