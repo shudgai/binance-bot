@@ -148,7 +148,10 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
 
-    fee_buffer = 0.0035  # 0.35% 最低利潤門檻（覆蓋雙向手續費並確保基本淨利潤，與保本線一致）
+    # 根據幣種波動度動態決定最低利潤門檻，高波動幣種拉大獲利要求 (1.5%) 以優化盈虧比，主流幣維持 0.35%
+    volatile_coins = ["ORDIUSDT", "INJUSDT", "SUIUSDT", "APTUSDT", "GUAUSDT", "SIRENUSDT"]
+    fee_buffer = 0.015 if sym.replace(":", "") in volatile_coins else 0.0035
+
     # 允許任何型態的止損（is_stop_loss=True）以及全域熔斷平倉，以保護本金防範暴跌
     if profit_pct < fee_buffer and not is_stop_loss and reason != "[GLOBAL_MELTDOWN]":
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")

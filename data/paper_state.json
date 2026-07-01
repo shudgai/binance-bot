@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 144.97949343402837,
+    "balance_usdt": 141.6314773625998,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -27,17 +27,10 @@
             "entries": []
         },
         "AAVE:USDT": {
-            "qty": -1.5,
+            "qty": 0.0,
             "avg_price": 84.86151428571429,
-            "realized_pnl": 0.0,
-            "entries": [
-                {
-                    "price": 84.86151428571429,
-                    "qty": 1.5,
-                    "time": 1782860658898,
-                    "side": "sell"
-                }
-            ]
+            "realized_pnl": -3.2827285714285566,
+            "entries": []
         },
         "APT:USDT": {
             "qty": 0.0,
@@ -320,6 +313,16 @@
             "realized_pnl": -4.989599999999997,
             "is_close": true,
             "fee": 0.11566799999999999
+        },
+        {
+            "symbol": "AAVE:USDT",
+            "price": 87.05,
+            "qty": 1.5,
+            "time": 1782874499960,
+            "isBuyer": true,
+            "realized_pnl": -3.2827285714285566,
+            "is_close": true,
+            "fee": 0.0652875
         }
     ]
 }
