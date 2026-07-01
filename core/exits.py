@@ -420,14 +420,14 @@ async def check_exits(sym):
         time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
 
         # 第二道防線：動態逾時 = 基礎逾時 × (當前ATR ÷ 平均ATR)，波動大時給更多空間
-        base_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 10, is_long)
+        base_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 60, is_long)
         _atr_hist_r = s.get("atr_history", [])
         _atr_ma20_r = float(np.mean(_atr_hist_r)) if len(_atr_hist_r) > 0 else atr_val
         if _atr_ma20_r > 0:
             dynamic_timeout = base_timeout_min * (atr_val / _atr_ma20_r)
         else:
             dynamic_timeout = base_timeout_min
-        dynamic_timeout = max(5.0, min(dynamic_timeout, 20.0))
+        dynamic_timeout = max(30.0, min(dynamic_timeout, 120.0))
 
         if time_since_last_entry > dynamic_timeout * 60:
             logger.info(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援動態逾時 {dynamic_timeout:.1f}min (Base:{base_timeout_min}min)，強制平倉！")
