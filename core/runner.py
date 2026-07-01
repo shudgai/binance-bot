@@ -402,11 +402,9 @@ def print_multi_status():
 
 
 async def periodic_status_log():
-    from services.utils import paper_key
     _data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
     while True:
         await asyncio.sleep(60)
-        # 定時儲存 ATR 快取
         try:
             cache_data = {}
             for sym in ctx.STATES:
@@ -415,11 +413,17 @@ async def periodic_status_log():
                 json.dump(cache_data, f)
         except Exception:
             pass
-        # 定時更新 paper_state.json（每分鐘寫入未實現損益與現價，讓前端/紀錄持續刷新）
+
+
+async def push_paper_live_state():
+    """每 2 秒即時更新 paper_state.json 的未實現損益與現價"""
+    from services.utils import paper_key
+    _paper_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json")
+    while True:
+        await asyncio.sleep(2)
         if not PAPER_TRADING:
             continue
         try:
-            _paper_file = os.path.join(_data_dir, "paper_state.json")
             with open(_paper_file, "r") as f:
                 state = json.load(f)
             total_unrealized = 0.0
@@ -431,7 +435,7 @@ async def periodic_status_log():
                 avg = float(pos.get("avg_price", 0.0))
                 cur = float(s.get("close_price", 0.0))
                 if abs(qty) > 0.000001 and avg > 0 and cur > 0:
-                    upnl = (cur - avg) / avg * abs(qty) * avg if qty > 0 else (avg - cur) / avg * abs(qty) * avg
+                    upnl = (cur - avg) * abs(qty) if qty > 0 else (avg - cur) * abs(qty)
                     pos["unrealized_pnl"] = round(upnl, 6)
                     pos["current_price"] = cur
                     total_unrealized += upnl
@@ -476,6 +480,7 @@ async def sync_paper_state():
 async def main():
     from core.orders import check_stale_limit_orders
     asyncio.create_task(sync_paper_state())
+    asyncio.create_task(push_paper_live_state())
     asyncio.create_task(periodic_htf_update(exchange_futures))
     asyncio.create_task(periodic_status_log())
     asyncio.create_task(check_stale_limit_orders())
