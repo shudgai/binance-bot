@@ -365,13 +365,24 @@ def check_total_equity_protection():
     return True
 
 
-def _fill_paper_order(sym, fill_price):
+def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0):
     """處理 paper 模式的待成交限價單：成交後更新倉位狀態"""
     s = ctx.STATES[sym]
     pk = paper_key(sym)
-    order = s.get("pending_paper_order")
-    if not order:
-        return
+    
+    if side is not None and qty is not None:
+        order = {
+            "side": side,
+            "qty": qty,
+            "margin": margin,
+            "placed_at": time.time(),
+            "timeout": 0
+        }
+    else:
+        order = s.get("pending_paper_order")
+        if not order:
+            return
+            
     if not fill_price or fill_price <= 0:
         logger.info(f"[REJECT_PAPER] {sym} _fill_paper_order fill_price=0，已攔截撤單")
         s["pending_paper_order"] = None
@@ -595,12 +606,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         try:
             current_market_price = s.get("close_price", price)
             if ENTRY_ORDER_MODE == 'market':
-                _fill_paper_order(sym, current_market_price)
+                _fill_paper_order(sym, current_market_price, side=side, qty=base_amt, margin=margin)
                 logger.info(f"✅ [Paper市價成交] {sym} {side} {base_amt:.4f} @ {current_market_price:.6f}")
                 return
             elif ENTRY_ORDER_MODE == 'chase':
                 fill_price = current_market_price * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else current_market_price * (1 - ENTRY_CHASE_OFFSET_PCT)
-                _fill_paper_order(sym, fill_price)
+                _fill_paper_order(sym, fill_price, side=side, qty=base_amt, margin=margin)
                 logger.info(f"✅ [Paper追價成交] {sym} {side} {base_amt:.4f} @ {fill_price:.6f}")
                 return
             elif ENTRY_ORDER_MODE == 'pullback':
