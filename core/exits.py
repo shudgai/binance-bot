@@ -493,8 +493,8 @@ async def check_exits(sym):
     _is_counter_trend = (is_long and btc_4h == "BEAR") or (not is_long and btc_4h == "BULL")
     _sl_floor_pct = 0.004
     if _is_counter_trend:
-        sl_mult *= 0.7
-        _sl_floor_pct = 0.0025
+        sl_mult *= 0.9
+        _sl_floor_pct = 0.0035
 
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     if is_low_vol:

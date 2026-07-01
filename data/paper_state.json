@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 150.08476143402837,
+    "balance_usdt": 144.97949343402837,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -15,17 +15,10 @@
             "entries": []
         },
         "ORDI:USDT": {
-            "qty": -64.8,
+            "qty": 0.0,
             "avg_price": 3.493,
-            "realized_pnl": 0.08157428571426699,
-            "entries": [
-                {
-                    "price": 3.493,
-                    "qty": 64.8,
-                    "time": 1782872199061,
-                    "side": "sell"
-                }
-            ]
+            "realized_pnl": -4.9080257142857295,
+            "entries": []
         },
         "SIREN:USDT": {
             "qty": 0.0,
@@ -317,6 +310,16 @@
             "realized_pnl": 0.0,
             "fee": 0.1131732,
             "is_close": false
+        },
+        {
+            "symbol": "ORDI:USDT",
+            "price": 3.57,
+            "qty": 64.8,
+            "time": 1782874235859,
+            "isBuyer": true,
+            "realized_pnl": -4.989599999999997,
+            "is_close": true,
+            "fee": 0.11566799999999999
         }
     ]
 }

@@ -198,5 +198,25 @@
         "friction_rate": 0.0,
         "theoretical_profit": 0.0016,
         "ai_summary": "[打平] GUAUSDT 透過 [打平] [Rescue_Timeout] 出場。獲利 -0.16%，摩擦力 0.00%。"
+    },
+    {
+        "timestamp": "2026-07-01 02:50:35",
+        "symbol": "ORDIUSDT",
+        "entry_reason": "UNKNOWN",
+        "exit_reason": "[大虧] [Trend_Follow]",
+        "profit_pct": -0.022,
+        "max_profit_reached": 0.0,
+        "atr_at_exit": 0.034214,
+        "market_mode": "High_Vol",
+        "expected_entry": 3.493,
+        "expected_exit": 3.57,
+        "actual_entry": 3.493,
+        "actual_exit": 3.57,
+        "fees": 0.0,
+        "qty": 64.8,
+        "slippage": 0.0,
+        "friction_rate": 0.0,
+        "theoretical_profit": 0.022,
+        "ai_summary": "[大虧] ORDIUSDT 透過 [大虧] [Trend_Follow] 出場。獲利 -2.20%，摩擦力 0.00%。"
     }
 ]
