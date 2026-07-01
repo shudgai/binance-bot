@@ -402,16 +402,46 @@ def print_multi_status():
 
 
 async def periodic_status_log():
+    from services.utils import paper_key
+    _data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
     while True:
         await asyncio.sleep(60)
-        # 狀態列印已移至 main_loop 的 print_multi_status
-        # 保留 periodic_status_log 來定時儲存快取
+        # 定時儲存 ATR 快取
         try:
             cache_data = {}
             for sym in ctx.STATES:
                 cache_data[sym] = ctx.STATES[sym]["atr_history"][-1000:]
-            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "atr_history_cache.json"), "w") as f:
+            with open(os.path.join(_data_dir, "atr_history_cache.json"), "w") as f:
                 json.dump(cache_data, f)
+        except Exception:
+            pass
+        # 定時更新 paper_state.json（每分鐘寫入未實現損益與現價，讓前端/紀錄持續刷新）
+        if not PAPER_TRADING:
+            continue
+        try:
+            _paper_file = os.path.join(_data_dir, "paper_state.json")
+            with open(_paper_file, "r") as f:
+                state = json.load(f)
+            total_unrealized = 0.0
+            for sym in ctx.ALL_SYMBOLS:
+                pk = paper_key(sym)
+                s = ctx.STATES.get(sym, {})
+                pos = state.get("positions", {}).get(pk, {})
+                qty = float(pos.get("qty", 0.0))
+                avg = float(pos.get("avg_price", 0.0))
+                cur = float(s.get("close_price", 0.0))
+                if abs(qty) > 0.000001 and avg > 0 and cur > 0:
+                    upnl = (cur - avg) / avg * abs(qty) * avg if qty > 0 else (avg - cur) / avg * abs(qty) * avg
+                    pos["unrealized_pnl"] = round(upnl, 6)
+                    pos["current_price"] = cur
+                    total_unrealized += upnl
+                else:
+                    pos.pop("unrealized_pnl", None)
+                    pos.pop("current_price", None)
+            state["total_unrealized_pnl"] = round(total_unrealized, 6)
+            state["last_updated"] = int(time.time())
+            with open(_paper_file, "w") as f:
+                json.dump(state, f, indent=4)
         except Exception:
             pass
 
