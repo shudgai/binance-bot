@@ -324,6 +324,8 @@ async def check_entries():
         profile = get_entry_strictness_profile()
         coin_profile_min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
         min_sig = min(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
+        if profile.get("min_signal_strength", 10.0) <= 10.0:
+            min_sig = max(min_sig - 1.5, 6.0)
         if strength < min_sig:
             set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
@@ -343,23 +345,26 @@ async def check_entries():
 
         # Exhaustion_Entry 與 Extreme_Reversal 是反轉策略，不受一般動能與 RSI 限制
         if route not in ["Exhaustion_Entry", "Extreme_Reversal"]:
-            # C. [放寬] 動能共振過濾：RSI 多單>22；空單<78；MACD 允許剛轉向
-            _macd_tiny = 1e-8
+            profile = get_entry_strictness_profile()
+            rsi_floor = profile.get("rsi_long_floor", 20.0)
+            rsi_ceiling = profile.get("rsi_long_ceiling", 78.0)
             if side == "buy":
-                if rsi <= 22:
+                if rsi <= rsi_floor - 2.0:
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 極端超賣 ({rsi:.1f} <= 22)，防接刀")
                     set_entry_diagnosis(f"{sym}: RSI 超賣過頭，阻擋做多")
                     continue
-                if macd_hist < -_macd_tiny and rsi < 35:
+                if macd_hist < -_macd_tiny and rsi < max(rsi_floor + 8.0, 35.0):
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 低 ({rsi:.1f}) 且 MACD 仍負 ({macd_hist:.6f})")
                     set_entry_diagnosis(f"{sym}: RSI/MACD 仍偏弱，阻擋做多")
                     continue
             else:  # sell
-                if rsi >= 78:
+                rsi_floor = profile.get("rsi_short_floor", 20.0)
+                rsi_ceiling = profile.get("rsi_short_ceiling", 72.0)
+                if rsi >= rsi_ceiling + 6.0:
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 極端超買 ({rsi:.1f} >= 78)，防追高")
                     set_entry_diagnosis(f"{sym}: RSI 超買過頭，阻擋做空")
                     continue
-                if macd_hist > _macd_tiny and rsi > 65:
+                if macd_hist > _macd_tiny and rsi > min(rsi_ceiling - 4.0, 65.0):
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 高 ({rsi:.1f}) 且 MACD 仍正 ({macd_hist:.6f})")
                     set_entry_diagnosis(f"{sym}: RSI/MACD 仍偏強，阻擋做空")
                     continue
@@ -376,6 +381,7 @@ async def check_entries():
             continue
 
         # E. 參與度過濾 (Participation Filter)
+        profile = get_entry_strictness_profile()
         if len(s["ohlcv"]) > 1:
             current_vol = volume  # 已是 ohlcv[-2]
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
@@ -394,11 +400,11 @@ async def check_entries():
                 volume_price_sync = True
 
             if route != "Exhaustion_Entry":
-                if not liquidity_check:
+                if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
                     set_entry_diagnosis(f"{sym}: 流動性不足，放棄進場")
                     continue
-                if not rvol_check:
+                if not rvol_check and profile.get("min_signal_strength", 10.0) > 10.0:
                     _rvol_pct = int(_rvol_multiplier * 100)
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
@@ -408,17 +414,19 @@ async def check_entries():
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry" and strength <= 15.0:
-            if side == "buy" and rsi > 80:
+            profile = get_entry_strictness_profile()
+            if side == "buy" and rsi > max(profile.get("rsi_long_ceiling", 78.0) + 4.0, 80.0):
                 logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超買，拒絕追高做多")
                 continue
-            if side == "sell" and rsi < 25:
+            if side == "sell" and rsi < min(profile.get("rsi_short_floor", 20.0) - 2.0, 25.0):
                 logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 被攔截：RSI {rsi:.1f} 極端超賣，拒絕殺低做空")
                 continue
         elif route != "Exhaustion_Entry" and strength > 15.0:
-            if side == "buy" and rsi > 88:
+            profile = get_entry_strictness_profile()
+            if side == "buy" and rsi > max(profile.get("rsi_long_ceiling", 78.0) + 10.0, 88.0):
                 logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超買頂部")
                 continue
-            if side == "sell" and rsi < 12:
+            if side == "sell" and rsi < min(profile.get("rsi_short_floor", 20.0) - 8.0, 12.0):
                 logger.info(f"🛑 [EXTREME_ZONE_FAIL] {sym} 強勢訊號仍被攔截：RSI {rsi:.1f} 極端超賣底部")
                 continue
 

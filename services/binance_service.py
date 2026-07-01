@@ -47,6 +47,38 @@ def get_price(symbol: str):
         "timestamp": ticker.get("time")
     }
 
+
+def _get_entry_price(symbol: str, side: str):
+    """選擇一個更貼近牌價的入場價格，優先使用 mark price，再回退到 order book 中位數，最後是最新成交價。"""
+    try:
+        mark = client.futures_mark_price(symbol=symbol)
+        mark_price = float(mark.get("markPrice", 0))
+        if mark_price > 0:
+            return mark_price
+    except Exception:
+        pass
+
+    try:
+        book = client.futures_order_book(symbol=symbol, limit=5)
+        if isinstance(book, dict):
+            bids = book.get("bids", [])
+            asks = book.get("asks", [])
+            if isinstance(bids, list) and isinstance(asks, list) and bids and asks:
+                bid_entry = bids[0]
+                ask_entry = asks[0]
+                if isinstance(bid_entry, (list, tuple)) and len(bid_entry) >= 1 and isinstance(ask_entry, (list, tuple)) and len(ask_entry) >= 1:
+                    bid_price = float(bid_entry[0])
+                    ask_price = float(ask_entry[0])
+                    midpoint = (bid_price + ask_price) / 2.0
+                    if midpoint > 0:
+                        return midpoint
+    except Exception:
+        pass
+
+    ticker = client.futures_symbol_ticker(symbol=symbol)
+    price = float(ticker.get("price", 0))
+    return price
+
 import time
 _last_prices = {}
 _last_prices_time = 0
@@ -298,8 +330,7 @@ def get_top_volume_altcoins(limit=12, ignore_list=None):
         return []
 
 def market_buy(symbol: str, amount: float):
-    ticker = client.futures_symbol_ticker(symbol=symbol)
-    price = float(ticker['price'])
+    price = _get_entry_price(symbol, "BUY")
     qty = amount / price
     step = get_contract_step(symbol)
     qty_str = str(round_step(qty, step))
@@ -323,8 +354,7 @@ def market_buy(symbol: str, amount: float):
     return order
 
 def market_short(symbol: str, amount: float):
-    ticker = client.futures_symbol_ticker(symbol=symbol)
-    price = float(ticker['price'])
+    price = _get_entry_price(symbol, "SELL")
     qty = amount / price
     step = get_contract_step(symbol)
     qty_str = str(round_step(qty, step))
