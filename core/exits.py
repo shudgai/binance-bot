@@ -544,7 +544,7 @@ async def check_exits(sym):
     
     # 動態回撤容忍度：利潤越高/波動越大，給予更合理的呼吸空間，防止被微幅波動洗出場
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    _pullback_buffer = max(0.004, atr_pct * 0.8)  # 至少 0.4% 或 0.8 倍 ATR 的回撤空間
+    _pullback_buffer = max(0.002, atr_pct * 0.5)  # 至少 0.2% 或 0.5 倍 ATR 的回撤空間
     
     if _peak_lock >= 0.015:
         _locked_gain = max(0.010, _peak_lock - _pullback_buffer)
@@ -638,16 +638,19 @@ async def check_exits(sym):
         s["has_been_negative"] = True
 
     # ── 峰值追蹤停利 (PeakTrail) ──
-    # 當利潤達到 0.3% 以上，且自高點回落達 0.2% 時，鎖利平倉
-    # _pt_peak = s.get("highest_profit_pct", 0.0)
-    # if _pt_peak >= 0.003 and (_pt_peak - profit_pct) >= 0.002:
-    #     cs = "sell" if is_long else "buy"
-    #     logger.info(
-    #         f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
-    #         f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ 0.20%，鎖利出場"
-    #     )
-    #     await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
-    #     return
+    _pt_peak = s.get("highest_profit_pct", 0.0)
+    if _pt_peak >= 0.003:
+        # 當利潤 < 1% 時，回落容忍度為 0.3% (防守微幅波動與手續費)
+        # 當利潤 >= 1% 時，回落容忍度收緊為 0.2% (高點鎖利)
+        _pt_buffer = 0.002 if _pt_peak >= 0.010 else 0.003
+        if (_pt_peak - profit_pct) >= _pt_buffer:
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
+                f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ {_pt_buffer*100:.2f}%，鎖利出場"
+            )
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
+            return
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)

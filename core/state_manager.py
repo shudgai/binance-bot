@@ -141,6 +141,46 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
             s["stop_count"] = 1
             s["first_stop_time"] = now
 
+        # 連續虧損汰換機制 (consecutive_losses >= 2)
+        losses = s.get("consecutive_losses", 0)
+        if losses >= 2:
+            logger.info(f"🔄 [連續虧損偵測] {sym} 已連續虧損 {losses} 次，準備進行幣種汰換...")
+            try:
+                from core.config import DEFAULT_SYMBOLS
+                from core.symbol_profile import save_symbol_pool, apply_symbol_profile, SYMBOL_PROFILES
+                
+                # 尋找不在目前監聽列表中的候選幣種
+                candidate_pool = list(DEFAULT_SYMBOLS)
+                for c in COIN_PROFILE_CONFIG.keys():
+                    if c not in candidate_pool:
+                        candidate_pool.append(c)
+                
+                new_sym = None
+                for c in candidate_pool:
+                    if c not in ctx.ALL_SYMBOLS:
+                        new_sym = c
+                        break
+                
+                if new_sym:
+                    # 執行汰換
+                    if sym in ctx.ALL_SYMBOLS:
+                        idx = ctx.ALL_SYMBOLS.index(sym)
+                        ctx.ALL_SYMBOLS[idx] = new_sym
+                    else:
+                        ctx.ALL_SYMBOLS.append(new_sym)
+                        
+                    # 初始化新幣種狀態
+                    ctx.STATES[new_sym] = build_symbol_state(new_sym)
+                    apply_symbol_profile(new_sym, SYMBOL_PROFILES.get(new_sym, {}))
+                    
+                    # 存檔持久化
+                    save_symbol_pool(ctx.ALL_SYMBOLS)
+                    logger.info(f"✨ [連續虧損汰換成功] {sym} 被移出監控池，由新幣種 {new_sym} 替補監控！")
+                else:
+                    logger.info(f"⚠️ [連續虧損汰換失敗] 候選池中已無可用幣種來替補 {sym}")
+            except Exception as replacement_err:
+                logger.info(f"🚨 [連續虧損汰換異常] {sym}: {replacement_err}")
+
 
 def reset_coin_state(sym):
     from core import ctx

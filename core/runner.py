@@ -194,6 +194,7 @@ async def main_loop(exchange):
     while True:
         try:
             loop_start = time.time()
+            await ensure_watch_tasks(exchange)
             if not PAPER_TRADING and loop_start - last_balance_update > 30:
                 await fetch_real_balance()
                 last_balance_update = loop_start

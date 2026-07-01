@@ -52,6 +52,16 @@ class AIManager:
         if not memories:
             return None
 
+        # 讀取當前設定檔參數作為對照上下文
+        current_configs = {}
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
+                    current_configs = config_data.get("profiles", {})
+            except Exception as e:
+                logger.error(f"AI 診斷讀取當前配置失敗: {e}")
+
         # 將摘要轉化為 AI 友好的文字描述
         context_text = ""
         for m in memories:
@@ -59,21 +69,24 @@ class AIManager:
 
         prompt = f"""
 You are a Quantitative Trading Expert specializing in "ATR-based Dynamic Position Sizing with Pyramiding".
-Analyze the following recent trade summaries and identify issues in friction, stop-loss sensitivity, or pyramiding efficiency.
+Analyze the following recent trade summaries and their CURRENT parameters, and identify issues in friction, stop-loss sensitivity, or pyramiding efficiency.
+
+Current Parameters of Symbols:
+{json.dumps(current_configs, indent=2, ensure_ascii=False)}
 
 Recent Trade Summaries:
 {context_text}
 
 Task:
-1. Identify any recurring problems (e.g., High Friction, Frequent Stop-outs, Poor Pyramiding).
-2. Provide specific parameter adjustment suggestions for the symbols involved.
+1. Identify any recurring problems (e.g., High Friction, Frequent Stop-outs, Poor Pyramiding) by comparing the trade outcomes with the current parameters of those symbols.
+2. Provide specific parameter adjustment suggestions for the symbols involved. Make sure you don't adjust parameters in the wrong direction (e.g. do not reduce sl_atr_multiplier if the symbol is suffering from frequent stop-outs).
 
 Output Format (Strict JSON):
 {{
   "diagnoses": [
     {{
       "symbol": "SYMBOL_NAME",
-      "reason": "Brief explanation of the issue",
+      "reason": "Brief explanation of the issue (compare current parameters vs trade summary)",
       "suggested_params": {{
         "sl_atr_multiplier": 2.5,
         "tp_atr_multiplier": 4.0,
