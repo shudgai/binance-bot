@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 150.68230163402836,
+    "balance_usdt": 150.08476143402837,
     "session_start_balance": 150.0,
     "positions": {
         "H:USDT": {
@@ -15,10 +15,17 @@
             "entries": []
         },
         "ORDI:USDT": {
-            "qty": 0.0,
-            "avg_price": 3.668671428571429,
+            "qty": -64.8,
+            "avg_price": 3.493,
             "realized_pnl": 0.08157428571426699,
-            "entries": []
+            "entries": [
+                {
+                    "price": 3.493,
+                    "qty": 64.8,
+                    "time": 1782872199061,
+                    "side": "sell"
+                }
+            ]
         },
         "SIREN:USDT": {
             "qty": 0.0,
@@ -64,17 +71,10 @@
             "entries": []
         },
         "GUA:USDT": {
-            "qty": -1235.0,
+            "qty": 0.0,
             "avg_price": 0.1841,
-            "realized_pnl": 0.0,
-            "entries": [
-                {
-                    "price": 0.1841,
-                    "qty": 1235.0,
-                    "time": 1782871245412,
-                    "side": "sell"
-                }
-            ]
+            "realized_pnl": -0.3704999999999935,
+            "entries": []
         }
     },
     "trades": [
@@ -296,6 +296,26 @@
             "isBuyer": false,
             "realized_pnl": 0.0,
             "fee": 0.11368175000000001,
+            "is_close": false
+        },
+        {
+            "symbol": "GUA:USDT",
+            "price": 0.1844,
+            "qty": 1235.0,
+            "time": 1782871764914,
+            "isBuyer": true,
+            "realized_pnl": -0.3704999999999935,
+            "is_close": true,
+            "fee": 0.11386700000000001
+        },
+        {
+            "symbol": "ORDI:USDT",
+            "price": 3.493,
+            "qty": 64.8,
+            "time": 1782872199062,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.1131732,
             "is_close": false
         }
     ]
