@@ -706,6 +706,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     limit_price = None
 
             params = {'marginMode': 'isolated', 'timeInForce': 'GTC'}
+            if ENTRY_ORDER_MODE == 'chase':
+                params['timeInForce'] = 'IOC'
             if order_type == 'market':
                 params.pop('timeInForce', None)
 
