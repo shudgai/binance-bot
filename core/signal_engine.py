@@ -5,7 +5,7 @@ import numpy as np
 
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, CONFIG_FILE,
-    DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS)
+    DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS, get_entry_strictness_profile)
 from core.indicators import _get_atr, _macd_vals, calculate_macd
 
 logger = logging.getLogger(__name__)
@@ -51,11 +51,13 @@ def compute_signal_strength(sym):
     trend_long = ema20 > 0 and close > ema20
     trend_short = ema20 > 0 and close < ema20
 
+    profile = get_entry_strictness_profile()
+
     # Define parameters for dynamic RSI thresholds
-    LONG_RSI_NORMAL = 45.0
-    SHORT_RSI_NORMAL = 55.0
-    LONG_RSI_HIGH_VOL = 30.0
-    SHORT_RSI_HIGH_VOL = 70.0
+    LONG_RSI_NORMAL = profile.get("rsi_long_floor", 25.0)
+    SHORT_RSI_NORMAL = profile.get("rsi_short_floor", 25.0)
+    LONG_RSI_HIGH_VOL = max(profile.get("rsi_long_floor", 25.0) - 5.0, 20.0)
+    SHORT_RSI_HIGH_VOL = max(profile.get("rsi_short_floor", 25.0) + 10.0, 30.0)
 
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
@@ -140,8 +142,8 @@ def compute_signal_strength(sym):
         strength = 15.0 + ((20.0 - rsi) / 2.0)
         return ("buy", strength, "Extreme_Reversal")
 
-    rsi_ok_long  = rsi < 75.0 and (rsi > 32.0 or (rsi >= 25.0 and (long_macd_cross  or macd_hist > 0)))
-    rsi_ok_short = rsi > 25.0 and (rsi < 68.0 or (rsi <= 75.0 and (short_macd_cross or macd_hist < 0)))
+    rsi_ok_long  = rsi < profile.get("rsi_long_ceiling", 75.0) and (rsi > profile.get("rsi_long_floor", 25.0) or (rsi >= max(profile.get("rsi_long_floor", 25.0) - 7.0, 20.0) and (long_macd_cross  or macd_hist > 0)))
+    rsi_ok_short = rsi > profile.get("rsi_short_floor", 25.0) and (rsi < profile.get("rsi_short_ceiling", 68.0) or (rsi <= profile.get("rsi_short_ceiling", 68.0) + 7.0 and (short_macd_cross or macd_hist < 0)))
 
     # --- 加分機制 ---
     long_trend_score = 0
@@ -192,7 +194,7 @@ def compute_signal_strength(sym):
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         macd_ok_long and
-        (last_two_candles_long or _bypass_candle) and
+        (last_two_candles_long or last_candle_long or _bypass_candle) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -201,7 +203,7 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         macd_ok_short and
-        (last_two_candles_short or _bypass_candle) and
+        (last_two_candles_short or last_candle_short or _bypass_candle) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -220,7 +222,7 @@ def compute_signal_strength(sym):
         macd_ok_long and
         rsi_direction_long and
         rsi_ok_long and
-        last_two_candles_long
+        (last_two_candles_long or last_candle_long)
     )
 
     route_b_short = (
@@ -230,7 +232,7 @@ def compute_signal_strength(sym):
         macd_ok_short and
         rsi_direction_short and
         rsi_ok_short and
-        last_two_candles_short
+        (last_two_candles_short or last_candle_short)
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -240,6 +242,8 @@ def compute_signal_strength(sym):
     if long_base_ok or short_base_ok:
         long_str = 0.0
         short_str = 0.0
+
+        min_entry_strength = profile.get("min_entry_strength", 10.0)
 
         if long_base_ok:
             long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
@@ -257,9 +261,9 @@ def compute_signal_strength(sym):
 
         # 多空同時成立時比強度取勝，不再永遠偏向多單
         if long_str >= short_str and long_base_ok:
-            return ("buy",  long_str  if long_str  >= 10.0 else 0.0, route_tag)
+            return ("buy",  long_str  if long_str  >= min_entry_strength else 0.0, route_tag)
         elif short_base_ok:
-            return ("sell", short_str if short_str >= 10.0 else 0.0, route_tag)
+            return ("sell", short_str if short_str >= min_entry_strength else 0.0, route_tag)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
     if len(s["ohlcv"]) >= 50:

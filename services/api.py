@@ -59,9 +59,9 @@ def daily_market_clean_and_reset(is_manual=False):
         if is_manual:
             force_close_all_positions()
             add_system_log(f"🧹 [{trigger_type}淨空] 系統狀態已重置，舊訂單已撤銷並強制平倉。", "success")
+            clear_system_logs()
         else:
             add_system_log(f"🧹 [{trigger_type}換班] 已保留現有持倉部位，將由機器人繼續監控至正常出場。", "success")
-        clear_system_logs()
         auto_radar_switch(force_start=True)
     except Exception as e:
         add_system_log(f"🚨 [{trigger_type}換班] 發生錯誤: {e}", "danger")
@@ -146,6 +146,8 @@ def api_force_reset():
 @app.get("/api/bot-status")
 def api_get_bot_status():
     status = get_bot_status()
+    if "entry_diagnosis" not in status:
+        status["entry_diagnosis"] = "等待訊號"
     if is_paper_trading():
         status["balance_quote"] = get_paper_balance()
         status["session_start_balance"] = get_session_start_balance()

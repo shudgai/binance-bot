@@ -186,6 +186,48 @@ ENTRY_ORDER_MODE = "chase"
 ENTRY_PULLBACK_ATR_MULT = 0.12
 ENTRY_CHASE_OFFSET_PCT = 0.0005
 
+ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "relaxed").lower()
+ENTRY_STRICTNESS_PROFILES = {
+    "relaxed": {
+        "volume_ratio": 0.50,
+        "pin_threshold": 2.5,
+        "min_body_ratio": 0.25,
+        "min_signal_strength": 10.0,
+        "rsi_long_floor": 20.0,
+        "rsi_short_floor": 20.0,
+        "rsi_long_ceiling": 78.0,
+        "rsi_short_ceiling": 72.0,
+        "min_entry_strength": 7.0,
+    },
+    "balanced": {
+        "volume_ratio": 0.70,
+        "pin_threshold": 2.0,
+        "min_body_ratio": 0.35,
+        "min_signal_strength": 12.0,
+        "rsi_long_floor": 25.0,
+        "rsi_short_floor": 25.0,
+        "rsi_long_ceiling": 75.0,
+        "rsi_short_ceiling": 68.0,
+        "min_entry_strength": 10.0,
+    },
+    "strict": {
+        "volume_ratio": 0.85,
+        "pin_threshold": 1.5,
+        "min_body_ratio": 0.45,
+        "min_signal_strength": 15.0,
+        "rsi_long_floor": 32.0,
+        "rsi_short_floor": 30.0,
+        "rsi_long_ceiling": 75.0,
+        "rsi_short_ceiling": 68.0,
+        "min_entry_strength": 12.0,
+    },
+}
+
+
+def get_entry_strictness_profile(mode=None):
+    mode_name = (mode or ENTRY_STRICTNESS_MODE).lower()
+    return ENTRY_STRICTNESS_PROFILES.get(mode_name, ENTRY_STRICTNESS_PROFILES["relaxed"])
+
 # 是否啟用 BTC 大盤過濾鎖定小幣開倉（True=啟用鎖定，False=小幣走自己獨立行情）
 USE_BTC_MACRO_FILTER = False
 

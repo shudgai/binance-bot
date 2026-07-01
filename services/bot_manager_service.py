@@ -17,6 +17,7 @@ bot_status = {
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
+    "entry_diagnosis": "等待訊號",
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
@@ -176,6 +177,10 @@ def set_bot_balance_quote(balance: float):
 
 def update_bot_status(key, value):
     bot_status[key] = value
+
+def set_entry_diagnosis(message: str):
+    bot_status["entry_diagnosis"] = message
+
 
 def read_bot_output(proc, sym):
     for line in iter(proc.stdout.readline, ''):

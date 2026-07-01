@@ -4,7 +4,7 @@ import numpy as np
 
 from core import ctx
 from core.config import (PAPER_TRADING, SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER,
-    COIN_PROFILE_CONFIG, USE_BTC_MACRO_FILTER)
+    COIN_PROFILE_CONFIG, USE_BTC_MACRO_FILTER, get_entry_strictness_profile)
 from core.indicators import _get_atr, _macd_vals, calculate_macd
 from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier, SYMBOL_PROFILES
 from core.balance import is_daily_loss_halted, get_fee_overhead
@@ -36,26 +36,28 @@ def is_valid_candle(sym, side):
     upper_wick = high - max(open_price, close_price)
     lower_wick = min(open_price, close_price) - low
 
+    profile = get_entry_strictness_profile()
+
     # --- 【新增：量能過濾】 ---
     current_vol = s.get("current_vol", 0.0)
     vol_ma20 = s.get("vol_ma20", 0.0)
-    # 如果當前成交量低於平均量的 70%，視為無量虛假波動，拒絕進場
-    if vol_ma20 > 0 and current_vol < vol_ma20 * 0.7:
-        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能過濾] 當前量({current_vol:.0f}) < 70%均量({vol_ma20*0.7:.0f})，拒絕進場")
+    volume_ratio = profile["volume_ratio"]
+    if vol_ma20 > 0 and current_vol < vol_ma20 * volume_ratio:
+        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [量能過濾] 當前量({current_vol:.0f}) < {volume_ratio:.2f}x均量({vol_ma20*volume_ratio:.0f})，拒絕進場")
         return False
     # --------------------------
 
-    pin_threshold = 2.0
+    pin_threshold = profile["pin_threshold"]
     candle_range = max(high - low, 1e-8)
     body_ratio = body / candle_range
-    if body_ratio < 0.35 or s.get("current_vol", 0.0) < max(100.0, s.get("vol_ma20", 0.0) * 0.5):
-        pin_threshold = 1.5
+    if body_ratio < profile["min_body_ratio"] or s.get("current_vol", 0.0) < max(100.0, s.get("vol_ma20", 0.0) * 0.5):
+        pin_threshold = max(1.5, pin_threshold - 0.5)
     ema20 = s.get("ema20", 0.0)
     if ema20 > 0:
         if side == 'buy' and close_price < ema20:
-            pin_threshold = 1.5
+            pin_threshold = max(1.5, pin_threshold - 0.5)
         if side == 'sell' and close_price > ema20:
-            pin_threshold = 1.5
+            pin_threshold = max(1.5, pin_threshold - 0.5)
 
     enabled = pin_threshold < 2.0
 
@@ -78,7 +80,7 @@ def is_valid_candle(sym, side):
         is_strong_macd = True
 
     if is_strong_macd:
-        pin_threshold = max(pin_threshold, 2.5)
+        pin_threshold = max(pin_threshold, profile["pin_threshold"] + 0.5)
         enabled = False
 
     if enabled:

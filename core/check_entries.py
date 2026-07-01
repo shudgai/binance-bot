@@ -5,7 +5,7 @@ import numpy as np
 
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE, MAX_POSITIONS,
-    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT)
+    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, get_entry_strictness_profile)
 from core.indicators import (_get_atr, _macd_vals, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -14,6 +14,7 @@ from core.state_manager import get_open_position_count, reset_coin_state
 from core.signal_engine import (compute_signal_strength, is_reversal_still_valid,
     is_eligible_for_reverse, check_pyramiding_eligibility, _load_disabled_symbols)
 from core.entry_filter import is_entry_allowed
+from services.bot_manager_service import set_entry_diagnosis
 
 logger = logging.getLogger(__name__)
 
@@ -315,12 +316,16 @@ async def check_entries():
         # 原本的計算邏輯
         side_strength = compute_signal_strength(sym)
         if side_strength is None or side_strength[0] is None:
+            set_entry_diagnosis(f"{sym}: 暫無有效訊號")
             continue
         side, strength, route = side_strength
 
         # [Layer 0] 每幣種最低信號強度門檻
-        min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
+        profile = get_entry_strictness_profile()
+        coin_profile_min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
+        min_sig = min(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
         if strength < min_sig:
+            set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
 
         # --- 2. 多重共振過濾區塊 (Multi-Confluence Entry Filter) ---
@@ -343,16 +348,20 @@ async def check_entries():
             if side == "buy":
                 if rsi <= 22:
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 極端超賣 ({rsi:.1f} <= 22)，防接刀")
+                    set_entry_diagnosis(f"{sym}: RSI 超賣過頭，阻擋做多")
                     continue
                 if macd_hist < -_macd_tiny and rsi < 35:
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 多單 RSI 低 ({rsi:.1f}) 且 MACD 仍負 ({macd_hist:.6f})")
+                    set_entry_diagnosis(f"{sym}: RSI/MACD 仍偏弱，阻擋做多")
                     continue
             else:  # sell
                 if rsi >= 78:
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 極端超買 ({rsi:.1f} >= 78)，防追高")
+                    set_entry_diagnosis(f"{sym}: RSI 超買過頭，阻擋做空")
                     continue
                 if macd_hist > _macd_tiny and rsi > 65:
                     logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 空單 RSI 高 ({rsi:.1f}) 且 MACD 仍正 ({macd_hist:.6f})")
+                    set_entry_diagnosis(f"{sym}: RSI/MACD 仍偏強，阻擋做空")
                     continue
 
         # D. 真實性驗證 (Volume Confirmation) - 動態門檻
@@ -363,6 +372,7 @@ async def check_entries():
         _d_multiplier = 0.03 if _is_low_vol_ce else 0.04
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
+            set_entry_diagnosis(f"{sym}: 量能不足，無法進場")
             continue
 
         # E. 參與度過濾 (Participation Filter)
@@ -386,10 +396,12 @@ async def check_entries():
             if route != "Exhaustion_Entry":
                 if not liquidity_check:
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
+                    set_entry_diagnosis(f"{sym}: 流動性不足，放棄進場")
                     continue
                 if not rvol_check:
                     _rvol_pct = int(_rvol_multiplier * 100)
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
+                    set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
                     logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
@@ -551,6 +563,7 @@ async def check_entries():
         s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
 
         logger.info(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
+        set_entry_diagnosis(f"{sym}: 等待 K 線收盤確認")
 
     if not candidates:
         return
@@ -569,6 +582,7 @@ async def check_entries():
                 continue
             remaining_slots -= 1
             logger.info(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
+            set_entry_diagnosis(f"{sym}: 準備立即開倉 ({route})")
         else:
             logger.info(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
 
