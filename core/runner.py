@@ -372,10 +372,16 @@ def print_multi_status():
 
     active_positions = []
     for sym, s in ctx.STATES.items():
-        if abs(s.get('qty', 0)) > 0.000001:
-            pnl = round(s.get('pnl_pct', 0.0), 2)
-            direction = "多" if s.get('qty', 0) > 0 else "空"
+        qty = s.get('qty', 0)
+        if abs(qty) > 0.000001:
             avg_price = s.get('avg_price', 0)
+            close_price = s.get('close_price', avg_price)
+            direction = "多" if qty > 0 else "空"
+            if avg_price > 0:
+                pnl_val = (close_price - avg_price) / avg_price if qty > 0 else (avg_price - close_price) / avg_price
+                pnl = round(pnl_val * 100, 2)
+            else:
+                pnl = 0.0
             active_positions.append(f"  🔥 持倉] {sym} | 方向:{direction} | 入場:{avg_price} | 獲利:{pnl}%")
 
     logger.info(f"[{now}] [__multi__] 📊 [現況]")

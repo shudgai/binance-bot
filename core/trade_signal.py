@@ -71,7 +71,7 @@ def update_trade_signal(sym, trade):
 
         if rt_profit >= 0.003 and not s.get("is_breakeven_locked", False):
             _buf = 0.003
-            _be = avg_p * (1 + _buf)
+            _be = avg_p * (1 + _buf) if _is_long else avg_p * (1 - _buf)
             _sl_now = s.get("stop_loss", 0)
             if _is_long and (_sl_now == 0 or _be > _sl_now):
                 s["stop_loss"] = _be
