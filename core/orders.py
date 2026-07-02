@@ -10,8 +10,8 @@ from core import ctx
 from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
-    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT, USE_TESTNET)
-from core.exchange_client import exchange_futures, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
+    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT)
+from core.exchange_client import exchange_futures, exchange_market_data, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
 from core.state_manager import mark_exit, reset_coin_state, build_symbol_state
@@ -503,13 +503,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     s["leverage"] = lev
     logger.info(f"@@LEVERAGE@@{lev}")
 
-    # Demo Trading (demo-fapi.binance.com) 的掛單簿是獨立模擬撮合的資料，跟真實市場的買賣盤量級
-    # 跟比例都對不上（實測 BTC/USDT 真實 bid/ask 比 0.33，Demo 卻是 1.91；量級更是差了 55~2000 倍），
-    # 用這組資料判斷「真實買賣盤是否支撐」沒有意義，只會產生雜訊性質的誤攔截，所以走 Demo Trading
-    # 時跳過這道檢查；日後換上正式 API Key（USE_TESTNET=False）連到真實市場後會自動恢復檢查。
-    if not is_rescue_dca and not USE_TESTNET:
+    # 改用 exchange_market_data（永遠讀真實市場，不受 Demo Trading 影響）查掛單簿：
+    # Demo Trading 自己的掛單簿是獨立模擬撮合的資料，跟真實市場的買賣盤量級跟比例都對不上
+    # （實測 BTC/USDT 真實 bid/ask 比 0.33，Demo 卻是 1.91；量級更是差了 55~2000 倍），
+    # 拿真實市場的掛單簿判斷才有意義，兩邊環境都適用，不用再看 USE_TESTNET 決定要不要跳過。
+    if not is_rescue_dca:
         try:
-            orderbook = await exchange_futures.fetch_order_book(sym, limit=20)
+            orderbook = await exchange_market_data.fetch_order_book(sym, limit=20)
             bids = sum(x[1] for x in orderbook.get('bids', []))
             asks = sum(x[1] for x in orderbook.get('asks', []))
             _s = ctx.STATES.get(sym, {})
