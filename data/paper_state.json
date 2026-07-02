@@ -1,0 +1,36 @@
+{
+    "balance_usdt": 150.25472546122057,
+    "session_start_balance": 150.0,
+    "positions": {
+        "XRP:USDT": {
+            "qty": 0.0,
+            "avg_price": 1.063218714705,
+            "realized_pnl": 0.3818018404505568,
+            "entries": []
+        }
+    },
+    "trades": [
+        {
+            "symbol": "XRP:USDT",
+            "price": 1.063218714705,
+            "qty": 119.7,
+            "time": 1782969983727,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.06363364007509426,
+            "is_close": false
+        },
+        {
+            "symbol": "XRP:USDT",
+            "price": 1.0600290585608851,
+            "qty": 119.7,
+            "time": 1782970909129,
+            "isBuyer": true,
+            "realized_pnl": 0.3818018404505568,
+            "is_close": true,
+            "fee": 0.06344273915486898
+        }
+    ],
+    "total_unrealized_pnl": 0.0,
+    "last_updated": 1782973086
+}

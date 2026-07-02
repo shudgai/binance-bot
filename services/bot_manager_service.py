@@ -17,14 +17,15 @@ bot_status = {
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
+    "entry_diagnosis": "等待訊號",
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
-SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_symbols.json")
-BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot_running_state.json")
+SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
+BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
-    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "RENDERUSDT", "LINKUSDT", "AVAXUSDT",
-    "DOTUSDT", "UNIUSDT", "NEARUSDT", "FETUSDT", "SUIUSDT"
+    "SOLUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT",
+    "LINKUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT"
 ]
 
 
@@ -52,15 +53,27 @@ def normalize_symbol_list(symbols, max_count=20):
     return seen[:max_count]
 
 
+def _filter_disabled_symbols(symbols):
+    from core.config import COIN_PROFILE_CONFIG
+    filtered = []
+    for sym in symbols:
+        if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):
+            continue
+        filtered.append(sym)
+    return filtered
+
+
 def load_symbol_config():
     try:
         with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return normalize_symbol_list(data.get("symbols", []))
-        return normalize_symbol_list(data)
+            symbols = normalize_symbol_list(data.get("symbols", []))
+        else:
+            symbols = normalize_symbol_list(data)
+        return _filter_disabled_symbols(symbols)
     except Exception:
-        return list(DEFAULT_SYMBOLS)
+        return _filter_disabled_symbols(list(DEFAULT_SYMBOLS))
 
 
 def load_symbol_profiles():
@@ -133,17 +146,54 @@ def toggle_coin_disabled(symbol: str) -> dict:
 
 def get_bot_status():
     from services.paper_trade_service import get_paper_balance
+    from core.config import PAPER_TRADING
     import os
     import json
-    from dotenv import load_dotenv
-    
-    load_dotenv()
-    if os.getenv("TRADING_MODE", "paper") == "paper":
+
+    # 改用 core.config.PAPER_TRADING（跟實際下單邏輯同一個判斷依據），
+    # 不要再看 TRADING_MODE 這個沒被設定過的環境變數，避免切了真實交易後面板還顯示紙上餘額。
+    if PAPER_TRADING:
         bot_status["balance_quote"] = get_paper_balance()
-        
-    if not bot_status.get("active_symbols"):
-        bot_status["active_symbols"] = load_symbol_config()
-        
+
+        # Calculate total realized PNL from paper_state.json
+        try:
+            total_realized = 0.0
+            total_fees = 0.0
+            state_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if os.path.exists(state_path):
+                with open(state_path, "r") as f:
+                    state = json.load(f)
+                for t in state.get("trades", []):
+                    fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+                    total_fees += fee
+                    if t.get("is_close"):
+                        pnl = t.get("realized_pnl", 0.0)
+                        total_realized += pnl
+            bot_status["total_realized_pnl"] = total_realized - total_fees
+        except Exception as e:
+            bot_status["total_realized_pnl"] = 0.0
+    else:
+        try:
+            # 用 API 進程自己直接查詢，不依賴 core.balance.REAL_BALANCE
+            # （那是 main.py 進程內的模組全域變數，API 是另一個進程看不到它的更新）。
+            from services.binance_service import get_account_balance_usdt
+            from core.config import LIVE_CAPITAL_CAP
+            real_balance = get_account_balance_usdt()
+            # 顯示的本金跟實際下單倉位計算用同一個上限，避免介面看到的數字（5000）跟部位大小（用150算）對不起來
+            bot_status["balance_quote"] = min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance
+        except Exception:
+            pass
+
+    # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
+    try:
+        actual_symbols = load_symbol_config()
+        if actual_symbols:
+            bot_status["watch_symbols"] = actual_symbols
+            bot_status["active_symbols"] = actual_symbols
+        bot_status["disabled_symbols"] = load_disabled_symbols()
+    except Exception:
+        pass
+
     return bot_status
 
 def set_bot_balance_quote(balance: float):
@@ -151,6 +201,10 @@ def set_bot_balance_quote(balance: float):
 
 def update_bot_status(key, value):
     bot_status[key] = value
+
+def set_entry_diagnosis(message: str):
+    bot_status["entry_diagnosis"] = message
+
 
 def read_bot_output(proc, sym):
     for line in iter(proc.stdout.readline, ''):
@@ -174,10 +228,34 @@ def read_bot_output(proc, sym):
                     bot_status["leverage"] = int(line.replace("@@LEVERAGE@@", "").strip())
                 except:
                     pass
+            elif line.startswith("@@SL_STATE@@"):
+                try:
+                    import json as _json
+                    bot_status["sl_states"] = _json.loads(line.replace("@@SL_STATE@@", "").strip())
+                except Exception:
+                    pass
+            elif line.startswith("@@TREND_BIAS@@"):
+                try:
+                    import json as _json
+                    bot_status["trend_bias"] = _json.loads(line.replace("@@TREND_BIAS@@", "").strip())
+                except Exception:
+                    pass
             elif line.startswith("@@COIN_DEBUG@@"):
                 add_system_log(line.replace("@@COIN_DEBUG@@", "").strip(), "info")
             else:
-                add_system_log(f"[{sym}] {line}", "info")
+                # 過濾掉每輪掃描的 debug 雜訊（🔍 條件檢測），只保留有意義的事件
+                _skip_prefixes = ("🔍", "[__multi__]", "[__multi__] 🔍", "----")
+                if any(line.startswith(p) for p in _skip_prefixes):
+                    pass  # 靜默丟棄，不送 web log
+                else:
+                    level = "info"
+                    if any(k in line for k in ("❌", "🛑", "⚠️", "停損", "REJECT", "Error", "error")):
+                        level = "danger"
+                    elif any(k in line for k in ("✅", "🚀", "⚡", "開倉", "平倉", "獲利")):
+                        level = "success"
+                    elif any(k in line for k in ("🛡️", "📊", "🔄", "冷卻")):
+                        level = "warning"
+                    add_system_log(f"[{sym}] {line}", level)
     proc.stdout.close()
     proc.wait()
     
@@ -195,21 +273,24 @@ def read_bot_output(proc, sym):
         from services.radar_service import auto_radar_switch
         threading.Thread(target=auto_radar_switch, daemon=True).start()
     elif bot_status["is_running"] and sym in bot_processes and bot_processes[sym] == proc:
-        # 退出碼 0 = 防禦分流正常退出，不重啟
-        # 退出碼 1+ = 真正崩潰，才重啟
+        # 無論退出碼為何，只要 bot_status["is_running"] 為 True，就必須重啟
+        # (退出碼 0 可能是因為防禦分流、或不可預期的 CancelledError 導致)
         if proc.returncode == 0:
-            add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，守護不重啟。", "info")
+            # 只在調試模式下記錄，避免頁面被重複重啟訊息刷爆。
+            if os.getenv("BOT_DEBUG_LOGS") == "1":
+                add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，將在 5 秒後重試檢查...", "info")
         else:
             add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止 (exit {proc.returncode})，將在 5 秒後自動重啟...", "danger")
-            def daemon_restart():
-                time.sleep(5)
-                if not bot_status["is_running"]:
-                    return
-                if sym == "__multi__":
-                    _start_multi_coin_bot(bot_status["trade_amount"])
-                else:
-                    _start_single_bot(sym, bot_status["trade_amount"])
-            threading.Thread(target=daemon_restart, daemon=True).start()
+            
+        def daemon_restart():
+            time.sleep(5)
+            if not bot_status["is_running"]:
+                return
+            if sym == "__multi__":
+                _start_multi_coin_bot(bot_status["trade_amount"])
+            else:
+                _start_single_bot(sym, bot_status["trade_amount"])
+        threading.Thread(target=daemon_restart, daemon=True).start()
 
 
 def _start_single_bot(symbol: str, trade_amt: float):
@@ -224,7 +305,7 @@ def _start_single_bot(symbol: str, trade_amt: float):
 
 def _start_multi_coin_bot(trade_amt: float):
     global bot_processes
-    cmd = [sys.executable, "-u", "heavy_dual_shot_core.py"]
+    cmd = [sys.executable, "-u", "main.py"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
     bot_processes["__multi__"] = proc
     threading.Thread(target=read_bot_output, args=(proc, "__multi__"), daemon=True).start()
@@ -233,7 +314,7 @@ def _start_multi_coin_bot(trade_amt: float):
 
 def _get_open_position_symbols():
     try:
-        state_path = os.path.join(os.path.dirname(__file__), "..", "paper_state.json")
+        state_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:
@@ -312,22 +393,20 @@ def kill_bot():
     for s in symbols:
         _kill_single_bot(s)
     
-    # 確保所有遺留的 bot 行程都被清除，防止 API 重啟後產生孤兒行程
-    # 使用精確字串匹配，避免誤殺 multi_coin_bot_v2.py（其名稱包含 multi_coin_bot.py 作為子字串）
+    # 確保所有遺留的 bot 行程都被清除（包含 manage_bot.sh 直接啟動的進程）
     try:
-        os.system("pkill -f 'multi_coin_bot_v2\\.py'")
-        os.system("pkill -f '[^2]multi_coin_bot\\.py'")
+        os.system("pkill -f 'main\\.py'")
     except:
         pass
 
     # 移除單例鎖定檔，避免已終止程序遺留鎖定導致新進程啟動失敗
-    try:
-        dir_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        os.remove(f"/tmp/binance_bot_single_instance_{dir_name}.lock")
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+    for _lf in ("/tmp/binance_bot_32f2e2ed.lock", "/tmp/binance_bot_single_instance.lock"):
+        try:
+            os.remove(_lf)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
 
 def restart_bot():
     kill_bot()
@@ -366,12 +445,15 @@ def toggle_bot():
     return bot_status["is_running"]
 
 def set_bot_symbol(symbols):
+    from core.config import COIN_PROFILE_CONFIG
+
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:
         symbols = list(DEFAULT_SYMBOLS)
 
     symbols = normalize_symbol_list(symbols)
+    symbols = [s for s in symbols if not COIN_PROFILE_CONFIG.get(s, {}).get("disable_entry", False)]
     save_symbol_config(symbols)
     bot_status["active_symbols"] = symbols
 
