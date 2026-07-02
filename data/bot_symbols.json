@@ -13,7 +13,10 @@
     "OUSDT",
     "BEATUSDT",
     "RIFUSDT",
-    "BASEDUSDT"
+    "BASEDUSDT",
+    "TAIKOUSDT",
+    "XRPUSDT",
+    "DYDXUSDT"
   ],
   "profiles": {
     "BTWUSDT": {

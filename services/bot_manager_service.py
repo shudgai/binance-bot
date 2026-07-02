@@ -53,15 +53,27 @@ def normalize_symbol_list(symbols, max_count=20):
     return seen[:max_count]
 
 
+def _filter_disabled_symbols(symbols):
+    from core.config import COIN_PROFILE_CONFIG
+    filtered = []
+    for sym in symbols:
+        if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):
+            continue
+        filtered.append(sym)
+    return filtered
+
+
 def load_symbol_config():
     try:
         with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return normalize_symbol_list(data.get("symbols", []))
-        return normalize_symbol_list(data)
+            symbols = normalize_symbol_list(data.get("symbols", []))
+        else:
+            symbols = normalize_symbol_list(data)
+        return _filter_disabled_symbols(symbols)
     except Exception:
-        return list(DEFAULT_SYMBOLS)
+        return _filter_disabled_symbols(list(DEFAULT_SYMBOLS))
 
 
 def load_symbol_profiles():
@@ -421,12 +433,15 @@ def toggle_bot():
     return bot_status["is_running"]
 
 def set_bot_symbol(symbols):
+    from core.config import COIN_PROFILE_CONFIG
+
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:
         symbols = list(DEFAULT_SYMBOLS)
 
     symbols = normalize_symbol_list(symbols)
+    symbols = [s for s in symbols if not COIN_PROFILE_CONFIG.get(s, {}).get("disable_entry", False)]
     save_symbol_config(symbols)
     bot_status["active_symbols"] = symbols
 

@@ -962,7 +962,14 @@ createApp({
         // 不使用 localStorage 初始化幣種，改為全部由 fetchBotStatus() 從 bot_symbols.json 動態載入
         // 避免舊快取導致幣種清單不一致
         const coins = ref([]);
-        const activeSymbol = ref(localStorage.getItem('activeSymbol') || (coins.value.length > 0 ? coins.value[0].symbol : 'SUIUSDT'));
+        const activeSymbol = ref('SUIUSDT');
+
+        const sanitizeSymbolList = (symbols) => {
+            if (!Array.isArray(symbols)) return [];
+            return symbols
+                .map(s => (typeof s === 'string' ? s.trim().toUpperCase() : ''))
+                .filter(s => s && s !== 'BTCUSDT' && !disabledSymbols.value.includes(s));
+        };
 
         watch(() => coins.value.map(c => c.symbol), () => {
             localStorage.setItem('coins', JSON.stringify(coins.value));
@@ -1389,23 +1396,26 @@ createApp({
                     : (data.watch_symbols && data.watch_symbols.length > 0 ? data.watch_symbols : null);
 
                 if (symbolList) {
-                    console.log(`[fetchBotStatus] symbolList(${symbolList.length}):`, symbolList.slice(0,5));
-                    // BTCUSDT 不是交易幣，過濾掉；ETHUSDT 現在是交易幣，保留
-                    const filteredSymbols = symbolList.filter(s => s !== 'BTCUSDT');
+                    const filteredSymbols = sanitizeSymbolList(symbolList);
+                    console.log(`[fetchBotStatus] symbolList(${symbolList.length}) -> filtered(${filteredSymbols.length}):`, filteredSymbols.slice(0,5));
                     const newCoins = filteredSymbols.map(sym => {
                         const existing = coins.value.find(c => c.symbol === sym);
                         if (existing) return existing;
                         const name = sym.replace('USDT', '');
                         return { symbol: sym, name: name, label: name, price: 0, prevPrice: 0, priceClass: '' };
                     });
-                    
+
                     const oldSyms = coins.value.map(c => c.symbol).join(',');
                     const newSyms = newCoins.map(c => c.symbol).join(',');
                     if (oldSyms !== newSyms) {
                         coins.value = newCoins;
                         localStorage.setItem('coins', JSON.stringify(newCoins));
                         if (!newCoins.some(c => c.symbol === activeSymbol.value)) {
-                            setActiveCoin(newCoins[0].symbol);
+                            if (newCoins.length > 0) {
+                                activeSymbol.value = newCoins[0].symbol;
+                            } else {
+                                activeSymbol.value = 'SUIUSDT';
+                            }
                         }
                         initWebSocket();
                         fetchInitialPrices();
@@ -1987,6 +1997,10 @@ createApp({
         onMounted(() => {
             addLog('🚀 Dashboard 初始化...');
             document.addEventListener('keydown', onKeydown);
+            localStorage.removeItem('coins');
+            localStorage.removeItem('activeSymbol');
+            coins.value = [];
+            activeSymbol.value = 'SUIUSDT';
             initChart();
             fetchExchangeRate();
             fetchBotStatus();
