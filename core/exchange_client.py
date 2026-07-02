@@ -18,6 +18,12 @@ exchange_futures = ccxtpro.binance({
     'options': {
         'defaultType': 'future',
         'watchOrderBookSnapshot': True,
+        # 這個機器人只交易 USDT 本位永續合約 (linear)，load_markets() 預設卻會同時抓
+        # spot/linear/inverse 三種市場資料。Demo Trading 帳戶不支援現貨（spot）的
+        # exchangeInfo 端點，一起抓的話會讓整個 load_markets() 失敗（ExchangeNotAvailable），
+        # 進而讓某些幣種抓不到正確市場資訊、K線請求 fallback 到錯的網址。限定只抓 linear
+        # 可以避開這個問題，兩邊環境（正式/Demo）都適用，也順便減少不必要的 API 呼叫。
+        'fetchMarkets': ['linear'],
     },
 })
 

@@ -26,7 +26,16 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('balance_quote \\(real, for display\\):', d.get\\('balance_quote'\\)\\)\")",
       "Bash(timeout -s KILL 15 ./venv/bin/python3 -c ' *)",
       "Bash(curl -s -X POST \"http://localhost:8005/api/bot-status/set-amount/150\")",
-      "Bash(curl -s -X POST \"http://localhost:8006/api/bot-status/set-amount/150\")"
+      "Bash(curl -s -X POST \"http://localhost:8006/api/bot-status/set-amount/150\")",
+      "Bash(venv/bin/python3 -c ' *)",
+      "Bash(.venv/bin/python3 -c ' *)",
+      "Bash(awk '/2026-07-02 12:26:31/{f=1} f' logs/bot.log)",
+      "Bash(awk '/2026-07-02 12:30:27/{f=1} f' logs/bot.log)",
+      "Bash(dmesg -T)",
+      "Bash(journalctl --since \"today\")",
+      "Read(//proc/pressure/**)",
+      "Bash(systemctl status *)",
+      "Bash(awk '{printf \"%-8s %-6s %-6s %s\\\\n\", $2, $4\"%\", $6/1024\"MB\", $11\" \"$12\" \"$13}')"
     ]
   }
 }

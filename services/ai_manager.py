@@ -77,6 +77,10 @@ class AIManager:
                 logger.error(f"AI 診斷讀取當前配置失敗: {e}")
 
         # 將摘要轉化為 AI 友好的文字描述
+        prompt = "Recent trades memories: " + json.dumps(memories, ensure_ascii=False) + "\n\n"
+        prompt += "Current configs: " + json.dumps(current_configs, ensure_ascii=False) + "\n\n"
+        prompt += "Please diagnose and provide suggested parameter updates."
+        
         # Prepare request payload
         req_payload = {
             "model": AI_MODEL,

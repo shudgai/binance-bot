@@ -265,8 +265,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if side == "buy" and bb_lower > 0:
         # 支持 per-coin 覆蓋：允許在配置中為特定幣種放寬支撑區容忍度與強度門檻
         coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
-        tol = coin_cfg.get("support_zone_tolerance_pct", 0.003)  # default 0.3%
-        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 24.0)
+        tol = coin_cfg.get("support_zone_tolerance_pct", 0.015)  # default 1.5%（原 0.5%）
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 12.0)  # 原 20.0
 
         # 買入時必須在下軌附近（有支撑）
         support_zone_upper = bb_lower * (1 + tol)
@@ -283,8 +283,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     
     if side == "sell" and bb_upper > 0:
         coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
-        tol = coin_cfg.get("support_zone_tolerance_pct", 0.003)
-        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 24.0)
+        tol = coin_cfg.get("support_zone_tolerance_pct", 0.015)  # 原 0.5%
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 12.0)  # 原 20.0
 
         # 賣出時必須在上軌附近（有阻力）
         resistance_zone_lower = bb_upper * (1 - tol)
@@ -334,11 +334,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
         is_strong_signal = strength >= 16.0
         # 放寬牛市防禦：原本只在極端超買/反轉路由才放行，現在允許中度強度訊號在 4H多頭環境下做空
-        if current_rsi_macro > 73.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
-        elif is_reversal_route and current_rsi_macro > 70.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
-        elif is_strong_signal and current_rsi_macro > 58.0:
+        if current_rsi_macro > 65.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>65，豁免允許空單")
+        elif is_reversal_route and current_rsi_macro > 60.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>60，豁免允許空單")
+        elif is_strong_signal and current_rsi_macro > 50.0:
             logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭且訊號強度 {strength:.1f}，RSI {current_rsi_macro:.1f} 於中段區間，放寬允許空單")
         else:
             logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
@@ -789,7 +789,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         bonus_b = 3.0
 
     total_score = base_score + bonus_a + bonus_b
-    MIN_ENTRY_SCORE = 9.0
+    MIN_ENTRY_SCORE = 4.0  # 原 7.5，放寬讓更多硬條件已通過的訊號能實際成交
 
     if total_score < MIN_ENTRY_SCORE:
         logger.info(f"🛑 [REJECT] {sym}: 硬條件通過，但總分未達標 (綜合得分: {total_score:.1f} < 門檻: {MIN_ENTRY_SCORE:.1f})")
