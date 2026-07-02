@@ -249,6 +249,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         logger.info(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
         return True
 
+    # 若幣種被標記為完全禁入場，直接拒絕（管理員策略）
+    if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):
+        logger.info(f"🛑 [DISABLED_ENTRY] {sym} 已被設定為禁入場，拒絕所有進場信號")
+        return False
+
     # =========================================================================
     # ✨ NEW STAGE 0.5: SUPPORT/RESISTANCE ZONE CONFIRMATION (支撑/阻力位確認)
     # 只在有明確支撑/阻力的位置入場，避免買在相對高點

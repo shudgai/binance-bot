@@ -112,11 +112,41 @@ Output Format (Strict JSON):
                 }),
                 timeout=30
             )
-            res_json = response.json()
-            content = json.loads(res_json["choices"][0]["message"]["content"])
+            try:
+                res_json = response.json()
+            except Exception:
+                text = response.text if hasattr(response, 'text') else str(response)
+                logger.error(f"AI API 回傳非 JSON：status={getattr(response,'status_code',None)} body={text[:200]}")
+                return None
+
+            # 防護：檢查 choices 與內容路徑是否存在
+            choices = res_json.get("choices") if isinstance(res_json, dict) else None
+            if not choices or not isinstance(choices, list):
+                logger.error(f"AI API 回傳格式缺少 choices 或格式錯誤: {res_json}")
+                return None
+
+            message = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if not message:
+                logger.error(f"AI API 回傳缺少 message 欄位: {choices[0]}")
+                return None
+
+            content_text = message.get("content")
+            if not content_text:
+                logger.error(f"AI API 回傳 message.content 為空: {message}")
+                return None
+
+            try:
+                content = json.loads(content_text)
+            except Exception as e:
+                logger.error(f"解析 AI 回傳 JSON 失敗: {e}；原始回傳片段: {content_text[:500]}")
+                return None
+
             return content.get("diagnoses", [])
+        except requests.RequestException as e:
+            logger.error(f"AI API 請求失敗: {e}")
+            return None
         except Exception as e:
-            logger.error(f"AI API 調用失敗: {e}")
+            logger.error(f"AI API 未知錯誤: {e}")
             return None
 
     def validate_suggestion(self, symbol: str, suggestion: Dict) -> Optional[Dict]:
