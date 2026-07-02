@@ -286,6 +286,7 @@ def get_trades(symbol: str):
             "qty": qty,
             "time": timestamp,
             "is_buyer": is_buyer,
+            "symbol": t.get("symbol"),
             "pnl": realized_pnl if realized_pnl != 0 else None
         })
     return formatted_trades
