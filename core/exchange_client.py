@@ -78,9 +78,14 @@ async def get_contract_precision(sym: str):
         step_size = float(amount_limits.get('min', 0.001) or 0.001)
         min_qty = float(amount_limits.get('min', step_size) or step_size)
         precision = int(round(-math.log10(step_size))) if step_size > 0 else 8
+        # binance 在 ccxt 用 TICK_SIZE 精度模式，market['precision']['price'] 本身就是
+        # 價格最小跳動單位（例如 0.0001），不是小數位數，可以直接拿來當 tick_size 用於
+        # round_step() 四捨五入交易所止損單的觸發價，避免下單時價格精度不合法被拒。
+        tick_size = float(market.get('precision', {}).get('price', 0.0001) or 0.0001)
         _PRECISION_CACHE[sym] = {
             'step_size': step_size,
             'min_qty': min_qty,
+            'tick_size': tick_size,
             'qty_prec': market.get('precision', {}).get('amount', precision),
             'price_prec': market.get('precision', {}).get('price', precision)
         }
@@ -88,6 +93,7 @@ async def get_contract_precision(sym: str):
         _PRECISION_CACHE[sym] = {
             'step_size': 0.001,
             'min_qty': 0.001,
+            'tick_size': 0.0001,
             'qty_prec': 3,
             'price_prec': 3
         }

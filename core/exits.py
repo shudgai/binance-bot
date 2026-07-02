@@ -1070,8 +1070,10 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
     而不是無條件都攤平——要看情況：只有「動能已趨緩、不是還在急殺/急拉」時才值得攤平，
     如果還是接刀狀態（急跌/急漲中），攤平只會虧更多，這時就照原計畫停損出場。"""
     if s.get("entry_count", 0) != 1 or s.get("is_ordering"):
+        logger.info(f"ℹ️ [補救略過] {sym} 不評估攤平救援 (entry_count={s.get('entry_count', 0)}, is_ordering={s.get('is_ordering')})")
         return False
     if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False):
+        logger.info(f"ℹ️ [補救略過] {sym} 此幣種已停用 Rescue DCA，不評估攤平救援")
         return False
 
     # 接刀防呆：跟一般救援攤平用同一套判斷，急跌/急漲中不硬攤，直接讓停損正常出場

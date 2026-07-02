@@ -260,8 +260,12 @@ def api_get_all_positions():
             from services.paper_trade_service import get_paper_positions
             return get_paper_positions()
         else:
-            return {} # For real trading, not implemented yet
+            from services.binance_service import get_all_positions
+            return get_all_positions()
     except Exception as e:
+        # 原本這裡吞掉例外直接回傳 {}，前端看起來像「沒有未實現損益」，但實際上是查詢失敗，
+        # 而不是真的沒有持倉——留下 log 才能追查到底是什麼原因查詢失敗。
+        add_system_log(f"🚨 [持倉查詢失敗] /api/positions: {e}", "danger")
         return {}
 
 @app.get("/api/position/{symbol}")

@@ -48,7 +48,8 @@
       "Bash(.venv/bin/python3 -m pytest tests/ --collect-only -q)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('8005 is_running:', d['is_running'], '| active:', len\\(d.get\\('active_symbols',[]\\)\\)\\)\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('8006 is_running:', d['is_running'], '| active:', len\\(d.get\\('active_symbols',[]\\)\\)\\)\")",
-      "Bash(curl -s http://localhost:8006/api/open-orders?symbol=VELVETUSDT)"
+      "Bash(curl -s http://localhost:8006/api/open-orders?symbol=VELVETUSDT)",
+      "Bash(curl -s http://localhost:8006/api/position/MUSDT)"
     ]
   }
 }

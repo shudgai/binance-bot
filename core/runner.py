@@ -135,7 +135,13 @@ async def calibrate_with_exchange(exchange):
             raw_symbol = pos.get('symbol', '')
             sym = raw_symbol.split(':')[0].replace('/', '')
 
-            real_qty = float(pos.get('contracts', 0.0) or pos.get('info', {}).get('positionAmt', 0.0))
+            # ccxt 統一格式的 contracts 欄位永遠是正數（不含方向），只有交易所原始的
+            # info.positionAmt 才會正確帶正負號（空單是負的）。原本寫成
+            # `contracts or info.positionAmt`，contracts 只要不是 0 就一定被優先選中，
+            # 導致空單的真實持倉方向被校準成多單，內部損益判斷完全顛倒。改成優先讀取
+            # 帶正負號的 positionAmt，讀不到才退回沒有方向資訊的 contracts。
+            raw_amt = pos.get('info', {}).get('positionAmt')
+            real_qty = float(raw_amt) if raw_amt is not None else float(pos.get('contracts', 0.0) or 0.0)
             if abs(real_qty) > 0.000001:
                 if sym not in ctx.ALL_SYMBOLS:
                     logger.info(f"⚠️ [發現未監控持倉] 交易所內 {sym} 仍有實盤倉位，自動加回監控清單並在介面顯示！")
@@ -152,6 +158,17 @@ async def calibrate_with_exchange(exchange):
                     if current_qty == 0:
                         ctx.STATES[sym]["entry_price"] = float(pos.get('entryPrice', pos.get('avg_price', 0.0)))
                         ctx.STATES[sym]["avg_price"] = ctx.STATES[sym]["entry_price"]
+                        # open_time 沒補回去的話會維持 0，check_exits() 的
+                        # `hold_sec = time.time() - open_time if open_time > 0 else 0`
+                        # 會永遠算出 hold_sec=0，卡在「剛進場 20~60 秒盲區保護」出不來，
+                        # 停損/停利邏輯永遠不會被執行——這正是重啟後校準回來的舊倉位一路
+                        # 虧損卻沒有停損的原因。entry_count 同理，process 重啟後
+                        # ctx.STATES 是全新字典，會被 build_symbol_state 預設成 0，
+                        # 而攤平救援要求 entry_count == 1 才會評估，補回 1 才能讓救援機制
+                        # 正常運作（重啟前如果已經攤平過，這裡只能保守假設沒攤平過）。
+                        ctx.STATES[sym]["open_time"] = time.time()
+                        if ctx.STATES[sym].get("entry_count", 0) == 0:
+                            ctx.STATES[sym]["entry_count"] = 1
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 
     except Exception as e:
