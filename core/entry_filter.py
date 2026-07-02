@@ -263,30 +263,38 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     bb_middle = (bb_lower + bb_upper) / 2 if (bb_lower > 0 and bb_upper > 0) else 0.0
     
     if side == "buy" and bb_lower > 0:
+        # 支持 per-coin 覆蓋：允許在配置中為特定幣種放寬支撑區容忍度與強度門檻
+        coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
+        tol = coin_cfg.get("support_zone_tolerance_pct", 0.003)  # default 0.3%
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 28.0)
+
         # 買入時必須在下軌附近（有支撑）
-        support_zone_upper = bb_lower * 1.003  # 下軌上方 0.3%
+        support_zone_upper = bb_lower * (1 + tol)
         is_in_support_zone = cp <= support_zone_upper
-        
-        if not is_in_support_zone and strength < 28.0:
-            # 只有超強訊號（strength >= 28） 才允許在中軌上方買
+
+        if not is_in_support_zone and strength < strength_threshold:
+            # 只有超強訊號或超過 per-coin 門檻才允許在中軌上方買
             distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
-            logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 遠離下軌 {bb_lower:.6f} ({distance_to_support*100:.2f}%)，缺乏支撑。訊號強度 {strength:.1f} < 28 拒絕進場")
+            logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 遠離下軌 {bb_lower:.6f} ({distance_to_support*100:.2f}%)，缺乏支撑。訊號強度 {strength:.1f} < {strength_threshold:.0f} 拒絕進場 (tol={tol*100:.2f}%)")
             return False
-        
+
         if is_in_support_zone:
             logger.info(f"✅ [SUPPORT_ZONE] {sym} 買入價在支撑區 [{bb_lower:.6f} ~ {support_zone_upper:.6f}]，有支撑，允許進場")
     
     if side == "sell" and bb_upper > 0:
+        coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
+        tol = coin_cfg.get("support_zone_tolerance_pct", 0.003)
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 28.0)
+
         # 賣出時必須在上軌附近（有阻力）
-        resistance_zone_lower = bb_upper * 0.997  # 上軌下方 0.3%
+        resistance_zone_lower = bb_upper * (1 - tol)
         is_in_resistance_zone = cp >= resistance_zone_lower
-        
-        if not is_in_resistance_zone and strength < 28.0:
-            # 只有超強訊號 才允許在中軌下方賣
+
+        if not is_in_resistance_zone and strength < strength_threshold:
             distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
-            logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 遠離上軌 {bb_upper:.6f} ({distance_to_resistance*100:.2f}%)，缺乏阻力。訊號強度 {strength:.1f} < 28 拒絕進場")
+            logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 遠離上軌 {bb_upper:.6f} ({distance_to_resistance*100:.2f}%)，缺乏阻力。訊號強度 {strength:.1f} < {strength_threshold:.0f} 拒絕進場 (tol={tol*100:.2f}%)")
             return False
-        
+
         if is_in_resistance_zone:
             logger.info(f"✅ [RESISTANCE_ZONE] {sym} 賣出價在阻力區 [{resistance_zone_lower:.6f} ~ {bb_upper:.6f}]，有阻力，允許進場")
 
