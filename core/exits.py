@@ -5,7 +5,8 @@ import numpy as np
 
 from core import ctx
 from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRESHOLD,
-    PROTECTED_PROFIT_FLOOR, TREND_PERSISTENCE_WINDOW, PRICE_MOVEMENT_THRESHOLD,
+    PROTECTED_PROFIT_FLOOR, MOMENTUM_EXIT_ATR_THRESHOLD, MOMENTUM_EXIT_MIN_PROFIT_PCT,
+    TREND_PERSISTENCE_WINDOW, PRICE_MOVEMENT_THRESHOLD,
     COIN_PROFILE_CONFIG, DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
     SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER)
 from core.indicators import _get_atr, _macd_vals, calculate_ema, calculate_macd
@@ -281,7 +282,7 @@ async def check_exits(sym):
     atr_val = _get_atr(s, p)
     profit_atr_mult = (p - avg) / atr_val if is_long else (avg - p) / atr_val
 
-    if profit_atr_mult > 6.0:
+    if profit_atr_mult > MOMENTUM_EXIT_ATR_THRESHOLD and profit_pct >= MOMENTUM_EXIT_MIN_PROFIT_PCT:
         macd_hist = s.get("macd_hist", 0.0)
         prev_macd_hist = s.get("prev_macd_hist", 0.0)
         rsi = s.get("current_rsi", 50.0)
@@ -296,7 +297,7 @@ async def check_exits(sym):
                 momentum_failing = True
 
         if momentum_failing:
-            logger.info(f"✅ [Momentum_Exit] {sym} 獲利達標 (6.0 ATR) 且動能衰竭，早期獲利平倉！")
+            logger.info(f"✅ [Momentum_Exit] {sym} 獲利達標 ({MOMENTUM_EXIT_ATR_THRESHOLD:.1f} ATR) 且動能衰竭，早期獲利平倉！")
             cs = "sell" if is_long else "buy"
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
             return
