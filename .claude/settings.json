@@ -41,7 +41,14 @@
       "Bash(cp /home/shudgai999/project/binance-bot/core/exchange_client.py core/exchange_client.py)",
       "Bash(cp /home/shudgai999/project/binance-bot/core/runner.py core/runner.py)",
       "Bash(cp /home/shudgai999/project/binance-bot/core/orders.py core/orders.py)",
-      "Bash(.venv/bin/python3 -m pytest tests/ -q)"
+      "Bash(.venv/bin/python3 -m pytest tests/ -q)",
+      "Bash(venv/bin/python3 -m unittest discover tests -v)",
+      "Bash(grep -E \"^test_|OK|FAILED|ok$\")",
+      "Bash(venv/bin/python3 -m unittest tests.test_entry_risk -v)",
+      "Bash(.venv/bin/python3 -m pytest tests/ --collect-only -q)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('8005 is_running:', d['is_running'], '| active:', len\\(d.get\\('active_symbols',[]\\)\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('8006 is_running:', d['is_running'], '| active:', len\\(d.get\\('active_symbols',[]\\)\\)\\)\")",
+      "Bash(curl -s http://localhost:8006/api/open-orders?symbol=VELVETUSDT)"
     ]
   }
 }

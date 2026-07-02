@@ -1218,5 +1218,25 @@
         "friction_rate": 0.0,
         "theoretical_profit": -0.0025,
         "ai_summary": "[微利] LABUSDT 透過 [微利] [Trend_Follow] 出場。獲利 0.25%，摩擦力 0.00%。"
+    },
+    {
+        "timestamp": "2026-07-02 13:32:05",
+        "symbol": "MUSDT",
+        "entry_reason": "Extreme_Reversal",
+        "exit_reason": "[微利] [Trend_Follow]",
+        "profit_pct": 0.005,
+        "max_profit_reached": 0.0089,
+        "atr_at_exit": 0.049157,
+        "market_mode": "High_Vol",
+        "expected_entry": 1.660081,
+        "expected_exit": 1.651781,
+        "actual_entry": 1.660081,
+        "actual_exit": 1.651781,
+        "fees": 0.0,
+        "qty": 86.0,
+        "slippage": 0.0,
+        "friction_rate": 0.0,
+        "theoretical_profit": -0.005,
+        "ai_summary": "[微利] MUSDT 透過 [微利] [Trend_Follow] 出場。獲利 0.50%，摩擦力 0.00%。"
     }
 ]

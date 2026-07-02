@@ -135,7 +135,7 @@ async def fetch_all_klines(exchange):
         async with ctx.request_semaphore:
             return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
 
-    symbols = list(ctx.ALL_SYMBOLS)
+    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
     tasks = {sym: fetch_with_sem(sym) for sym in symbols}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     for i, sym in enumerate(symbols):
@@ -160,7 +160,7 @@ async def fetch_sma200_15m(exchange, sym):
 
 async def fetch_all_sma200(exchange):
     from core import ctx
-    symbols = list(ctx.ALL_SYMBOLS)
+    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
     tasks = [fetch_sma200_15m(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, sym in enumerate(symbols):
@@ -186,7 +186,7 @@ async def fetch_ema_15m(exchange, sym):
 
 async def fetch_all_ema_15m(exchange):
     from core import ctx
-    symbols = list(ctx.ALL_SYMBOLS)
+    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
     tasks = [fetch_ema_15m(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, sym in enumerate(symbols):
@@ -213,7 +213,7 @@ async def fetch_ema50_1h(exchange, sym):
 
 async def fetch_all_ema50_1h(exchange):
     from core import ctx
-    symbols = list(ctx.ALL_SYMBOLS)
+    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
     tasks = [fetch_ema50_1h(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, sym in enumerate(symbols):
@@ -238,7 +238,7 @@ async def fetch_bb_4h(exchange, sym):
 
 async def fetch_all_bb_4h(exchange):
     from core import ctx
-    symbols = list(ctx.ALL_SYMBOLS)
+    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
     tasks = [fetch_bb_4h(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, sym in enumerate(symbols):

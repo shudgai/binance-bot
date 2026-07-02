@@ -14,7 +14,8 @@
     "BREVUSDT",
     "BEATUSDT",
     "LABUSDT",
-    "NFPUSDT"
+    "NFPUSDT",
+    "XRPUSDT"
   ],
   "profiles": {
     "GUAUSDT": {
