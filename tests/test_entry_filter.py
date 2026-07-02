@@ -97,7 +97,7 @@ class EntryFilterTests(unittest.TestCase):
 
         self.assertTrue(is_entry_allowed(sym, "buy", route="a", strength=27.4))
 
-    def test_short_entry_is_allowed_when_btc_bull_defense_is_relaxed(self):
+    def test_short_entry_is_blocked_in_btc_bull_mid_rsi_zone(self):
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -135,7 +135,9 @@ class EntryFilterTests(unittest.TestCase):
         s["prev_macd_signal"] = 0.0
         s["prev_macd_hist"] = 0.0
 
-        self.assertTrue(is_entry_allowed(sym, "sell", route="a", strength=20.5))
+        # BTC 4H 多頭且 RSI 只有 61（中段區間，未達 73 極端超買），逆勢空單應該被
+        # BULL_DEFENSE 擋下——這條中段區間豁免已經因為實測拖累空單勝率而移除。
+        self.assertFalse(is_entry_allowed(sym, "sell", route="a", strength=20.5))
 
 
 if __name__ == "__main__":

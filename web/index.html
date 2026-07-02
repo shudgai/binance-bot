@@ -646,7 +646,7 @@
                                     <template v-if="t.is_close">
                                         {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; return (net > 0 ? '+' : '') + net.toFixed(4) })() }}
                                         <span style="font-size:10px; opacity:0.8; margin-left:4px;">
-                                            {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; const base = t.price * Math.abs(t.qty); const lev = bot.leverage || 20; return '(' + (net / base * 100 * lev).toFixed(2) + '% / 實: ' + (net / base * 100).toFixed(2) + '%)' })() }}
+                                            {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; const base = t.price * Math.abs(t.qty); const lev = getPositionInfo(t.symbol)?.leverage || bot.leverage || 5; return '(' + (net / base * 100 * lev).toFixed(2) + '% / 實: ' + (net / base * 100).toFixed(2) + '%)' })() }}
                                         </span>
                                     </template>
                                     <template v-else>
@@ -735,7 +735,7 @@
                 </div>
                 <div class="info-card">
                     <div class="info-title">動態槓桿</div>
-                    <div class="info-val" style="font-size:15px; color: #f39c12;">{{ bot.leverage || 20 }}x</div>
+                    <div class="info-val" style="font-size:15px; color: #f39c12;">{{ bot.leverage || 5 }}x</div>
                 </div>
                 <div class="info-card">
                     <div class="info-title">未實現損益</div>
@@ -1755,7 +1755,8 @@ createApp({
         const getTradeUnrealizedPnlPercent = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
             if (pnl === 0 || trade.price * trade.qty === 0) return 0;
-            return pnl / (trade.price * trade.qty) * 100 * (bot.value.leverage || 20);
+            const lev = getPositionInfo(trade.symbol)?.leverage || bot.value.leverage || 5;
+            return pnl / (trade.price * trade.qty) * 100 * lev;
         };
 
         const getTradeUnrealizedPnlPercentActual = (trade) => {

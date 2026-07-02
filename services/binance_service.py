@@ -293,15 +293,23 @@ def get_trades(symbol: str):
         # 前端 formatTradeTime() 是拿 ms 直接餵 new Date()（跟紙上交易 paper_state.json
         # 的時間格式一致），這裡原本除以 1000 轉成秒，會讓顯示的成交時間跑到 1970 年附近。
         timestamp = t.get("time")
+        # 前端交易列表（買入/賣出方向、平倉損益顯示）是照紙上交易 paper_state.json 的欄位
+        # 名稱寫的：isBuyer（不是 is_buyer）、is_close、realized_pnl、fee，符號也是用
+        # "M:USDT" 這種冒號格式（跟 get_all_positions() 一致，這樣才能對到持倉抓到現價）。
+        # 原本這裡欄位名稱、符號格式都對不起來，導致方向永遠顯示賣出、已實現損益永遠不顯示。
+        # Binance 只有在成交會「減倉/平倉」時才會算出非 0 的 realizedPnl，開倉成交固定是 0，
+        # 可以直接拿它來判斷這筆是不是平倉成交。
         formatted_trades.append({
             "id": t.get("id"),
             "order_id": t.get("orderId"),
+            "symbol": str(t.get("symbol", "")).replace("USDT", ":USDT"),
             "price": float(t["price"]),
             "qty": qty,
             "time": timestamp,
-            "is_buyer": is_buyer,
-            "symbol": t.get("symbol"),
-            "pnl": realized_pnl if realized_pnl != 0 else None
+            "isBuyer": is_buyer,
+            "is_close": realized_pnl != 0,
+            "realized_pnl": realized_pnl,
+            "fee": float(t.get("commission", 0.0)),
         })
     return formatted_trades
 
@@ -479,8 +487,12 @@ def market_sell(symbol: str, base_asset: str):
     return order
 
 def get_all_positions():
+    # 前端 allPositions 是用「symbol -> 持倉」的物件（跟紙上交易 get_paper_positions() 一樣），
+    # 用 `for (let sym in data)` 取 key 直接當幣種名稱。這裡原本回傳陣列，前端迴圈會拿到
+    # 「0」「1」這種索引當 key，導致 getPositionInfo() 永遠對不到持倉，交易列表判斷不出
+    # 現價、未實現損益。改成回傳用冒號格式符號（跟 get_trades() 一致）當 key 的字典。
     positions = client.futures_position_information()
-    formatted = []
+    result = {}
     for pos in positions:
         qty = float(pos['positionAmt'])
         if abs(qty) > 0.000001:
@@ -490,16 +502,25 @@ def get_all_positions():
             mark_price = float(pos['markPrice'])
             total_cost = abs(qty) * entry_price
             pnl_percent = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0.0
-            formatted.append({
-                "symbol": sym.replace('USDT', ':USDT'),
+            # 原始持倉資料沒有直接的 leverage 欄位，但可以用 notional/initialMargin 反推
+            # 出真實槓桿（名目倉位大小 ÷ 實際佔用保證金）。前端算「槓桿後損益%」原本沒有
+            # 真實槓桿可用時會 fallback 到寫死的 20 倍，跟這個幣種實際設定的 2~5 倍差很多，
+            # 導致百分比顯示被放大成不合理的數字（例如 -4.89% 顯示成 -97.78%）。
+            initial_margin = float(pos.get('initialMargin', 0) or 0)
+            leverage = round(abs(float(pos.get('notional', 0) or 0)) / initial_margin) if initial_margin > 0 else 0
+            key = sym.replace('USDT', ':USDT')
+            result[key] = {
+                "symbol": key,
                 "positionAmt": qty,
                 "qty": qty,
                 "entryPrice": entry_price,
                 "avg_price": entry_price,
                 "markPrice": mark_price,
                 "current_price": mark_price,
+                "leverage": leverage,
                 "unRealizedProfit": unrealized_pnl,
                 "pnl": unrealized_pnl,
-                "pnl_percent": pnl_percent
-            })
-    return formatted
+                "pnl_percent": pnl_percent,
+                "realized_pnl": 0
+            }
+    return result

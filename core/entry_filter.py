@@ -327,19 +327,19 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
     # BTC 4H 多頭 → 封鎖所有做空訊號（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
     # 豁免：RSI > 73 極端超買 / Exhaustion 路由且 RSI > 70
+    # 曾經放寬過一個「強度夠高、RSI 50~65 中段區間」也放行空單的分支，數據回測發現
+    # 空單勝率因此明顯拖累整體表現（62.5% vs 多單 78.4%，空單平均還是淨虧損），因為
+    # BTC 持續 4H 多頭時，中段 RSI 的逆勢空單經常被主趨勢碾過去。移除該分支，只保留
+    # RSI 真的極端超買時才豁免，其餘情況維持封鎖。
     # =========================================================================
     bull_defense_mode = (btc_4h == "BULL")
     if bull_defense_mode and side == 'sell':
         current_rsi_macro = s.get("current_rsi", 50.0)
         is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-        is_strong_signal = strength >= 16.0
-        # 放寬牛市防禦：原本只在極端超買/反轉路由才放行，現在允許中度強度訊號在 4H多頭環境下做空
-        if current_rsi_macro > 65.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>65，豁免允許空單")
-        elif is_reversal_route and current_rsi_macro > 60.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>60，豁免允許空單")
-        elif is_strong_signal and current_rsi_macro > 50.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭且訊號強度 {strength:.1f}，RSI {current_rsi_macro:.1f} 於中段區間，放寬允許空單")
+        if current_rsi_macro > 73.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
+        elif is_reversal_route and current_rsi_macro > 70.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
         else:
             logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
             return False
