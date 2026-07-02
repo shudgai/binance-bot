@@ -50,8 +50,8 @@ def is_valid_candle(sym, side):
     pin_threshold = profile["pin_threshold"]
     candle_range = max(high - low, 1e-8)
     body_ratio = body / candle_range
-    if body_ratio < profile["min_body_ratio"] or s.get("current_vol", 0.0) < max(100.0, s.get("vol_ma20", 0.0) * 0.5):
-        pin_threshold = max(1.5, pin_threshold - 0.5)
+    if body_ratio < profile["min_body_ratio"] or s.get("current_vol", 0.0) < max(80.0, s.get("vol_ma20", 0.0) * 0.4):
+        pin_threshold = max(1.8, pin_threshold - 0.4)
     ema20 = s.get("ema20", 0.0)
     if ema20 > 0:
         if side == 'buy' and close_price < ema20:
@@ -92,7 +92,8 @@ def is_valid_candle(sym, side):
             logger.info(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
 
     if side == 'buy':
-        # 移除嚴格的 prev_close 比較，允許提早進場抄底
+        if body <= 0:
+            return True
         if upper_wick > body * pin_threshold:
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 上影線過長 (上影線 {upper_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
             return False
@@ -103,7 +104,6 @@ def is_valid_candle(sym, side):
         atr_val = s.get("current_atr", 0.0)
         min_body = max(atr_val * 0.05, close_price * 0.0005) if atr_val > 0 else close_price * 0.0005
         if body < min_body:
-            # Doji 蠟燭，跳過影線過濾直接送出
             return True
         if lower_wick > body * pin_threshold:
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線過濾] 下影線過長 (下影線 {lower_wick:.4f} > 實體 {body:.4f} * {pin_threshold:.1f})")
@@ -250,6 +250,42 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         return True
 
     # =========================================================================
+    # ✨ NEW STAGE 0.5: SUPPORT/RESISTANCE ZONE CONFIRMATION (支撑/阻力位確認)
+    # 只在有明確支撑/阻力的位置入場，避免買在相對高點
+    # =========================================================================
+    bb_lower = s.get("bb_low", 0.0)
+    bb_upper = s.get("bb_up", 0.0)
+    bb_middle = (bb_lower + bb_upper) / 2 if (bb_lower > 0 and bb_upper > 0) else 0.0
+    
+    if side == "buy" and bb_lower > 0:
+        # 買入時必須在下軌附近（有支撑）
+        support_zone_upper = bb_lower * 1.003  # 下軌上方 0.3%
+        is_in_support_zone = cp <= support_zone_upper
+        
+        if not is_in_support_zone and strength < 28.0:
+            # 只有超強訊號（strength >= 28） 才允許在中軌上方買
+            distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
+            logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 遠離下軌 {bb_lower:.6f} ({distance_to_support*100:.2f}%)，缺乏支撑。訊號強度 {strength:.1f} < 28 拒絕進場")
+            return False
+        
+        if is_in_support_zone:
+            logger.info(f"✅ [SUPPORT_ZONE] {sym} 買入價在支撑區 [{bb_lower:.6f} ~ {support_zone_upper:.6f}]，有支撑，允許進場")
+    
+    if side == "sell" and bb_upper > 0:
+        # 賣出時必須在上軌附近（有阻力）
+        resistance_zone_lower = bb_upper * 0.997  # 上軌下方 0.3%
+        is_in_resistance_zone = cp >= resistance_zone_lower
+        
+        if not is_in_resistance_zone and strength < 28.0:
+            # 只有超強訊號 才允許在中軌下方賣
+            distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
+            logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 遠離上軌 {bb_upper:.6f} ({distance_to_resistance*100:.2f}%)，缺乏阻力。訊號強度 {strength:.1f} < 28 拒絕進場")
+            return False
+        
+        if is_in_resistance_zone:
+            logger.info(f"✅ [RESISTANCE_ZONE] {sym} 賣出價在阻力區 [{resistance_zone_lower:.6f} ~ {bb_upper:.6f}]，有阻力，允許進場")
+
+    # =========================================================================
     # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
     # BTC 4H + 1H 雙熊 → 封鎖做多；BTC 4H 多頭 → 封鎖做空
     # =========================================================================
@@ -346,24 +382,24 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
     current_rsi_mtf = s.get("current_rsi", 50.0)
-    # 逆勢必須極強才允許突破 15m 趨勢封鎖；強度 22 時仍有失敗案例，提高到 24 減少逆勢開倉
-    _mtf_strong_override = strength >= 24.0
+    # 逆勢需訊號夠強才允許突破 15m 趨勢封鎖
+    _mtf_strong_override = strength >= 20.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
             if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 24，允許逆勢")
-            elif current_rsi_mtf >= 65.0:
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
+            elif current_rsi_mtf >= 60.0:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達超買，允許")
             else:
-                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < 65（未超買），拒絕")
+                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < 60（未超買），拒絕")
                 return False
         elif side == 'buy' and ema20_15m < ema50_15m:
             if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 極強訊號 {strength:.1f} ≥ 24，允許逆勢")
-            elif current_rsi_mtf <= 35.0:
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
+            elif current_rsi_mtf <= 40.0:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達超賣，允許")
             else:
-                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > 35（未超賣），拒絕")
+                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > 40（未超賣），拒絕")
                 return False
 
     # 4. Pre-Entry Quality Filter：實體 + 量能同步爆發（過濾弱訊號假突破）
@@ -493,7 +529,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} [4H大盤過濾] BTC 4H 牛市，禁止做空 (強度 {strength:.1f} < {_btc4h_override})")
                 return False
 
-    if len(s["ohlcv"]) < 20:
+    _short_history_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
+    if len(s["ohlcv"]) < 20 and not _short_history_exempt:
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
         return False
 
@@ -544,11 +581,17 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # --- [ATR 爆發閘門 (Volatility Spike Gate)] ---
     # 瞬時波動率 > 2× 歷史平均 → 市場正處於「閃崩/閃漲」狀態，SL 必然過寬，拒絕常規進場
     # 豁免：Exhaustion_Entry（耗竭反轉）與 Extreme_Reversal（極端反轉）本就在極端波動中操作
+    # 另外，對於強訊號且僅為輕微 ATR 爆發的情況，放寬一次，避免高品質訊號被過度封鎖。
     _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
+    _atr_spike_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 0.0
+    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.3)
     if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
-        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2x ({atr_24h_avg*2:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
-        return False
-    if not is_entry_pin_safe(sym, side):
+        if _allow_mild_atr_spike:
+            logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x) ，放寬進場")
+        else:
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2x ({atr_24h_avg*2:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
+            return False
+    if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and not is_entry_pin_safe(sym, side):
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
         return False
 
@@ -580,7 +623,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} [Extreme_Reversal 豁免] 高量={s['current_vol']:.0f} (>= 1.5x均量) 視為量能高潮，反轉確認加分！")
 
         # 價格結構確認 (Price Action Confirmation)，擴大至過去 3 根 K 線
-        if len(s["ohlcv"]) >= 2:
+        # 反轉 / 耗竭路由本來就以突破/回檔為主，不能再被普通趨勢結構門檻卡住
+        _struct_exempt_routes = ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
+        if route in _struct_exempt_routes:
+            logger.info(f"⚡ [ALLOW] [Filter:Structure] {sym} {route} 路由豁免結構過濾，允許反轉/耗竭進場")
+        elif len(s["ohlcv"]) >= 2:
             current_close = s["ohlcv"][-1][4]
             lookback = min(3, len(s["ohlcv"]) - 1)
             past_candles = s["ohlcv"][-lookback-1:-1]
@@ -588,14 +635,16 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             past_lows = [c[3] for c in past_candles]
             avg_high = sum(past_highs) / len(past_highs)
             avg_low = sum(past_lows) / len(past_lows)
+            # 容許 0.3% 誤差，避免強勢訊號只差一點點就被結構過濾擋下
+            _struct_tolerance = 0.003
 
             if side == "sell":
-                struct_ok = (current_close < avg_high) or (current_close < max(past_lows))
+                struct_ok = (current_close < avg_high * (1 + _struct_tolerance)) or (current_close < max(past_lows) * (1 + _struct_tolerance))
                 if not struct_ok:
                     logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 空單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未低於3K平均高點({avg_high:.4f})且未破任一低點({max(past_lows):.4f})，攔截")
                     return False
             if side == "buy":
-                struct_ok = (current_close > avg_low) or (current_close > min(past_highs))
+                struct_ok = (current_close > avg_low * (1 - _struct_tolerance)) or (current_close > min(past_highs) * (1 - _struct_tolerance))
                 if not struct_ok:
                     logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [結構過濾] 多單強勢({strength:.1f})但收盤價 ({current_close:.4f}) 未高於3K平均低點({avg_low:.4f})且未破任一高點({min(past_highs):.4f})，攔截")
                     return False
@@ -614,6 +663,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
         # 2. 判斷是否為「逆勢轉折交易」
         sma200_15m = s.get("sma200_15m", 0)
+        current_close = s.get("close_price", s["ohlcv"][-1][4]) if len(s.get("ohlcv", [])) >= 1 else 0.0
         is_counter_trend = False
 
         if route == "Extreme_Reversal":
@@ -647,7 +697,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                         return False
 
             # 4. RSI 超買/超賣歷史確認 (RSI History Confirmation)
-            if "rsi_history" in s and len(s["rsi_history"]) > 0:
+            # 反轉路由不應被此條件完全擋下，因為它們本來就可能在 RSI 尚未回撤時立即反轉
+            if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and "rsi_history" in s and len(s["rsi_history"]) > 0:
                 recent_rsis = s["rsi_history"][-10:]
                 if side == "sell":
                     highest_rsi = max(recent_rsis)
@@ -722,7 +773,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         bonus_b = 3.0
 
     total_score = base_score + bonus_a + bonus_b
-    MIN_ENTRY_SCORE = 11.0
+    MIN_ENTRY_SCORE = 9.0
 
     if total_score < MIN_ENTRY_SCORE:
         logger.info(f"🛑 [REJECT] {sym}: 硬條件通過，但總分未達標 (綜合得分: {total_score:.1f} < 門檻: {MIN_ENTRY_SCORE:.1f})")

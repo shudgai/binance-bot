@@ -303,6 +303,8 @@ async def check_exits(sym):
 
     _hard_sl = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", 0.0)
     if _hard_sl > 0 and profit_pct <= -_hard_sl:
+        if await _attempt_forced_rescue(sym, s, is_long, p):
+            return
         cs = 'sell' if is_long else 'buy'
         logger.info(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
@@ -389,11 +391,22 @@ async def check_exits(sym):
 
     base_loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
     atr_val = s.get("entry_atr", s.get("current_atr", p * 0.01))
-    # 彈性距離：如果波動率(ATR)很大，就把攤平距離拉遠，避免太早攤平
-    loss_limit = max(base_loss_limit, atr_val * 0.6)
-    
+    # 彈性距離：ATR 換算成價格百分比再乘係數，波動率越大攤平距離拉越遠，避免太早攤平
+    # （原本直接用絕對價位的 ATR 跟百分比門檻比較，幣價越高換算出的門檻越離譜，如 AAVE 這種高單價幣門檻會被拉到 10%+ 幾乎永遠不會觸發）
+    atr_pct_dca = (atr_val / avg) if avg > 0 else 0.01
+    # 提高加倉門檻：對 ATR 基礎上取更嚴格倍率，並放大最低風險門檻
+    loss_limit = max(base_loss_limit * 1.5, atr_pct_dca * 1.1)
+
     _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
-    if not _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
+    # 取得每幣種的最大加倉次數與加倉冷卻（若未設定，使用 state 或全域預設）
+    max_additional = s.get("max_additional_entries", s.get("max_additional_entries", 3))
+    entry_cooldown = s.get("entry_cooldown_sec", s.get("entry_cooldown_sec", 45))
+    time_since_last = time.time() - s.get("last_entry_time", 0)
+
+    # 只有在尚未超過最大加倉次數且距離上次加倉超過冷卻時間時，才允許 DCA
+    can_dca = (s.get("entry_count", 0) < max_additional) and (time_since_last >= entry_cooldown)
+
+    if not _disable_dca and can_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) >= 1:
         # 防呆：檢查是否正在急跌/急漲 (Falling Knife)
         macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
         prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
@@ -409,31 +422,25 @@ async def check_exits(sym):
                 logger.info(f"🔪 [接刀保護] {sym} 走勢太兇猛，暫緩攤平！等待動能衰減... (目前虧損: {profit_pct*100:.2f}%)")
                 s["knife_warning_logged"] = time.time()
         else:
-            logger.info(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損 {profit_pct*100:.2f}% (大於門檻 {loss_limit*100:.2f}%) 且急勢已緩，啟動彈性救援加碼！")
+            logger.info(f"⚠️ [Rescue_DCA_Triggered] {sym} 虧損 {profit_pct*100:.2f}% (門檻 {loss_limit*100:.2f}%)，距離上次加倉 {time_since_last:.1f}s，max_additional={max_additional}, entry_count={s.get('entry_count',0)}")
             cs = "buy" if is_long else "sell"
             await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
+            s["last_entry_time"] = time.time()
             return
     elif _disable_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) == 1:
         logger.info(f"ℹ️ [DCA_Disabled] {sym} 虧損 {profit_pct*100:.2f}% 但此幣種已停用 Rescue DCA，等待 ATR-SL 出場")
+    
+    # ─ DCA 加倉失敗保護：加倉後如果繼續惡化，就提早結束 ─
+    if s.get("entry_count", 0) >= 2 and profit_pct <= -(loss_limit * 2.5):
+        # 加倉後虧損超過初始門檻的 2.5 倍，表示加倉失敗，應該平倉止損
+        logger.info(f"🚨 [DCA_Failure_Exit] {sym} 加倉後虧損繼續惡化至 {profit_pct*100:.2f}%，超過容忍度，立即平倉止損！")
+        cs = "sell" if is_long else "buy"
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[DCA_Failure_Exit]", is_stop_loss=True)
+        return
 
     if s.get("entry_count", 0) > 0:
-        time_since_last_entry = time.time() - s.get("last_entry_time", 0.0)
-
-        # 第二道防線：動態逾時 = 基礎逾時 × (當前ATR ÷ 平均ATR)，波動大時給更多空間
-        base_timeout_min = get_effective_exit_setting(sym, "rescue_timeout_min", 60, is_long)
-        _atr_hist_r = s.get("atr_history", [])
-        _atr_ma20_r = float(np.mean(_atr_hist_r)) if len(_atr_hist_r) > 0 else atr_val
-        if _atr_ma20_r > 0:
-            dynamic_timeout = base_timeout_min * (atr_val / _atr_ma20_r)
-        else:
-            dynamic_timeout = base_timeout_min
-        dynamic_timeout = max(30.0, min(dynamic_timeout, 120.0))
-
-        if time_since_last_entry > dynamic_timeout * 60:
-            logger.info(f"⚠️ [RESCUE_TIMEOUT] {sym} 救援動態逾時 {dynamic_timeout:.1f}min (Base:{base_timeout_min}min)，強制平倉！")
-            cs = "sell" if is_long else "buy"
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rescue_Timeout]", is_stop_loss=True)
-            return
+        # 救援逾時強制平倉已依使用者要求移除：不再因為「攤平後等太久」就砍倉，
+        # 讓單子繼續等，改由實際價格觸及下方的停利/停損時才出場。
 
         # 第三道防線：救援期間動能衰減提早止損 (已依使用者要求關閉，讓單子有時間等獲利)
         # if time_since_last_entry > 180 and profit_pct < -0.001:
@@ -544,16 +551,17 @@ async def check_exits(sym):
     
     # 動態回撤容忍度：利潤越高/波動越大，給予更合理的呼吸空間，防止被微幅波動洗出場
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    _pullback_buffer = max(0.002, atr_pct * 0.5)  # 至少 0.2% 或 0.5 倍 ATR 的回撤空間
+    _pullback_buffer = max(0.0008, atr_pct * 0.25)  # 減少到 0.08% 或 0.25 倍 ATR（更嚴緊）
     
-    if _peak_lock >= 0.015:
-        _locked_gain = max(0.010, _peak_lock - _pullback_buffer)
+    # 更激進的早期鎖利：門檻從 1.5% / 0.8% / 0.4% 降至 1.0% / 0.6% / 0.3%
+    if _peak_lock >= 0.010:
+        _locked_gain = max(0.0085, _peak_lock - _pullback_buffer)
         _lock_desc = f"動態高點鎖利 ({_locked_gain*100:.2f}%)"
-    elif _peak_lock >= 0.008:
+    elif _peak_lock >= 0.006:
         _locked_gain = max(0.005, _peak_lock - _pullback_buffer)
         _lock_desc = f"半路鎖利 ({_locked_gain*100:.2f}%)"
-    elif _peak_lock >= 0.004:
-        _locked_gain = max(0.001, _peak_lock - _pullback_buffer)
+    elif _peak_lock >= 0.003:
+        _locked_gain = max(0.0025, _peak_lock - _pullback_buffer)
         _lock_desc = f"保本鎖利 ({_locked_gain*100:.2f}%)"
 
     if _locked_gain > 0:
@@ -637,20 +645,8 @@ async def check_exits(sym):
     if profit_pct < 0:
         s["has_been_negative"] = True
 
-    # ── 峰值追蹤停利 (PeakTrail) ──
-    _pt_peak = s.get("highest_profit_pct", 0.0)
-    if _pt_peak >= 0.003:
-        # 當利潤 < 1% 時，回落容忍度為 0.3% (防守微幅波動與手續費)
-        # 當利潤 >= 1% 時，回落容忍度收緊為 0.2% (高點鎖利)
-        _pt_buffer = 0.002 if _pt_peak >= 0.010 else 0.003
-        if (_pt_peak - profit_pct) >= _pt_buffer:
-            cs = "sell" if is_long else "buy"
-            logger.info(
-                f"🎯 [峰值追蹤停利] {sym} 峰值 {_pt_peak*100:.2f}% "
-                f"→ 現 {profit_pct*100:.2f}%，回落 {(_pt_peak-profit_pct)*100:.2f}% ≥ {_pt_buffer*100:.2f}%，鎖利出場"
-            )
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[PeakTrail]")
-            return
+    # PeakTrail 已停用：0.3% 峰值就用 0.2-0.3% 固定回落出場，會搶在下方 ATR 自適應的
+    # TrailTP_Peak 之前把單子太早洗出去，讓利潤沒機會跑到真正的高點。改由 TrailTP_Peak 統一負責峰值鎖利。
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)
@@ -661,13 +657,8 @@ async def check_exits(sym):
             sl = min(sl, s["trailing_stop_price"])
         s["stop_loss"] = sl
 
-    # ── 時間停滯出場 (Time-based Stagnation Exit) ──
-    # 如果進場超過 15 分鐘（900秒），利潤卻小於 0.3%，且沒有觸發保本，視為動能耗盡
-    if hold_sec >= 900 and -0.005 < profit_pct < 0.003 and s.get("highest_profit_pct", 0.0) < 0.004:
-        cs = "sell" if is_long else "buy"
-        logger.info(f"⏳ [時間停滯出場] {sym} 進場已達 {hold_sec/60:.0f} 分鐘，利潤僅 {profit_pct*100:.2f}%，動能枯竭，提前退場")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Stagnation]")
-        return
+    # 時間停滯出場已依使用者要求移除：不再因為「持倉時間長但獲利還沒發展」就強制出場，
+    # 讓單子繼續等，改由實際價格觸及停利/停損時才出場。
 
     # ── 入袋為安 (SafePocket_Exit) ──
     # 情境：持倉已有段時間，曾有獲利，但現在利潤縮水且方向朝SL → 先落袋不等被SL掃出
@@ -960,63 +951,15 @@ async def check_exits(sym):
                 return
 
     if not is_strong:
-        recent_vols = [x[5] for x in s["ohlcv"][-4:-1]] if len(s["ohlcv"]) >= 4 else []
-        vol_ma20 = s.get("vol_ma20", 1)
-        is_vol_stagnant = len(recent_vols) >= 3 and all(v < vol_ma20 * 0.6 for v in recent_vols)
-        bb_width = s.get("bb_up", 0) - s.get("bb_low", 0)
-        is_range_tight = (bb_width / p) < 0.003 if p > 0 else False
-
         entry_layers = len(s.get("entries", []))
-        if is_strong:
-            time_decay_limit = 5400 if entry_layers <= 1 else 7200
-        else:
-            time_decay_limit = 2400 if entry_layers <= 1 else 5400
+        time_decay_limit = (5400 if entry_layers <= 1 else 7200) if is_strong else (2400 if entry_layers <= 1 else 5400)
 
-        if hold_sec > time_decay_limit:
-            cs = 'sell' if is_long else 'buy'
-            if profit_pct >= min_tp_pct:
-                logger.info(f"⏳ [時間衰減獲利] {sym} 持倉已達 {hold_sec//60} 分鐘，獲利 {profit_pct*100:.2f}% >= {min_tp_pct*100:.2f}%，出場！")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Decay_Exit]")
-                s["highest_profit_pct"] = 0.0
-                return
-            elif profit_pct <= -0.003:
-                logger.info(f"⏳ [時間衰減停損] {sym} 持倉已達 {hold_sec//60} 分鐘但虧損 {profit_pct*100:.2f}%，切損出場！")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Decay_Stop]")
-                s["highest_profit_pct"] = 0.0
-                return
-            elif 0 < profit_pct < min_tp_pct and not s.get("is_breakeven_locked"):
-                s["is_breakeven_locked"] = True
-                s["stop_loss"] = avg
-                logger.info(f"⏳ [時間衰減保本] {sym} 超時但利潤 {profit_pct*100:.2f}% 未達目標 {min_tp_pct*100:.2f}%，鎖定保本繼續等")
-
-        from core.indicators import get_dynamic_stagnation_limit
-        stagnation_limit = get_dynamic_stagnation_limit(s["current_atr"], s["atr_ma20"])
-        if hold_sec > stagnation_limit and profit_pct >= min_tp_pct * 0.8:
-            if is_vol_stagnant and is_range_tight:
-                if not s["has_partial_closed"]:
-                    if min_tp_pct * 0.7 <= profit_pct < min_tp_pct:
-                        half = abs(s["qty"]) * 0.5
-                        cs = 'sell' if is_long else 'buy'
-                        logger.info(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，平50%")
-                        await close_position(sym, cs, half, p, avg, reason="[Vol_Stagnation_1]")
-                        s["has_partial_closed"] = True
-                        return
-                    else:
-                        cs = 'sell' if is_long else 'buy'
-                        reason = "[Vol_Stagnation_Exit]" if profit_pct >= min_tp_pct else "[Stagnation_BreakEven]"
-                        logger.info(f"⏳ [量能僵局] {sym} 持倉{stagnation_limit//60}分且量縮橫盤，全平釋放資金")
-                        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason)
-                        s["highest_profit_pct"] = 0.0
-                        return
-        if s["has_partial_closed"] and hold_sec > 480 and min_tp_pct * 0.5 <= profit_pct < min_tp_pct:
-            if is_vol_stagnant and is_range_tight:
-                cs = 'sell' if is_long else 'buy'
-                logger.info(f"⏳ [量能僵局] {sym} 剩餘50%持倉8分仍未突破1%且量縮橫盤，全平")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Vol_Stagnation_2]")
-                s["highest_profit_pct"] = 0.0
-                return
-            s["has_partial_closed"] = False
-            return
+        # 時間衰減出場 / 量能僵局出場已依使用者要求移除：不再因為「持倉太久」或「量能停滯」
+        # 就提前平倉，只在超時後把停損鎖到保本，保護本金但讓利潤有機會繼續發展。
+        if hold_sec > time_decay_limit and 0 <= profit_pct < min_tp_pct and not s.get("is_breakeven_locked"):
+            s["is_breakeven_locked"] = True
+            s["stop_loss"] = avg
+            logger.info(f"⏳ [時間衰減保本] {sym} 超時但利潤 {profit_pct*100:.2f}% 未達目標 {min_tp_pct*100:.2f}%，鎖定保本繼續等")
 
         profile_type = COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", "")
         if s.get("personality") == "calm":
@@ -1079,11 +1022,16 @@ async def check_exits(sym):
 
     # ── 停損檢查 (Universal SL) ──
     if (is_long and p <= sl) or (not is_long and p >= sl):
+        if profit_pct < 0 and await _attempt_forced_rescue(sym, s, is_long, p):
+            return
         cs = 'sell' if is_long else 'buy'
         sl_pct = abs(sl - avg) / avg * 100
         reason_str = "[Breakeven_Stop]" if sl == avg else "[Trend_Follow]"
         logger.info(f"🛑 [{reason_str}] {sym} -{sl_pct:.1f}%")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_str, is_stop_loss=True)
+        # 出場價鎖定在 SL 觸發價：紙上交易的 tick 可能已經跳過 sl 好幾檔，
+        # 若直接用當下價格 p 成交，會比原本設定的 SL 價位還差（甚至把鎖利誤結算成虧損）。
+        exit_price = max(p, sl) if is_long else min(p, sl)
+        await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason=reason_str, is_stop_loss=True)
         if abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]" and _check_reversal_allowed(sym, s):
             if s.get("consecutive_losses", 0) >= 2:
                 s["reversal_ban_until"] = time.time() + 14400
@@ -1095,6 +1043,35 @@ async def check_exits(sym):
                 s["last_reverse_time"] = time.time()
                 logger.info(f"🔄 [SL_Reverse] {sym} SL 後偵測到強勢逆向突破，設置反手 → {rev_side}")
         return
+
+
+async def _attempt_forced_rescue(sym, s, is_long, p):
+    """真正判定「看錯方向」要停損出場前，若這個部位還沒攤平過，先評估是否適合補救加碼，
+    而不是無條件都攤平——要看情況：只有「動能已趨緩、不是還在急殺/急拉」時才值得攤平，
+    如果還是接刀狀態（急跌/急漲中），攤平只會虧更多，這時就照原計畫停損出場。"""
+    if s.get("entry_count", 0) != 1 or s.get("is_ordering"):
+        return False
+    if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False):
+        return False
+
+    # 接刀防呆：跟一般救援攤平用同一套判斷，急跌/急漲中不硬攤，直接讓停損正常出場
+    macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+    prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+    is_falling_knife = (is_long and macd_hist < 0 and macd_hist < prev_macd_hist) or \
+                        (not is_long and macd_hist > 0 and macd_hist > prev_macd_hist)
+    if is_falling_knife:
+        logger.info(f"🔪 [接刀保護] {sym} 即將停損，但走勢仍在急殺/急拉中，不適合攤平，照計畫出場")
+        return False
+
+    from core.orders import execute_order
+    cs = "buy" if is_long else "sell"
+    logger.info(f"🆘 [強制補救] {sym} 即將觸發停損，尚未攤平過且動能已趨緩，最後嘗試一次救援加碼再觀察！")
+    s["is_ordering"] = True
+    try:
+        await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
+    finally:
+        s["is_ordering"] = False
+    return True
 
 
 def _check_reversal_allowed(sym, s):

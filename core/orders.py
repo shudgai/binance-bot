@@ -11,7 +11,7 @@ from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIME
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
     ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT)
-from core.exchange_client import exchange_futures, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol
+from core.exchange_client import exchange_futures, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
 from core.state_manager import mark_exit, reset_coin_state, build_symbol_state
@@ -366,23 +366,25 @@ def check_total_equity_protection():
     return True
 
 
-def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0):
+def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescue_dca=False):
     """處理 paper 模式的待成交限價單：成交後更新倉位狀態"""
     s = ctx.STATES[sym]
     pk = paper_key(sym)
-    
+
     if side is not None and qty is not None:
         order = {
             "side": side,
             "qty": qty,
             "margin": margin,
             "placed_at": time.time(),
-            "timeout": 0
+            "timeout": 0,
+            "is_rescue_dca": is_rescue_dca,
         }
     else:
         order = s.get("pending_paper_order")
         if not order:
             return
+        is_rescue_dca = order.get("is_rescue_dca", False)
             
     if not fill_price or fill_price <= 0:
         logger.info(f"[REJECT_PAPER] {sym} _fill_paper_order fill_price=0，已攔截撤單")
@@ -419,7 +421,10 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0):
             s["highest_profit_pct"] = 0.0
             s["first_entry_price"] = fill_price
         _import_update_trailing_stop()(sym, fill_price, side == 'buy')
-        if s["entry_count"] >= 2:
+        # 金字塔加碼（同方向、更好價位）才鎖定在首筆進場價保本；
+        # 救援攤平 (Rescue DCA) 是在更差價位補倉攤低成本，鎖在首筆價格等於讓新均價毫無喘息空間，
+        # 因此救援攤平後改用新均價重新計算停損，不做這個保本鎖定。
+        if s["entry_count"] >= 2 and not is_rescue_dca:
             first_ep = s["entries"][0]["price"]
             if side == 'buy':
                 s["trailing_stop_price"] = max(s["trailing_stop_price"], first_ep)
@@ -458,6 +463,20 @@ async def check_paper_pending_order(sym):
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False):
     import numpy as np  # 強制防禦局部變量失效漏洞
     s = ctx.STATES[sym]
+    
+    # ─── 新增：分批入場策略 (Staged Entry) ───
+    # 初次進場用 60% 分配，後續加倉用 100%
+    is_first_entry = (s.get("entry_count", 0) == 0)
+    if is_first_entry and not is_rescue_dca:
+        # 初次試探倉：只用 60% 的分配額度
+        staged_allocation = allocation_pct * 0.6
+        logger.info(f"📊 [分批進場] {sym} 初次進場用試探倉 {staged_allocation:.2%} (正常 {allocation_pct:.2%} × 60%)")
+        allocation_pct = staged_allocation
+    elif s.get("entry_count", 0) >= 1 and not is_rescue_dca:
+        # 加倉確認：使用全額分配
+        logger.info(f"📊 [分批進場] {sym} 加倉確認用全額 {allocation_pct:.2%}")
+    
+    logger.info(f"🛒 [ORDER_ATTEMPT] {sym} 開始執行 {side} 進場 | price={price:.6f} allocation={allocation_pct:.2f}")
 
     # 進場方向與當前持倉衝突防護
     # 如果已有持倉，且新進場方向與舊持倉方向相反，除非是救援 DCA，否則直接攔截
@@ -467,6 +486,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         _current_direction = "buy" if _existing_qty > 0 else "sell"
         if side != _current_direction and not is_rescue_dca:
             logger.info(f"🛑 [Direction_Conflict] {sym} 已有 {_current_direction} 持倉 (qty={_existing_qty:.4f})，禁止發出 {side} 進場指令 (非救援模式)")
+            logger.info(f"🧱 [ORDER_BLOCK] {sym} 被方向衝突攔截，未進入下單）")
             logger.info(f"🛑 [Direction_Conflict] {sym} 若要反手，請先透過 close_position 平倉後再進場，避免方向衝突！")
             return
 
@@ -497,10 +517,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if side == 'buy':
                 if asks == 0 or bids / asks < _flow_threshold:
                     logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
+                    logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
                     return
             else:
                 if bids == 0 or asks / bids < _flow_threshold:
                     logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
+                    logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
                     return
         except Exception as e:
             logger.info(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
@@ -514,14 +536,14 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     if margin <= 0:
         logger.info(f"⚠️ [風控] {sym} 無可用保證金")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被保證金不足攔截，未進入下單")
         return
 
     try:
-        ticker = await exchange_futures.fetch_ticker(sym)
-        market_price = float(ticker.get('last') or 0)
+        market_price = await get_reference_price(sym, exchange_futures)
     except Exception as e:
         market_price = 0.0
-        logger.info(f"⚠️ [價格偏離檢查] {sym} fetch_ticker 失敗: {e}")
+        logger.info(f"⚠️ [價格偏離檢查] {sym} 取得參考價失敗: {e}")
 
     if market_price <= 0:
         # fetch_ticker 失敗時回落到即時交易流價格（獨立數據源，不依賴 OHLCV）
@@ -531,12 +553,14 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         deviation = abs(price - market_price) / market_price
         if deviation > 0.05:
             logger.info(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
+            logger.info(f"🧱 [ORDER_BLOCK] {sym} 被價格偏離風控攔截，未進入下單")
             # 順帶修正被污染的 close_price，避免後續繼續使用錯誤值
             s["close_price"] = market_price
             return
     else:
         # 完全無法取得市場價格，保守拒絕
         logger.info(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被市場價缺失風控攔截，未進入下單")
         return
 
     now = time.time()
@@ -601,18 +625,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     if base_amt <= 0.0:
         logger.info(f"⚠️ [風控] {sym} 計算後開倉數量為 0")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被數量計算為 0 攔截，未進入下單")
         return
 
     if PAPER_TRADING:
         try:
-            current_market_price = s.get("close_price", price)
+            # market_price 已在上方用 mark price / 委託簿中位數取得，比 OHLCV 收盤價更貼近牌價
+            current_market_price = market_price if market_price > 0 else s.get("close_price", price)
             if ENTRY_ORDER_MODE == 'market':
-                _fill_paper_order(sym, current_market_price, side=side, qty=base_amt, margin=margin)
+                _fill_paper_order(sym, current_market_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper市價成交] {sym} {side} {base_amt:.4f} @ {current_market_price:.6f}")
                 return
             elif ENTRY_ORDER_MODE == 'chase':
                 fill_price = current_market_price * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else current_market_price * (1 - ENTRY_CHASE_OFFSET_PCT)
-                _fill_paper_order(sym, fill_price, side=side, qty=base_amt, margin=margin)
+                _fill_paper_order(sym, fill_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper追價成交] {sym} {side} {base_amt:.4f} @ {fill_price:.6f}")
                 return
             elif ENTRY_ORDER_MODE == 'pullback':
@@ -641,6 +667,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
+                    "is_rescue_dca": is_rescue_dca,
                 }
                 direction = "做多" if side == 'buy' else "做空"
                 logger.info(f"⏳ [Paper回踩掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
@@ -651,6 +678,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
+                    "is_rescue_dca": is_rescue_dca,
                 }
                 direction = "做多" if side == 'buy' else "做空"
                 logger.info(f"⏳ [Paper被動掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待成交)")

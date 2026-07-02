@@ -455,6 +455,8 @@
         .log-table tr:hover { background: rgba(99,102,241,0.07); }
         .log-table tr.log-entry-confirm { background: #fef08a !important; font-weight: 600; }
         .log-table tr.log-entry-confirm:hover { background: #fde047 !important; }
+        .log-table tr.log-entry-filled { background: #fb923c !important; font-weight: 700; }
+        .log-table tr.log-entry-filled:hover { background: #f97316 !important; }
         .log-time { color: var(--text-muted); margin-right: 6px; opacity: 0.7; }
         .log-info { color: #374151; }
         .log-warning { color: #92400e; }
@@ -678,7 +680,7 @@
                 <div :class="['log-console', showLogs ? '' : 'collapsed']" ref="consoleRef">
                     <table class="log-table">
                         <tbody>
-                            <tr v-for="(log, idx) in logs" :key="idx" :class="(log.text.includes('即時開倉') || log.text.includes('順勢加倉') || log.text.includes('直進✓') || log.text.includes('反手直進')) ? 'log-entry-confirm' : ''">
+                            <tr v-for="(log, idx) in logs" :key="idx" :class="logRowClass(log)">
                                 <td class="log-td-time">{{ log.time }}</td>
                                 <td :class="log.levelClass">{{ log.text }}</td>
                             </tr>
@@ -708,7 +710,7 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="(log, idx) in logs" :key="idx" :class="(log.text.includes('即時開倉') || log.text.includes('順勢加倉') || log.text.includes('直進✓') || log.text.includes('反手直進')) ? 'log-entry-confirm' : ''">
+                                    <tr v-for="(log, idx) in logs" :key="idx" :class="logRowClass(log)">
                                         <td class="log-td-time">{{ log.time }}</td>
                                         <td :class="log.levelClass">{{ log.text }}</td>
                                     </tr>
@@ -892,6 +894,7 @@ createApp({
         const currentCurrency = ref('USD');
         const twdRate = ref(32.5);
         const logs = ref([]);
+        const backendLogs = ref([]);
         const slStates = ref({});
         const trendBias = ref({});
         const activeTab = ref('chart');  // mobile tab: 'chart' | 'trade' | 'history' | 'settings'
@@ -1216,6 +1219,16 @@ createApp({
             return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         };
 
+        const logRowClass = (log) => {
+            if (log.text.includes('Paper成交') || log.text.includes('Paper市價成交') || log.text.includes('Paper追價成交') || log.text.includes('限價成交') || log.text.includes('實盤開倉成功')) {
+                return 'log-entry-filled';
+            }
+            if (log.text.includes('即時開倉') || log.text.includes('順勢加倉') || log.text.includes('直進✓') || log.text.includes('反手直進')) {
+                return 'log-entry-confirm';
+            }
+            return '';
+        };
+
         const addLog = (text, level = 'info') => {
             const t = new Date().toTimeString().split(' ')[0];
             let lc = 'log-info';
@@ -1227,13 +1240,17 @@ createApp({
             nextTick(() => { if (consoleRef.value) consoleRef.value.scrollTop = consoleRef.value.scrollHeight; });
         };
 
-        const clearLogs = () => { logs.value = []; addLog('控制台已清空。'); };
+        const clearLogs = () => {
+            backendLogs.value = [];
+            logs.value = [];
+            addLog('控制台已清空。');
+        };
         const copyLogs = async () => {
             if (!logs.value.length) {
                 showToast('目前沒有系統紀錄可複製', 'warning');
                 return;
             }
-            const payload = logs.value.map(l => `[${l.time}] ${l.text}`).join('\n');
+            const payload = backendLogs.value.length ? backendLogs.value.map(l => `[${l.time}] ${l.text}`).join('\n') : logs.value.map(l => `[${l.time}] ${l.text}`).join('\n');
             
             let success = false;
             try {
@@ -1907,15 +1924,16 @@ createApp({
                 if (!res.ok) return;
                 const bl = await res.json();
                 let hasNew = false;
-                for (let log of bl) {
-                    let lc = log.level === 'warning' ? 'log-warning' : log.level === 'danger' ? 'log-danger' : log.level === 'success' ? 'log-success' : 'log-info';
-                    if (!logs.value.some(l => l.time === log.time && l.text === log.text)) {
-                        logs.value.push({ time: log.time, text: log.text, levelClass: lc });
-                        hasNew = true;
-                    }
+                const incoming = (bl || []).map(log => {
+                    const lc = log.level === 'warning' ? 'log-warning' : log.level === 'danger' ? 'log-danger' : log.level === 'success' ? 'log-success' : 'log-info';
+                    return { time: log.time, text: log.text, levelClass: lc };
+                });
+                if (incoming.length !== backendLogs.value.length || incoming.some((item, idx) => item.time !== backendLogs.value[idx]?.time || item.text !== backendLogs.value[idx]?.text)) {
+                    backendLogs.value = incoming.slice(-100);
+                    hasNew = true;
                 }
                 if (hasNew) {
-                    if (logs.value.length > 100) logs.value = logs.value.slice(-100);
+                    logs.value = [...backendLogs.value];
                     nextTick(() => { if (consoleRef.value) consoleRef.value.scrollTop = consoleRef.value.scrollHeight; });
                 }
             } catch(e) {}
@@ -2043,7 +2061,7 @@ createApp({
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, sortedTrades, liveTrades, error,
             toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeCurrentPrice, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, totalUnrealizedPnl, limitPrice,
-            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs,
+            cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs, logRowClass,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,

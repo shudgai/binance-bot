@@ -3,9 +3,12 @@
 BIN=/home/shudgai999/project/binance-bot/.venv/bin
 CONFIG_FILE=/home/shudgai999/project/binance-bot/.entry_mode
 
-ENTRY_MODE="balanced"
+ENTRY_MODE="${ENTRY_STRICTNESS_MODE:-relaxed}"
 if [ -f "$CONFIG_FILE" ]; then
-  ENTRY_MODE="$(cat "$CONFIG_FILE")"
+  FILE_MODE="$(tr -d '[:space:]' < "$CONFIG_FILE")"
+  if [ -n "$FILE_MODE" ]; then
+    ENTRY_MODE="$FILE_MODE"
+  fi
 fi
 
 if [ -n "$ENTRY_STRICTNESS_MODE" ]; then

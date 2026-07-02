@@ -14,7 +14,7 @@ exchange_futures = ccxtpro.binance({
     'apiKey': os.getenv('BINANCE_API_KEY') or None,
     'secret': os.getenv('BINANCE_API_SECRET') or None,
     'enableRateLimit': True,
-    'rateLimit': 1000,
+    'rateLimit': 200,
     'options': {
         'defaultType': 'future',
         'watchOrderBookSnapshot': True,
@@ -83,6 +83,39 @@ async def sanitize_order_qty(sym: str, qty: float):
     if qty < prec['min_qty']:
         return 0.0
     return qty
+
+
+async def get_reference_price(sym: str, exchange=None) -> float:
+    """挑選一個更貼近牌價的參考價：優先 mark price，其次委託簿中位數，最後回退最新成交價。
+    exchange 參數預設用本模組的 exchange_futures；呼叫端可傳入自己 import 進去的實例，
+    確保測試 mock 該呼叫端模組的 exchange_futures 時，這裡也會用到同一個 mock。"""
+    ex = exchange if exchange is not None else exchange_futures
+    try:
+        mark = await ex.fetch_mark_price(sym)
+        mark_price = float(mark.get("markPrice") or 0)
+        if mark_price > 0:
+            return mark_price
+    except Exception:
+        pass
+
+    try:
+        book = await ex.fetch_order_book(sym, limit=5)
+        bids = book.get("bids", [])
+        asks = book.get("asks", [])
+        if bids and asks:
+            bid_price = float(bids[0][0])
+            ask_price = float(asks[0][0])
+            midpoint = (bid_price + ask_price) / 2.0
+            if midpoint > 0:
+                return midpoint
+    except Exception:
+        pass
+
+    try:
+        ticker = await ex.fetch_ticker(sym)
+        return float(ticker.get("last") or 0)
+    except Exception:
+        return 0.0
 
 
 def check_binance_weight():

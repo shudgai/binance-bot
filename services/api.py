@@ -220,9 +220,11 @@ def api_radar_scan():
 @app.get("/api/radar/atr-rank")
 def api_radar_atr_rank():
     try:
-        from services.binance_service import get_atr_ranked_coins
+        from services.binance_service import get_atr_ranked_coins, get_atr_scan_universe
         from services.radar_service import BLACKLIST
-        scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
+        scan_pool = get_atr_scan_universe(ignore_list=list(BLACKLIST.keys()))
+        if not scan_pool:
+            scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
         selected, full_ranking = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT)
         return {"success": True, "selected": selected, "ranking": full_ranking}
     except Exception as e:

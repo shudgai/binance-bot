@@ -8,6 +8,7 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.exits import detect_market_regime
 from core.signal_engine import compute_signal_strength
+from core.check_entries import check_entries
 
 
 class TradeSignalTests(unittest.TestCase):
@@ -72,6 +73,36 @@ class TradeSignalTests(unittest.TestCase):
 
         self.assertIsNone(side)
         self.assertEqual(strength, 0)
+
+    def test_check_entries_handles_missing_macd_tiny_threshold(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["status"] = "ACTIVE"
+        s["close_price"] = 100.0
+        s["current_rsi"] = 40.0
+        s["macd_hist"] = 0.0
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 1100.0
+        s["sma200_15m"] = 99.0
+        s["ema50_1h"] = 99.0
+        s["atr_history"] = [0.1, 0.1, 0.1]
+        s["current_atr"] = 0.1
+        s["ohlcv"] = [
+            [0, 90, 95, 90, 95, 1000],
+            [0, 91, 96, 91, 96, 1100],
+            [0, 92, 97, 92, 97, 1200],
+        ]
+        s["qty"] = 0.0
+        s["pending_side"] = None
+        s["pending_reverse"] = None
+
+        try:
+            import asyncio
+            asyncio.run(check_entries())
+        except Exception as exc:
+            self.fail(f"check_entries should not crash: {exc}")
 
 
 if __name__ == "__main__":

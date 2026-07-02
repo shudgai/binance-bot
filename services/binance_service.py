@@ -108,6 +108,36 @@ def _get_valid_futures_symbols() -> set:
     return _valid_futures_symbols
 
 
+def get_atr_scan_universe(min_vol_usdt: float = 5_000_000, max_candidates: int = 60, ignore_list=None) -> list:
+    """從幣安永續合約市場即時抓取候選幣種清單（依24h成交量篩選/排序），供 ATR 雷達排名使用。
+    取代寫死的固定清單，讓 ATR 雷達能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。"""
+    try:
+        valid = _get_valid_futures_symbols()
+        tickers = client.futures_ticker()
+        exclude = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT", "BTCDOMUSDT"}
+        if ignore_list:
+            exclude.update(ignore_list)
+
+        candidates = []
+        for t in tickers:
+            sym = t["symbol"]
+            if sym in exclude or not sym.endswith("USDT") or sym not in valid:
+                continue
+            try:
+                q_vol = float(t.get("quoteVolume", 0))
+            except (ValueError, TypeError):
+                continue
+            if q_vol < min_vol_usdt:
+                continue
+            candidates.append((sym, q_vol))
+
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in candidates[:max_candidates]]
+    except Exception as e:
+        print(f"[ATR掃描範圍] 抓取永續合約清單失敗: {e}")
+        return []
+
+
 def get_hot_movers(
     min_vol_usdt: float = 10_000_000,
     min_change_pct: float = 5.0,

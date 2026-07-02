@@ -71,8 +71,8 @@ def build_symbol_state(sym):
         "trail_tp_price": 0.0,
         "entry_count": 0,
         "avg_entry_price": 0.0,
-        "max_additional_entries": 2,
-        "entry_cooldown_sec": conf.get("entry_cooldown_sec", 90),
+        "max_additional_entries": 3,
+        "entry_cooldown_sec": conf.get("entry_cooldown_sec", 45),
         "min_flip_time": conf.get("min_flip_time", 300),
         "profile_type": conf.get("profile_type", "Core_Trend"),
         "entry_size_pct": 0.5,
@@ -96,21 +96,108 @@ def build_symbol_state(sym):
     }
 
 
+def _remove_cooldown_substitute(sym):
+    """冷卻/封禁結束時，將原幣種復位到監控池，並移除候補幣種（若未開倉）。"""
+    from core import ctx
+    from core.symbol_profile import save_symbol_pool
+    
+    sub = ctx.COOLDOWN_SUBSTITUTES.pop(sym, None)
+    
+    # 🔄 [恢復冷卻幣種] 將原幣種加回到 ALL_SYMBOLS
+    if sym not in ctx.ALL_SYMBOLS:
+        ctx.ALL_SYMBOLS.append(sym)
+        logger.info(f"🔄 [冷卻恢復] {sym} 冷卻期結束，已重新加入監控池")
+        save_symbol_pool(ctx.ALL_SYMBOLS)
+    
+    if not sub:
+        return
+    
+    # ♻️ [候補幣種清理] 若候補幣種未開倉，則移除
+    sub_state = ctx.STATES.get(sub)
+    if sub_state and abs(sub_state.get("qty", 0.0)) < 0.000001 and sub_state.get("entry_count", 0) == 0:
+        if sub in ctx.ALL_SYMBOLS:
+            ctx.ALL_SYMBOLS.remove(sub)
+            save_symbol_pool(ctx.ALL_SYMBOLS)
+        logger.info(f"♻️ [冷卻補位] {sym} 已恢復，移除暫時候補幣種 {sub}")
+    else:
+        # 候補幣種已有持倉或進場，保留為正式監控幣種
+        logger.info(f"✅ [冷卻補位] {sym} 已恢復，候補幣種 {sub} 已有部位或進場，轉為正式監控幣種")
+
+
+def _add_cooldown_substitute(sym):
+    """幣種進入冷卻/封禁時，暫時從幣安永續合約市場找一個候補幣種補入，
+    避免監控池在這段期間少一個可交易幣種。實際抓取放在背景執行緒，避免卡住主循環。"""
+    import threading
+
+    def _worker():
+        from core import ctx
+        from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES, save_symbol_pool
+        try:
+            from services.binance_service import get_top_volume_altcoins
+            from services.radar_service import clean_blacklist, BLACKLIST
+
+            clean_blacklist()
+            ignore_list = list(BLACKLIST.keys()) + list(ctx.ALL_SYMBOLS) + list(ctx.COOLDOWN_SUBSTITUTES.values())
+            candidates = get_top_volume_altcoins(15, ignore_list=ignore_list)
+
+            new_sym = None
+            for c in candidates:
+                if c not in ctx.ALL_SYMBOLS and c not in ctx.COOLDOWN_SUBSTITUTES.values():
+                    new_sym = c
+                    break
+
+            if not new_sym:
+                logger.info(f"⚠️ [冷卻補位] {sym} 冷卻中，幣安永續合約市場找不到合適的候補幣種")
+                return
+
+            ctx.ALL_SYMBOLS.append(new_sym)
+            ctx.STATES[new_sym] = build_symbol_state(new_sym)
+            apply_symbol_profile(new_sym, SYMBOL_PROFILES.get(new_sym, {}))
+            ctx.COOLDOWN_SUBSTITUTES[sym] = new_sym
+            save_symbol_pool(ctx.ALL_SYMBOLS)
+            logger.info(f"✨ [冷卻補位] {sym} 進入冷卻，從幣安永續合約市場補入候補幣種 {new_sym} 維持監控池數量")
+        except Exception as e:
+            logger.info(f"🚨 [冷卻補位異常] {sym}: {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def update_states():
     from core import ctx
     now = time.time()
+    
+    # 處理 ALL_SYMBOLS 中的幣種狀態轉移
     for sym in ctx.ALL_SYMBOLS:
         s = ctx.STATES[sym]
         if s["status"] == "COOLDOWN" and now >= s["next_status_time"]:
             s["status"] = "ACTIVE"
             s["status_reason"] = ""
             logger.info(f"🔄 [狀態] {sym} 冷卻結束 → ACTIVE")
+            _remove_cooldown_substitute(sym)
         if s["status"] == "BANNED" and now >= s["next_status_time"]:
             s["status"] = "ACTIVE"
             s["status_reason"] = ""
             s["stop_count"] = 0
             s["first_stop_time"] = 0
             logger.info(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
+            _remove_cooldown_substitute(sym)
+    
+    # 處理被移出後仍在冷卻的幣種（可能被暫時汰換，但冷卻結束後應恢復）
+    for sym in list(ctx.STATES.keys()):
+        if sym not in ctx.ALL_SYMBOLS:
+            s = ctx.STATES[sym]
+            if s["status"] in ("COOLDOWN", "BANNED") and now >= s["next_status_time"]:
+                s["status"] = "ACTIVE"
+                s["status_reason"] = ""
+                if s["status"] == "BANNED":  # 若是封禁狀態解除
+                    s["stop_count"] = 0
+                    s["first_stop_time"] = 0
+                # 檢查是否需要恢復到 ALL_SYMBOLS
+                if sym in ctx.COOLDOWN_SUBSTITUTES:
+                    _remove_cooldown_substitute(sym)
+                elif sym not in ctx.ALL_SYMBOLS:
+                    # 被汰換的幣種在冷卻結束後，若沒有候補紀錄，先不主動恢復（保留現有汰換決定）
+                    logger.info(f"ℹ️  [離線恢復] {sym} 冷卻結束但不在監控池，保持待命狀態")
 
 
 def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
@@ -180,6 +267,11 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
                     logger.info(f"⚠️ [連續虧損汰換失敗] 候選池中已無可用幣種來替補 {sym}")
             except Exception as replacement_err:
                 logger.info(f"🚨 [連續虧損汰換異常] {sym}: {replacement_err}")
+            return  # 已被永久汰換，不需再補位
+
+    # 冷卻/封禁期間補位：讓監控池在這段期間維持原本可交易的幣種數量
+    if sym in ctx.ALL_SYMBOLS and sym not in ctx.COOLDOWN_SUBSTITUTES:
+        _add_cooldown_substitute(sym)
 
 
 def reset_coin_state(sym):

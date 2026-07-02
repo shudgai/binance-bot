@@ -45,7 +45,8 @@ def send_alert(message):
 async def watch_symbol_trades(exchange, sym):
     while True:
         try:
-            trades = await exchange_futures.fetch_trades(sym, limit=50)
+            async with ctx.request_semaphore:
+                trades = await exchange_futures.fetch_trades(sym, limit=50)
             if isinstance(trades, list):
                 for trade in trades:
                     update_trade_signal(sym, trade)
@@ -53,7 +54,7 @@ async def watch_symbol_trades(exchange, sym):
                 update_trade_signal(sym, trades)
         except Exception as e:
             logger.info(f"⚠️ [成交流監聽異常] {sym}: {e}")
-        await asyncio.sleep(3)
+        await asyncio.sleep(8)
 
 
 async def ensure_watch_tasks(exchange):

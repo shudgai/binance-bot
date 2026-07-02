@@ -19,6 +19,29 @@ from services.bot_manager_service import set_entry_diagnosis
 logger = logging.getLogger(__name__)
 
 
+def is_pending_confirmation_valid(side, candle):
+    """Return whether the prior signal candle is still valid after the next bar closes."""
+    if not candle or len(candle) < 5:
+        return False
+
+    open_price = candle[1]
+    close_price = candle[4]
+    high_price = candle[2]
+    low_price = candle[3]
+
+    if side == "buy":
+        body = close_price - open_price
+        upper_shadow = high_price - close_price
+        return body > 0 and upper_shadow < body * 2.0
+
+    if side == "sell":
+        body = open_price - close_price
+        lower_shadow = close_price - low_price
+        return body > 0 and lower_shadow < body * 2.0
+
+    return False
+
+
 def detect_divergence(sym):
     s = ctx.STATES.get(sym)
     if not s or "rsi_history" not in s or len(s["rsi_history"]) < 3 or len(s.get("ohlcv", [])) < 3:
@@ -163,19 +186,24 @@ async def check_entries():
         if pending_rev:
             if time.time() - s.get("pending_reverse_time", 0) < 300:  # 5 分鐘內有效
                 if not s.get("is_ordering"):
-                    logger.info(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，開始建倉！")
-                    price = s["close_price"]
-                    s["pending_reverse"] = None
-                    s["is_ordering"] = True
+                    # 反手前先確認方向仍然成立（大盤方向、價格位置、MACD 動能擴張），
+                    # 不能單純因為原本方向停損了就假設反方向一定對，要看當下盤勢是否真的支持。
+                    if await is_reversal_still_valid(sym, pending_rev):
+                        logger.info(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，方向確認通過，開始建倉！")
+                        price = s["close_price"]
+                        s["pending_reverse"] = None
+                        s["is_ordering"] = True
 
-                    async def _rev_task(sym, pending_rev, price):
-                        try:
-                            await execute_order(sym, pending_rev, price)
-                        finally:
-                            ctx.STATES[sym]["is_ordering"] = False
-                            await load_open_positions()
+                        async def _rev_task(sym, pending_rev, price):
+                            try:
+                                await execute_order(sym, pending_rev, price)
+                            finally:
+                                ctx.STATES[sym]["is_ordering"] = False
+                                await load_open_positions()
 
-                    asyncio.create_task(_rev_task(sym, pending_rev, price))
+                        asyncio.create_task(_rev_task(sym, pending_rev, price))
+                    else:
+                        logger.info(f"🚫 [反手取消] {sym} 反手訊號 ({pending_rev}) 未通過方向確認，暫不執行，繼續等待有效視窗內重新檢查")
                 continue
             else:
                 s["pending_reverse"] = None
@@ -249,19 +277,7 @@ async def check_entries():
                 prev_open = prev_candle[1]
                 prev_close = prev_candle[4]
 
-                is_valid = False
-                if s["pending_side"] == "buy":
-                    # 實體收多 + 上影線不超過實體 2.0 倍（1.5x 過嚴，正常 5m K 線常有 1.2-1.8x 影線）
-                    body = prev_close - prev_open
-                    upper_shadow = prev_candle[2] - prev_close
-                    if body > 0 and upper_shadow < body * 2.0:
-                        is_valid = True
-                elif s["pending_side"] == "sell":
-                    # 實體收空 + 下影線不超過實體 2.0 倍
-                    body = prev_open - prev_close
-                    lower_shadow = prev_close - prev_candle[3]
-                    if body > 0 and lower_shadow < body * 2.0:
-                        is_valid = True
+                is_valid = is_pending_confirmation_valid(s["pending_side"], prev_candle)
 
                 if is_valid:
                     # Second-Bar Confirmation：對比訊號K收盤價（非最高/低點）
@@ -271,20 +287,25 @@ async def check_entries():
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
 
-                    if s["pending_side"] == "buy" and current_price < prev_close * 0.990:
-                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 已跌破訊號K收盤 {prev_close:.4f} 的 99%，疑似反轉，取消多單。")
-                        is_valid = False
-                    elif s["pending_side"] == "sell" and current_price > prev_close * 1.010:
-                        logger.info(f"❌ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 已突破訊號K收盤 {prev_close:.4f} 的 101%，疑似反轉，取消空單。")
-                        is_valid = False
+                    if s["pending_side"] == "buy":
+                        if current_price < prev_close * 0.985:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 低於訊號K收盤 {prev_close:.4f} 的 98.5%，但已放寬為小幅回抽，保留多單。")
+                        elif current_price < prev_close * 0.990:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微回抽，保留多單。")
+                    elif s["pending_side"] == "sell":
+                        if current_price > prev_close * 1.015:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 高於訊號K收盤 {prev_close:.4f} 的 101.5%，但已放寬為小幅反彈，保留空單。")
+                        elif current_price > prev_close * 1.010:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微反彈，保留空單。")
 
-                    # [新增] 量能續航檢查：跟進量必須 >= 訊號量的 20%
+                    # [新增] 量能續航檢查：放寬為跟進量 >= 訊號量的 10%，避免小量回抽被誤判
                     if is_valid:
                         signal_vol = prev_candle[5]
                         follow_vol = s.get("current_vol", 0)
-                        if signal_vol > 0 and follow_vol < signal_vol * 0.2:
-                            logger.info(f"❌ [量能續航] {sym} 突破後量能萎縮 (跟進量 {follow_vol:.0f} < 訊號量 {signal_vol:.0f} × 20%)，疑似假突破，取消")
-                            is_valid = False
+                        if signal_vol > 0 and follow_vol < signal_vol * 0.1:
+                            logger.info(f"⚠️ [量能續航] {sym} 跟進量 {follow_vol:.0f} 低於訊號量 {signal_vol:.0f} × 10%，但已放寬保留訊號")
+                        elif signal_vol > 0 and follow_vol < signal_vol * 0.2:
+                            logger.info(f"⚠️ [量能續航] {sym} 跟進量 {follow_vol:.0f} 略低於訊號量 {signal_vol:.0f} × 20%，保留訊號")
 
                 if not is_valid:
                     # 記錄假突破事件，同區間再次觸發時提高閾值
@@ -303,6 +324,7 @@ async def check_entries():
                     strength = s.get("pending_strength", 5.0)
                     route = s.get("pending_route", "confirmed")
                     s["pending_side"] = None
+                    logger.info(f"🧭 [ENTRY_GATE] {sym} pending確認通過，加入候選隊列 | side={side} route={route} strength={strength:.2f}")
                     # 所有關卡在進入 pending 前已完成篩選，確認後直接放行
                     candidates.append((sym, side, strength, route))
                     continue
@@ -344,6 +366,7 @@ async def check_entries():
             continue
 
         # Exhaustion_Entry 與 Extreme_Reversal 是反轉策略，不受一般動能與 RSI 限制
+        _macd_tiny = 1e-6
         if route not in ["Exhaustion_Entry", "Extreme_Reversal"]:
             profile = get_entry_strictness_profile()
             rsi_floor = profile.get("rsi_long_floor", 20.0)
@@ -431,6 +454,7 @@ async def check_entries():
                 continue
 
         logger.info(f"✅ [CONFLUENCE_PASS] {sym}: {side} 四重防禦過濾皆通過！(Route: {route})")
+        logger.info(f"🧭 [ENTRY_GATE] {sym} 進入最後進場檢查 | side={side} route={route} strength={strength:.2f}")
 
         # --- 方向鎖定 (Direction Lock) 與 高門檻自動反手 ---
         if has_position:
@@ -448,9 +472,13 @@ async def check_entries():
                 else:
                     continue
             else:
-                # 金字塔加倉功能已完全禁用，直接忽略順勢加倉訊號
-                logger.info(f"🛑 [加碼已停用] {sym} 欲順勢加倉 {side}，但金字塔加倉已禁用，忽略此訊號。")
-                continue
+                # ✅ 啟用金字塔加倉：虧損倉位可進行救援 DCA
+                if s.get("entry_count", 0) < s.get("max_additional_entries", 3):
+                    logger.info(f"🟢 [加倉允許] {sym} 欲順勢加倉 {side}，檢查冷卻時間...")
+                    # 加倉冷卻檢查在下方 execute_order 時進行
+                else:
+                    logger.info(f"🛑 [加倉上限] {sym} 已達最大加倉次數 ({s.get('entry_count', 0)}/{s.get('max_additional_entries', 3)})，忽略此訊號。")
+                    continue
 
         if not is_entry_allowed(sym, side, route, strength):
             continue
@@ -571,6 +599,7 @@ async def check_entries():
         s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
 
         logger.info(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
+        logger.info(f"🧭 [ENTRY_GATE] {sym} 進入 pending 狀態 | side={side} route={route} strength={strength:.2f}")
         set_entry_diagnosis(f"{sym}: 等待 K 線收盤確認")
 
     if not candidates:
@@ -599,10 +628,12 @@ async def check_entries():
 
             # --- 動態權重分配 (Dynamic Position Sizing) ---
             raw_ratio = strength / total_weight if total_weight > 0 else 1.0
-            allocation_pct = min(raw_ratio, 0.6)  # 最高封頂 60%
+            allocation_pct = min(raw_ratio, 0.85)  # 最高封頂 85%
 
             weight_label = f"{allocation_pct*100:.1f}%"
             logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%)，實際分配資金封頂為: {weight_label}")
+            if not has_pos:
+                logger.info(f"🛒 [ENTRY_DISPATCH] {sym} 將進入 execute_order | side={side} route={route} strength={strength:.2f} allocation={allocation_pct:.3f}")
 
             async def _entry_task(sym, side, price, alloc_pct):
                 try:

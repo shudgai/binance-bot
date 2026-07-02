@@ -14,6 +14,8 @@ PENDING_LIMIT_ORDERS = {}
 WATCH_TASKS = {}
 CONSECUTIVE_ERRORS = 0
 request_semaphore = None
+# 冷卻期補位：{原幣種: 暫時補入的候補幣種}，讓監控池在冷卻期間維持原本數量
+COOLDOWN_SUBSTITUTES = {}
 
 
 def init_states(symbols=None):

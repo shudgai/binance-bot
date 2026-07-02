@@ -252,7 +252,9 @@ def read_bot_output(proc, sym):
         # 無論退出碼為何，只要 bot_status["is_running"] 為 True，就必須重啟
         # (退出碼 0 可能是因為防禦分流、或不可預期的 CancelledError 導致)
         if proc.returncode == 0:
-            add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，將在 5 秒後重試檢查...", "info")
+            # 只在調試模式下記錄，避免頁面被重複重啟訊息刷爆。
+            if os.getenv("BOT_DEBUG_LOGS") == "1":
+                add_system_log(f"ℹ️ [防禦分流] {sym} 正常退出 (exit 0)，將在 5 秒後重試檢查...", "info")
         else:
             add_system_log(f"⚠️ [系統守護] 偵測到機器人({sym})意外停止 (exit {proc.returncode})，將在 5 秒後自動重啟...", "danger")
             

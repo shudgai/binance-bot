@@ -1,6 +1,7 @@
 import collections
 import datetime
 import json
+import logging
 import os
 import fcntl
 import tempfile
@@ -14,6 +15,25 @@ _LOCK_FILE = os.path.join(_LOG_DIR, "system_logs.lock")
 
 system_logs = collections.deque(maxlen=100)
 _tz_taipei = pytz.timezone('Asia/Taipei')
+
+
+class FileBackedSystemLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            add_system_log(msg, level=self._level_to_name(record.levelno))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _level_to_name(levelno):
+        if levelno >= logging.ERROR:
+            return "danger"
+        if levelno >= logging.WARNING:
+            return "warning"
+        if levelno >= logging.INFO:
+            return "info"
+        return "info"
 
 
 def _load_logs_from_disk():
@@ -72,8 +92,17 @@ def _bootstrap_from_disk():
 _bootstrap_from_disk()
 
 
+def attach_to_root_logger(root_logger: logging.Logger):
+    handler = FileBackedSystemLogHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger.addHandler(handler)
+    return handler
+
+
 def add_system_log(text: str, level: str = "info"):
     now = datetime.datetime.now(_tz_taipei).strftime("%H:%M:%S")
+    if isinstance(text, Exception):
+        text = str(text)
     entry = {"time": now, "text": text, "level": level}
 
     with open(_LOCK_FILE, "a+", encoding="utf-8") as lock_file:

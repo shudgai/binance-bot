@@ -4,7 +4,7 @@ import time
 import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
-from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins, get_hot_movers as _get_hot_movers
+from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins, get_atr_scan_universe, get_hot_movers as _get_hot_movers
 from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
@@ -207,7 +207,12 @@ def auto_radar_switch(force_start=False):
         current_syms = bot_status.get("active_symbols", [])
 
         clean_blacklist()
-        scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
+        # 直接從幣安永續合約市場即時抓活躍幣種清單，取代寫死的 CORE_SYMBOLS，
+        # 這樣 ATR 雷達才能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。
+        scan_pool = get_atr_scan_universe(ignore_list=list(BLACKLIST.keys()))
+        if not scan_pool:
+            add_system_log("⚠️ [雷達掃描] 幣安永續合約市場清單抓取失敗，改用固定核心清單", "warning")
+            scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
         top_symbols, full_ranking = get_atr_ranked_coins(scan_pool, limit=CORE_SELECT_COUNT)
 
         if not top_symbols:
