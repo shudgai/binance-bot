@@ -220,7 +220,7 @@ def read_bot_output(proc, sym):
                 add_system_log(line.replace("@@COIN_DEBUG@@", "").strip(), "info")
             else:
                 # 過濾掉每輪掃描的 debug 雜訊（🔍 條件檢測），只保留有意義的事件
-                _skip_prefixes = ("🔍", "[__multi__] 🔍", "----")
+                _skip_prefixes = ("🔍", "[__multi__]", "[__multi__] 🔍", "----")
                 if any(line.startswith(p) for p in _skip_prefixes):
                     pass  # 靜默丟棄，不送 web log
                 else:

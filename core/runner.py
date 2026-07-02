@@ -383,7 +383,7 @@ def print_multi_status():
                 pnl = round(pnl_val * 100, 2)
             else:
                 pnl = 0.0
-            active_positions.append(f"  🔥 持倉] {sym} | 方向:{direction} | 入場:{avg_price} | 獲利:{pnl}%")
+            active_positions.append(f"  🔥 [持倉] {sym} | 方向:{direction} | 入場:{avg_price} | 獲利:{pnl}%")
 
     logger.info(f"[{now}] [__multi__] 📊 [現況]")
 
@@ -391,14 +391,14 @@ def print_multi_status():
         for pos in active_positions:
             logger.info(pos)
     else:
-        logger.info("  ✨ 持倉] 目前無持倉")
+        logger.info("  ✨ [持倉] 目前無持倉")
 
     total_monitored = len(ctx.STATES)
     active_count = len(active_positions)
     cooldown_count = sum(1 for s in ctx.STATES.values() if s.get('status') == 'COOLDOWN')
     banned_count = sum(1 for s in ctx.STATES.values() if s.get('status') == 'BANNED')
 
-    logger.info(f"  📊 統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
+    logger.info(f"  📊 [統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
     logger.info("-" * 60)
 
 

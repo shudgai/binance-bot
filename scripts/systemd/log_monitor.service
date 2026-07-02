@@ -1,0 +1,14 @@
+[Unit]
+Description=Binance Bot Log Monitor (runs log_monitor script)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory={{WORKDIR}}
+ExecStart={{PYTHON}} {{WORKDIR}}/scripts/log_monitor.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

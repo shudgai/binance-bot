@@ -266,7 +266,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         # 支持 per-coin 覆蓋：允許在配置中為特定幣種放寬支撑區容忍度與強度門檻
         coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
         tol = coin_cfg.get("support_zone_tolerance_pct", 0.003)  # default 0.3%
-        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 28.0)
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 24.0)
 
         # 買入時必須在下軌附近（有支撑）
         support_zone_upper = bb_lower * (1 + tol)
@@ -284,7 +284,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if side == "sell" and bb_upper > 0:
         coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
         tol = coin_cfg.get("support_zone_tolerance_pct", 0.003)
-        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 28.0)
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 24.0)
 
         # 賣出時必須在上軌附近（有阻力）
         resistance_zone_lower = bb_upper * (1 - tol)
