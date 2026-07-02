@@ -6,3 +6,6 @@ api_b64.txt
 *.log
 .DS_Store
 .claude/
+.venv/
+__pycache__/
+.env
