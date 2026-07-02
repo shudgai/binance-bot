@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 156.37858679372363,
+    "balance_usdt": 158.60681741257204,
     "session_start_balance": 150.0,
     "positions": {
         "INJ:USDT": {
@@ -34,8 +34,8 @@
         },
         "M:USDT": {
             "qty": 0.0,
-            "avg_price": 1.22458264533,
-            "realized_pnl": 2.923976014208411,
+            "avg_price": 1.2477884626922269,
+            "realized_pnl": 3.6664101495102708,
             "entries": []
         },
         "BEAT:USDT": {
@@ -57,19 +57,37 @@
             "entries": []
         },
         "XRP:USDT": {
-            "qty": 125.2,
-            "avg_price": 1.06002975,
+            "qty": 0.0,
+            "avg_price": 1.0603340934809224,
+            "realized_pnl": 0.6640342260424117,
+            "entries": []
+        },
+        "DOGE:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.07315513929,
+            "realized_pnl": 0.48659696558372273,
+            "entries": []
+        },
+        "TAIKO:USDT": {
+            "qty": 0.0,
+            "avg_price": 0.42003360099068304,
+            "realized_pnl": 1.1067885386104335,
+            "entries": []
+        },
+        "RE:USDT": {
+            "qty": 223.0,
+            "avg_price": 0.60420195,
             "realized_pnl": 0.0,
             "entries": [
                 {
-                    "price": 1.06002975,
-                    "qty": 125.2,
-                    "time": 1782960050458,
+                    "price": 0.60420195,
+                    "qty": 223.0,
+                    "time": 1782964924464,
                     "side": "buy"
                 }
             ],
-            "unrealized_pnl": -0.016245,
-            "current_price": 1.0599
+            "unrealized_pnl": 0.088765,
+            "current_price": 0.6046
         }
     },
     "trades": [
@@ -562,8 +580,118 @@
             "realized_pnl": 0.33111137295000026,
             "is_close": true,
             "fee": 0.066387830276475
+        },
+        {
+            "symbol": "XRP:USDT",
+            "price": 1.06063819407,
+            "qty": 125.3,
+            "time": 1782961283576,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.06644898285848551,
+            "is_close": false
+        },
+        {
+            "symbol": "M:USDT",
+            "price": 1.2473233499999998,
+            "qty": 50.0,
+            "time": 1782961919375,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.031183083749999996,
+            "is_close": false
+        },
+        {
+            "symbol": "M:USDT",
+            "price": 1.248125500875,
+            "qty": 69.0,
+            "time": 1782962051573,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.0430603297801875,
+            "is_close": false
+        },
+        {
+            "symbol": "M:USDT",
+            "price": 1.2540274050056879,
+            "qty": 119.0,
+            "time": 1782962123503,
+            "isBuyer": false,
+            "realized_pnl": 0.7424341353018595,
+            "is_close": true,
+            "fee": 0.07461463059783843
+        },
+        {
+            "symbol": "XRP:USDT",
+            "price": 1.0629849287146247,
+            "qty": 250.5,
+            "time": 1782962944710,
+            "isBuyer": false,
+            "realized_pnl": 0.6640342260424117,
+            "is_close": true,
+            "fee": 0.13313886232150673
+        },
+        {
+            "symbol": "DOGE:USDT",
+            "price": 0.07315513929,
+            "qty": 1827.0,
+            "time": 1782964021408,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.066827219741415,
+            "is_close": false
+        },
+        {
+            "symbol": "DOGE:USDT",
+            "price": 0.073421475888568,
+            "qty": 1827.0,
+            "time": 1782964405317,
+            "isBuyer": false,
+            "realized_pnl": 0.48659696558372273,
+            "is_close": true,
+            "fee": 0.06707051822420687
+        },
+        {
+            "symbol": "TAIKO:USDT",
+            "price": 0.42245702295,
+            "qty": 318.0,
+            "time": 1782964598405,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.06717066664905,
+            "is_close": false
+        },
+        {
+            "symbol": "TAIKO:USDT",
+            "price": 0.41634628911,
+            "qty": 209.0,
+            "time": 1782964791000,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.043508187211995,
+            "is_close": false
+        },
+        {
+            "symbol": "TAIKO:USDT",
+            "price": 0.4221337689956364,
+            "qty": 527.0,
+            "time": 1782964883787,
+            "isBuyer": false,
+            "realized_pnl": 1.1067885386104335,
+            "is_close": true,
+            "fee": 0.11123224813035021
+        },
+        {
+            "symbol": "RE:USDT",
+            "price": 0.60420195,
+            "qty": 223.0,
+            "time": 1782964924464,
+            "isBuyer": true,
+            "realized_pnl": 0.0,
+            "fee": 0.067368517425,
+            "is_close": false
         }
     ],
-    "total_unrealized_pnl": -0.016245,
-    "last_updated": 1782961064
+    "total_unrealized_pnl": 0.088765,
+    "last_updated": 1782965011
 }

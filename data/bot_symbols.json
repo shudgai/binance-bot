@@ -6,7 +6,6 @@
     "INUSDT",
     "NFPUSDT",
     "REUSDT",
-    "MUSDT",
     "UBUSDT",
     "BASUSDT",
     "SYNUSDT",
@@ -14,9 +13,13 @@
     "BEATUSDT",
     "RIFUSDT",
     "BASEDUSDT",
-    "TAIKOUSDT",
+    "DYDXUSDT",
+    "MUSDT",
+    "WLDUSDT",
     "XRPUSDT",
-    "DYDXUSDT"
+    "DOGEUSDT",
+    "TACUSDT",
+    "TAIKOUSDT"
   ],
   "profiles": {
     "BTWUSDT": {
