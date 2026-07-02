@@ -303,22 +303,40 @@ async def check_exits(sym):
             return
 
     _hard_sl = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", 0.0)
-    if _hard_sl > 0 and profit_pct <= -_hard_sl:
-        if await _attempt_forced_rescue(sym, s, is_long, p):
+    if _hard_sl > 0:
+        # 提早在門檻 75% 處就評估要不要攤平，而不是等真正跌破停損線才評估——
+        # 這樣攤平才有機會買在明顯優於原始停損線的價位，真正達到降低風險的效果，
+        # 而不是在已經要停損的當下才硬加碼，反而放大虧損（曾實際發生：攤平價幾乎
+        # 貼著原始停損線，加碼後部位變大、停損線卻被新均價往下拖，最終虧損翻倍）。
+        _rescue_eval_pct = _hard_sl * 0.75
+        if s.get("entry_count", 0) == 1 and not s.get("is_ordering") and profit_pct <= -_rescue_eval_pct:
+            if await _attempt_forced_rescue(sym, s, is_long, p):
+                return
+
+        # 攤平後的停損線不能比「原始進場價的停損線」更寬鬆：取新均價停損線跟原始
+        # 進場價停損線中「較緊」的那一個，避免攤平失敗時虧損被無限放大。
+        first_ep = s.get("first_entry_price", avg)
+        if is_long:
+            _hard_sl_price = max(avg * (1 - _hard_sl), first_ep * (1 - _hard_sl))
+            _hard_sl_hit = p <= _hard_sl_price
+        else:
+            _hard_sl_price = min(avg * (1 + _hard_sl), first_ep * (1 + _hard_sl))
+            _hard_sl_hit = p >= _hard_sl_price
+
+        if _hard_sl_hit:
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
+            if abs(profit_pct) > 0.015 and _check_reversal_allowed(sym, s):
+                if s.get("consecutive_losses", 0) >= 2:
+                    s["reversal_ban_until"] = time.time() + 14400
+                last_reverse = s.get("last_reverse_time", 0)
+                if time.time() - last_reverse > 1800:
+                    s["pending_reverse"] = "buy" if not is_long else "sell"
+                    s["pending_reverse_time"] = time.time()
+                    s["last_reverse_time"] = time.time()
+                    logger.info(f"🔄 [Hard_SL_Reverse] {sym} 硬止損後設置反手信號 → {s['pending_reverse']}")
             return
-        cs = 'sell' if is_long else 'buy'
-        logger.info(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
-        if abs(profit_pct) > 0.015 and _check_reversal_allowed(sym, s):
-            if s.get("consecutive_losses", 0) >= 2:
-                s["reversal_ban_until"] = time.time() + 14400
-            last_reverse = s.get("last_reverse_time", 0)
-            if time.time() - last_reverse > 1800:
-                s["pending_reverse"] = "buy" if not is_long else "sell"
-                s["pending_reverse_time"] = time.time()
-                s["last_reverse_time"] = time.time()
-                logger.info(f"🔄 [Hard_SL_Reverse] {sym} 硬止損後設置反手信號 → {s['pending_reverse']}")
-        return
 
     # --- 進場後觀察期快速撤退 (Post-Entry Observation Exit) ---
     # 首次進場後 1-5 分鐘：檢測三種「開錯方向」情境
@@ -1070,7 +1088,9 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
     logger.info(f"🆘 [強制補救] {sym} 即將觸發停損，尚未攤平過且動能已趨緩，最後嘗試一次救援加碼再觀察！")
     s["is_ordering"] = True
     try:
-        await execute_order(sym, cs, p, allocation_pct=0.33, is_rescue_dca=True)
+        # 縮小補救倉位（0.33→0.20）：這是最後一次性的救援加碼，一旦失敗會直接停損出場，
+        # 縮小額度可以降低每次救援失敗時放大的虧損金額。
+        await execute_order(sym, cs, p, allocation_pct=0.20, is_rescue_dca=True)
     finally:
         s["is_ordering"] = False
     return True

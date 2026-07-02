@@ -97,6 +97,46 @@ class EntryFilterTests(unittest.TestCase):
 
         self.assertTrue(is_entry_allowed(sym, "buy", route="a", strength=27.4))
 
+    def test_short_entry_is_allowed_when_btc_bull_defense_is_relaxed(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+
+        ctx.MARKET_WIND["allow_long"] = True
+        ctx.MARKET_WIND["allow_short"] = True
+        ctx.MARKET_WIND["btc_trend_4h"] = "BULL"
+        ctx.MARKET_WIND["btc_trend_1h"] = None
+
+        s["close_price"] = 1.0
+        s["current_vol"] = 1200.0
+        s["vol_ma20"] = 1000.0
+        s["current_atr"] = 0.0018
+        s["atr_history"] = [0.0010] * 20
+        s["current_rsi"] = 61.0
+        s["ema20"] = 0.99
+        s["ema20_history"] = [1.01] * 3
+        s["ema20_15m"] = 1.02
+        s["ema50_15m"] = 1.00
+        s["ema50_1h"] = 0.0
+        s["sma200_15m"] = 0.0
+        s["mtf_filter"] = False
+        s["bb_up"] = 1.00
+        s["bb_down"] = 0.99
+        s["rsi_history"] = [61.0] * 10
+        s["ohlcv"] = [
+            [0, 0.98 + i * 0.0005, 0.99 + i * 0.0005, 0.97 + i * 0.0005, 0.985 + i * 0.0005, 1000]
+            for i in range(19)
+        ]
+        s["ohlcv"].append([0, 0.995, 0.996, 0.992, 0.993, 1000])
+        s["macd_line"] = 0.001
+        s["macd_signal"] = 0.0
+        s["prev_macd_line"] = 0.0005
+        s["prev_macd_signal"] = 0.0
+        s["prev_macd_hist"] = 0.0
+
+        self.assertTrue(is_entry_allowed(sym, "sell", route="a", strength=20.5))
+
 
 if __name__ == "__main__":
     unittest.main()
