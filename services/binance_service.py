@@ -261,10 +261,22 @@ def get_position(symbol: str, quote_asset: str, base_asset: str):
 
 def get_trades(symbol: str):
     if symbol == "ALL":
-        # 幣安沒有「查所有幣種成交」的單一端點，逐一查目前監控的幣種再合併排序
+        # 幣安沒有「查所有幣種成交」的單一端點，逐一查目前監控的幣種再合併排序。
+        # 只查目前監控池會漏掉已經輪替出池子的幣種（例如雷達換幣後），導致之前明明
+        # 有成交的幣種從清單消失，所以額外併入本機 trade_history.json 記錄過的幣種，
+        # 確保歷史成交不會因為幣種被換出監控池就從畫面上憑空消失。
         from services.bot_manager_service import load_symbol_config
+        import json as _json
+        from core.config import TRADE_HISTORY_FILE
+        query_symbols = set(load_symbol_config())
+        try:
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = _json.load(f)
+            query_symbols.update(t.get("symbol", "") for t in history if t.get("symbol"))
+        except Exception:
+            pass
         all_trades = []
-        for sym in load_symbol_config():
+        for sym in query_symbols:
             try:
                 all_trades.extend(client.futures_account_trades(symbol=sym, limit=15))
             except Exception:
@@ -278,7 +290,9 @@ def get_trades(symbol: str):
         qty = float(t["qty"])
         is_buyer = (t["side"] == "BUY")
         realized_pnl = float(t.get("realizedPnl", 0.0))
-        timestamp = t.get("time") / 1000.0
+        # 前端 formatTradeTime() 是拿 ms 直接餵 new Date()（跟紙上交易 paper_state.json
+        # 的時間格式一致），這裡原本除以 1000 轉成秒，會讓顯示的成交時間跑到 1970 年附近。
+        timestamp = t.get("time")
         formatted_trades.append({
             "id": t.get("id"),
             "order_id": t.get("orderId"),
@@ -463,3 +477,29 @@ def market_sell(symbol: str, base_asset: str):
             quantity=abs(qty)
         )
     return order
+
+def get_all_positions():
+    positions = client.futures_position_information()
+    formatted = []
+    for pos in positions:
+        qty = float(pos['positionAmt'])
+        if abs(qty) > 0.000001:
+            sym = pos['symbol']
+            entry_price = float(pos['entryPrice'])
+            unrealized_pnl = float(pos['unRealizedProfit'])
+            mark_price = float(pos['markPrice'])
+            total_cost = abs(qty) * entry_price
+            pnl_percent = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0.0
+            formatted.append({
+                "symbol": sym.replace('USDT', ':USDT'),
+                "positionAmt": qty,
+                "qty": qty,
+                "entryPrice": entry_price,
+                "avg_price": entry_price,
+                "markPrice": mark_price,
+                "current_price": mark_price,
+                "unRealizedProfit": unrealized_pnl,
+                "pnl": unrealized_pnl,
+                "pnl_percent": pnl_percent
+            })
+    return formatted
