@@ -9,11 +9,13 @@ api_key = os.getenv("BINANCE_API_KEY")
 api_secret = os.getenv("BINANCE_API_SECRET")
 use_testnet = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 
+# 用的是幣安「Demo Trading」網頁申請的金鑰，跟舊版 testnet 是不同網址系統，
+# python-binance 用 demo=True（不是 testnet=True）才會打對網址。
 client = None
 if api_key and api_key != "your_api_key_here":
-    client = Client(api_key, api_secret, testnet=use_testnet)
+    client = Client(api_key, api_secret, demo=use_testnet)
 else:
-    client = Client(testnet=use_testnet)
+    client = Client(demo=use_testnet)
 
 _contract_precisions = {}
 
@@ -207,11 +209,32 @@ def get_all_prices():
         raise e
 
 
+def get_account_balance_usdt() -> float:
+    """即時查詢合約帳戶 USDT 餘額，給 API 進程自己直接查，不依賴 main.py 進程內快取的 REAL_BALANCE
+    （main.py 和 API 是兩個獨立進程，各自的模組全域變數互不相通）。"""
+    for b in client.futures_account_balance():
+        if b.get("asset") == "USDT":
+            return float(b.get("balance", 0.0))
+    return 0.0
+
+
 def get_position(symbol: str, quote_asset: str, base_asset: str):
     positions = client.futures_position_information(symbol=symbol)
     if not positions:
-        raise Exception("No position data returned")
-        
+        # 從沒交易過的幣種查不到部位資料是正常情況（沒有持倉），不是錯誤
+        return {
+            "asset": base_asset,
+            "quote_asset": quote_asset,
+            "qty": 0.0,
+            "avg_price": 0.0,
+            "total_cost": 0.0,
+            "current_price": 0.0,
+            "current_value": 0.0,
+            "pnl": 0.0,
+            "pnl_percent": 0.0,
+            "realized_pnl": 0.0
+        }
+
     pos = positions[0]
     qty = float(pos['positionAmt'])
     unrealized_pnl = float(pos['unRealizedProfit'])
@@ -237,7 +260,19 @@ def get_position(symbol: str, quote_asset: str, base_asset: str):
     }
 
 def get_trades(symbol: str):
-    trades = client.futures_account_trades(symbol=symbol, limit=15)
+    if symbol == "ALL":
+        # 幣安沒有「查所有幣種成交」的單一端點，逐一查目前監控的幣種再合併排序
+        from services.bot_manager_service import load_symbol_config
+        all_trades = []
+        for sym in load_symbol_config():
+            try:
+                all_trades.extend(client.futures_account_trades(symbol=sym, limit=15))
+            except Exception:
+                continue
+        all_trades.sort(key=lambda t: t.get("time", 0), reverse=True)
+        trades = list(reversed(all_trades[:30]))
+    else:
+        trades = client.futures_account_trades(symbol=symbol, limit=15)
     formatted_trades = []
     for t in reversed(trades):
         qty = float(t["qty"])

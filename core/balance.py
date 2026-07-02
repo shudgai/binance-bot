@@ -4,7 +4,7 @@ import os
 import time
 from core.config import (
     PAPER_TRADING, DUAL_SHOT_MAX_SLOTS, DUAL_SHOT_LEVERAGE,
-    DAILY_LOSS_LIMIT_PCT, TAKER_FEE_RATE, ROUND_TRIP_FEE_PCT,
+    DAILY_LOSS_LIMIT_PCT, TAKER_FEE_RATE, ROUND_TRIP_FEE_PCT, LIVE_CAPITAL_CAP,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,8 @@ async def fetch_real_balance():
 
 def get_balance():
     if not PAPER_TRADING:
-        return REAL_BALANCE
+        # 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算，不要用帳戶全部餘額
+        return min(REAL_BALANCE, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else REAL_BALANCE
     try:
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), "r") as f:
             state = json.load(f)

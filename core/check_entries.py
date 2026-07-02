@@ -484,9 +484,15 @@ async def check_entries():
             continue
 
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
-        last_trade_side = s.get("last_trade_side", "")
+        # 注意：這裡必須用機器人「自己」上一次真正進場的方向與出場時間
+        # (last_entry_direction / last_exit_time)，不能用 last_trade_side /
+        # last_trade_time —— 那兩個欄位是 core/trade_signal.py 從交易所「公開成交流」
+        # (fetch_trades) 更新的，代表的是市場上任何人最後一筆成交的方向，跟本機器人
+        # 有沒有做過交易完全無關，每幾秒就會因為別人的成交而隨機翻動，導致這個冷卻
+        # 在機器人根本還沒進場過的幣種上也會誤觸發。
+        last_trade_side = s.get("last_entry_direction", "")
         if last_trade_side != "" and side != last_trade_side and route != "Automatic_Reverse":
-            flip_elapsed = time.time() - s.get("last_trade_time", 0)
+            flip_elapsed = time.time() - s.get("last_exit_time", 0)
             last_exit = s.get("last_exit_reason", "")
             is_stop_loss = "Stop" in last_exit or "Loss" in last_exit or "Trailing" in last_exit or "Momentum_Fade" in last_exit
 

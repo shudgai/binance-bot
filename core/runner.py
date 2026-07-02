@@ -376,7 +376,7 @@ def print_multi_status():
         qty = s.get('qty', 0)
         if abs(qty) > 0.000001:
             avg_price = s.get('avg_price', 0)
-            close_price = s.get('close_price', avg_price)
+            close_price = s.get('close_price', 0) or avg_price  # 重啟後 close_price 還沒抓到報價前，先當作 0 損益，避免顯示假的 100%
             direction = "多" if qty > 0 else "空"
             if avg_price > 0:
                 pnl_val = (close_price - avg_price) / avg_price if qty > 0 else (avg_price - close_price) / avg_price

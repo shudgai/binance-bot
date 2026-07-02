@@ -22,8 +22,10 @@ exchange_futures = ccxtpro.binance({
 })
 
 if USE_TESTNET:
-    exchange_futures.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
-    exchange_futures.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
+    # 用的是幣安「Demo Trading」網頁申請的金鑰，跟舊版期貨測試網（testnet.binancefuture.com）
+    # 是不同系統、不同網址（demo-fapi.binance.com），要用 enable_demo_trading 對應到正確網址，
+    # 這是 ccxt 官方目前支援的方式，不像舊版 set_sandbox_mode 需要額外繞過棄用警告。
+    exchange_futures.enable_demo_trading(True)
 
 _PRECISION_CACHE = {}
 
@@ -127,11 +129,13 @@ def check_binance_weight():
                 weight = int(v)
                 break
         if weight is not None:
-            if weight > 900:
-                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/1200，觸發重度防護，冷卻 10 秒")
+            # 幣安期貨真實權重上限是每分鐘 2400（不是 1200，那是下單次數的獨立限制），
+            # 門檻對應調整，避免權重還有很多餘裕就誤觸發不必要的自我限速。
+            if weight > 1800:
+                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發重度防護，冷卻 10 秒")
                 return 10.0
-            elif weight > 700:
-                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/1200，觸發輕度防護，冷卻 3 秒")
+            elif weight > 1400:
+                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發輕度防護，冷卻 3 秒")
                 return 3.0
     except Exception as e:
         logger.info(f"⚠️ [API權重讀取失敗] {e}")

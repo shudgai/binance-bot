@@ -146,14 +146,15 @@ def toggle_coin_disabled(symbol: str) -> dict:
 
 def get_bot_status():
     from services.paper_trade_service import get_paper_balance
+    from core.config import PAPER_TRADING
     import os
     import json
-    from dotenv import load_dotenv
-    
-    load_dotenv()
-    if os.getenv("TRADING_MODE", "paper") == "paper":
+
+    # 改用 core.config.PAPER_TRADING（跟實際下單邏輯同一個判斷依據），
+    # 不要再看 TRADING_MODE 這個沒被設定過的環境變數，避免切了真實交易後面板還顯示紙上餘額。
+    if PAPER_TRADING:
         bot_status["balance_quote"] = get_paper_balance()
-        
+
         # Calculate total realized PNL from paper_state.json
         try:
             total_realized = 0.0
@@ -171,7 +172,18 @@ def get_bot_status():
             bot_status["total_realized_pnl"] = total_realized - total_fees
         except Exception as e:
             bot_status["total_realized_pnl"] = 0.0
-        
+    else:
+        try:
+            # 用 API 進程自己直接查詢，不依賴 core.balance.REAL_BALANCE
+            # （那是 main.py 進程內的模組全域變數，API 是另一個進程看不到它的更新）。
+            from services.binance_service import get_account_balance_usdt
+            from core.config import LIVE_CAPITAL_CAP
+            real_balance = get_account_balance_usdt()
+            # 顯示的本金跟實際下單倉位計算用同一個上限，避免介面看到的數字（5000）跟部位大小（用150算）對不起來
+            bot_status["balance_quote"] = min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance
+        except Exception:
+            pass
+
     # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
     try:
         actual_symbols = load_symbol_config()

@@ -5,6 +5,8 @@ load_dotenv()
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 PAPER_TRADING = True
+# Demo Trading 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算（僅在非紙上交易時生效）。
+LIVE_CAPITAL_CAP = 150.0
 TIMEFRAME = '5m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 6
@@ -181,8 +183,8 @@ HARD_STOP_LOSS_PCT = 0.025
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.004
 PROTECTED_PROFIT_FLOOR   = 0.0025
-MOMENTUM_EXIT_ATR_THRESHOLD = float(os.getenv('MOMENTUM_EXIT_ATR_THRESHOLD', 8.0))
-MOMENTUM_EXIT_MIN_PROFIT_PCT = float(os.getenv('MOMENTUM_EXIT_MIN_PROFIT_PCT', 0.008))
+MOMENTUM_EXIT_ATR_THRESHOLD = float(os.getenv('MOMENTUM_EXIT_ATR_THRESHOLD', 10.0))
+MOMENTUM_EXIT_MIN_PROFIT_PCT = float(os.getenv('MOMENTUM_EXIT_MIN_PROFIT_PCT', 0.01))
 TREND_PERSISTENCE_WINDOW  = 300
 PRICE_MOVEMENT_THRESHOLD  = 0.0015
 

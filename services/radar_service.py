@@ -9,6 +9,10 @@ from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 
+# 若設定此環境變數（指向另一份部署的 bot_symbols.json 絕對路徑），本部署不再自己跑 ATR 雷達
+# 掃描，而是直接跟隨來源部署選出的幣種清單，用來讓 8006 長期跟隨 8005 的幣池。
+FOLLOW_SYMBOLS_FROM = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
+
 
 def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:
     """
@@ -190,12 +194,58 @@ def _get_open_position_symbols():
         print(f"⚠️ [讀取持倉] 失敗: {e}")
         return []
 
+def _follow_source_radar_switch(force_start=False):
+    """跟隨 FOLLOW_SYMBOLS_FROM 指向的來源部署幣種清單，不自己跑 ATR 掃描。"""
+    global last_bot_restart
+    try:
+        with open(FOLLOW_SYMBOLS_FROM, "r", encoding="utf-8") as f:
+            source = json.load(f)
+        final_symbols = source.get("symbols", []) if isinstance(source, dict) else source
+        profiles = source.get("profiles", {}) if isinstance(source, dict) else {}
+    except Exception as e:
+        add_system_log(f"🚨 [跟隨幣池] 讀取來源清單失敗 ({FOLLOW_SYMBOLS_FROM}): {e}", "danger")
+        return get_bot_status().get("active_symbols", [])
+
+    if not final_symbols:
+        add_system_log("⚠️ [跟隨幣池] 來源清單為空，維持原狀", "warning")
+        return get_bot_status().get("active_symbols", [])
+
+    with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({"symbols": final_symbols, "profiles": profiles}, f, ensure_ascii=False, indent=2)
+
+    bot_status = get_bot_status()
+    current_syms = bot_status.get("active_symbols", [])
+    if sorted(final_symbols) == sorted(current_syms):
+        add_system_log(f"✅ [跟隨幣池] 榜單未變 ({', '.join(final_symbols)})，維持不變", "success")
+        if force_start and not bot_status.get("is_running"):
+            start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
+        return final_symbols
+
+    add_system_log(f"🎯 [跟隨幣池] 跟隨來源更新為: {', '.join(final_symbols)}", "success")
+    bot_status["active_symbols"] = final_symbols
+
+    since_restart = time.time() - last_bot_restart
+    if since_restart < BOT_RESTART_COOLDOWN:
+        remaining = int(BOT_RESTART_COOLDOWN - since_restart)
+        add_system_log(f"⏳ [跟隨幣池] 換倉冷卻中，剩餘 {remaining} 秒，暫不重啟", "warning")
+        return final_symbols
+
+    if bot_status.get("is_running") or force_start:
+        last_bot_restart = time.time()
+        start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
+
+    return final_symbols
+
+
 def auto_radar_switch(force_start=False):
     global last_api_call
     if not radar_lock.acquire(blocking=False):
         add_system_log("⚠️ [雷達掃描] 前一次掃描尚未完成，跳過", "warning")
         return get_bot_status().get("active_symbols", [])
     try:
+        if FOLLOW_SYMBOLS_FROM:
+            return _follow_source_radar_switch(force_start=force_start)
+
         add_system_log(f"📡 [雷達掃描] 核心 {RADAR_SELECT_COUNT} 幣固定 + 熱門動能最多 {HOT_MOVERS_COUNT} 幣加碼...", "warning")
 
         elapsed = time.time() - last_api_call

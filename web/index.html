@@ -496,8 +496,7 @@
     <div :class="['top-bar', bot.environment === 'live' ? 'top-bar-live' : '']">
         <div class="logo">
             <span>⚡</span> ANTI-BOT
-            <span v-if="bot.environment === 'sandbox'" class="env-badge sandbox">SANDBOX 模擬交易</span>
-            <span v-else-if="bot.environment === 'live'" class="env-badge live">LIVE 實盤實金</span>
+            <span class="env-badge sandbox">TEST</span>
         </div>
         <div class="topbar-right">
             <button class="btn" style="background: rgba(0,0,0,0.03); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;" @click="showHistoryNotebook = true; fetchHistorySummary()">

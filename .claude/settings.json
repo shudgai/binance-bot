@@ -19,7 +19,14 @@
       "Bash(git -C /home/shudgai999/project/binance-bot push origin 20260625_0330)",
       "Bash(git -C /home/shudgai999/project/binance-bot commit -m ' *)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('core/signal_engine.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(curl -sI \"https://fapi.binance.com/fapi/v1/exchangeInfo\")",
+      "Bash(curl -s \"https://fapi.binance.com/fapi/v1/exchangeInfo\")",
+      "Bash(kill -9 279936 279939 280333 280491)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('balance_quote \\(real, for display\\):', d.get\\('balance_quote'\\)\\)\")",
+      "Bash(timeout -s KILL 15 ./venv/bin/python3 -c ' *)",
+      "Bash(curl -s -X POST \"http://localhost:8005/api/bot-status/set-amount/150\")",
+      "Bash(curl -s -X POST \"http://localhost:8006/api/bot-status/set-amount/150\")"
     ]
   }
 }
