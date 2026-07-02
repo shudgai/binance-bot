@@ -33,6 +33,24 @@ if USE_TESTNET:
     # 這是 ccxt 官方目前支援的方式，不像舊版 set_sandbox_mode 需要額外繞過棄用警告。
     exchange_futures.enable_demo_trading(True)
 
+    # Demo Trading 的行情資料（K線、ATR、掛單簿）是獨立模擬撮合的，跟真實市場的價格、量級
+    # 都對不上（實測價格可以差到 0.8%，掛單簿量級能差到 2000 倍），拿來算 RSI/MACD/ATR 這些
+    # 進出場指標會跟真實市場脫節。這裡另開一條「不啟用 Demo Trading」的連線，只用來查公開
+    # 行情數據（不需要 API Key），讓訊號判斷跟 8005（紙上交易，讀真實市場）完全一致；
+    # 真的下單、查餘額、查持倉還是走上面那條 Demo Trading 連線，一樣驗證真實下單流程。
+    exchange_market_data = ccxtpro.binance({
+        'enableRateLimit': True,
+        'rateLimit': 200,
+        'options': {
+            'defaultType': 'future',
+            'watchOrderBookSnapshot': True,
+            'fetchMarkets': ['linear'],
+        },
+    })
+else:
+    # 正式環境本來就沒有開 Demo Trading，查行情跟下單本來就是同一條真實連線，不需要另開。
+    exchange_market_data = exchange_futures
+
 _PRECISION_CACHE = {}
 
 

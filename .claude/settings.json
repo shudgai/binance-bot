@@ -35,7 +35,13 @@
       "Bash(journalctl --since \"today\")",
       "Read(//proc/pressure/**)",
       "Bash(systemctl status *)",
-      "Bash(awk '{printf \"%-8s %-6s %-6s %s\\\\n\", $2, $4\"%\", $6/1024\"MB\", $11\" \"$12\" \"$13}')"
+      "Bash(awk '{printf \"%-8s %-6s %-6s %s\\\\n\", $2, $4\"%\", $6/1024\"MB\", $11\" \"$12\" \"$13}')",
+      "Bash(sort -t: -k1,1 -k2,2n)",
+      "Bash(python3 -m py_compile core/exchange_client.py core/runner.py core/orders.py)",
+      "Bash(cp /home/shudgai999/project/binance-bot/core/exchange_client.py core/exchange_client.py)",
+      "Bash(cp /home/shudgai999/project/binance-bot/core/runner.py core/runner.py)",
+      "Bash(cp /home/shudgai999/project/binance-bot/core/orders.py core/orders.py)",
+      "Bash(.venv/bin/python3 -m pytest tests/ -q)"
     ]
   }
 }

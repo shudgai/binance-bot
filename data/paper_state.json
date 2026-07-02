@@ -1,5 +1,5 @@
 {
-    "balance_usdt": 169.23937216272,
+    "balance_usdt": 169.45634034500466,
     "session_start_balance": 150.0,
     "positions": {
         "INJ:USDT": {
@@ -108,6 +108,12 @@
             "qty": 0.0,
             "avg_price": 0.089790482805,
             "realized_pnl": 0.3636514553602366,
+            "entries": []
+        },
+        "LAB:USDT": {
+            "qty": 0.0,
+            "avg_price": 9.032813583875,
+            "realized_pnl": 0.361312543354984,
             "entries": []
         }
     },
@@ -1131,8 +1137,28 @@
             "realized_pnl": -2.8535142857142843,
             "is_close": true,
             "fee": 0.07178717730002787
+        },
+        {
+            "symbol": "LAB:USDT",
+            "price": 9.032813583875,
+            "qty": 16.0,
+            "time": 1782998505283,
+            "isBuyer": false,
+            "realized_pnl": 0.0,
+            "fee": 0.07226250867100001,
+            "is_close": false
+        },
+        {
+            "symbol": "LAB:USDT",
+            "price": 9.010231549915314,
+            "qty": 16.0,
+            "time": 1782998589554,
+            "isBuyer": true,
+            "realized_pnl": 0.361312543354984,
+            "is_close": true,
+            "fee": 0.07208185239932252
         }
     ],
     "total_unrealized_pnl": 0.0,
-    "last_updated": 1782997717
+    "last_updated": 1782998816
 }

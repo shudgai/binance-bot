@@ -1198,5 +1198,25 @@
         "friction_rate": 0.0,
         "theoretical_profit": -0.0195,
         "ai_summary": "[大虧] OUSDT 透過 [大虧] [Trend_Follow] 出場。獲利 -1.95%，摩擦力 0.00%。"
+    },
+    {
+        "timestamp": "2026-07-02 13:23:09",
+        "symbol": "LABUSDT",
+        "entry_reason": "a",
+        "exit_reason": "[微利] [Trend_Follow]",
+        "profit_pct": 0.0025,
+        "max_profit_reached": 0.0034,
+        "atr_at_exit": 0.075357,
+        "market_mode": "High_Vol",
+        "expected_entry": 9.032814,
+        "expected_exit": 9.010232,
+        "actual_entry": 9.032814,
+        "actual_exit": 9.010232,
+        "fees": 0.0,
+        "qty": 16.0,
+        "slippage": 0.0,
+        "friction_rate": 0.0,
+        "theoretical_profit": -0.0025,
+        "ai_summary": "[微利] LABUSDT 透過 [微利] [Trend_Follow] 出場。獲利 0.25%，摩擦力 0.00%。"
     }
 ]

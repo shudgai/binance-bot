@@ -135,9 +135,10 @@ async def fetch_all_klines(exchange):
         async with ctx.request_semaphore:
             return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
 
-    tasks = {sym: fetch_with_sem(sym) for sym in ctx.ALL_SYMBOLS}
+    symbols = list(ctx.ALL_SYMBOLS)
+    tasks = {sym: fetch_with_sem(sym) for sym in symbols}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    for i, sym in enumerate(ctx.ALL_SYMBOLS):
+    for i, sym in enumerate(symbols):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["ohlcv"] = results[i]
             ctx.STATES[sym]["close_price"] = results[i][-1][4]
@@ -159,9 +160,10 @@ async def fetch_sma200_15m(exchange, sym):
 
 async def fetch_all_sma200(exchange):
     from core import ctx
-    tasks = [fetch_sma200_15m(exchange, sym) for sym in ctx.ALL_SYMBOLS]
+    symbols = list(ctx.ALL_SYMBOLS)
+    tasks = [fetch_sma200_15m(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(ctx.ALL_SYMBOLS):
+    for i, sym in enumerate(symbols):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["sma200_15m"] = results[i]
 
@@ -184,9 +186,10 @@ async def fetch_ema_15m(exchange, sym):
 
 async def fetch_all_ema_15m(exchange):
     from core import ctx
-    tasks = [fetch_ema_15m(exchange, sym) for sym in ctx.ALL_SYMBOLS]
+    symbols = list(ctx.ALL_SYMBOLS)
+    tasks = [fetch_ema_15m(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(ctx.ALL_SYMBOLS):
+    for i, sym in enumerate(symbols):
         if not isinstance(results[i], Exception):
             ema20, ema50 = results[i]
             ctx.STATES[sym]["ema20_15m"] = ema20
@@ -210,9 +213,10 @@ async def fetch_ema50_1h(exchange, sym):
 
 async def fetch_all_ema50_1h(exchange):
     from core import ctx
-    tasks = [fetch_ema50_1h(exchange, sym) for sym in ctx.ALL_SYMBOLS]
+    symbols = list(ctx.ALL_SYMBOLS)
+    tasks = [fetch_ema50_1h(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(ctx.ALL_SYMBOLS):
+    for i, sym in enumerate(symbols):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["ema50_1h"] = results[i]
 
@@ -234,9 +238,10 @@ async def fetch_bb_4h(exchange, sym):
 
 async def fetch_all_bb_4h(exchange):
     from core import ctx
-    tasks = [fetch_bb_4h(exchange, sym) for sym in ctx.ALL_SYMBOLS]
+    symbols = list(ctx.ALL_SYMBOLS)
+    tasks = [fetch_bb_4h(exchange, sym) for sym in symbols]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(ctx.ALL_SYMBOLS):
+    for i, sym in enumerate(symbols):
         if not isinstance(results[i], Exception):
             upper, lower = results[i]
             if upper is not None and lower is not None:

@@ -12,7 +12,7 @@ import requests
 
 from core import ctx
 from core.config import (PAPER_TRADING, MAX_POSITIONS, MAIN_LOOP_INTERVAL_SEC)
-from core.exchange_client import exchange_futures, check_binance_weight
+from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state
 from core.balance import fetch_real_balance
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
@@ -46,7 +46,7 @@ async def watch_symbol_trades(exchange, sym):
     while True:
         try:
             async with ctx.request_semaphore:
-                trades = await exchange_futures.fetch_trades(sym, limit=50)
+                trades = await exchange.fetch_trades(sym, limit=50)
             if isinstance(trades, list):
                 for trade in trades:
                     update_trade_signal(sym, trade)
@@ -164,11 +164,13 @@ async def main_loop(exchange):
     from core.exits import check_exits
     from core.check_entries import check_entries
 
-    asyncio.create_task(market_wind_loop(exchange))
+    asyncio.create_task(market_wind_loop(exchange_market_data))
     """初始化後進入主交易循環"""
 
     try:
         await asyncio.wait_for(exchange_futures.load_markets(), timeout=15)
+        if exchange_market_data is not exchange_futures:
+            await asyncio.wait_for(exchange_market_data.load_markets(), timeout=15)
     except Exception as e:
         logger.info(f"⚠️ load_markets 失敗 ({e})，使用預設市場清單")
 
@@ -178,7 +180,7 @@ async def main_loop(exchange):
 
     logger.info(f"📋 監控幣種: {', '.join(ctx.ALL_SYMBOLS)}")
     try:
-        await asyncio.wait_for(initialize_atr_history(exchange), timeout=60)
+        await asyncio.wait_for(initialize_atr_history(exchange_market_data), timeout=60)
     except (asyncio.TimeoutError, Exception) as e:
         logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
 
@@ -186,16 +188,16 @@ async def main_loop(exchange):
     await calibrate_with_exchange(exchange)
     await fetch_real_balance()
     await load_open_positions()
-    await fetch_all_sma200(exchange)
-    await fetch_all_ema50_1h(exchange)
-    await fetch_all_ema_15m(exchange)
+    await fetch_all_sma200(exchange_market_data)
+    await fetch_all_ema50_1h(exchange_market_data)
+    await fetch_all_ema_15m(exchange_market_data)
 
     last_balance_update = time.time()
 
     while True:
         try:
             loop_start = time.time()
-            await ensure_watch_tasks(exchange)
+            await ensure_watch_tasks(exchange_market_data)
             if not PAPER_TRADING and loop_start - last_balance_update > 30:
                 await fetch_real_balance()
                 last_balance_update = loop_start
@@ -231,7 +233,7 @@ async def main_loop(exchange):
                 ctx.STATES[sym]["adjusted_this_tick"] = False
 
             print_multi_status()
-            await fetch_all_klines(exchange)
+            await fetch_all_klines(exchange_market_data)
             for sym in ctx.ALL_SYMBOLS:
                 if ctx.STATES[sym].get("status") == "COOLDOWN":
                     if time.time() < ctx.STATES[sym].get("next_status_time", 0):
@@ -304,7 +306,7 @@ async def main_loop(exchange):
                 try:
                     for _sym in _open_syms:
                         try:
-                            _tk = await exchange_futures.fetch_ticker(_sym)
+                            _tk = await exchange_market_data.fetch_ticker(_sym)
                             if _tk and _tk.get("last"):
                                 ctx.STATES[_sym]["close_price"] = float(_tk["last"])
                         except Exception:
@@ -482,7 +484,7 @@ async def main():
     from core.orders import check_stale_limit_orders
     asyncio.create_task(sync_paper_state())
     asyncio.create_task(push_paper_live_state())
-    asyncio.create_task(periodic_htf_update(exchange_futures))
+    asyncio.create_task(periodic_htf_update(exchange_market_data))
     asyncio.create_task(periodic_status_log())
     asyncio.create_task(check_stale_limit_orders())
 
@@ -501,6 +503,11 @@ async def main():
             await exchange_futures.close()
         except Exception:
             pass
+        if exchange_market_data is not exchange_futures:
+            try:
+                await exchange_market_data.close()
+            except Exception:
+                pass
 
 
 def check_direction_safety(sym, side):

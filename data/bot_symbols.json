@@ -2,7 +2,6 @@
   "symbols": [
     "GUAUSDT",
     "VELVETUSDT",
-    "LABUSDT",
     "INUSDT",
     "TAIKOUSDT",
     "BASUSDT",
@@ -13,7 +12,9 @@
     "MUSDT",
     "TACUSDT",
     "BREVUSDT",
-    "BEATUSDT"
+    "BEATUSDT",
+    "LABUSDT",
+    "NFPUSDT"
   ],
   "profiles": {
     "GUAUSDT": {
