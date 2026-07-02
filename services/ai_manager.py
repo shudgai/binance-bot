@@ -5,7 +5,7 @@ import time
 import logging
 import asyncio
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
@@ -34,6 +34,18 @@ class AIManager:
     def __init__(self):
         self.history_path = TRADE_HISTORY_FILE
         self.config_path = BOT_SYMBOLS_FILE
+
+    def _prune_raw_responses(self, raw_dir: Path, keep_days: int = 7):
+        """刪除 raw responses 目錄中超過 keep_days 的檔案。"""
+        cutoff = datetime.utcnow() - timedelta(days=keep_days)
+        for f in raw_dir.glob('response_*.txt'):
+            try:
+                mtime = datetime.utcfromtimestamp(f.stat().st_mtime)
+                if mtime < cutoff:
+                    f.unlink()
+                    logger.info(f"🧹 刪除舊的 AI raw response: {f}")
+            except Exception as e:
+                logger.warning(f"刪除舊 AI raw response 時發生錯誤: {e} (file: {f})")
 
     def _get_recent_memories(self, limit: int = 50) -> List[Dict]:
         """讀取最近的交易經驗並過濾出重點摘要。"""
@@ -78,6 +90,11 @@ class AIManager:
         # Ensure directory for raw responses exists
         raw_dir = Path(os.path.join(os.path.dirname(__file__), '..', 'data', 'ai_raw_responses')).resolve()
         raw_dir.mkdir(parents=True, exist_ok=True)
+        # prune old raw responses to avoid disk filling
+        try:
+            self._prune_raw_responses(raw_dir, keep_days=7)
+        except Exception:
+            logger.warning("無法執行 raw responses 清理，但繼續執行 API 呼叫")
 
         max_attempts = 3
         backoff_base = 1.0
