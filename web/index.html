@@ -619,7 +619,7 @@
                         <tbody>
                             <tr v-for="t in sortedTrades" :key="t.id">
                                 <td>{{ formatTradeTime(t.time) }}</td>
-                                <td style="font-weight: bold;">{{ t.symbol.replace(':USDT', '').replace('USDT', '') }}</td>
+                                <td style="font-weight: bold;">{{ t.symbol?.replace(':USDT', '').replace('USDT', '') }}</td>
                                 <td>
                                     <span v-if="t.isBuyer && !t.is_close" style="color:var(--trade-up);font-weight:700;">買入(多)</span>
                                     <span v-else-if="!t.isBuyer && t.is_close" style="color:var(--trade-down);font-weight:700;">賣出(平多)</span>
@@ -776,7 +776,7 @@
                         :style="radarSelected.includes(r.symbol) ? 'background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.35);border-radius:8px;padding:6px 10px;' : 'background:var(--card-bg);border:1px solid var(--border-color);border-radius:8px;padding:6px 10px;opacity:0.55;'"
                     >
                         <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <span style="font-size:12px;font-weight:700;">{{ r.symbol.replace('USDT','') }}</span>
+                            <span style="font-size:12px;font-weight:700;">{{ r.symbol?.replace('USDT','') }}</span>
                             <span :style="radarSelected.includes(r.symbol) ? 'font-size:11px;font-weight:600;color:#16a34a;' : 'font-size:11px;color:var(--text-muted);'">{{ r.atr_pct.toFixed(2) }}%</span>
                         </div>
                         <div style="font-size:10px;color:var(--text-muted);">#{{ i+1 }} {{ radarSelected.includes(r.symbol) ? '✅ 已選' : '' }}</div>
