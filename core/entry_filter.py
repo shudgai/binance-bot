@@ -332,13 +332,16 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if bull_defense_mode and side == 'sell':
         current_rsi_macro = s.get("current_rsi", 50.0)
         is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-        # RSI > 73 才算真正超買可逆勢做空（68 在上升趨勢很常見，不算超買）
+        is_strong_signal = strength >= 16.0
+        # 放寬牛市防禦：原本只在極端超買/反轉路由才放行，現在允許中度強度訊號在 4H多頭環境下做空
         if current_rsi_macro > 73.0:
             logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
         elif is_reversal_route and current_rsi_macro > 70.0:
             logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
+        elif is_strong_signal and current_rsi_macro > 58.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭且訊號強度 {strength:.1f}，RSI {current_rsi_macro:.1f} 於中段區間，放寬允許空單")
         else:
-            logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route})")
+            logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
             return False
 
     # =========================================================================
