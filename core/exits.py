@@ -395,7 +395,8 @@ async def check_exits(sym):
     # （原本直接用絕對價位的 ATR 跟百分比門檻比較，幣價越高換算出的門檻越離譜，如 AAVE 這種高單價幣門檻會被拉到 10%+ 幾乎永遠不會觸發）
     atr_pct_dca = (atr_val / avg) if avg > 0 else 0.01
     # 提高加倉門檻：對 ATR 基礎上取更嚴格倍率，並放大最低風險門檻
-    loss_limit = max(base_loss_limit * 1.5, atr_pct_dca * 1.1)
+    # 全域再乘上 1.25 以提高 Rescue DCA 觸發門檻（+25%）
+    loss_limit = max(base_loss_limit * 1.5, atr_pct_dca * 1.1) * 1.25
 
     _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
     # 取得每幣種的最大加倉次數與加倉冷卻（若未設定，使用 state 或全域預設）
