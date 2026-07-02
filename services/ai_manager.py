@@ -4,6 +4,8 @@ import requests
 import time
 import logging
 import asyncio
+from pathlib import Path
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
@@ -63,91 +65,105 @@ class AIManager:
                 logger.error(f"AI 診斷讀取當前配置失敗: {e}")
 
         # 將摘要轉化為 AI 友好的文字描述
-        context_text = ""
-        for m in memories:
-            context_text += f"- {m.get('ai_summary', '無摘要')}\n"
+        # Prepare request payload
+        req_payload = {
+            "model": AI_MODEL,
+            "messages": [
+                {"role": "system", "content": "You are a helpful trading assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": {"type": "json_object"}
+        }
 
-        prompt = f"""
-You are a Quantitative Trading Expert specializing in "ATR-based Dynamic Position Sizing with Pyramiding".
-Analyze the following recent trade summaries and their CURRENT parameters, and identify issues in friction, stop-loss sensitivity, or pyramiding efficiency.
+        # Ensure directory for raw responses exists
+        raw_dir = Path(os.path.join(os.path.dirname(__file__), '..', 'data', 'ai_raw_responses')).resolve()
+        raw_dir.mkdir(parents=True, exist_ok=True)
 
-Current Parameters of Symbols:
-{json.dumps(current_configs, indent=2, ensure_ascii=False)}
-
-Recent Trade Summaries:
-{context_text}
-
-Task:
-1. Identify any recurring problems (e.g., High Friction, Frequent Stop-outs, Poor Pyramiding) by comparing the trade outcomes with the current parameters of those symbols.
-2. Provide specific parameter adjustment suggestions for the symbols involved. Make sure you don't adjust parameters in the wrong direction (e.g. do not reduce sl_atr_multiplier if the symbol is suffering from frequent stop-outs).
-
-Output Format (Strict JSON):
-{{
-  "diagnoses": [
-    {{
-      "symbol": "SYMBOL_NAME",
-      "reason": "Brief explanation of the issue (compare current parameters vs trade summary)",
-      "suggested_params": {{
-        "sl_atr_multiplier": 2.5,
-        "tp_atr_multiplier": 4.0,
-        "add_entry_pct": 0.3,
-        "leverage": 5
-      }},
-      "confidence_score": 0.9
-    }}
-  ]
-}}
-"""
-        
-        try:
-            # 這裡以 OpenAI 為例，若使用 Claude 請更換請求頭與 URL
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
-                data=json.dumps({
-                    "model": AI_MODEL,
-                    "messages": [{"role": "system", "content": "You are a helpful trading assistant."},
-                                  {"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"}
-                }),
-                timeout=30
-            )
+        max_attempts = 3
+        backoff_base = 1.0
+        for attempt in range(1, max_attempts + 1):
             try:
-                res_json = response.json()
-            except Exception:
-                text = response.text if hasattr(response, 'text') else str(response)
-                logger.error(f"AI API 回傳非 JSON：status={getattr(response,'status_code',None)} body={text[:200]}")
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
+                    data=json.dumps(req_payload),
+                    timeout=30
+                )
+            except requests.RequestException as e:
+                logger.warning(f"AI API 請求失敗 (attempt {attempt}/{max_attempts}): {e}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
+                logger.error(f"AI API 請求最終失敗: {e}")
                 return None
 
-            # 防護：檢查 choices 與內容路徑是否存在
+            # Save raw response if non-200 or content issues
+            timestamp = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+            raw_file = raw_dir / f"response_{timestamp}_attempt{attempt}_status{getattr(response,'status_code', 'na')}.txt"
+            try:
+                body_text = response.text
+            except Exception:
+                body_text = '<unreadable body>'
+
+            # If not OK, persist and possibly retry
+            if getattr(response, 'status_code', None) != 200:
+                raw_file.write_text(f"STATUS: {getattr(response,'status_code', None)}\n\nHEADERS:\n{response.headers}\n\nBODY:\n{body_text}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
+                logger.error(f"AI API 非 200 回應 (status={getattr(response,'status_code',None)}), 已保存 raw response: {raw_file}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
+                return None
+
+            # Try parse JSON
+            try:
+                res_json = response.json()
+            except Exception as e:
+                raw_file.write_text(f"JSON_PARSE_ERROR: {e}\n\nBODY:\n{body_text}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
+                logger.error(f"解析 AI 回傳 JSON 失敗 (attempt {attempt}): {e}，raw saved: {raw_file}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
+                return None
+
+            # Validate structure
             choices = res_json.get("choices") if isinstance(res_json, dict) else None
             if not choices or not isinstance(choices, list):
-                logger.error(f"AI API 回傳格式缺少 choices 或格式錯誤: {res_json}")
+                raw_file.write_text(f"MISSING_CHOICES\n\nRESPONSE:\n{json.dumps(res_json, ensure_ascii=False, indent=2)}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
+                logger.error(f"AI API 回傳格式缺少 choices 或格式錯誤 (attempt {attempt}), raw saved: {raw_file}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
                 return None
 
             message = choices[0].get("message") if isinstance(choices[0], dict) else None
             if not message:
-                logger.error(f"AI API 回傳缺少 message 欄位: {choices[0]}")
+                raw_file.write_text(f"MISSING_MESSAGE\n\nCHOICES:\n{json.dumps(choices, ensure_ascii=False, indent=2)}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
+                logger.error(f"AI API 回傳缺少 message 欄位 (attempt {attempt}), raw saved: {raw_file}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
                 return None
 
             content_text = message.get("content")
             if not content_text:
-                logger.error(f"AI API 回傳 message.content 為空: {message}")
+                raw_file.write_text(f"EMPTY_CONTENT\n\nMESSAGE:\n{json.dumps(message, ensure_ascii=False, indent=2)}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
+                logger.error(f"AI API 回傳 message.content 為空 (attempt {attempt}), raw saved: {raw_file}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
                 return None
 
             try:
                 content = json.loads(content_text)
             except Exception as e:
-                logger.error(f"解析 AI 回傳 JSON 失敗: {e}；原始回傳片段: {content_text[:500]}")
+                raw_file.write_text(f"CONTENT_JSON_PARSE_ERROR: {e}\n\nCONTENT_TEXT:\n{content_text[:2000]}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
+                logger.error(f"解析 AI 回傳 JSON 失敗 (attempt {attempt}): {e}；原始回傳片段已存: {raw_file}")
+                if attempt < max_attempts:
+                    time.sleep(backoff_base * (2 ** (attempt - 1)))
+                    continue
                 return None
 
             return content.get("diagnoses", [])
-        except requests.RequestException as e:
-            logger.error(f"AI API 請求失敗: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"AI API 未知錯誤: {e}")
-            return None
 
     def validate_suggestion(self, symbol: str, suggestion: Dict) -> Optional[Dict]:
         """安全閥門：檢查 AI 給出的建議是否在安全範圍內。"""
