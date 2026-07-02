@@ -10,7 +10,8 @@
     "MUSDT",
     "TACUSDT",
     "BREVUSDT",
-    "BEATUSDT"
+    "BEATUSDT",
+    "SIRENUSDT"
   ],
   "profiles": {
     "GUAUSDT": {

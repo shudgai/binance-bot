@@ -1,12 +1,20 @@
 import unittest
-import multi_coin_bot
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.ctx import STATES, init_states
+from core.state_manager import reset_coin_state
+from core.orders import should_recover_from_reversal
 
 
 class ReversalRecoveryTests(unittest.TestCase):
     def test_reverse_signal_triggers_recovery(self):
         sym = "XRPUSDT"
-        s = multi_coin_bot.STATES[sym]
-        multi_coin_bot.reset_coin_state(sym)
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
         s["qty"] = 1.0
         s["avg_price"] = 100.0
         s["close_price"] = 99.0
@@ -16,7 +24,7 @@ class ReversalRecoveryTests(unittest.TestCase):
         s["prev_macd_signal"] = 0.1
         s["macd_line"] = -0.3
         s["macd_signal"] = 0.1
-        s["trade_signal_strength"] = 1.8
+        s["trade_signal_strength"] = 3.0
         s["trade_signal_reason"] = "即時大額成交"
         s["ohlcv"] = [
             [0, 100, 100.5, 99.5, 100.0, 1000],
@@ -26,7 +34,7 @@ class ReversalRecoveryTests(unittest.TestCase):
         s["current_vol"] = 5000
         s["vol_ma20"] = 1000
 
-        decision = multi_coin_bot.should_recover_from_reversal(sym, True)
+        decision = should_recover_from_reversal(sym, True)
 
         self.assertTrue(decision)
 

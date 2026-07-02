@@ -18,5 +18,25 @@
         "friction_rate": 0.0,
         "theoretical_profit": -0.003,
         "ai_summary": "[微利] XRPUSDT 透過 [微利] [Trend_Follow] 出場。獲利 0.30%，摩擦力 0.00%。"
+    },
+    {
+        "timestamp": "2026-07-02 13:29:19",
+        "symbol": "BEATUSDT",
+        "entry_reason": "Extreme_Reversal",
+        "exit_reason": "[微利] [Trend_Follow]",
+        "profit_pct": 0.0026,
+        "max_profit_reached": 0.0046,
+        "atr_at_exit": 0.022724,
+        "market_mode": "High_Vol",
+        "expected_entry": 2.841,
+        "expected_exit": 2.848419,
+        "actual_entry": 2.841,
+        "actual_exit": 2.848419,
+        "fees": 0.0,
+        "qty": 45.0,
+        "slippage": 0.0,
+        "friction_rate": 0.0,
+        "theoretical_profit": 0.0026,
+        "ai_summary": "[微利] BEATUSDT 透過 [微利] [Trend_Follow] 出場。獲利 0.26%，摩擦力 0.00%。"
     }
 ]
