@@ -582,6 +582,11 @@ async def check_exits(sym):
     sl_base = get_dynamic_atr_multiplier(sym, sl_base_raw)
 
     atr_val = _get_atr(s, p)
+    entry_atr = s.get("entry_atr", atr_val)
+    # 防止 ATR 下降後讓停損距離收縮：以進場時 ATR 為下限，避免原本的保護線在冷靜階段變得過緊。
+    if atr_val < entry_atr:
+        atr_val = entry_atr
+
     atr_ma20 = s.get("atr_ma20", atr_val)
     is_low_vol = (atr_ma20 > 0 and atr_val < atr_ma20)
     if is_low_vol:
@@ -603,19 +608,19 @@ async def check_exits(sym):
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
 
-    breakeven_threshold = 0.0  # 只要曾經有過正盈餘，就啟動保本鎖定
+    breakeven_threshold = 0.005  # 0.5% 正利潤才啟動保本鎖定，避免噪音期過早改寫 SL
 
     fee_buffer = 0.001  # 0.1% 獲利以覆蓋雙向手續費與微幅點差
 
     breakeven_price = None
-    if s.get("highest_profit_pct", 0.0) > breakeven_threshold:
+    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
         if is_long:
             breakeven_price = avg * (1 + fee_buffer)
             if breakeven_price > s.get('stop_loss', 0):
                 s['stop_loss'] = breakeven_price
                 if not s.get('is_breakeven_locked'):
                     s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 曾出現正盈餘，移動保本線已鎖定在：{breakeven_price:.4f}")
+                    logger.info(f"🛡️ [{sym}] 獲利達標 {breakeven_threshold*100:.1f}% ，保本線已鎖定在：{breakeven_price:.4f}")
         else:
             # 空倉：保本線應在入場價下方（Universal SL 用 p >= sl，price 回升超過此點才退場）
             breakeven_price = avg * (1 - fee_buffer)
@@ -623,7 +628,7 @@ async def check_exits(sym):
                 s['stop_loss'] = breakeven_price
                 if not s.get('is_breakeven_locked'):
                     s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 曾出現正盈餘，移動保本線已鎖定在：{breakeven_price:.4f}")
+                    logger.info(f"🛡️ [{sym}] 獲利達標 {breakeven_threshold*100:.1f}% ，保本線已鎖定在：{breakeven_price:.4f}")
 
     from core.config import EXIT_RR_MULTIPLIER
     min_tp_dist = sl_dist * EXIT_RR_MULTIPLIER
