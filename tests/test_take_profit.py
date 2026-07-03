@@ -2,6 +2,7 @@ import unittest
 import sys
 import os
 import time
+import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,6 +50,43 @@ class TakeProfitTests(unittest.TestCase):
         import asyncio
         async def run_check():
             await check_exits(sym)
+
+        asyncio.run(run_check())
+
+    def test_post_entry_early_exit_triggers_on_wrong_direction(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["entry_count"] = 1
+        s["last_entry_direction"] = "buy"
+        s["close_price"] = 99.2
+        s["open_time"] = time.time() - 240
+        s["current_atr"] = 0.5
+        s["current_rsi"] = 45.0
+        s["prev_rsi"] = 47.0
+        s["prev_macd_line"] = 0.01
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = -0.01
+        s["macd_signal"] = 0.0
+        s["ema20"] = 100.5
+        s["current_vol"] = 2000.0
+        s["vol_ma20"] = 1000.0
+        s["ohlcv"] = [[0, 100.0, 100.5, 99.0, 99.2, 1200], [0, 100.2, 100.6, 99.1, 99.3, 1100]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(s.get("wrong_dir_side"), "buy")
+                self.assertEqual(s.get("pending_reverse"), "sell")
 
         asyncio.run(run_check())
 

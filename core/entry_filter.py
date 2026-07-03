@@ -826,18 +826,18 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     logger.info(f"💚 [PASS] {sym}: 完美通過全套風控，准予開倉！(總得分: {total_score:.1f}, 基礎分: {base_score:.1f}, 加分A: {bonus_a:.1f}, 加分B: {bonus_b:.1f})")
 
-    # --- 【新增】進場方向絕對一致性檢查 (Directional Consistency / Direction_Safety) ---
+    # --- 【新增】進場方向一致性檢查 (Directional Consistency / Direction_Safety) ---
     # 確保進場方向與當前 K 線的收盤動態一致，防止在「反轉 K」上強行進場
     # 豁免：Extreme_Reversal / Exhaustion_Entry / Automatic_Reverse 本就逆勢操作，不受此限
     if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and len(s.get("ohlcv", [])) >= 2:
         prev_close_dc = s["ohlcv"][-2][4]
         current_close_dc = s.get("close_price", s["ohlcv"][-1][4])
 
-        if side == "buy" and current_close_dc < prev_close_dc and strength < 15.0:
-            logger.info(f"🛑 [Direction_Safety] {sym} 多單訊號但當前收盤 ({current_close_dc:.4f}) < 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 15.0)，拒絕進場")
+        if side == "buy" and current_close_dc < prev_close_dc and strength < 20.0:
+            logger.info(f"🛑 [Direction_Safety] {sym} 多單訊號但當前收盤 ({current_close_dc:.4f}) < 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 20.0)，拒絕進場")
             return False
-        elif side == "sell" and current_close_dc > prev_close_dc and strength < 15.0:
-            logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 15.0)，拒絕進場")
+        elif side == "sell" and current_close_dc > prev_close_dc and strength < 20.0:
+            logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 20.0)，拒絕進場")
             return False
 
     return True
