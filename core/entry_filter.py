@@ -469,11 +469,28 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
-        if side == 'buy' and not (close_price > prev_close or close_price > open_price):
-            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} <= 前收: {prev_close:.4f} 且 <= 開盤: {open_price:.4f})。")
+        current_atr = s.get("current_atr", 0.0)
+        close_tolerance_pct = 0.005
+        if close_price > 0 and current_atr > 0:
+            atr_tolerance_pct = 0.8 * current_atr / close_price
+            close_tolerance_pct = max(close_tolerance_pct, atr_tolerance_pct)
+        if side == 'buy' and not (
+            close_price > prev_close or
+            close_price > open_price or
+            close_price >= prev_close * (1.0 - close_tolerance_pct) or
+            close_price >= open_price * (1.0 - close_tolerance_pct) or
+            strength >= 20.0
+        ):
+            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} <= 前收: {prev_close:.4f} 且 <= 開盤: {open_price:.4f})，容差 {close_tolerance_pct*100:.2f}%。")
             return False
-        elif side == 'sell' and not (close_price < prev_close or close_price < open_price):
-            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})。")
+        elif side == 'sell' and not (
+            close_price < prev_close or
+            close_price < open_price or
+            close_price <= prev_close * (1.0 + close_tolerance_pct) or
+            close_price <= open_price * (1.0 + close_tolerance_pct) or
+            strength >= 20.0
+        ):
+            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})，容差 {close_tolerance_pct*100:.2f}%。")
             return False
 
     # --- 趨勢斜率過濾 (Trend Slope Filter) ---
