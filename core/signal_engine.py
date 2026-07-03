@@ -364,7 +364,11 @@ async def is_reversal_still_valid(sym, pending_side):
             return False
 
     # 3. MACD 動能擴張確認 (Momentum Expansion)
-    # 不只看方向轉折，還要確認 MACD 柱狀圖「正在加速擴張」才算有效反手動能
+    # 不只看方向轉折，還要確認 MACD 柱狀圖「正在加速擴張」才算有效反手動能。
+    # 例外：如果這筆是「攤平救援後很快又停損」的情況（pending_reverse_after_rescue），
+    # 代表原方向的判斷已經被市場快速、明確地打臉，MACD 這種落後指標可能還來不及在
+    # 同一根K線內完整反映，這時放寬成只要求「動能方向正在改善」，不用等到完全轉向
+    # 又擴張——用意是這種價格已經強力反向的情況，不要因為指標太保守而錯過反手。
     macd_line = s.get("macd_line", 0.0)
     macd_signal_val = s.get("macd_signal", 0.0)
     prev_macd_line = s.get("prev_macd_line", 0.0)
@@ -372,14 +376,17 @@ async def is_reversal_still_valid(sym, pending_side):
 
     macd_hist_now = macd_line - macd_signal_val
     macd_hist_prev = prev_macd_line - prev_macd_signal
+    _after_rescue = s.get("pending_reverse_after_rescue", False)
 
     if pending_side == "buy":
-        if not (macd_hist_now > 0 and macd_hist_now > macd_hist_prev):
-            logger.info(f"📉 [Reversal_Weak_Momentum] {sym} 反手做多：MACD 雖轉正但未擴張 ({macd_hist_now:.6f} <= {macd_hist_prev:.6f})，放棄反手")
+        _ok = (macd_hist_now > macd_hist_prev) if _after_rescue else (macd_hist_now > 0 and macd_hist_now > macd_hist_prev)
+        if not _ok:
+            logger.info(f"📉 [Reversal_Weak_Momentum] {sym} 反手做多：MACD 動能不足 ({macd_hist_now:.6f} <= {macd_hist_prev:.6f}，攤平後放寬={_after_rescue})，放棄反手")
             return False
     elif pending_side == "sell":
-        if not (macd_hist_now < 0 and macd_hist_now < macd_hist_prev):
-            logger.info(f"📈 [Reversal_Weak_Momentum] {sym} 反手做空：MACD 雖轉負但未擴張 ({macd_hist_now:.6f} >= {macd_hist_prev:.6f})，放棄反手")
+        _ok = (macd_hist_now < macd_hist_prev) if _after_rescue else (macd_hist_now < 0 and macd_hist_now < macd_hist_prev)
+        if not _ok:
+            logger.info(f"📈 [Reversal_Weak_Momentum] {sym} 反手做空：MACD 動能不足 ({macd_hist_now:.6f} >= {macd_hist_prev:.6f}，攤平後放寬={_after_rescue})，放棄反手")
             return False
 
     # 4. 反手空間防護 (Space Buffer for Reverse)

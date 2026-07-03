@@ -192,6 +192,7 @@ async def check_entries():
                         logger.info(f"🔄 [自動反手執行] {sym} 偵測到反手訊號 ({pending_rev})，方向確認通過，開始建倉！")
                         price = s["close_price"]
                         s["pending_reverse"] = None
+                        s["pending_reverse_after_rescue"] = False
                         s["is_ordering"] = True
 
                         async def _rev_task(sym, pending_rev, price):
@@ -207,6 +208,7 @@ async def check_entries():
                 continue
             else:
                 s["pending_reverse"] = None
+                s["pending_reverse_after_rescue"] = False
 
         if s["status"] != "ACTIVE":
             continue

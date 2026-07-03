@@ -254,6 +254,32 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         logger.info(f"🛑 [DISABLED_ENTRY] {sym} 已被設定為禁入場，拒絕所有進場信號")
         return False
 
+    # ── 驟跌/驟漲保護：暫停新進場（不接落下的刀子）──
+    # 小幣種有時會短時間劇烈崩跌或暴衝，跟出場端「急速逆勢」用同一套 2.0倍ATR
+    # 標準判斷，但這裡要判斷方向：只有「逆著進場方向」的劇烈變動才算危險
+    # （買單遇到剛崩跌、空單遇到剛暴衝），不能用不分方向的高低區間，否則會把
+    # 正常的強勢單邊行情（訊號本來就該追的趨勢）也誤判成崩盤而擋掉。
+    # 偵測到就暫停這個幣種的新進場 15 分鐘；冷卻期間再次偵測到會持續延長，
+    # 直到波動真的緩和下來才恢復——不是接刀子進場，而是等塵埃落定。
+    # 反手類路線（Automatic_Reverse 已在上面提早 return True、Extreme_Reversal/
+    # Exhaustion_Entry）不受此限制，因為這些本來就是設計來承接劇烈變盤的。
+    if route not in ("Extreme_Reversal", "Exhaustion_Entry"):
+        _ohlcv = s.get("ohlcv", [])
+        _crash_atr = s.get("current_atr", 0.0)
+        if len(_ohlcv) >= 3 and _crash_atr > 0:
+            _ref_close = _ohlcv[-3][4]
+            _cur_close = s.get("close_price", _ref_close)
+            _net_move = _cur_close - _ref_close
+            _adverse_mult = (-_net_move / _crash_atr) if side == "buy" else (_net_move / _crash_atr)
+            if _adverse_mult >= 2.0:
+                s["crash_cooldown_until"] = time.time() + 900
+                logger.info(f"⚡ [驟跌保護] {sym} 近期價格逆勢達 {_adverse_mult:.2f}倍ATR，暫停{'多' if side=='buy' else '空'}單進場15分鐘")
+
+        if s.get("crash_cooldown_until", 0) > time.time():
+            remaining = s["crash_cooldown_until"] - time.time()
+            logger.info(f"🛑 [驟跌保護] {sym} 仍在劇烈逆勢冷卻期，暫停進場（剩餘 {remaining:.0f} 秒）")
+            return False
+
     # =========================================================================
     # ✨ NEW STAGE 0.5: SUPPORT/RESISTANCE ZONE CONFIRMATION (支撑/阻力位確認)
     # 只在有明確支撑/阻力的位置入場，避免買在相對高點

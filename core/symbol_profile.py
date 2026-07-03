@@ -268,6 +268,12 @@ def apply_symbol_profile(sym, profile):
     ]:
         if key in profile:
             state[key] = profile[key]
+    # 雷達幣池的 profile（bot_symbols.json 的 "profiles" 區塊）用的欄位名稱是
+    # "hard_sl_pct"（跟 COIN_PROFILE_CONFIG 一致），不是上面迴圈裡的
+    # "hard_stop_loss_pct"，兩個名字對不起來會讓交易所實際掛的止損單讀不到
+    # 雷達幫這個幣種算出來的百分比，永遠退回全域預設值。
+    if "hard_sl_pct" in profile:
+        state["hard_stop_loss_pct"] = profile["hard_sl_pct"]
     state["personality"] = personality
     state["personality_source"] = personality_source
     if personality_source == "manual":

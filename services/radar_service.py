@@ -99,7 +99,7 @@ HOT_MOVER_PROFILE_BASE = {
     "sl_atr_multiplier":       3.0,
     "tp_atr_multiplier":       6.0,
     "leverage":                2,
-    "hard_sl_pct":             0.025,
+    "hard_sl_pct":             0.015,
     "min_signal_strength":     20.0,
     "disable_rescue_dca":      True,
     "trailing_activation_atr": 0.8,
@@ -178,6 +178,18 @@ def _get_recently_traded_symbols(hours=24):
         return []
 
 def _get_open_position_symbols():
+    from core.config import PAPER_TRADING
+    if not PAPER_TRADING:
+        # 實盤：查交易所真實持倉，不是紙上交易那份 paper_state.json（實盤模式下
+        # 這個檔案不會反映真實倉位，之前一直回傳空陣列，導致實盤模式下「持倉保護」
+        # 形同虛設，是造成 XRPUSDT 明明有真實倉位卻在監控清單/介面上消失的原因）。
+        try:
+            from services.binance_service import get_all_positions
+            positions = get_all_positions()
+            return [pos["symbol"].replace(":USDT", "USDT") for pos in positions.values()]
+        except Exception as e:
+            print(f"⚠️ [讀取持倉] 失敗: {e}")
+            return []
     try:
         state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "paper_state.json")
         if not os.path.exists(state_path):
@@ -209,6 +221,16 @@ def _follow_source_radar_switch(force_start=False):
     if not final_symbols:
         add_system_log("⚠️ [跟隨幣池] 來源清單為空，維持原狀", "warning")
         return get_bot_status().get("active_symbols", [])
+
+    # 持倉保護：跟隨來源清單時，本地（8006）自己真實持有部位的幣種，就算來源
+    # 清單沒有也要保留，不然來源換池時會把本地還有真錢倉位的幣種從清單/介面上
+    # 整個刪掉（本地部位還在、還在被 check_exits 監控，只是介面看不到、容易讓人
+    # 誤以為沒被追蹤——XRPUSDT 就是實際發生過的案例）。
+    open_syms = _get_open_position_symbols()
+    missing_open = [s for s in open_syms if s not in final_symbols]
+    if missing_open:
+        add_system_log(f"🔒 [持倉保護] 跟隨幣池但強制保留本地持倉幣種: {', '.join(missing_open)}", "warning")
+        final_symbols = final_symbols + missing_open
 
     with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({"symbols": final_symbols, "profiles": profiles}, f, ensure_ascii=False, indent=2)

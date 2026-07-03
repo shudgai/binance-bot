@@ -207,10 +207,46 @@ async def check_exits(sym):
 
     if s.get("current_atr", 0.0) <= 0:
         return
+
+    p = s["close_price"]
+    avg = s["avg_price"]
+    is_long = s["qty"] > 0
+    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    current_atr = s.get("current_atr", 0.0)
+
+    # ── 急速逆勢提早出場 (Rapid Reversal Early Exit) ──
+    # 用「距離上一次進場/攤平的時間」而不是「距離最初開倉的時間」，這樣攤平救援後
+    # 才發生的急速逆勢也抓得到（例如：攤平加碼後不到 1 分鐘價格又急速創新高/新低，
+    # 遠超正常波動，代表方向判斷可能真的錯了、而且錯得很快，不必等一般停損/盲區
+    # 保護期跑完，提早出場並評估反手，避免虧損在等待期間繼續擴大）。
+    # 用 ATR 倍數而非固定百分比衡量「急速」，高低價幣都適用同一套標準。
+    _time_since_entry = time.time() - s.get("last_entry_time", 0)
+    _ref_price = s.get("last_entry_price", avg) or avg
+    if _time_since_entry < 180 and current_atr > 0 and _ref_price > 0:
+        _adverse_atr_mult = (_ref_price - p) / current_atr if is_long else (p - _ref_price) / current_atr
+        # 門檻原本是 1.2x，實際上線後對 ETH/SOL 這類主流大幣太敏感，短暫回檔（現貨
+        # 換算損益只有 -0.24%~-0.6%）就被誤判成「急速逆勢」提前出場，反而讓單子沒機會
+        # 等回本。拉高到 2.0x，只讓真正劇烈的逆勢（例如 MUSDT 那種閃崩）才觸發。
+        if profit_pct < 0 and _adverse_atr_mult >= 2.0:
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
+            if _check_reversal_allowed(sym, s):
+                last_reverse = s.get("last_reverse_time", 0)
+                if time.time() - last_reverse > 1800:
+                    rev_side = "buy" if not is_long else "sell"
+                    s["pending_reverse"] = rev_side
+                    s["pending_reverse_time"] = time.time()
+                    s["last_reverse_time"] = time.time()
+                    # 沿用攤平失敗後的放寬動能確認標準：急速逆勢代表方向已經被價格
+                    # 明確打臉，MACD 這種落後指標可能還來不及完整反映，不用等它擴張。
+                    s["pending_reverse_after_rescue"] = True
+                    logger.info(f"🔄 [Rapid_Reverse] {sym} 急速逆勢出場後設置反手 → {rev_side}")
+            return
+
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 0
     atr_history = s.get("atr_history", [])
     atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
-    current_atr = s.get("current_atr", 0.0)
     cooldown_limit = 20.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 60.0
     if hold_sec < cooldown_limit:
         current_vol = s.get("current_vol", 0.0)
@@ -221,11 +257,6 @@ async def check_exits(sym):
             logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
         else:
             return
-
-    p = s["close_price"]
-    avg = s["avg_price"]
-    is_long = s["qty"] > 0
-    profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
@@ -302,7 +333,20 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
             return
 
-    _hard_sl = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", 0.0)
+    # ── 停滯攤平 (Stagnation Rescue) ──
+    # 持倉超過 60 分鐘、還沒攤平過、目前仍在虧損（不管有沒有接近停損線），就評估
+    # 攤平一次，讓均價貼近市價，早點有機會平倉、不要一直佔著交易槽位。跟接刀防呆
+    # 共用同一套判斷（_attempt_forced_rescue 內建），急跌/急漲中不會硬攤。
+    if hold_sec >= 3600 and profit_pct < 0 and s.get("entry_count", 0) == 1 and not s.get("is_ordering"):
+        if await _attempt_forced_rescue(sym, s, is_long, p):
+            return
+
+    # 未個別配置 hard_sl_pct 的幣種（例如 MUSDT）過去 fallback 是 0.0，等於整段 Hard_SL
+    # 直接被跳過、完全沒有固定百分比的硬停損防線，只能靠 ATR 動態停損（Universal SL）——
+    # 但 ATR 停損距離沒有上限，暴漲暴跌時 get_dynamic_atr_multiplier 還會把倍數放寬到 1.2x，
+    # 兩者疊加曾讓單筆虧損跑到 -14%（MUSDT 實際案例）。改用全域 HARD_STOP_LOSS_PCT 當預設值，
+    # 讓每個幣種至少都有一道固定百分比的最後防線。
+    _hard_sl = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", HARD_STOP_LOSS_PCT)
     if _hard_sl > 0:
         # 提早在門檻 75% 處就評估要不要攤平，而不是等真正跌破停損線才評估——
         # 這樣攤平才有機會買在明顯優於原始停損線的價位，真正達到降低風險的效果，
@@ -325,6 +369,9 @@ async def check_exits(sym):
 
         if _hard_sl_hit:
             cs = 'sell' if is_long else 'buy'
+            # 在 close_position 把狀態重置前，先記錄這筆是不是「攤平救援後才停損」的，
+            # 用來讓反手驗證知道要不要放寬動能確認（見下方 pending_reverse_after_rescue）。
+            _was_rescued = s.get("entry_count", 0) >= 2
             logger.info(f"🚨 [Hard_SL] {sym} 虧損達 {profit_pct*100:.2f}% (限制 {_hard_sl*100:.1f}%)，強制硬止損出場！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_SL]", is_stop_loss=True)
             if abs(profit_pct) > 0.015 and _check_reversal_allowed(sym, s):
@@ -335,6 +382,7 @@ async def check_exits(sym):
                     s["pending_reverse"] = "buy" if not is_long else "sell"
                     s["pending_reverse_time"] = time.time()
                     s["last_reverse_time"] = time.time()
+                    s["pending_reverse_after_rescue"] = _was_rescued
                     logger.info(f"🔄 [Hard_SL_Reverse] {sym} 硬止損後設置反手信號 → {s['pending_reverse']}")
             return
 
@@ -483,7 +531,14 @@ async def check_exits(sym):
         rescue_floor = get_effective_exit_setting(sym, "rescue_tp_floor_pct", 0.005, is_long)
         rescue_trail_atr = get_effective_exit_setting(sym, "rescue_trailing_atr", 1.5, is_long)
 
-        if profit_pct >= rescue_floor:
+        # 一旦曾經進入過救援追蹤模式（rescue_tracking_active），之後即使瞬間獲利
+        # 跌破 rescue_floor（例如重啟校準當下短暫讀到獲利趨近 0%、或價格瞬間洗一下），
+        # 也要繼續留在這套追蹤停利邏輯裡，不能直接掉出去給下面「弱勢快速停利」用
+        # 過時的歷史峰值（highest_profit_pct）跟當下已經拉回的價格結算，導致原本
+        # 追蹤了老半天的獲利，一次巧合的瞬間讀數就被鎖在遠低於實際軌跡的價位出場
+        # （MUSDT 實際案例：追蹤 40 分鐘穩定在 2~4%，因為這個銜接漏洞只鎖到 0.3%）。
+        if profit_pct >= rescue_floor or s.get("rescue_tracking_active", False):
+            s["rescue_tracking_active"] = True
             if is_long:
                 s["rescue_highest"] = max(s.get("rescue_highest", 0.0), p)
                 trail_sl = s["rescue_highest"] - (atr_val * rescue_trail_atr)
@@ -1019,9 +1074,18 @@ async def check_exits(sym):
 
             if (is_long and p <= s["trailing_highest"] * limit_down) or (not is_long and p >= s["trailing_lowest"] * limit_up):
                 cs = 'sell' if is_long else 'buy'
+                # 這道「離高點回撤 X%」是用 trailing_highest（會被雜訊反覆刷新的價格高點）
+                # 當基準，跟下面 PeakLock 階梯算出來、存在 s["stop_loss"] 的保護價是兩套
+                # 獨立機制。實測發現這道比較鬆、又寫在前面，會搶先用比 PeakLock 更差的
+                # 價格出場（例如 PeakLock 算出該鎖 1.51%，這裡卻用已經回落更多的即時價
+                # 出場只鎖到 0.49%）。這裡用 PeakLock 算出的停損價當地板，出場價不能比它差。
+                _pl_sl = s.get("stop_loss", 0)
+                exit_price = p
+                if _pl_sl > 0:
+                    exit_price = max(p, _pl_sl) if is_long else min(p, _pl_sl)
                 locked = (s["highest_profit_pct"] - retrace_limit) * 100
                 logger.info(f"🏃 [動態停利] {sym} 最高點回撤 {retrace_limit*100:.1f}%，鎖住約 {locked:.2f}% 獲利")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]")
+                await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason="[Trend_Follow]")
                 s["highest_profit_pct"] = 0.0
                 return
 
@@ -1048,6 +1112,9 @@ async def check_exits(sym):
         sl_pct = abs(sl - avg) / avg * 100
         reason_str = "[Breakeven_Stop]" if sl == avg else "[Trend_Follow]"
         logger.info(f"🛑 [{reason_str}] {sym} -{sl_pct:.1f}%")
+        # 在 close_position 把狀態重置前，先記錄這筆是不是「攤平救援後才停損」的，
+        # 用來讓反手驗證知道要不要放寬動能確認（見下方 pending_reverse_after_rescue）。
+        _was_rescued = s.get("entry_count", 0) >= 2
         # 出場價鎖定在 SL 觸發價：紙上交易的 tick 可能已經跳過 sl 好幾檔，
         # 若直接用當下價格 p 成交，會比原本設定的 SL 價位還差（甚至把鎖利誤結算成虧損）。
         exit_price = max(p, sl) if is_long else min(p, sl)
@@ -1061,6 +1128,7 @@ async def check_exits(sym):
                 s["pending_reverse"] = rev_side
                 s["pending_reverse_time"] = time.time()
                 s["last_reverse_time"] = time.time()
+                s["pending_reverse_after_rescue"] = _was_rescued
                 logger.info(f"🔄 [SL_Reverse] {sym} SL 後偵測到強勢逆向突破，設置反手 → {rev_side}")
         return
 

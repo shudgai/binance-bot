@@ -183,6 +183,11 @@ def get_bot_status():
             bot_status["balance_quote"] = min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance
         except Exception:
             pass
+        try:
+            from services.binance_service import get_total_realized_pnl_usdt
+            bot_status["total_realized_pnl"] = get_total_realized_pnl_usdt()
+        except Exception:
+            bot_status["total_realized_pnl"] = 0.0
 
     # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
     try:
