@@ -519,30 +519,45 @@ def api_chat(chat_msg: ChatMessage):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/history/summary")
+@app.get("/api/history/summary")
 def api_history_summary():
     try:
-        ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
-        if not os.path.exists(ps_path):
-            return {"summaries": []}
         tz = pytz.timezone('Asia/Taipei')
-        with open(ps_path, "r") as f:
-            state = json.load(f)
-        trades = state.get("trades", [])
         daily = {}
-        for t in trades:
-            dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
-            date_key = dt.strftime("%Y-%m-%d")
-            entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
-            entry["trades"] += 1
-            if t.get("is_close") and t.get("realized_pnl"):
-                entry["pnl"] += t["realized_pnl"]
-            
-            # 手續費加總 (支援相容舊紀錄)
-            fee = t.get("fee", (t["price"] * abs(t["qty"])) * 0.0005)
-            entry["fee"] += fee
+        
+        if is_paper_trading():
+            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if not os.path.exists(ps_path):
+                return {"summaries": []}
+            with open(ps_path, "r") as f:
+                state = json.load(f)
+            trades = state.get("trades", [])
+            for t in trades:
+                dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
+                date_key = dt.strftime("%Y-%m-%d")
+                entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
+                entry["trades"] += 1
+                if t.get("is_close") and t.get("realized_pnl"):
+                    entry["pnl"] += t["realized_pnl"]
+                fee = t.get("fee", (t["price"] * abs(t["qty"])) * 0.0005)
+                entry["fee"] += fee
+        else:
+            from services.binance_service import client
+            records = client.futures_income_history(limit=1000)
+            for r in records:
+                dt = datetime.datetime.fromtimestamp(r["time"] / 1000, tz=tz)
+                date_key = dt.strftime("%Y-%m-%d")
+                entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
+                itype = r.get("incomeType")
+                income = float(r.get("income", 0.0))
+                if itype == "REALIZED_PNL":
+                    entry["trades"] += 1
+                    entry["pnl"] += income
+                elif itype == "COMMISSION":
+                    entry["fee"] += abs(income)
 
         # 將 fee 也回傳，並將 pnl 扣除 fee
-        summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"] - v["fee"], 4)} for k, v in sorted(daily.items(), reverse=True)]
+        summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"] - v["fee"], 4) if is_paper_trading() else round(v["pnl"], 4)} for k, v in sorted(daily.items(), reverse=True)]
         return {"summaries": summaries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -550,44 +565,85 @@ def api_history_summary():
 @app.get("/api/history/download/{date}")
 def api_history_download(date: str):
     try:
-        ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
-        if not os.path.exists(ps_path):
-            raise HTTPException(status_code=404, detail="無交易紀錄")
-        with open(ps_path, "r") as f:
-            state = json.load(f)
-        trades = state.get("trades", [])
         tz = pytz.timezone('Asia/Taipei')
-        filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
-        if not filtered:
-            raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
-        
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["時間", "幣種", "方向", "價格", "數量", "手續費", "已實現損益", "平倉"])
-        for t in filtered:
-            ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
-            side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
-                   "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
-                   "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
-                   "買入(平空)"
-            
-            fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
-            # 將單筆的 realized_pnl 扣除手續費，確保整欄加總等於總淨利潤
-            net_pnl = t.get("realized_pnl", 0) - fee
 
-            writer.writerow([
-                ts,
-                t.get("symbol", "").replace(":USDT", ""),
-                side,
-                t.get("price", ""),
-                t.get("qty", ""),
-                round(fee, 6),
-                round(net_pnl, 6),
-                "是" if t.get("is_close") else "否"
-            ])
+        if is_paper_trading():
+            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if not os.path.exists(ps_path):
+                raise HTTPException(status_code=404, detail="無交易紀錄")
+            with open(ps_path, "r") as f:
+                state = json.load(f)
+            trades = state.get("trades", [])
+            filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
+            if not filtered:
+                raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
+            
+            for t in filtered:
+                ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+                side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
+                       "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
+                       "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
+                       "買入(平空)"
+                fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+                net_pnl = t.get("realized_pnl", 0) - fee
+
+                writer.writerow([
+                    ts, t.get("symbol", "").replace(":USDT", ""), side,
+                    t.get("price", ""), t.get("qty", ""), round(fee, 6),
+                    round(net_pnl, 6), "是" if t.get("is_close") else "否"
+                ])
+        else:
+            from services.binance_service import client
+            from services.bot_manager_service import load_symbol_config
+            from core.config import TRADE_HISTORY_FILE
+            
+            query_symbols = set(load_symbol_config())
+            try:
+                with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                query_symbols.update(t.get("symbol", "") for t in history if t.get("symbol"))
+            except:
+                pass
+            
+            all_trades = []
+            for sym in query_symbols:
+                try:
+                    sym_trades = client.futures_account_trades(symbol=sym, limit=200)
+                    for t in sym_trades:
+                        if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date:
+                            all_trades.append(t)
+                except:
+                    continue
+            
+            if not all_trades:
+                raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
+                
+            all_trades.sort(key=lambda t: t.get("time", 0))
+            for t in all_trades:
+                ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+                is_buyer = (t["side"] == "BUY")
+                realized_pnl = float(t.get("realizedPnl", 0.0))
+                is_close = realized_pnl != 0
+                side = "買入(多)" if is_buyer and not is_close else \
+                       "賣出(平多)" if not is_buyer and is_close else \
+                       "賣出(空)" if not is_buyer and not is_close else \
+                       "買入(平空)"
+                
+                fee = float(t.get("commission", 0.0))
+                # For real Binance API, realizedPnl already excludes commission technically, wait, no, realizedPnl is gross. Net = realizedPnl - commission
+                # Commission from Binance is negative (e.g. -0.05), so we add it to get net pnl
+                net_pnl = realized_pnl + fee
+                
+                writer.writerow([
+                    ts, t.get("symbol", "").replace("USDT", ""), side,
+                    t.get("price", ""), t.get("qty", ""), round(abs(fee), 6),
+                    round(net_pnl, 6), "是" if is_close else "否"
+                ])
         
         from fastapi.responses import StreamingResponse
-        # Add UTF-8 BOM (\ufeff) so Excel correctly recognizes the encoding for Chinese characters
         csv_content = "\ufeff" + output.getvalue()
         return StreamingResponse(
             iter([csv_content]),

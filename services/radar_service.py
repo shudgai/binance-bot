@@ -90,9 +90,12 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 12   # 核心池固定選出幣數
-HOT_MOVERS_COUNT   = 2    # 額外加入的熱門動能幣（最多）
+RADAR_SELECT_COUNT = 8    # 核心池固定選出幣數（原本12，精選減少監控幣種數量）
+HOT_MOVERS_COUNT   = 2    # 額外加入的熱門動能幣（最多）——上限跟核心池加總為10個
 CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
+
+# 排除急升/急跌的每日變動閾值（百分比）——若絕對變動超過此值，會從 ATR 掃描候選中剔除
+MAX_DAILY_MOVE_PCT = 30.0
 
 # 熱門幣保守 profile（只走有強訊號的機會）
 HOT_MOVER_PROFILE_BASE = {
@@ -123,7 +126,11 @@ last_bot_restart = 0.0
 BOT_RESTART_COOLDOWN = 300.0  # 5 minutes
 
 # 熔斷黑名單 {symbol: expire_timestamp}
-BLACKLIST = {}
+# WLDUSDT: 使用者要求永久排除，不用 blacklist_coin() 的一般熔斷（24小時後會過期），
+# 用 float('inf') 讓它永遠不會被 clean_blacklist() 的 `v > now` 過濾掉，且直接寫在
+# 初始值裡，即使服務重啟（BLACKLIST 是模組層級的執行期狀態，重啟就歸零）也會回到
+# 這個永久排除的起始狀態，不用另外存檔案。
+BLACKLIST = {"WLDUSDT": float('inf')}
 
 def clean_blacklist():
     global BLACKLIST
@@ -281,7 +288,7 @@ def auto_radar_switch(force_start=False):
         clean_blacklist()
         # 直接從幣安永續合約市場即時抓活躍幣種清單，取代寫死的 CORE_SYMBOLS，
         # 這樣 ATR 雷達才能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。
-        scan_pool = get_atr_scan_universe(ignore_list=list(BLACKLIST.keys()))
+        scan_pool = get_atr_scan_universe(ignore_list=list(BLACKLIST.keys()), max_change_pct=MAX_DAILY_MOVE_PCT)
         if not scan_pool:
             add_system_log("⚠️ [雷達掃描] 幣安永續合約市場清單抓取失敗，改用固定核心清單", "warning")
             scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]

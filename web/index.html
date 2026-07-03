@@ -788,7 +788,7 @@
             <div class="card">
                 <div class="amount-row" style="margin-bottom:0;">
                     <span class="info-title">單次自動交易金額 (隨帳戶餘額動態調整)</span>
-                    <span class="amount-val">{{ formatCurrencyVal(bot.balance_quote) }} {{ getQuoteAsset() }}</span>
+                    <span class="amount-val">{{ formatCurrencyVal(bot.trade_amount) }} {{ getQuoteAsset() }}</span>
                 </div>
             </div>
 
@@ -911,7 +911,7 @@ createApp({
             });
         });
         const liveTrades = ref([]);
-        const tempTradeAmount = computed(() => parseFloat((bot.value.balance_quote || 0).toFixed(4)));
+        const tempTradeAmount = computed(() => parseFloat((bot.value.trade_amount || bot.value.balance_quote || 0).toFixed(4)));
         const limitPrice = ref('');
         const openOrders = ref([]);
         const selectedTf = ref('1m');

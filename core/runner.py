@@ -210,6 +210,12 @@ async def main_loop(exchange):
     except (asyncio.TimeoutError, Exception) as e:
         logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
 
+    try:
+        from core.check_entries import load_pending_signals
+        load_pending_signals()
+    except Exception as e:
+        logger.info(f"⚠️ [Pending快取] 還原失敗: {e}")
+
     logger.info("🔍 [INIT] 正在啟動時校準倉位...")
     await calibrate_with_exchange(exchange)
     await fetch_real_balance()

@@ -172,6 +172,10 @@ def get_bot_status():
             bot_status["total_realized_pnl"] = total_realized - total_fees
         except Exception as e:
             bot_status["total_realized_pnl"] = 0.0
+
+        # 單次自動交易金額跟著複利調整（紙上餘額本身就已經是本金+累計損益，
+        # 直接拿來當交易金額即可），道理跟下面實盤那段一樣：虧損就縮水、獲利就變大。
+        bot_status["trade_amount"] = max(bot_status["balance_quote"], 10.0)
     else:
         try:
             # 用 API 進程自己直接查詢，不依賴 core.balance.REAL_BALANCE
@@ -185,7 +189,14 @@ def get_bot_status():
             pass
         try:
             from services.binance_service import get_total_realized_pnl_usdt
-            bot_status["total_realized_pnl"] = get_total_realized_pnl_usdt()
+            from core.config import LIVE_CAPITAL_CAP
+            total_realized = get_total_realized_pnl_usdt()
+            bot_status["total_realized_pnl"] = total_realized
+            # 單次自動交易金額要跟著已實現損益複利調整，不是固定不變的 150——
+            # 已經虧損就該用縮水後的本金下單，已經獲利就該用變大的本金下單，
+            # 不然實際虧損擴大時，倉位大小卻完全沒反映出真實剩餘資金。
+            # 下限設一個很小的值，避免虧損超過本金上限時算出負數/歸零倉位。
+            bot_status["trade_amount"] = max(LIVE_CAPITAL_CAP + total_realized, 10.0)
         except Exception:
             bot_status["total_realized_pnl"] = 0.0
 
@@ -196,6 +207,21 @@ def get_bot_status():
             bot_status["watch_symbols"] = actual_symbols
             bot_status["active_symbols"] = actual_symbols
         bot_status["disabled_symbols"] = load_disabled_symbols()
+    except Exception:
+        pass
+
+    # 跟隨模式下，介面顯示的幣池要跟來源部署完全一致；本地因「持倉保護」多
+    # 加回的幣種（本地有真倉但來源清單沒選到）仍在背景由 ctx.ALL_SYMBOLS
+    # 繼續做出場管理，只是不列在畫面上，避免看起來兩邊選幣邏輯跑掉了。
+    try:
+        follow_source = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
+        if follow_source and os.path.exists(follow_source):
+            with open(follow_source, "r", encoding="utf-8") as f:
+                source_data = json.load(f)
+            source_symbols = source_data.get("symbols", []) if isinstance(source_data, dict) else source_data
+            if source_symbols:
+                bot_status["active_symbols"] = source_symbols
+                bot_status["watch_symbols"] = source_symbols
     except Exception:
         pass
 
