@@ -82,7 +82,11 @@ def build_symbol_state(sym):
         "volume_multiplier": conf.get("volume_multiplier", 1.0),
         "sl_atr_multiplier": conf.get("sl_atr_multiplier", 1.5),
         "tp_atr_multiplier": conf.get("tp_atr_multiplier", 2.5),
-        "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
+        # 原本這裡不管 conf 內容、一律寫死用全域 HARD_STOP_LOSS_PCT，導致每個幣種
+        # 個別配置的 hard_sl_pct（COIN_PROFILE_CONFIG）從未真正套用到交易所實際掛的
+        # STOP_MARKET 止損單（core/orders.py 讀的是這個 hard_stop_loss_pct 欄位算價）——
+        # 欄位名稱對不起來，等於所有幣種的交易所止損單永遠都是同一個全域百分比。
+        "hard_stop_loss_pct": conf.get("hard_sl_pct", HARD_STOP_LOSS_PCT),
         "personality": "balanced",
         "personality_source": "infer",
         "last_personality_update": 0.0,
@@ -306,7 +310,7 @@ def reset_coin_state(sym):
     s["volume_multiplier"] = 1.0
     s["sl_atr_multiplier"] = 1.5
     s["tp_atr_multiplier"] = 2.5
-    s["hard_stop_loss_pct"] = 0.02
+    s["hard_stop_loss_pct"] = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", HARD_STOP_LOSS_PCT)
     s["personality"] = "balanced"
     s["personality_source"] = "infer"
     s["last_personality_update"] = 0.0
@@ -317,6 +321,7 @@ def reset_coin_state(sym):
     s["trailing_stop_price"] = 0.0
     s.pop("rescue_highest", None)
     s.pop("rescue_lowest", None)
+    s["rescue_tracking_active"] = False
     s.pop("debug_start_time", None)
     s.pop("last_debug_pressure_time", None)
     s.pop("last_price_check", None)

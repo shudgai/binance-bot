@@ -148,6 +148,15 @@ async def calibrate_with_exchange(exchange):
                     ctx.ALL_SYMBOLS.append(sym)
                     ctx.STATES[sym] = build_symbol_state(sym)
                     apply_symbol_profile(sym, SYMBOL_PROFILES.get(sym, {}))
+                    # 這裡只更新了 main.py 這個進程自己記憶體裡的 ALL_SYMBOLS，
+                    # 但網頁「監控幣種」清單是 API 那個獨立進程從 bot_symbols.json
+                    # 讀出來的，兩個進程不共用記憶體——不寫回檔案，介面永遠看不到
+                    # 這個剛救回來的幣種，即使 log 訊息說「並在介面顯示」也不成立。
+                    try:
+                        from core.symbol_profile import save_symbol_pool
+                        save_symbol_pool(ctx.ALL_SYMBOLS)
+                    except Exception as se:
+                        logger.info(f"⚠️ [持倉救回寫檔失敗] {sym}: {se}")
 
             if sym in ctx.STATES:
                 current_qty = ctx.STATES[sym].get("qty", 0.0)
@@ -274,13 +283,17 @@ async def main_loop(exchange):
             except Exception as e:
                 logger.info(f"⚠️ [狀態更新異常]: {e}")
 
-            # --- AI 大腦診斷 ---
-            try:
-                from services.ai_manager import ai_engine
-                if time.time() % 1800 < 6:
-                    asyncio.create_task(ai_engine.run_ai_diagnosis_cycle())
-            except ImportError:
-                pass
+            # --- AI 大腦診斷（已停用）---
+            # 停用原因：1) 沒有設定 OPENAI_API_KEY，每次呼叫都收到 401 静默失敗，
+            # 完全沒有實際作用；2) 就算補上 key，這是全自動套用（信心分數過門檻就
+            # 直接寫入 bot_symbols.json 生效），跟目前每次調整風控參數都要先分析
+            # 數據、跟使用者確認過的做法互相矛盾，背景自動改參數的風險比效益大。
+            # try:
+            #     from services.ai_manager import ai_engine
+            #     if time.time() % 1800 < 6:
+            #         asyncio.create_task(ai_engine.run_ai_diagnosis_cycle())
+            # except ImportError:
+            #     pass
 
             # --- 出場檢查區塊 (最關鍵的防禦) ---
             from core.strategy.factory import StrategyFactory

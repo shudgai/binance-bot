@@ -2,24 +2,25 @@
   "symbols": [
     "GUAUSDT",
     "VELVETUSDT",
-    "LABUSDT",
+    "SKYAIUSDT",
+    "TAIKOUSDT",
+    "BASUSDT",
     "INUSDT",
+    "LABUSDT",
     "SYNUSDT",
     "TACUSDT",
     "USUSDT",
-    "BREVUSDT",
-    "BASUSDT",
+    "ALLOUSDT",
     "NFPUSDT",
     "MUSDT",
-    "TAIKOUSDT",
-    "DOGEUSDT"
+    "XRPUSDT"
   ],
   "profiles": {
     "GUAUSDT": {
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 7.5,
       "leverage": 2,
-      "_radar_atr_pct": 285.748,
+      "_radar_atr_pct": 223.133,
       "_radar_rank": 1,
       "_radar_tag": "超低價/超高波動",
       "hard_sl_pct": 0.03,
@@ -30,84 +31,84 @@
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.8,
       "leverage": 2,
-      "_radar_atr_pct": 72.145,
+      "_radar_atr_pct": 80.08,
       "_radar_rank": 2,
       "_radar_tag": "低價/超高波動",
       "hard_sl_pct": 0.03,
       "trailing_activation_atr": 1.2,
       "trailing_distance_atr": 0.7
     },
-    "TAIKOUSDT": {
+    "SKYAIUSDT": {
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.8,
       "leverage": 2,
-      "_radar_atr_pct": 56.3,
+      "_radar_atr_pct": 72.47,
       "_radar_rank": 3,
-      "_radar_tag": "低價/超高波動",
+      "_radar_tag": "超低價/超高波動",
       "hard_sl_pct": 0.03,
       "trailing_activation_atr": 1.2,
       "trailing_distance_atr": 0.7
     },
-    "LABUSDT": {
+    "TAIKOUSDT": {
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.7,
       "leverage": 2,
-      "_radar_atr_pct": 43.698,
+      "_radar_atr_pct": 52.427,
       "_radar_rank": 4,
-      "_radar_tag": "正常/超高波動",
-      "hard_sl_pct": 0.03,
-      "trailing_activation_atr": 1.2,
-      "trailing_distance_atr": 0.7
-    },
-    "INUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 14.6,
-      "leverage": 2,
-      "_radar_atr_pct": 42.778,
-      "_radar_rank": 5,
-      "_radar_tag": "超低價/超高波動",
+      "_radar_tag": "低價/超高波動",
       "hard_sl_pct": 0.03,
       "trailing_activation_atr": 1.2,
       "trailing_distance_atr": 0.7
     },
     "BASUSDT": {
       "sl_atr_multiplier": 3.5,
+      "tp_atr_multiplier": 14.6,
+      "leverage": 2,
+      "_radar_atr_pct": 48.316,
+      "_radar_rank": 5,
+      "_radar_tag": "超低價/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "INUSDT": {
+      "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.5,
       "leverage": 2,
-      "_radar_atr_pct": 35.875,
+      "_radar_atr_pct": 41.255,
       "_radar_rank": 6,
       "_radar_tag": "超低價/超高波動",
       "hard_sl_pct": 0.03,
       "trailing_activation_atr": 1.2,
       "trailing_distance_atr": 0.7
     },
-    "OUSDT": {
+    "LABUSDT": {
       "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 11.5,
+      "tp_atr_multiplier": 14.4,
       "leverage": 2,
-      "_radar_atr_pct": 29.487,
+      "_radar_atr_pct": 34.813,
       "_radar_rank": 7,
-      "_radar_tag": "低價/超高波動",
-      "hard_sl_pct": 0.03,
-      "trailing_activation_atr": 1.2,
-      "trailing_distance_atr": 0.7
-    },
-    "REUSDT": {
-      "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 14.3,
-      "leverage": 2,
-      "_radar_atr_pct": 29.312,
-      "_radar_rank": 8,
-      "_radar_tag": "低價/超高波動",
+      "_radar_tag": "正常/超高波動",
       "hard_sl_pct": 0.03,
       "trailing_activation_atr": 1.2,
       "trailing_distance_atr": 0.7
     },
     "SYNUSDT": {
       "sl_atr_multiplier": 3.5,
-      "tp_atr_multiplier": 14.2,
+      "tp_atr_multiplier": 14.3,
       "leverage": 2,
-      "_radar_atr_pct": 28.637,
+      "_radar_atr_pct": 28.701,
+      "_radar_rank": 8,
+      "_radar_tag": "低價/超高波動",
+      "hard_sl_pct": 0.03,
+      "trailing_activation_atr": 1.2,
+      "trailing_distance_atr": 0.7
+    },
+    "OUSDT": {
+      "sl_atr_multiplier": 3.5,
+      "tp_atr_multiplier": 11.4,
+      "leverage": 2,
+      "_radar_atr_pct": 25.719,
       "_radar_rank": 9,
       "_radar_tag": "低價/超高波動",
       "hard_sl_pct": 0.03,
@@ -118,7 +119,7 @@
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.2,
       "leverage": 2,
-      "_radar_atr_pct": 25.26,
+      "_radar_atr_pct": 25.299,
       "_radar_rank": 10,
       "_radar_tag": "超低價/超高波動",
       "hard_sl_pct": 0.03,
@@ -129,7 +130,7 @@
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.1,
       "leverage": 2,
-      "_radar_atr_pct": 22.6,
+      "_radar_atr_pct": 24.771,
       "_radar_rank": 11,
       "_radar_tag": "正常/超高波動",
       "hard_sl_pct": 0.03,
@@ -140,7 +141,7 @@
       "sl_atr_multiplier": 3.5,
       "tp_atr_multiplier": 14.0,
       "leverage": 2,
-      "_radar_atr_pct": 22.307,
+      "_radar_atr_pct": 23.452,
       "_radar_rank": 12,
       "_radar_tag": "低價/超高波動",
       "hard_sl_pct": 0.03,
@@ -151,7 +152,7 @@
       "sl_atr_multiplier": 3.0,
       "tp_atr_multiplier": 6.0,
       "leverage": 2,
-      "hard_sl_pct": 0.025,
+      "hard_sl_pct": 0.015,
       "min_signal_strength": 20.0,
       "disable_rescue_dca": true,
       "trailing_activation_atr": 0.8,
@@ -163,13 +164,13 @@
       "volume_threshold_factor": 1.2,
       "_radar_atr_pct": 0.0,
       "_radar_rank": 61,
-      "_radar_tag": "熱門動能/24h+33.3%"
+      "_radar_tag": "熱門動能/24h+37.7%"
     },
-    "BREVUSDT": {
+    "ALLOUSDT": {
       "sl_atr_multiplier": 3.0,
       "tp_atr_multiplier": 6.0,
       "leverage": 2,
-      "hard_sl_pct": 0.025,
+      "hard_sl_pct": 0.015,
       "min_signal_strength": 20.0,
       "disable_rescue_dca": true,
       "trailing_activation_atr": 0.8,
@@ -181,7 +182,7 @@
       "volume_threshold_factor": 1.2,
       "_radar_atr_pct": 0.0,
       "_radar_rank": 62,
-      "_radar_tag": "熱門動能/24h+29.7%"
+      "_radar_tag": "熱門動能/24h+35.9%"
     }
   }
 }

@@ -745,8 +745,8 @@
                 </div>
                 <div class="info-card">
                     <div class="info-title">總已實現利潤</div>
-                    <div :class="['info-val mono', (bot.balance_quote - bot.session_start_balance) > 0 ? 'up' : (bot.balance_quote - bot.session_start_balance) < 0 ? 'down' : '']" style="font-size:15px;">
-                        {{ (bot.balance_quote - bot.session_start_balance) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot.balance_quote - bot.session_start_balance) }} USDT
+                    <div :class="['info-val mono', (bot.total_realized_pnl || 0) > 0 ? 'up' : (bot.total_realized_pnl || 0) < 0 ? 'down' : '']" style="font-size:15px;">
+                        {{ (bot.total_realized_pnl || 0) > 0 ? '+' : '' }}{{ formatCurrencyVal(bot.total_realized_pnl || 0) }} USDT
                     </div>
                 </div>
                 <div class="balance-box ms-auto text-end" style="cursor: pointer;" @click="toggleCurrency" title="點擊切換顯示幣別">

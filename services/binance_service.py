@@ -218,6 +218,20 @@ def get_account_balance_usdt() -> float:
     return 0.0
 
 
+def get_total_realized_pnl_usdt() -> float:
+    """用幣安 income history 加總帳戶累計已實現損益（含手續費），
+    對應紙上交易那邊「total_realized_pnl」的概念，讓實體帳戶也能顯示總已實現利潤。"""
+    total = 0.0
+    try:
+        records = client.futures_income_history(limit=1000)
+        for r in records:
+            if r.get("incomeType") in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
+                total += float(r.get("income", 0.0) or 0.0)
+    except Exception:
+        pass
+    return total
+
+
 def get_position(symbol: str, quote_asset: str, base_asset: str):
     positions = client.futures_position_information(symbol=symbol)
     if not positions:

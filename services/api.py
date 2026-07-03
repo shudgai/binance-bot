@@ -153,7 +153,7 @@ def api_get_bot_status():
         status["session_start_balance"] = get_session_start_balance()
     else:
         # 實盤餘額的取得可放在 binance_service，為簡化先保留原本邏輯(這部分會用到 binance_service，為快速先這樣)
-        pass 
+        pass
     return status
 
 @app.post("/api/bot-status/toggle")

@@ -98,6 +98,92 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         logger.info(f"⚠️ [AI Memory] 紀錄失敗: {e}")
 
 
+async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
+    """送出市價平倉單，並可靠地取得真實成交均價。create_order() 剛回傳的市價單
+    結果，average/price 欄位常常還沒填（要過一下子交易所才處理完），如果直接信任
+    這個回傳值，會退回去用呼叫端傳入的理論價格算獲利——這正是 PeakLock/RESCUE_TRAIL
+    等鎖利機制「內部顯示賺錢、實際上虧損」的成因之一。這裡改成下單後主動再查一次
+    訂單狀態，確保拿到的是交易所真正的成交均價。"""
+    market_order = await exchange_futures.create_order(
+        sym, type="market", side=close_side, amount=qty,
+        params={"reduceOnly": True}
+    )
+    fill_price = float(market_order.get('average') or market_order.get('price') or 0.0)
+    if fill_price <= 0:
+        await asyncio.sleep(0.5)
+        try:
+            fetched = await exchange_futures.fetch_order(market_order['id'], sym)
+            fill_price = float(fetched.get('average') or fetched.get('price') or 0.0)
+        except Exception as fe:
+            logger.info(f"⚠️ [市價成交查詢失敗] {sym}: {fe}")
+    if fill_price <= 0:
+        fill_price = fallback_price
+    return fill_price
+
+
+async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
+    """實盤鎖利出場：限價掛在理論價位，沒成交就追到當下最新買一/賣一價再試一次，
+    還是掛不到才轉市價出清剩餘部位。比起單純「掛一個價位等到逾時才轉市價」，
+    多一次貼近市場的追價機會，同時全程都用真實成交均價回填，不用理論價格。"""
+    prec = await get_contract_precision(sym)
+    filled_qty = 0.0
+    filled_notional = 0.0
+    remaining_qty = qty
+    limit_price = round_step(price, prec['tick_size'])
+
+    for attempt in (1, 2):
+        try:
+            order = await exchange_futures.create_order(
+                sym, type='limit', side=close_side, amount=remaining_qty,
+                price=limit_price, params={'reduceOnly': True, 'timeInForce': 'GTC'}
+            )
+        except Exception as e:
+            logger.info(f"🚨 [鎖利限價下單失敗] {sym} (第{attempt}次): {e}")
+            break
+
+        await asyncio.sleep(4)
+        step_filled = 0.0
+        try:
+            fetched = await exchange_futures.fetch_order(order['id'], sym)
+            step_filled = float(fetched.get('filled', 0) or 0)
+            fill_avg = float(fetched.get('average') or fetched.get('price') or limit_price)
+            filled_notional += step_filled * fill_avg
+            filled_qty += step_filled
+        except Exception as fe:
+            logger.info(f"⚠️ [限價單查詢失敗] {sym}: {fe}")
+
+        remaining_qty = round_step(qty - filled_qty, prec['step_size']) if filled_qty < qty else 0.0
+        if remaining_qty <= 0.000001:
+            logger.info(f"✅ [限價鎖利成交] {sym} 第{attempt}次掛單全數成交 @ {filled_notional/filled_qty:.6f}")
+            return filled_notional / filled_qty
+
+        try:
+            await exchange_futures.cancel_order(order['id'], sym)
+        except Exception:
+            pass
+
+        if attempt == 1:
+            try:
+                ob = await exchange_futures.fetch_order_book(sym, limit=5)
+                asks = ob.get('asks', [])
+                bids = ob.get('bids', [])
+                best_bid = float(bids[0][0]) if bids else limit_price
+                best_ask = float(asks[0][0]) if asks else limit_price
+                reprice = best_bid if close_side == 'sell' else best_ask
+                limit_price = round_step(reprice, prec['tick_size'])
+                logger.info(f"🔁 [鎖利限價追價] {sym} 4秒未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），改掛貼近市場價 {limit_price:.6f} 再試")
+            except Exception as re_e:
+                logger.info(f"⚠️ [追價報價失敗] {sym}: {re_e}，維持原價再試一次")
+
+    if remaining_qty > 0.000001:
+        logger.info(f"⏱️ [鎖利限價逾時] {sym} 追價後仍未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），剩餘 {remaining_qty:.6f} 改市價出場")
+        market_fill = await _market_close_and_get_fill(sym, close_side, remaining_qty, price)
+        filled_notional += remaining_qty * market_fill
+        filled_qty += remaining_qty
+
+    return (filled_notional / filled_qty) if filled_qty > 0 else limit_price
+
+
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = ctx.STATES[sym]
     await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
@@ -158,6 +244,41 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
 
+    sanitized_qty = await sanitize_order_qty(sym, qty)
+    if sanitized_qty <= 0.0:
+        logger.info(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
+        return
+    qty = sanitized_qty
+
+    if PAPER_TRADING:
+        # 紙上交易沒有真實委託簿，成交價就是模擬假設的理論價，不會有滑價落差。
+        real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
+        if s["qty"] > 0:
+            pnl = (price - real_avg) * qty
+        else:
+            pnl = (real_avg - price) * qty
+        update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
+        final_price = price
+    else:
+        # 實盤平倉：獲利中（PeakLock/停利鎖利）用限價單掛在理論價位，試著真的鎖住
+        # 這個價位的獲利；虧損中（真正停損）維持市價單，優先保證一定出場，
+        # 不能讓限價單沒成交而讓虧損繼續擴大。
+        # 之前的做法不管市價單實際成交在哪裡，一律用「理論價格」算獲利/貼標籤，
+        # 導致 PeakLock 明明鎖利 1.10%，交易所實際卻用市價成交在 -0.10%，
+        # 系統內部紀錄卻還是顯示賺錢——這裡改成用真實成交均價回填後續所有計算。
+        try:
+            if profit_pct > 0:
+                final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
+            else:
+                final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
+        except Exception as e:
+            logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
+            return
+
+    # 用真實成交價（實盤）或模擬價（紙上）重新計算最終獲利，取代呼叫端傳入的理論價格
+    profit_pct = (final_price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - final_price) / real_avg
+    price = final_price
+
     atr_val = s.get("entry_atr", s.get("current_atr", price * 0.01))
     sl_mult = s.get("sl_atr_multiplier", 1.5)
     initial_risk_pct = (sl_mult * atr_val) / real_avg if real_avg > 0 else 0.01
@@ -187,27 +308,6 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     full_reason = f"{pnl_tag} {reason}".strip()
     s["last_exit_time"] = time.time()
     s["last_exit_reason"] = full_reason
-
-    sanitized_qty = await sanitize_order_qty(sym, qty)
-    if sanitized_qty <= 0.0:
-        logger.info(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
-        return
-    qty = sanitized_qty
-
-    if PAPER_TRADING:
-        real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
-        if s["qty"] > 0:
-            pnl = (price - real_avg) * qty
-        else:
-            pnl = (real_avg - price) * qty
-        update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
-    else:
-        try:
-            await exchange_futures.create_order(sym, type="market", side=close_side, amount=qty,
-                                        params={"reduceOnly": True})
-        except Exception as e:
-            logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
-            return
 
     record_trade_result(
         symbol=sym,
