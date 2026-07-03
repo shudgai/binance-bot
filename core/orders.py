@@ -10,7 +10,8 @@ from core import ctx
 from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
-    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT)
+    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
+    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET)
 from core.exchange_client import exchange_futures, exchange_market_data, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal

@@ -258,7 +258,9 @@ async def check_exits(sym):
         if vol_ratio > 2.5:
             logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
         else:
-            return
+            # 進場初期仍要保護真實停損，不能因為「新倉盲區」而直接跳過 Hard_SL / Universal SL。
+            # 這裡不再直接 return，讓後續的停損檢查仍能執行。
+            pass
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉

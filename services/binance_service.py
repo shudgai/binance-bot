@@ -116,7 +116,7 @@ def _get_valid_futures_symbols() -> set:
 
 
 def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
-                         max_candidates: int = 60,
+                         max_candidates: int = 24,
                          ignore_list=None,
                          max_change_pct: float = 50.0,
                          min_price: float = 0.01,
@@ -197,7 +197,7 @@ def get_hot_movers(
     min_change_pct: float = 5.0,
     max_change_pct: float = 25.0,
     min_price: float = 0.01,
-    limit: int = 3,
+    limit: int = 2,
     ignore_list=None,
     min_orderbook_depth_usdt: float = 2_000.0,
     max_spread_pct: float = 0.003,
