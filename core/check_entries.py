@@ -535,7 +535,9 @@ async def check_entries():
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
-            if strength > 15.0 or route == "Automatic_Reverse":
+            # 門檻拉高到 18.0（原本 15.0 太容易在邊緣強度就跳過趨勢過濾），
+            # 跟 core/entry_filter.py 的 _mtf_override_threshold 對齊。
+            if strength > 18.0 or route == "Automatic_Reverse":
                 logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)

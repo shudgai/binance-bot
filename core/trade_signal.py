@@ -69,7 +69,10 @@ def update_trade_signal(sym, trade):
         if rt_profit > s.get("highest_profit_pct", 0.0):
             s["highest_profit_pct"] = rt_profit
 
-        if rt_profit >= 0.003 and not s.get("is_breakeven_locked", False):
+        # 觸發門檻原本 0.3% 太緊，獲利才剛冒頭一點點就把停損鎖在成本價附近，
+        # 稍微一回檔就被打到、幾乎打平出場（勉強打平甚至不夠付手續費），倉位
+        # 根本沒機會真正發展出有意義的獲利。拉高到 1.0% 才觸發保本鎖定。
+        if rt_profit >= 0.010 and not s.get("is_breakeven_locked", False):
             _buf = 0.003
             _be = avg_p * (1 + _buf) if _is_long else avg_p * (1 - _buf)
             _sl_now = s.get("stop_loss", 0)

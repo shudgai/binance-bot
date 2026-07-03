@@ -11,11 +11,16 @@ use_testnet = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 
 # 用的是幣安「Demo Trading」網頁申請的金鑰，跟舊版 testnet 是不同網址系統，
 # python-binance 用 demo=True（不是 testnet=True）才會打對網址。
+# ping=False：python-binance 建構子預設會在啟動當下打一次 ping 測連線，且沒有
+# 包 try/except，只要 demo-api.binance.com 短暫 502（實際發生過，幣安自己的
+# Demo Trading 網域故障），整個 API process 會直接 crash-loop 起不來。這個 ping
+# 只是「啟動時的連線小提示」，不影響後續實際 API 呼叫，關掉它讓啟動不受外部
+# 短暫故障影響即可。
 client = None
 if api_key and api_key != "your_api_key_here":
-    client = Client(api_key, api_secret, demo=use_testnet)
+    client = Client(api_key, api_secret, demo=use_testnet, ping=False)
 else:
-    client = Client(demo=use_testnet)
+    client = Client(demo=use_testnet, ping=False)
 
 _contract_precisions = {}
 
@@ -110,7 +115,13 @@ def _get_valid_futures_symbols() -> set:
     return _valid_futures_symbols
 
 
-def get_atr_scan_universe(min_vol_usdt: float = 5_000_000, max_candidates: int = 60, ignore_list=None) -> list:
+def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
+                         max_candidates: int = 60,
+                         ignore_list=None,
+                         max_change_pct: float = 50.0,
+                         min_price: float = 0.01,
+                         min_orderbook_depth_usdt: float = 2_000.0,
+                         max_spread_pct: float = 0.003) -> list:
     """從幣安永續合約市場即時抓取候選幣種清單（依24h成交量篩選/排序），供 ATR 雷達排名使用。
     取代寫死的固定清單，讓 ATR 雷達能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。"""
     try:
@@ -127,14 +138,55 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000, max_candidates: int =
                 continue
             try:
                 q_vol = float(t.get("quoteVolume", 0))
+                chg = float(t.get("priceChangePercent", 0))
+                price = float(t.get("lastPrice", 0))
             except (ValueError, TypeError):
                 continue
             if q_vol < min_vol_usdt:
                 continue
+            # 排除 24h 漲跌幅過高或過低（急升/急跌）之標的，避免追高或追底
+            if abs(chg) > max_change_pct:
+                continue
+            # 價格過低或過高過濾（避免超微幣或高價位超出策略範圍）
+            if price < min_price or price == 0:
+                continue
             candidates.append((sym, q_vol))
 
+        # orderbook 深度檢查放在成交量排序、截斷到 max_candidates 之後才做，
+        # 只對真正可能被選中的候選查委託簿，不是每個通過前面篩選的幣種都查——
+        # 之前對全部候選都查，一次掃描要打幾十次委託簿 API，把幣安權重推到超標
+        # （2400 上限一度打到 2449），連帶讓查真實餘額之類的其他請求間歇性失敗。
         candidates.sort(key=lambda x: x[1], reverse=True)
-        return [sym for sym, _ in candidates[:max_candidates]]
+        top_candidates = candidates[:max_candidates]
+
+        filtered = []
+        for sym, q_vol in top_candidates:
+            try:
+                ob = client.futures_order_book(symbol=sym, limit=5)
+                bids = ob.get('bids', [])
+                asks = ob.get('asks', [])
+                if bids and asks:
+                    best_bid_price = float(bids[0][0])
+                    best_bid_qty = float(bids[0][1])
+                    best_ask_price = float(asks[0][0])
+                    best_ask_qty = float(asks[0][1])
+                    bid_depth_usdt = best_bid_price * best_bid_qty
+                    ask_depth_usdt = best_ask_price * best_ask_qty
+                    if bid_depth_usdt < min_orderbook_depth_usdt or ask_depth_usdt < min_orderbook_depth_usdt:
+                        continue
+                    # 買賣價差過濾：即使深度夠，價差太大代表這個幣種交易成本高
+                    # （一買一賣就先虧掉價差），用同一次委託簿查詢順便算，不用額外
+                    # 呼叫 API。
+                    mid_price = (best_bid_price + best_ask_price) / 2
+                    spread_pct = (best_ask_price - best_bid_price) / mid_price if mid_price > 0 else 1.0
+                    if spread_pct > max_spread_pct:
+                        continue
+            except Exception:
+                # 若 orderbook 查詢失敗則跳過此檢查（不讓單點失敗阻塞整體掃描）
+                pass
+            filtered.append(sym)
+
+        return filtered
     except Exception as e:
         print(f"[ATR掃描範圍] 抓取永續合約清單失敗: {e}")
         return []
@@ -147,6 +199,8 @@ def get_hot_movers(
     min_price: float = 0.01,
     limit: int = 3,
     ignore_list=None,
+    min_orderbook_depth_usdt: float = 2_000.0,
+    max_spread_pct: float = 0.003,
 ) -> list:
     """全市場掃描有動能但未過熱的合約幣種。
     防範機制：
@@ -154,6 +208,8 @@ def get_hot_movers(
     · max_change_pct 24h 漲幅 ≤ 25%       — 不追已過熱（防抄頂）
     · min_price      價格 ≥ $0.01          — 過濾超微幣（精度/點差風險）
     · valid_futures  確認為有效 USDT 永續合約
+    · min_orderbook_depth_usdt  買一/賣一深度都要足夠，跟 get_atr_scan_universe 用同一套標準
+      （熱門動能幣通常波動更大，委託簿更薄，之前沒做這項檢查反而比一般 ATR 候選更需要）
     """
     try:
         valid = _get_valid_futures_symbols()
@@ -183,9 +239,36 @@ def get_hot_movers(
 
             candidates.append({"symbol": sym, "price": price, "q_vol": q_vol, "change_pct": chg})
 
+        # orderbook 深度檢查放在排序、截斷之後才做（只查真正可能被選中的候選），
+        # 理由跟 get_atr_scan_universe 一樣：避免對每個通過前面篩選的幣種都打一次
+        # 委託簿 API，一次掃描累積起來會把幣安權重推到超標。
         candidates.sort(key=lambda x: x["change_pct"], reverse=True)
-        print(f"[HotMovers] 掃到 {len(candidates)} 個候選（漲{min_change_pct}-{max_change_pct}% vol>${min_vol_usdt/1e6:.0f}M），回傳前 {limit} 個")
-        return candidates[:limit]
+        top_candidates = candidates[:max(limit * 5, 15)]
+
+        filtered = []
+        for c in top_candidates:
+            sym = c["symbol"]
+            try:
+                ob = client.futures_order_book(symbol=sym, limit=5)
+                bids = ob.get('bids', [])
+                asks = ob.get('asks', [])
+                if bids and asks:
+                    best_bid_price = float(bids[0][0])
+                    best_ask_price = float(asks[0][0])
+                    bid_depth_usdt = best_bid_price * float(bids[0][1])
+                    ask_depth_usdt = best_ask_price * float(asks[0][1])
+                    if bid_depth_usdt < min_orderbook_depth_usdt or ask_depth_usdt < min_orderbook_depth_usdt:
+                        continue
+                    mid_price = (best_bid_price + best_ask_price) / 2
+                    spread_pct = (best_ask_price - best_bid_price) / mid_price if mid_price > 0 else 1.0
+                    if spread_pct > max_spread_pct:
+                        continue
+            except Exception:
+                pass
+            filtered.append(c)
+
+        print(f"[HotMovers] 掃到 {len(filtered)} 個候選（漲{min_change_pct}-{max_change_pct}% vol>${min_vol_usdt/1e6:.0f}M），回傳前 {limit} 個")
+        return filtered[:limit]
     except Exception as e:
         print(f"[HotMovers] 掃描失敗: {e}")
         return []
@@ -419,6 +502,27 @@ def get_top_volume_altcoins(limit=12, ignore_list=None):
         top_candidates = candidates[: max(limit * 4, 20)]
         scored = []
         for sym, q_vol in top_candidates:
+            try:
+                price = float([t for t in tickers if t['symbol'] == sym][0].get('lastPrice', 0))
+            except Exception:
+                price = 0
+            # skip extremely low price
+            if price == 0 or price < 0.01:
+                continue
+            # simple orderbook depth check
+            try:
+                ob = client.futures_order_book(symbol=sym, limit=5)
+                bids = ob.get('bids', [])
+                asks = ob.get('asks', [])
+                if not bids or not asks:
+                    continue
+                bid_depth_usdt = float(bids[0][0]) * float(bids[0][1])
+                ask_depth_usdt = float(asks[0][0]) * float(asks[0][1])
+                if bid_depth_usdt < 1000 or ask_depth_usdt < 1000:
+                    continue
+            except Exception:
+                pass
+
             _, volatility = get_1h_volatility(sym)
             # Combine volume and short-term volatility into a single ranking score
             vol_factor = 1.0 + min(max(volatility, 0.0), 50.0) / 20.0

@@ -815,6 +815,18 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         limit_price = limit_price * (1 + ENTRY_CHASE_OFFSET_PCT)
                     else:
                         limit_price = limit_price * (1 - ENTRY_CHASE_OFFSET_PCT)
+                    # 攤平救援封頂：追價模式本來是為了確保成交而主動加價，一般進場
+                    # 這樣做沒問題，但攤平的目的是要比現有均價更低（多單）/更高（空單）
+                    # 才有意義。實際案例（WLDUSDT）：訊號價明明比均價低，追價模式卻用
+                    # 下單當下已經回彈的最新賣一價再加碼，兩次攤平最後都成交在跟原始
+                    # 成本幾乎一樣的價位，均價完全沒被拉低，只是把倉位放大到 3 倍、
+                    # 曝險跟著放大 3 倍卻沒有換到任何攤平效果。這裡限制攤平單的價格
+                    # 不能比目前均價差，寧可這次掛不到、等下一輪再評估。
+                    if is_rescue_dca and s.get("avg_price", 0) > 0:
+                        if side == 'buy':
+                            limit_price = min(limit_price, s["avg_price"])
+                        else:
+                            limit_price = max(limit_price, s["avg_price"])
                     limit_price = round_step(limit_price, tick_size)
                     logger.info(f"📌 [追價掛單] {sym} 掛對手價 {limit_price:.6f} 確保成交")
                 elif ENTRY_ORDER_MODE == 'pullback':
@@ -859,10 +871,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if order_type == 'market':
                 params.pop('timeInForce', None)
 
+            # API 延遲量測：只量「送出委託→交易所回應」這通 API 呼叫本身的耗時，
+            # 不含後面故意等待成交的 sleep(3)——那是設計上刻意的等待，混進去量會讓
+            # 每一筆都必然超過門檻，量不出真正的網路/交易所處理延遲。這裡量到的才是
+            # 判斷 chase 這種要求快速掛單/追價的高動態模式，實際環境是否跟得上的依據。
+            _api_call_start = time.time()
             order = await exchange_futures.create_order(
                 sym, type=order_type, side=side, amount=abs(base_amt), price=limit_price,
                 params=params
             )
+            _api_latency_ms = (time.time() - _api_call_start) * 1000
+            if _api_latency_ms > 500:
+                logger.info(f"⚠️ [API延遲警報] {sym} 下單 API 耗時 {_api_latency_ms:.0f}ms > 500ms，chase 高動態模式可能不適合目前環境，建議改用趨勢型/被動掛單策略")
+            else:
+                logger.info(f"⏱️ [API延遲] {sym} 下單 API 耗時 {_api_latency_ms:.0f}ms")
             order_id = order['id']
             order_ts = time.time()
 
@@ -881,10 +903,71 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 status = 'unknown'
                 filled_qty = 0.0
 
+            requested_amt = base_amt
             if status == 'closed' or filled_qty >= base_amt * 0.99:
                 ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                 fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
                 logger.info(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
+            elif ENTRY_ORDER_MODE == 'chase':
+                # 原本這裡不管成交多少（包含完全沒成交），都直接放棄剩餘數量，
+                # 只留下「由逾期止單機制接管」這句話，但實際上從來沒有其他地方
+                # 真的去監控/處理 ctx.PENDING_LIMIT_ORDERS，等於剩餘部位就這樣
+                # 被默默放棄，倉位比訊號原本要求的還小、甚至完全沒進場。
+                # chase 模式本身用 IOC，未成交部分交易所會自動取消，不會留下孤兒
+                # 掛單，所以在這裡追一次新的對手價再試一次是安全的，能讓進場更
+                # 接近原本訊號要求的完整倉位。
+                ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
+                remaining_amt = base_amt - filled_qty
+                fill_notional = filled_qty * float(fetched.get('average') or limit_price) if filled_qty > 0 else 0.0
+                if filled_qty > 0:
+                    logger.info(f"⚠️ [部分成交] {sym} 第1次掛單成交 {filled_qty:.4f}/{base_amt:.4f}，剩餘 {remaining_amt:.4f} 追價再試")
+                else:
+                    logger.info(f"⏳ [未成交] {sym} 第1次掛單 3 秒未成交，追價再試一次")
+                try:
+                    ob2 = await exchange_futures.fetch_order_book(sym, limit=5)
+                    asks2 = ob2.get('asks', [])
+                    bids2 = ob2.get('bids', [])
+                    ask1_2 = float(asks2[0][0]) if asks2 else limit_price
+                    bid1_2 = float(bids2[0][0]) if bids2 else limit_price
+                    reprice = ask1_2 if side == 'buy' else bid1_2
+                    reprice = reprice * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else reprice * (1 - ENTRY_CHASE_OFFSET_PCT)
+                    # 攤平救援封頂：跟第一次掛單同一套規則，第二次追價也不能追到比
+                    # 均價差的位置，不然重試機制反而更容易把攤平買在比均價還差的價位。
+                    if is_rescue_dca and s.get("avg_price", 0) > 0:
+                        if side == 'buy':
+                            reprice = min(reprice, s["avg_price"])
+                        else:
+                            reprice = max(reprice, s["avg_price"])
+                    prec2 = await get_contract_precision(sym)
+                    reprice = round_step(reprice, prec2['tick_size'])
+                    remaining_amt = round_step(remaining_amt, prec2['step_size'])
+                except Exception as re_e:
+                    logger.info(f"⚠️ [追價報價失敗] {sym}: {re_e}")
+                    reprice = limit_price
+
+                if remaining_amt > 0.000001:
+                    try:
+                        order2 = await exchange_futures.create_order(
+                            sym, type='limit', side=side, amount=remaining_amt, price=reprice,
+                            params={'marginMode': 'isolated', 'timeInForce': 'IOC'}
+                        )
+                        await asyncio.sleep(3)
+                        fetched2 = await exchange_futures.fetch_order(order2['id'], sym)
+                        filled_qty2 = float(fetched2.get('filled', 0.0))
+                        if filled_qty2 > 0:
+                            fill_notional += filled_qty2 * float(fetched2.get('average') or reprice)
+                            filled_qty += filled_qty2
+                            logger.info(f"✅ [追價成交] {sym} 第2次掛單成交 {filled_qty2:.4f} @ {reprice:.6f}")
+                    except Exception as ce:
+                        logger.info(f"🚨 [追價下單失敗] {sym}: {ce}")
+
+                if filled_qty <= 0.000001:
+                    logger.info(f"⏳ [進場放棄] {sym} 追價後仍未成交，放棄本次進場")
+                    return
+                fill_price = fill_notional / filled_qty
+                base_amt = filled_qty
+                if filled_qty < requested_amt * 0.99:
+                    logger.info(f"⚠️ [進場部分完成] {sym} 最終成交 {filled_qty:.4f}/{requested_amt:.4f}")
             elif filled_qty > 0:
                 fill_price = float(fetched.get('average') or limit_price)
                 base_amt = filled_qty

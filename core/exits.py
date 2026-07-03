@@ -367,6 +367,15 @@ async def check_exits(sym):
             _hard_sl_price = min(avg * (1 + _hard_sl), first_ep * (1 + _hard_sl))
             _hard_sl_hit = p >= _hard_sl_price
 
+        # 攤平救援後給 60 秒觀察期，跟 Universal SL 那邊用同一套邏輯——不然攤平
+        # 成交沒多久，Hard_SL 就用新均價重新算一次直接打到，觀察期形同虛設
+        # （MUSDT 實際案例：攤平後僅 57 秒就被 Hard_SL 打掉，完全沒享受到觀察期，
+        # 因為當時這個保護只接在 Universal SL，沒有同步接到 Hard_SL）。
+        _since_rescue_hsl = time.time() - s.get("last_rescue_time", 0)
+        if _hard_sl_hit and s.get("entry_count", 0) >= 2 and _since_rescue_hsl < 60:
+            logger.info(f"⏳ [攤平觀察期] {sym} 攤平後 {_since_rescue_hsl:.0f} 秒內，暫緩 Hard_SL 再觀察（剩餘 {60-_since_rescue_hsl:.0f} 秒）")
+            _hard_sl_hit = False
+
         if _hard_sl_hit:
             cs = 'sell' if is_long else 'buy'
             # 在 close_position 把狀態重置前，先記錄這筆是不是「攤平救援後才停損」的，
@@ -506,7 +515,16 @@ async def check_exits(sym):
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[DCA_Failure_Exit]", is_stop_loss=True)
         return
 
-    if s.get("entry_count", 0) > 0:
+    if s.get("entry_count", 0) >= 2:
+        # 這段「救援動態追蹤」本來就是設計給攤平/DCA 過的倉位用的較寬鬆追蹤停利
+        # （見下方 rescue_floor/rescue_tracking_active 等命名），但原本寫成
+        # entry_count > 0，而 entry_count 在第一次進場成交後就會變成 1
+        # （core/orders.py 的 execute_order），導致從未攤平過的正常單只要獲利
+        # 一度超過 rescue_floor（0.5%），也會被導進這裡、跳過後面本該用的
+        # 即時保本鎖利／PeakLock 階梯鎖利，改用寬很多的「峰值-1.5xATR」追蹤，
+        # 結果獲利從高點慢慢回吐變成虧損才出場（NEAR 實際案例：峰值0.51%，
+        # 最後-0.31%出場）。改成 >= 2，跟 Universal SL / Hard_SL 判斷「是否
+        # 攤平過」用同一個門檻，只有真的攤平過的倉位才走這套追蹤邏輯。
         # 救援逾時強制平倉已依使用者要求移除：不再因為「攤平後等太久」就砍倉，
         # 讓單子繼續等，改由實際價格觸及下方的停利/停損時才出場。
 
@@ -606,12 +624,12 @@ async def check_exits(sym):
                     s['is_breakeven_locked'] = True
                     logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
 
-    MIN_EXIT_RR = 1.3
-    min_tp_dist = sl_dist * MIN_EXIT_RR
+    from core.config import EXIT_RR_MULTIPLIER
+    min_tp_dist = sl_dist * EXIT_RR_MULTIPLIER
     if tp_dist < min_tp_dist:
         orig_tp_dist = tp_dist
         tp_dist = min_tp_dist
-        logger.info(f"⚠️ [Exit RR Fix] {sym} 停利距離 {orig_tp_dist/avg*100:.2f}% < 停損 {sl_dist/avg*100:.2f}%×{MIN_EXIT_RR}，已強制拉至 {tp_dist/avg*100:.2f}%")
+        logger.info(f"⚠️ [Exit RR Fix] {sym} 停利距離 {orig_tp_dist/avg*100:.2f}% < 停損 {sl_dist/avg*100:.2f}%×{EXIT_RR_MULTIPLIER}，已強制拉至 {tp_dist/avg*100:.2f}%")
 
     tp = avg + tp_dist if is_long else avg - tp_dist
 
@@ -628,15 +646,18 @@ async def check_exits(sym):
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _pullback_buffer = max(0.0008, atr_pct * 0.25)  # 減少到 0.08% 或 0.25 倍 ATR（更嚴緊）
     
-    # 更激進的早期鎖利：門檻從 1.5% / 0.8% / 0.4% 降至 1.0% / 0.6% / 0.3%
-    if _peak_lock >= 0.010:
-        _locked_gain = max(0.0085, _peak_lock - _pullback_buffer)
+    # 門檻曾經被降到 1.0% / 0.6% / 0.3% 觸發，太早鎖利——最低一層只要峰值 0.3% 就
+    # 鎖在 0.25%，跟 core/trade_signal.py 的「即時保本」（已拉高到 1%）各自獨立運作，
+    # 只調高其中一個沒有用，實際案例（MUSDT）就是被這個最低層鎖在 0.31% 峰值，
+    # 幾乎沒發展空間就出場。拉高到 3.0% / 2.0% / 1.0%，讓真實滑價下也有緩衝空間。
+    if _peak_lock >= 0.030:
+        _locked_gain = max(0.020, _peak_lock - _pullback_buffer)
         _lock_desc = f"動態高點鎖利 ({_locked_gain*100:.2f}%)"
-    elif _peak_lock >= 0.006:
-        _locked_gain = max(0.005, _peak_lock - _pullback_buffer)
+    elif _peak_lock >= 0.020:
+        _locked_gain = max(0.010, _peak_lock - _pullback_buffer)
         _lock_desc = f"半路鎖利 ({_locked_gain*100:.2f}%)"
-    elif _peak_lock >= 0.003:
-        _locked_gain = max(0.0025, _peak_lock - _pullback_buffer)
+    elif _peak_lock >= 0.010:
+        _locked_gain = max(0.005, _peak_lock - _pullback_buffer)
         _lock_desc = f"保本鎖利 ({_locked_gain*100:.2f}%)"
 
     if _locked_gain > 0:
@@ -881,7 +902,11 @@ async def check_exits(sym):
                 return
 
     regime_decision, regime_reason = detect_market_regime(sym, p, avg, is_long)
-    if regime_decision == "BREAKOUT_REVERSAL":
+    if regime_decision == "BREAKOUT_REVERSAL" and profit_pct > 0:
+        # 依使用者要求：除了真正的停損線（Hard_SL/Universal SL）跟急速逆勢（真正的
+        # 急跌/急漲）以外，其他出場機制都要等有獲利才能觸發，不能在虧損時主動平倉。
+        # 這裡加上 profit_pct > 0 門檻，虧損時偵測到異常大額成交/爆量也不主動出場，
+        # 交給停損線自己處理。
         cs = 'sell' if is_long else 'buy'
         logger.info(f"🚨 [市場 regime] {sym} {regime_reason}，立即平倉並考慮反手")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Breakout_Fail]", is_stop_loss=True)
@@ -1106,6 +1131,14 @@ async def check_exits(sym):
 
     # ── 停損檢查 (Universal SL) ──
     if (is_long and p <= sl) or (not is_long and p >= sl):
+        # 攤平救援後給 60 秒觀察期，不要攤平成交下一個 tick 就立刻用新均價被同一條
+        # 停損線打到——兌現 _attempt_forced_rescue 那句「最後嘗試一次救援加碼再觀察」。
+        # 嚴重惡化不受這個觀察期保護：DCA_Failure_Exit（虧損達初始門檻2.5倍）在更前面
+        # 已經無視時間、直接攔截，不會因為給了觀察期就放任虧損失控擴大。
+        _since_rescue = time.time() - s.get("last_rescue_time", 0)
+        if s.get("entry_count", 0) >= 2 and _since_rescue < 60:
+            logger.info(f"⏳ [攤平觀察期] {sym} 攤平後 {_since_rescue:.0f} 秒內，暫緩停損再觀察（剩餘 {60-_since_rescue:.0f} 秒）")
+            return
         if profit_pct < 0 and await _attempt_forced_rescue(sym, s, is_long, p):
             return
         cs = 'sell' if is_long else 'buy'
@@ -1145,12 +1178,20 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
         return False
 
     # 接刀防呆：跟一般救援攤平用同一套判斷，急跌/急漲中不硬攤，直接讓停損正常出場
+    # 原本只看 MACD 柱狀圖有沒有翻負，但這樣不夠敏感——實際案例（MUSDT）RSI 從 60
+    # 一路跌到 44、仍在明顯持續下滑，MACD 柱狀圖卻還沒轉負，導致攤平照樣被放行，
+    # 攤平後沒多久又被停損打到（雙巴）。加上 RSI 是否仍在同方向惡化的檢查，只要
+    # RSI 還在朝虧損方向持續變化，就視為還沒冷靜下來，不適合攤平。
     macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
     prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+    rsi_now = s.get("current_rsi", 50.0)
+    rsi_prev = s.get("prev_rsi", rsi_now)
     is_falling_knife = (is_long and macd_hist < 0 and macd_hist < prev_macd_hist) or \
-                        (not is_long and macd_hist > 0 and macd_hist > prev_macd_hist)
+                        (not is_long and macd_hist > 0 and macd_hist > prev_macd_hist) or \
+                        (is_long and rsi_now < rsi_prev) or \
+                        (not is_long and rsi_now > rsi_prev)
     if is_falling_knife:
-        logger.info(f"🔪 [接刀保護] {sym} 即將停損，但走勢仍在急殺/急拉中，不適合攤平，照計畫出場")
+        logger.info(f"🔪 [接刀保護] {sym} 即將停損，但走勢仍在急殺/急拉中（RSI:{rsi_prev:.1f}→{rsi_now:.1f}），不適合攤平，照計畫出場")
         return False
 
     from core.orders import execute_order
@@ -1161,6 +1202,17 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
         # 縮小補救倉位（0.33→0.20）：這是最後一次性的救援加碼，一旦失敗會直接停損出場，
         # 縮小額度可以降低每次救援失敗時放大的虧損金額。
         await execute_order(sym, cs, p, allocation_pct=0.20, is_rescue_dca=True)
+        # 記錄攤平時間，讓 Universal SL 給這次攤平一段短暫觀察期（見下方 rescue_grace
+        # 判斷），兌現這裡日誌講的「再觀察」——不然攤平成交後下一個 tick 立刻用新均價
+        # 重新檢查停損線，等於完全沒有觀察期，攤平沒有實質意義。
+        s["last_rescue_time"] = time.time()
+        # 保本線是單向棘輪鎖定（只會往上鎖，不會下修），攤平前如果已經鎖過一次
+        # 保本價，攤平後新均價通常比舊均價低，但那條舊鎖定值不會跟著往下修正，
+        # 導致新均價一算出來就已經低於舊停損線——攤平完成當下部位就已經在停損
+        # 線之下，只是靠 60 秒觀察期暫時擋著，觀察期一過立刻打停損，攤平完全沒
+        # 發揮該有的緩衝空間。這裡重置，讓停損線用新均價重新計算。
+        s["is_breakeven_locked"] = False
+        s["highest_profit_pct"] = 0.0
     finally:
         s["is_ordering"] = False
     return True
