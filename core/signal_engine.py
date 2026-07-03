@@ -194,20 +194,20 @@ def compute_signal_strength(sym):
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         macd_ok_long and
-        (last_two_candles_long or last_candle_long or _bypass_candle) and
+        (last_two_candles_long or last_candle_long or _bypass_candle or raw_long_str >= 20.0) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
-        close_near_ema20_long
+        (close_near_ema20_long or raw_long_str >= 20.0)
     )
 
     route_a_short = (
         macd_ok_short and
-        (last_two_candles_short or last_candle_short or _bypass_candle) and
+        (last_two_candles_short or last_candle_short or _bypass_candle or raw_short_str >= 20.0) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
-        close_near_ema20_short
+        (close_near_ema20_short or raw_short_str >= 20.0)
     )
 
     # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────

@@ -580,7 +580,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        _mtf_override_threshold = 14.0  # 需要強訊號才能繞過 1H EMA50 趨勢過濾（改自 16.0）
+        # 需要強訊號才能繞過 1H EMA50 趨勢過濾。這裡曾被改成 14.0（低於原本的 16.0），
+        # 從實際虧損案例（BASUSDT 強度僅 15.39 就被放行逆勢進場後虧損）發現門檻太低，
+        # 拉高到 18.0，比原始的 16.0 更保守，減少邊緣強度訊號被誤放行進場。
+        _mtf_override_threshold = 18.0
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
@@ -626,7 +629,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 另外，對於強訊號且僅為輕微 ATR 爆發的情況，放寬一次，避免高品質訊號被過度封鎖。
     _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
     _atr_spike_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 0.0
-    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.3)
+    _allow_mild_atr_spike = (strength >= 20.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.5)
     if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
         if _allow_mild_atr_spike:
             logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x) ，放寬進場")
