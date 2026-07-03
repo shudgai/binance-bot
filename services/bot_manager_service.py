@@ -183,20 +183,16 @@ def get_bot_status():
             from services.binance_service import get_account_balance_usdt
             from core.config import LIVE_CAPITAL_CAP
             real_balance = get_account_balance_usdt()
-            # 顯示的本金跟實際下單倉位計算用同一個上限，避免介面看到的數字（5000）跟部位大小（用150算）對不起來
-            bot_status["balance_quote"] = min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance
+            if real_balance is not None and real_balance > 0:
+                bot_status["balance_quote"] = min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance
+                bot_status["trade_amount"] = max(bot_status["balance_quote"], 10.0)
+            else:
+                print(f"[BotStatus] 取得實盤餘額失敗或回傳無效值，保留先前餘額 {bot_status.get('balance_quote', 0)}")
         except Exception:
             pass
         try:
             from services.binance_service import get_total_realized_pnl_usdt
-            from core.config import LIVE_CAPITAL_CAP
-            total_realized = get_total_realized_pnl_usdt()
-            bot_status["total_realized_pnl"] = total_realized
-            # 單次自動交易金額要跟著已實現損益複利調整，不是固定不變的 150——
-            # 已經虧損就該用縮水後的本金下單，已經獲利就該用變大的本金下單，
-            # 不然實際虧損擴大時，倉位大小卻完全沒反映出真實剩餘資金。
-            # 下限設一個很小的值，避免虧損超過本金上限時算出負數/歸零倉位。
-            bot_status["trade_amount"] = max(LIVE_CAPITAL_CAP + total_realized, 10.0)
+            bot_status["total_realized_pnl"] = get_total_realized_pnl_usdt()
         except Exception:
             bot_status["total_realized_pnl"] = 0.0
 

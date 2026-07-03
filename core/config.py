@@ -4,9 +4,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = True
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+PAPER_TRADING = not BINANCE_API_KEY or BINANCE_API_KEY == "your_api_key_here"
 # Demo Trading 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算（僅在非紙上交易時生效）。
-LIVE_CAPITAL_CAP = 150.0
+# 設為 0 或留空則不再限制真實交易帳戶的資金上限。
+LIVE_CAPITAL_CAP = float(os.getenv("LIVE_CAPITAL_CAP", "150.0"))
 TIMEFRAME = '5m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 6
@@ -197,10 +200,12 @@ PRICE_MOVEMENT_THRESHOLD  = 0.0015
 TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 
-# 全域調整：改為回踩進場，讓全部幣種更少因追價進場被噪音洗出
-ENTRY_ORDER_MODE = "pullback"
-ENTRY_PULLBACK_ATR_MULT = 0.16
-ENTRY_CHASE_OFFSET_PCT = 0.0005
+# 全域調整：進場方式改為自動模式，根據訊號強度選擇 pullback/chase/market
+ENTRY_ORDER_MODE = os.getenv("ENTRY_ORDER_MODE", "auto").lower()
+ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.16))
+ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0005))
+ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 18.0))
+ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 30.0))
 
 ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "relaxed").lower()
 ENTRY_STRICTNESS_PROFILES = {

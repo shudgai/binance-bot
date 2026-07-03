@@ -651,10 +651,11 @@ async def check_exits(sym):
     _locked_gain = 0.0
     _lock_desc = ""
     
-    # 動態回撤容忍度：利潤越高/波動越大，給予更合理的呼吸空間，防止被微幅波動洗出場
+    # 動態回撤容忍度：利潤越高/波動越大，給予更合理的呼吸空間，
+    # 但仍要儘量靠近峰值出場，不讓回撤變成大幅滑價。
     atr_pct = atr_val / avg if avg > 0 else 0.005
-    _pullback_buffer = max(0.0008, atr_pct * 0.25)  # 減少到 0.08% 或 0.25 倍 ATR（更嚴緊）
-    
+    _pullback_buffer = max(0.0005, atr_pct * 0.18)  # 更緊的峰值保護，最少 0.05%
+
     # 門檻曾經被降到 1.0% / 0.6% / 0.3% 觸發，太早鎖利——最低一層只要峰值 0.3% 就
     # 鎖在 0.25%，跟 core/trade_signal.py 的「即時保本」（已拉高到 1%）各自獨立運作，
     # 只調高其中一個沒有用，實際案例（MUSDT）就是被這個最低層鎖在 0.31% 峰值，
@@ -755,6 +756,19 @@ async def check_exits(sym):
 
     # ── 全週期移動停損 (update_trailing_stop on each tick) ──
     update_trailing_stop(sym, p, is_long)
+    # 若 highest_profit_pct 來源包含 intra-candle HIGH，trailing_highest/lowest 可能落後
+    # 這會讓 Trend_Follow 或其他峰值相關出場錯誤判斷。補齊極值，讓後續邏輯都以正確峰值為基準。
+    _hp = s.get("highest_profit_pct", 0.0)
+    if _hp > 0:
+        if is_long:
+            _peak_price = avg * (1 + _hp)
+            if _peak_price > s.get("trailing_highest", 0.0):
+                s["trailing_highest"] = _peak_price
+        else:
+            _trough_price = avg * (1 - _hp)
+            if _trough_price < s.get("trailing_lowest", float('inf')):
+                s["trailing_lowest"] = _trough_price
+
     if s.get("trailing_stop_price", 0.0) > 0:
         if is_long:
             sl = max(sl, s["trailing_stop_price"])
@@ -871,25 +885,26 @@ async def check_exits(sym):
                 return
 
     # ── Trailing TP：槓桿自適應高點停利 ──
-    # 啟動門檻 = max(2.0%÷槓桿, 0.3x ATR)；ATR 分層動態縮緊
+    # 兩套條件：先判斷是否啟動高點鎖利，然後以固定回撤下限決定實際出場。
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
-    ts_activation_pct = max(0.020 / _lev, atr_pct * 0.35)
-    # 動態追蹤距離：越高越要保留空間，但也要更接近峰值。原來的 1.2-1.5 ATR 太寬，
-    # 常常讓高點過了才出場，最後回落到停損。
+    ts_activation_pct = max(0.0010, 0.020 / _lev, atr_pct * 0.35)
+    # 動態追蹤距離：越高越要保留空間，但仍儘量靠近峰值。
     if _hp >= 0.05:
-        ts_retracement_pct = atr_pct * 0.8   # > 5%：仍留足呼吸空間，但不再過度放寬
+        ts_retracement_pct = atr_pct * 0.55   # > 5%：更緊地守高點
     elif _hp >= 0.02:
-        ts_retracement_pct = atr_pct * 0.7   # 2-5%：接近高點即可出場
+        ts_retracement_pct = atr_pct * 0.45   # 2-5%：更接近高點出場
     elif _hp >= 0.008:
-        ts_retracement_pct = atr_pct * 0.9   # 0.8-2%：初期利潤先收緊一點
+        ts_retracement_pct = atr_pct * 0.65   # 0.8-2%：初期利潤仍需一定緩衝
     else:
-        ts_retracement_pct = atr_pct * 1.0   # < 0.8%：還沒到高點，維持基本回撤
-    ts_retracement_pct = max(ts_retracement_pct, 0.001)      # 絕對下限 0.1%
+        ts_retracement_pct = atr_pct * 0.75   # < 0.8%：仍允許最小回撤空間
+    ts_retracement_pct = max(ts_retracement_pct, 0.0010)      # 絕對下限 0.10%
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
-            peak_price = s.get("trailing_highest", avg)
+            peak_price = max(s.get("trailing_highest", avg), avg * (1 + _hp))
+            if peak_price > s.get("trailing_highest", 0.0):
+                s["trailing_highest"] = peak_price
             trail_sl_price = peak_price * (1 - ts_retracement_pct)
             if trail_sl_price > s.get("stop_loss", 0):
                 s["stop_loss"] = trail_sl_price
@@ -902,7 +917,9 @@ async def check_exits(sym):
                 s["highest_profit_pct"] = 0.0
                 return
         else:
-            trough_price = s.get("trailing_lowest", avg)
+            trough_price = min(s.get("trailing_lowest", avg), avg * (1 - _hp))
+            if trough_price < s.get("trailing_lowest", float('inf')):
+                s["trailing_lowest"] = trough_price
             trail_sl_price = trough_price * (1 + ts_retracement_pct)
             if s.get("stop_loss", float('inf')) > trail_sl_price:
                 s["stop_loss"] = trail_sl_price
@@ -1111,13 +1128,17 @@ async def check_exits(sym):
             limit_down = 1.0 - retrace_limit
             limit_up   = 1.0 + retrace_limit
 
-            if (is_long and p <= s["trailing_highest"] * limit_down) or (not is_long and p >= s["trailing_lowest"] * limit_up):
+            if is_long:
+                _peak_ref = max(s.get("trailing_highest", avg), avg * (1 + s.get("highest_profit_pct", 0.0)))
+                _should_exit = p <= _peak_ref * limit_down
+            else:
+                _trough_ref = min(s.get("trailing_lowest", avg), avg * (1 - s.get("highest_profit_pct", 0.0)))
+                _should_exit = p >= _trough_ref * limit_up
+
+            if _should_exit:
                 cs = 'sell' if is_long else 'buy'
-                # 這道「離高點回撤 X%」是用 trailing_highest（會被雜訊反覆刷新的價格高點）
-                # 當基準，跟下面 PeakLock 階梯算出來、存在 s["stop_loss"] 的保護價是兩套
-                # 獨立機制。實測發現這道比較鬆、又寫在前面，會搶先用比 PeakLock 更差的
-                # 價格出場（例如 PeakLock 算出該鎖 1.51%，這裡卻用已經回落更多的即時價
-                # 出場只鎖到 0.49%）。這裡用 PeakLock 算出的停損價當地板，出場價不能比它差。
+                # 這道「離高點回撤 X%」是用 trailing_highest/lowest 與 highest_profit_pct 的真實峰值
+                # 共同作為基準，避免 stale 的 trailing_extreme 讓 Trend_Follow 錯誤提早出場。
                 _pl_sl = s.get("stop_loss", 0)
                 exit_price = p
                 if _pl_sl > 0:

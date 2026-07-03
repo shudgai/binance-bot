@@ -49,7 +49,14 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('8005 is_running:', d['is_running'], '| active:', len\\(d.get\\('active_symbols',[]\\)\\)\\)\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('8006 is_running:', d['is_running'], '| active:', len\\(d.get\\('active_symbols',[]\\)\\)\\)\")",
       "Bash(curl -s http://localhost:8006/api/open-orders?symbol=VELVETUSDT)",
-      "Bash(curl -s http://localhost:8006/api/position/MUSDT)"
+      "Bash(curl -s http://localhost:8006/api/position/MUSDT)",
+      "Bash(python3 -m py_compile core/trade_signal.py)",
+      "Bash(systemctl --user show binance-live-api.service --property=ActiveEnterTimestamp,MainPID)",
+      "Bash(awk -F'[][]' '$2 ~ /2026-07-03 15:1[0-5]/')",
+      "Bash(journalctl --user -u binance-api.service --no-pager)",
+      "Bash(awk 'NR==159,0' /home/shudgai999/project/binance-bot/core/check_entries.py)",
+      "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot/core/check_entries.py /home/shudgai999/project/binance-bot/core/runner.py)",
+      "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot-live/core/check_entries.py /home/shudgai999/project/binance-bot-live/core/runner.py)"
     ]
   }
 }

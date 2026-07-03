@@ -53,6 +53,76 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
+    def test_peak_lock_exits_closer_to_high(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 101.60
+        s["open_time"] = time.time() - 600
+        s["current_atr"] = 0.5
+        s["current_rsi"] = 55.0
+        s["prev_rsi"] = 55.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [
+            [0, 100.0, 101.5, 99.8, 100.8, 500],
+            [0, 100.8, 102.0, 100.7, 101.7, 500],
+            [0, 101.7, 102.0, 101.5, 101.6, 450],
+        ]
+        s["prev_close"] = 101.70
+        s["highest_profit_pct"] = 0.03
+        s["trailing_highest"] = 102.0
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+        s["pnl_history"] = []
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+
+        asyncio.run(run_check())
+
+    def test_peak_lock_uses_intracandle_high_when_trailing_highest_is_stale(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 100.37
+        s["open_time"] = time.time() - 600
+        s["current_atr"] = 0.30
+        s["current_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [
+            [0, 100.0, 100.60, 99.8, 100.37, 500],
+        ]
+        s["prev_close"] = 100.37
+        s["highest_profit_pct"] = 0.006
+        s["trailing_highest"] = 100.0
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+        s["pnl_history"] = []
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(s["trailing_highest"], 100.6)
+
+        asyncio.run(run_check())
+
     def test_post_entry_early_exit_triggers_on_wrong_direction(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"

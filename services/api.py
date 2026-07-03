@@ -48,7 +48,8 @@ app.add_middleware(
 )
 
 def is_paper_trading():
-    return not api_key or api_key == "your_api_key_here"
+    from core.config import PAPER_TRADING
+    return PAPER_TRADING
 
 def daily_market_clean_and_reset(is_manual=False):
     """大掃除與即時同步前五名 (模組化)"""
@@ -521,13 +522,18 @@ def api_chat(chat_msg: ChatMessage):
 @app.get("/api/history/summary")
 def api_history_summary():
     try:
-        ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
-        if not os.path.exists(ps_path):
-            return {"summaries": []}
+        if is_paper_trading():
+            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if not os.path.exists(ps_path):
+                return {"summaries": []}
+            with open(ps_path, "r") as f:
+                state = json.load(f)
+            trades = state.get("trades", [])
+        else:
+            from services.binance_service import get_trades
+            trades = get_trades("ALL")
+
         tz = pytz.timezone('Asia/Taipei')
-        with open(ps_path, "r") as f:
-            state = json.load(f)
-        trades = state.get("trades", [])
         daily = {}
         for t in trades:
             dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
@@ -536,12 +542,10 @@ def api_history_summary():
             entry["trades"] += 1
             if t.get("is_close") and t.get("realized_pnl"):
                 entry["pnl"] += t["realized_pnl"]
-            
-            # 手續費加總 (支援相容舊紀錄)
-            fee = t.get("fee", (t["price"] * abs(t["qty"])) * 0.0005)
+
+            fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
             entry["fee"] += fee
 
-        # 將 fee 也回傳，並將 pnl 扣除 fee
         summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"] - v["fee"], 4)} for k, v in sorted(daily.items(), reverse=True)]
         return {"summaries": summaries}
     except Exception as e:
@@ -550,17 +554,22 @@ def api_history_summary():
 @app.get("/api/history/download/{date}")
 def api_history_download(date: str):
     try:
-        ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
-        if not os.path.exists(ps_path):
-            raise HTTPException(status_code=404, detail="無交易紀錄")
-        with open(ps_path, "r") as f:
-            state = json.load(f)
-        trades = state.get("trades", [])
+        if is_paper_trading():
+            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if not os.path.exists(ps_path):
+                raise HTTPException(status_code=404, detail="無交易紀錄")
+            with open(ps_path, "r") as f:
+                state = json.load(f)
+            trades = state.get("trades", [])
+        else:
+            from services.binance_service import get_trades
+            trades = get_trades("ALL")
+
         tz = pytz.timezone('Asia/Taipei')
         filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
         if not filtered:
             raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
-        
+
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["時間", "幣種", "方向", "價格", "數量", "手續費", "已實現損益", "平倉"])
@@ -570,9 +579,8 @@ def api_history_download(date: str):
                    "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
                    "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
                    "買入(平空)"
-            
+
             fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
-            # 將單筆的 realized_pnl 扣除手續費，確保整欄加總等於總淨利潤
             net_pnl = t.get("realized_pnl", 0) - fee
 
             writer.writerow([
@@ -585,9 +593,8 @@ def api_history_download(date: str):
                 round(net_pnl, 6),
                 "是" if t.get("is_close") else "否"
             ])
-        
+
         from fastapi.responses import StreamingResponse
-        # Add UTF-8 BOM (\ufeff) so Excel correctly recognizes the encoding for Chinese characters
         csv_content = "\ufeff" + output.getvalue()
         return StreamingResponse(
             iter([csv_content]),

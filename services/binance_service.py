@@ -292,13 +292,16 @@ def get_all_prices():
         raise e
 
 
-def get_account_balance_usdt() -> float:
+def get_account_balance_usdt() -> float | None:
     """即時查詢合約帳戶 USDT 餘額，給 API 進程自己直接查，不依賴 main.py 進程內快取的 REAL_BALANCE
     （main.py 和 API 是兩個獨立進程，各自的模組全域變數互不相通）。"""
-    for b in client.futures_account_balance():
-        if b.get("asset") == "USDT":
-            return float(b.get("balance", 0.0))
-    return 0.0
+    try:
+        for b in client.futures_account_balance():
+            if b.get("asset") == "USDT":
+                return float(b.get("balance", 0.0))
+    except Exception as e:
+        print(f"[BalanceFetch] 讀取合約餘額失敗: {e}")
+    return None
 
 
 def get_total_realized_pnl_usdt() -> float:

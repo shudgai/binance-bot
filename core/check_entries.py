@@ -1,5 +1,7 @@
 import logging
 import asyncio
+import os
+import json
 import time
 import numpy as np
 
@@ -17,6 +19,56 @@ from core.entry_filter import is_entry_allowed
 from services.bot_manager_service import set_entry_diagnosis
 
 logger = logging.getLogger(__name__)
+
+_PENDING_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pending_signals_cache.json")
+_PENDING_MAX_AGE_SEC = 1200  # 20 分鐘內存檔才還原，太舊的訊號還原也沒意義，讓它自然作廢
+
+
+def save_pending_signals():
+    """把「等待下一根K線收盤確認」中的訊號存檔。維護重啟服務（套用修復）時，main.py 的
+    ctx.STATES 會整個重建，原本正在等確認的訊號會憑空消失、白等一輪——存檔讓下次啟動
+    時能還原，不用眼睜睜看著剛通過風控的訊號被重啟清空。"""
+    try:
+        snapshot = {}
+        for sym, s in ctx.STATES.items():
+            if s.get("pending_side"):
+                snapshot[sym] = {
+                    "pending_side": s["pending_side"],
+                    "pending_time": s.get("pending_time", 0),
+                    "pending_strength": s.get("pending_strength", 5.0),
+                    "pending_route": s.get("pending_route", "confirmed"),
+                    "saved_at": time.time(),
+                }
+        with open(_PENDING_CACHE_PATH, "w") as f:
+            json.dump(snapshot, f)
+    except Exception:
+        pass
+
+
+def load_pending_signals():
+    """啟動時還原上次存檔、還在等待確認中的訊號。超過 _PENDING_MAX_AGE_SEC 視為過期不還原。"""
+    try:
+        if not os.path.exists(_PENDING_CACHE_PATH):
+            return
+        with open(_PENDING_CACHE_PATH, "r") as f:
+            snapshot = json.load(f)
+        now = time.time()
+        restored = []
+        for sym, data in snapshot.items():
+            if sym not in ctx.STATES:
+                continue
+            if now - data.get("saved_at", 0) > _PENDING_MAX_AGE_SEC:
+                continue
+            s = ctx.STATES[sym]
+            s["pending_side"] = data.get("pending_side")
+            s["pending_time"] = data.get("pending_time", 0)
+            s["pending_strength"] = data.get("pending_strength", 5.0)
+            s["pending_route"] = data.get("pending_route", "confirmed")
+            restored.append(sym)
+        if restored:
+            logger.info(f"💾 [快取] 已還原 {len(restored)} 個等待確認中的訊號: {', '.join(restored)}")
+    except Exception as e:
+        logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
 
 
 def is_pending_confirmation_valid(side, candle):
@@ -612,6 +664,8 @@ async def check_entries():
         logger.info(f"🧭 [ENTRY_GATE] {sym} 進入 pending 狀態 | side={side} route={route} strength={strength:.2f}")
         set_entry_diagnosis(f"{sym}: 等待 K 線收盤確認")
 
+    save_pending_signals()
+
     if not candidates:
         return
 
@@ -645,13 +699,15 @@ async def check_entries():
             if not has_pos:
                 logger.info(f"🛒 [ENTRY_DISPATCH] {sym} 將進入 execute_order | side={side} route={route} strength={strength:.2f} allocation={allocation_pct:.3f}")
 
-            async def _entry_task(sym, side, price, alloc_pct):
+            async def _entry_task(sym, side, price, alloc_pct, signal_strength, entry_route):
                 try:
-                    await execute_order(sym, side, price, alloc_pct)
+                    await execute_order(sym, side, price, alloc_pct,
+                                         signal_strength=signal_strength,
+                                         entry_route=entry_route)
                 finally:
                     ctx.STATES[sym]["is_ordering"] = False
 
-            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct))
+            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct, strength, route))
 
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
