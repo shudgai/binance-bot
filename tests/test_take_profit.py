@@ -1,6 +1,7 @@
 import unittest
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,6 +49,39 @@ class TakeProfitTests(unittest.TestCase):
         import asyncio
         async def run_check():
             await check_exits(sym)
+
+        asyncio.run(run_check())
+
+    def test_breakeven_lock_triggers_on_positive_peak(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 101.0
+        s["open_time"] = time.time() - 120
+        s["current_atr"] = 0.5
+        s["current_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100, 100, 99, 100, 1000]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1.0
+        s["current_vol"] = 1.0
+
+        import asyncio
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                self.assertTrue(s.get("is_breakeven_locked", False))
+                self.assertGreater(s.get("stop_loss", 0.0), s["avg_price"])
+                mock_close.assert_not_called()
 
         asyncio.run(run_check())
 

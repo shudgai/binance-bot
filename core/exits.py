@@ -212,6 +212,8 @@ async def check_exits(sym):
     avg = s["avg_price"]
     is_long = s["qty"] > 0
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    if profit_pct > s.get("highest_profit_pct", 0.0):
+        s["highest_profit_pct"] = profit_pct
     current_atr = s.get("current_atr", 0.0)
 
     # ── 急速逆勢提早出場 (Rapid Reversal Early Exit) ──
@@ -603,18 +605,19 @@ async def check_exits(sym):
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
 
-    breakeven_threshold = 0.0035  # 所有單：0.35% 即啟動保本
+    breakeven_threshold = 0.0  # 只要曾經有過正盈餘，就啟動保本鎖定
 
     fee_buffer = 0.001  # 0.1% 獲利以覆蓋雙向手續費與微幅點差
 
-    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
+    breakeven_price = None
+    if s.get("highest_profit_pct", 0.0) > breakeven_threshold:
         if is_long:
             breakeven_price = avg * (1 + fee_buffer)
             if breakeven_price > s.get('stop_loss', 0):
                 s['stop_loss'] = breakeven_price
                 if not s.get('is_breakeven_locked'):
                     s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+                    logger.info(f"🛡️ [{sym}] 曾出現正盈餘，移動保本線已鎖定在：{breakeven_price:.4f}")
         else:
             # 空倉：保本線應在入場價下方（Universal SL 用 p >= sl，price 回升超過此點才退場）
             breakeven_price = avg * (1 - fee_buffer)
@@ -622,7 +625,7 @@ async def check_exits(sym):
                 s['stop_loss'] = breakeven_price
                 if not s.get('is_breakeven_locked'):
                     s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 獲利達標，移動保本線已鎖定在：{breakeven_price:.4f}")
+                    logger.info(f"🛡️ [{sym}] 曾出現正盈餘，移動保本線已鎖定在：{breakeven_price:.4f}")
 
     from core.config import EXIT_RR_MULTIPLIER
     min_tp_dist = sl_dist * EXIT_RR_MULTIPLIER
@@ -635,6 +638,14 @@ async def check_exits(sym):
 
     if not s.get("is_breakeven_locked"):
         s["stop_loss"] = avg - sl_dist if is_long else avg + sl_dist
+
+    previous_stop_loss = s.get("stop_loss", avg)
+    # 保本鎖定後不要把 stop_loss 往不利方向回退
+    if s.get("is_breakeven_locked") and breakeven_price is not None:
+        if is_long:
+            s["stop_loss"] = max(s.get("stop_loss", avg), previous_stop_loss)
+        else:
+            s["stop_loss"] = min(s.get("stop_loss", avg), previous_stop_loss)
 
     # ── 階梯式收網與峰值比例鎖利 (Tiered Peak Profit Lock) ──
     # 取代原本單一的鎖利邏輯，改為更敏銳的階梯式保護
@@ -866,13 +877,18 @@ async def check_exits(sym):
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
-    ts_activation_pct = max(0.030 / _lev, atr_pct * 0.5)
-    # 動態追蹤距離：利潤越高給越大空間讓行情繼續跑，避免 5%+ 大行情被雜訊洗出場
-    if _hp >= 0.05:     ts_retracement_pct = atr_pct * 1.5   # > 5%：保留充足空間繼續跑（原 0.8 太緊）
-    elif _hp >= 0.02:   ts_retracement_pct = atr_pct * 1.2   # 2-5%：適中空間
-    elif _hp >= 0.008:  ts_retracement_pct = atr_pct * 1.5   # 0.8-2%：早期利潤也留呼吸空間
-    else:               ts_retracement_pct = atr_pct * 1.5   # < 0.8%：剛啟動
-    ts_retracement_pct = max(ts_retracement_pct, 0.0015)      # 絕對下限 0.15%（原 0.08% 太小）
+    ts_activation_pct = max(0.020 / _lev, atr_pct * 0.35)
+    # 動態追蹤距離：越高越要保留空間，但也要更接近峰值。原來的 1.2-1.5 ATR 太寬，
+    # 常常讓高點過了才出場，最後回落到停損。
+    if _hp >= 0.05:
+        ts_retracement_pct = atr_pct * 0.8   # > 5%：仍留足呼吸空間，但不再過度放寬
+    elif _hp >= 0.02:
+        ts_retracement_pct = atr_pct * 0.7   # 2-5%：接近高點即可出場
+    elif _hp >= 0.008:
+        ts_retracement_pct = atr_pct * 0.9   # 0.8-2%：初期利潤先收緊一點
+    else:
+        ts_retracement_pct = atr_pct * 1.0   # < 0.8%：還沒到高點，維持基本回撤
+    ts_retracement_pct = max(ts_retracement_pct, 0.001)      # 絕對下限 0.1%
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = s.get("trailing_highest", avg)
