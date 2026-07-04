@@ -151,6 +151,13 @@ async def get_reference_price(sym: str, exchange=None) -> float:
 
 
 def check_binance_weight():
+    # keep a simple streak counter for repeated high-weight observations
+    global _WEIGHT_ALERT_STREAK
+    try:
+        _WEIGHT_ALERT_STREAK
+    except NameError:
+        _WEIGHT_ALERT_STREAK = 0
+
     try:
         headers = getattr(exchange_futures, 'last_response_headers', {})
         weight = None
@@ -161,15 +168,54 @@ def check_binance_weight():
         if weight is not None:
             # 幣安期貨真實權重上限是每分鐘 2400（不是 1200，那是下單次數的獨立限制），
             # 門檻對應調整，避免權重還有很多餘裕就誤觸發不必要的自我限速。
+            # Critical: at-or-above hard cap
             if weight >= 2400:
                 logger.warning(f"🚨 [API限流警報 - 致命] 幣安目前權重已達 {weight}/2400，觸發強制冷卻，冷卻 30 秒")
+                try:
+                    _send_tele_alert(f"🚨 [致命API權重] 幣安權重 {weight}/2400，強制冷卻 30s")
+                except Exception:
+                    pass
+                _WEIGHT_ALERT_STREAK = 0
                 return 30.0
+
+            # Heavy: consecutive observations trigger alert
             if weight > 1800:
-                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發重度防護，冷卻 10 秒")
+                _WEIGHT_ALERT_STREAK += 1
+                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發重度防護，冷卻 10 秒 (streak={_WEIGHT_ALERT_STREAK})")
+                if _WEIGHT_ALERT_STREAK >= 3:
+                    try:
+                        _send_tele_alert(f"⚠️ [API權重持續偏高] 幣安權重連續 {_WEIGHT_ALERT_STREAK} 次達 {weight}/2400，請檢查系統或減少請求頻率。")
+                    except Exception:
+                        pass
+                    _WEIGHT_ALERT_STREAK = 0
                 return 10.0
             elif weight > 1400:
+                # mild case
+                _WEIGHT_ALERT_STREAK = 0
                 logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發輕度防護，冷卻 3 秒")
                 return 3.0
     except Exception as e:
         logger.info(f"⚠️ [API權重讀取失敗] {e}")
     return 0.0
+
+
+def _send_tele_alert(message: str):
+    """Send alert to Telegram or LINE if configured. Used for API weight alerts."""
+    try:
+        tg_token = os.getenv('TELEGRAM_TOKEN')
+        tg_chat = os.getenv('TELEGRAM_CHAT_ID')
+        if tg_token and tg_chat:
+            import requests
+            url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+            payload = {"chat_id": tg_chat, "text": message}
+            requests.post(url, json=payload, timeout=5)
+            return
+    except Exception:
+        pass
+
+    # fallback to LINE if TELEGRAM not configured
+    try:
+        from services.line_notifier import send_line_alert
+        send_line_alert(message)
+    except Exception:
+        pass

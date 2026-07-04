@@ -253,7 +253,7 @@ def get_entry_strictness_profile(mode=None):
 USE_BTC_MACRO_FILTER = False
 # 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
 # 預設 3 批次 → 若有 18 顆幣種，每批 6 顆，降低每輪請求壓力
-MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '3'))
+MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '4'))
 # 控制同時對交易所發出的併發請求數（Semaphore 大小），預設降為 2
 REQUEST_SEMAPHORE_SIZE = int(os.getenv('REQUEST_SEMAPHORE_SIZE', '2'))
 # 若需要在同一輪中對批次之間加延遲，可調整此參數（秒）
