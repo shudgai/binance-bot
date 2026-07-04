@@ -161,6 +161,9 @@ def check_binance_weight():
         if weight is not None:
             # 幣安期貨真實權重上限是每分鐘 2400（不是 1200，那是下單次數的獨立限制），
             # 門檻對應調整，避免權重還有很多餘裕就誤觸發不必要的自我限速。
+            if weight >= 2400:
+                logger.warning(f"🚨 [API限流警報 - 致命] 幣安目前權重已達 {weight}/2400，觸發強制冷卻，冷卻 30 秒")
+                return 30.0
             if weight > 1800:
                 logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發重度防護，冷卻 10 秒")
                 return 10.0
