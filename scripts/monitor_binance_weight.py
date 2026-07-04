@@ -2,7 +2,14 @@
 import asyncio
 import time
 import os
+import sys
 from statistics import mean
+from pathlib import Path
+
+# ensure project root is on sys.path so we can import core/ modules
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 async def monitor(duration_sec=1800, interval_sec=15):
     from core import ctx
