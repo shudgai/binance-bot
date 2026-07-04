@@ -254,6 +254,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         logger.info(f"🛑 [DISABLED_ENTRY] {sym} 已被設定為禁入場，拒絕所有進場信號")
         return False
 
+    # ── 幣種質量檢查：拒絕高噪音/上沖下洗幣種 ──
+    if not is_stable_ranging_candidate(sym):
+        logger.info(f"🛑 [幣種質量] {sym} 為上沖下洗幣種，拒絕進場")
+        return False
+
     # ── 驟跌/驟漲保護：暫停新進場（不接落下的刀子）──
     # 小幣種有時會短時間劇烈崩跌或暴衝，跟出場端「急速逆勢」用同一套 2.0倍ATR
     # 標準判斷，但這裡要判斷方向：只有「逆著進場方向」的劇烈變動才算危險
@@ -840,4 +845,50 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 20.0)，拒絕進場")
             return False
 
+    return True
+
+
+def is_stable_ranging_candidate(sym):
+    """
+    檢查幣種是否為穩定盤整型（過濾掉上沖下洗的高噪音幣種）
+    - 計算最近 20 根 K 線的波動特性
+    - 如果上升後下降/下降後上升的反轉幅度過大 → 判定為「上沖下洗」
+    - 只接納那種相對平穩、沒有頻繁反轉的幣種
+    Returns: True 代表穩定盤整，False 代表高噪音/上沖下洗
+    """
+    s = ctx.STATES.get(sym)
+    if not s or len(s.get("ohlcv", [])) < 8:
+        return True  # 資料不足，放行
+
+    ohlcv = s["ohlcv"][-20:]  # 最近最多 20 根 K 線
+    closes = np.array([x[4] for x in ohlcv])
+    
+    # 計算最近 K 線的收盤价变化率
+    price_changes = np.diff(closes) / closes[:-1]
+    
+    # 計算「反轉次數」：相鄰兩根 K 線的方向不一致
+    reversals = 0
+    for i in range(len(price_changes) - 1):
+        if price_changes[i] * price_changes[i+1] < 0:  # 符號相反 = 反轉
+            reversals += 1
+    
+    # 計算波動率（標準差）
+    volatility = np.std(price_changes)
+    
+    # 門檻判定：
+    # - 反轉次數 > 5 次 = 高頻率上沖下洗幣（對於 20 根 K 線來說，5 次反轉 = 25% 反轉率）
+    # - 波動率 > 0.008 且反轉 > 4 = 高噪音幣
+    max_reversals_allowed = 5
+    volatility_threshold = 0.008
+    
+    if reversals > max_reversals_allowed:
+        logger.info(f"🛑 [高噪音過濾] {sym} 反轉次數過多 ({reversals}/{len(price_changes)-1}，>5 代表上沖下洗)，暫不納入")
+        return False
+    
+    if volatility > volatility_threshold and reversals > 4:
+        logger.info(f"🛑 [高噪音過濾] {sym} 波動率過高 ({volatility:.4f} > {volatility_threshold:.4f}) 且反轉頻繁 ({reversals})，暫不納入")
+        return False
+    
+    # 通過檢查：穩定盤整幣種
+    logger.info(f"✅ [穩定盤整] {sym} 通過檢查 (反轉: {reversals}/{len(price_changes)-1}，波動率: {volatility:.4f})")
     return True

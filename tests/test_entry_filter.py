@@ -6,7 +6,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
-from core.entry_filter import is_entry_pin_safe, get_entry_strictness_profile, is_entry_allowed
+from core.entry_filter import is_entry_pin_safe, get_entry_strictness_profile, is_entry_allowed, is_stable_ranging_candidate
+from core.exits import should_allow_trend_follow_exit
 
 
 class EntryFilterTests(unittest.TestCase):
@@ -179,6 +180,58 @@ class EntryFilterTests(unittest.TestCase):
         s["ohlcv"].append([0, 1.01, 1.02, 0.995, 0.99, 1000.0])
 
         self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=18.5))
+
+    def test_trend_follow_exit_requires_stronger_signal_or_larger_loss(self):
+        self.assertFalse(should_allow_trend_follow_exit(
+            profit_pct=-0.007,
+            current_atr=0.001,
+            atr_24h_avg=0.001,
+            is_long=True,
+            macd_is_down=False,
+            macd_is_up=False,
+            has_strong_momentum=False,
+        ))
+        self.assertTrue(should_allow_trend_follow_exit(
+            profit_pct=0.018,
+            current_atr=0.001,
+            atr_24h_avg=0.001,
+            is_long=True,
+            macd_is_down=False,
+            macd_is_up=False,
+            has_strong_momentum=False,
+        ))
+        self.assertTrue(should_allow_trend_follow_exit(
+            profit_pct=-0.018,
+            current_atr=0.002,
+            atr_24h_avg=0.001,
+            is_long=True,
+            macd_is_down=False,
+            macd_is_up=False,
+            has_strong_momentum=True,
+        ))
+
+    def test_choppy_price_structure_is_rejected_for_entry(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+
+        s["ohlcv"] = [
+            [0, 1.00 + i * 0.002, 1.01 + i * 0.002, 0.99 + i * 0.002, 1.00 + i * 0.002, 1000.0]
+            for i in range(8)
+        ]
+        s["ohlcv"][1][4] = 0.998
+        s["ohlcv"][3][4] = 1.002
+        s["ohlcv"][5][4] = 0.998
+        s["ohlcv"][7][4] = 1.002
+
+        self.assertFalse(is_stable_ranging_candidate(sym))
+
+        s["ohlcv"] = [
+            [0, 1.00 + i * 0.0005, 1.003 + i * 0.0005, 0.998 + i * 0.0005, 1.001 + i * 0.0005, 1000.0]
+            for i in range(8)
+        ]
+        self.assertTrue(is_stable_ranging_candidate(sym))
 
 
 if __name__ == "__main__":
