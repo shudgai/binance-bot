@@ -140,3 +140,61 @@ def update_paper_state(symbol: str, side: str, price: float, qty: float, is_clos
 
         with open(PAPER_STATE_FILE, "w") as f:
             json.dump(state, f, indent=4)
+
+def manual_close_paper_position(symbol: str):
+    """
+    Manually close a paper trading position for a given symbol.
+    Automatically fetches the current price to calculate PnL.
+    """
+    from services.binance_service import get_price
+    
+    # Standardize the symbol key
+    paper_key = symbol
+    if ":USDT" not in symbol:
+        paper_key = f"{symbol}:USDT"
+
+    if not os.path.exists(PAPER_STATE_FILE):
+        print(f"[ERROR] Paper state file not found at {PAPER_STATE_FILE}")
+        return
+
+    with open(PAPER_STATE_FILE, "r") as f:
+        state = json.load(f)
+
+    positions = state.get("positions", {})
+    pos = positions.get(paper_key)
+
+    if not pos or abs(pos.get("qty", 0.0)) < 0.000001:
+        print(f"[INFO] No active paper position found for {symbol}.")
+        return
+
+    try:
+        price_data = get_price(symbol)
+        current_price = price_data.get("price", 0.0)
+        if current_price <= 0:
+            print(f"[ERROR] Could not fetch current price for {symbol}.")
+            return
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch price: {e}")
+        return
+
+    qty = pos.get("qty", 0.0)
+    avg_price = pos.get("avg_price", 0.0)
+    
+    # Calculate PnL
+    # If qty > 0 (Long), PnL = (Current - Avg) * Qty
+    # If qty < 0 (Short), PnL = (Avg - Current) * |Qty|
+    if qty > 0:
+        pnl = (current_price - avg_price) * qty
+    else:
+        pnl = (avg_price - current_price) * abs(qty)
+
+    # Call the existing update logic
+    update_paper_state(
+        symbol=symbol,
+        side="sell" if qty > 0 else "buy",
+        price=current_price,
+        qty=abs(qty),
+        is_close=True,
+        pnl=pnl
+    )
+    print(f"[SUCCESS] Manually closed {symbol} at {current_price} with PnL: {pnl:.4f}")

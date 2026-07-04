@@ -104,22 +104,38 @@ async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
     結果，average/price 欄位常常還沒填（要過一下子交易所才處理完），如果直接信任
     這個回傳值，會退回去用呼叫端傳入的理論價格算獲利——這正是 PeakLock/RESCUE_TRAIL
     等鎖利機制「內部顯示賺錢、實際上虧損」的成因之一。這裡改成下單後主動再查一次
-    訂單狀態，確保拿到的是交易所真正的成交均價。"""
-    market_order = await exchange_futures.create_order(
-        sym, type="market", side=close_side, amount=qty,
-        params={"reduceOnly": True}
-    )
-    fill_price = float(market_order.get('average') or market_order.get('price') or 0.0)
-    if fill_price <= 0:
-        await asyncio.sleep(0.5)
+    訂單狀態，確保拿到的是交易所真正的成交均價。
+    針對 -1007 (timeout) / 502 / 503 / 504 等短暫性網路錯誤，以指數退避最多重試 3 次，
+    避免因 Binance 瞬間後端超載而讓平倉單靜默失敗。"""
+    _TRANSIENT_KEYWORDS = ("Timeout", "timeout", "502", "503", "504", "Bad Gateway",
+                           "Service Unavailable", "Gateway Timeout")
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            fetched = await exchange_futures.fetch_order(market_order['id'], sym)
-            fill_price = float(fetched.get('average') or fetched.get('price') or 0.0)
-        except Exception as fe:
-            logger.info(f"⚠️ [市價成交查詢失敗] {sym}: {fe}")
-    if fill_price <= 0:
-        fill_price = fallback_price
-    return fill_price
+            market_order = await exchange_futures.create_order(
+                sym, type="market", side=close_side, amount=qty,
+                params={"reduceOnly": True}
+            )
+            fill_price = float(market_order.get('average') or market_order.get('price') or 0.0)
+            if fill_price <= 0:
+                await asyncio.sleep(0.5)
+                try:
+                    fetched = await exchange_futures.fetch_order(market_order['id'], sym)
+                    fill_price = float(fetched.get('average') or fetched.get('price') or 0.0)
+                except Exception as fe:
+                    logger.info(f"⚠️ [市價成交查詢失敗] {sym}: {fe}")
+            if fill_price <= 0:
+                fill_price = fallback_price
+            return fill_price
+        except Exception as e:
+            err_str = str(e)
+            is_transient = any(kw in err_str for kw in _TRANSIENT_KEYWORDS)
+            if is_transient and attempt < max_retries - 1:
+                wait_sec = 2 ** attempt  # 1s → 2s → (第3次後直接拋出)
+                logger.info(f"⚠️ [市價平倉重試 {attempt+1}/{max_retries}] {sym} 短暫性錯誤 ({err_str[:80]})，{wait_sec}s 後重試...")
+                await asyncio.sleep(wait_sec)
+                continue
+            raise  # 不可重試錯誤或已達最大重試次數，往上拋
 
 
 async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
@@ -185,29 +201,31 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
     return (filled_notional / filled_qty) if filled_qty > 0 else limit_price
 
 
-async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
+async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False) -> bool:
+    """平倉入口。回傳 True 代表倉位已成功平倉並重設狀態；False 代表因錯誤或攔截未能平倉。"""
     s = ctx.STATES[sym]
-    await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
+    return await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
 
 
-async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
+async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False) -> bool:
     s = ctx.STATES[sym]
-    s["adjusted_this_tick"] = True
+    # NOTE: adjusted_this_tick 只在訂單真正送出後才設（在 _close_position_inner_locked 內），
+    # 避免 API 失敗時誤鎖住 fast_exit_loop，讓失敗後仍可在同一主迴圈窗口內重試。
 
     # ── 防重複平倉鎖（Duplicate Close Guard）──
     # asyncio 雖然單執行緒，但 await 點會讓另一個 coroutine 插入執行，
     # 兩個呼叫者同時通過 qty 檢查後都去執行平倉 → 重複平倉。
     if s.get("_is_closing", False):
         logger.info(f"⚠️ [DuplicateClose] {sym} 已有平倉指令執行中，忽略重複呼叫 | reason={reason}")
-        return
+        return False
     s["_is_closing"] = True
     try:
-        await _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
+        return await _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
     finally:
         s["_is_closing"] = False
 
 
-async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
+async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False) -> bool:
     s = ctx.STATES[sym]
 
     # 強化防禦：檢查實際持倉與指令方向是否衝突
@@ -223,14 +241,14 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         price = s.get("close_price", 0.0) or s.get("avg_price", 0.0)
         if price <= 0:
             logger.info(f"[REJECT_ZERO_PRICE] {sym} 平倉價格為 0，已攔截！")
-            return
+            return False
         logger.info(f"[WARN_ZERO_PRICE] {sym} 平倉價格補救為 {price:.6f}")
     if abs(s["qty"]) < 0.000001:
-        return
+        return False
     pk = paper_key(sym)
     qty = min(abs(qty), abs(s["qty"]))
     if qty < 0.000001:
-        return
+        return False
 
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
@@ -243,12 +261,12 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     allowed_exit_reasons = ["[Time_Stagnation]", "[SafePocket]", "[Trend_Follow]", "[Take_Profit]", "[PeakTrail]", "[Rescue_Trailing_Stop]", "[GLOBAL_MELTDOWN]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
-        return
+        return False
 
     sanitized_qty = await sanitize_order_qty(sym, qty)
     if sanitized_qty <= 0.0:
         logger.info(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
-        return
+        return False
     qty = sanitized_qty
 
     if PAPER_TRADING:
@@ -258,6 +276,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
             pnl = (price - real_avg) * qty
         else:
             pnl = (real_avg - price) * qty
+        s["adjusted_this_tick"] = True   # 已實際操作，鎖住本 tick 防重複
         update_paper_state(pk, close_side, price, qty, is_close=True, pnl=pnl)
         final_price = price
     else:
@@ -272,9 +291,12 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
                 final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
             else:
                 final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
+            # 訂單已成功送至交易所（不論最終成交情況），鎖住本 tick 防重複呼叫
+            s["adjusted_this_tick"] = True
         except Exception as e:
             logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
-            return
+            # API 失敗，不設 adjusted_this_tick，讓 fast_exit_loop 下一秒可重試
+            return False
 
     # 用真實成交價（實盤）或模擬價（紙上）重新計算最終獲利，取代呼叫端傳入的理論價格
     profit_pct = (final_price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - final_price) / real_avg
@@ -346,6 +368,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
 
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=profit_pct)
         reset_coin_state(sym)
+        return True
     else:
         prec = await get_contract_precision(sym)
         raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
@@ -363,6 +386,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
                     qty_to_remove = 0
 
         logger.info(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
+        return True
 
         if s.get("exchange_stop_order_id") and not PAPER_TRADING:
             try:

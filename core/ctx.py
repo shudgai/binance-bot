@@ -36,5 +36,4 @@ def init_states(symbols=None):
     for sym in ALL_SYMBOLS:
         STATES[sym] = build_symbol_state(sym)
     apply_all_symbol_profiles()
-    from core.config import REQUEST_SEMAPHORE_SIZE
-    request_semaphore = asyncio.Semaphore(max(1, int(REQUEST_SEMAPHORE_SIZE)))
+    request_semaphore = asyncio.Semaphore(5)

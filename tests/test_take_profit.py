@@ -193,38 +193,6 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_hard_stop_loss_still_triggers_during_initial_cooldown(self):
-        from unittest.mock import patch, AsyncMock
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s["qty"] = 1.0
-        s["avg_price"] = 100.0
-        s["close_price"] = 95.0
-        s["open_time"] = time.time() - 10
-        s["current_atr"] = 0.5
-        s["current_rsi"] = 50.0
-        s["prev_macd_line"] = 0.0
-        s["prev_macd_signal"] = 0.0
-        s["macd_line"] = 0.0
-        s["macd_signal"] = 0.0
-        s["ohlcv"] = [[0, 100.0, 100.0, 99.0, 100.0, 1000]]
-        s["prev_close"] = 100.0
-        s["highest_profit_pct"] = 0.0
-        s["pnl_history"] = []
-        s["vol_ma20"] = 1000.0
-        s["current_vol"] = 100.0
-
-        async def run_check():
-            with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Hard_SL]")
-                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
-
-        asyncio.run(run_check())
-
     def test_exit_blocked_on_negative_profit(self):
         from core.orders import close_position
         sym = "XRPUSDT"

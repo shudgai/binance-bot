@@ -193,8 +193,8 @@ def force_close_all_positions():
         # market_sell 內部會重新讀取並上鎖 update_paper_state
         for sym in symbols_to_close:
             try:
-                # sym 通常是 symbol:USDT，我們要還原成純 symbol 去抓價格
-                raw_sym = sym.replace(":USDT", "") if ":USDT" in sym else sym
+                # sym 多半是 `SUI:USDT`，要還原成交易介面使用的 `SUIUSDT`。
+                raw_sym = sym.replace(":USDT", "USDT") if ":USDT" in sym else sym
                 market_sell(raw_sym, sym)
                 add_system_log(f"🧹 [每日淨空] 已強制平倉 {raw_sym}", "info")
             except Exception as e:

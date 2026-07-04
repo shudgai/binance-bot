@@ -185,10 +185,10 @@ PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 3600
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
-SL_ATR_MULTIPLIER = 1.5
+SL_ATR_MULTIPLIER = 1.8
 TP_ATR_MULTIPLIER = 3.0
-HARD_STOP_LOSS_PCT = 0.025
-EXIT_RR_MULTIPLIER = 1.6
+HARD_STOP_LOSS_PCT = 0.03
+EXIT_RR_MULTIPLIER = 1.5
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.004
 PROTECTED_PROFIT_FLOOR   = 0.0025
@@ -202,10 +202,10 @@ ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 
 # 全域調整：進場方式改為自動模式，根據訊號強度選擇 pullback/chase/market
 ENTRY_ORDER_MODE = os.getenv("ENTRY_ORDER_MODE", "auto").lower()
-ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.22))
-ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0003))
-ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 22.0))
-ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 35.0))
+ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.16))
+ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0005))
+ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 18.0))
+ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 30.0))
 
 ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "relaxed").lower()
 ENTRY_STRICTNESS_PROFILES = {
@@ -251,11 +251,4 @@ def get_entry_strictness_profile(mode=None):
 
 # 是否啟用 BTC 大盤過濾鎖定小幣開倉（True=啟用鎖定，False=小幣走自己獨立行情）
 USE_BTC_MACRO_FILTER = False
-# 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
-# 預設 3 批次 → 若有 18 顆幣種，每批 6 顆，降低每輪請求壓力
-MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '4'))
-# 控制同時對交易所發出的併發請求數（Semaphore 大小），預設降為 2
-REQUEST_SEMAPHORE_SIZE = int(os.getenv('REQUEST_SEMAPHORE_SIZE', '2'))
-# 若需要在同一輪中對批次之間加延遲，可調整此參數（秒）
-KLINE_BATCH_PAUSE_SEC = float(os.getenv('KLINE_BATCH_PAUSE_SEC', '0.0'))
 

@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import traceback
+import random
 
 import ccxt
 import requests
@@ -125,6 +126,11 @@ async def calibrate_with_exchange(exchange):
     與交易所進行實際持倉校準。
     若偵測到本地數據與交易所數據不符，強制覆蓋為交易所數據。
     """
+    # Force ENA and ZEC to 0 internally
+    for sym in ("ENAUSDT", "ZECUSDT", "ENA", "ZEC"):
+        if sym in ctx.STATES:
+            ctx.STATES[sym]["qty"] = 0.0
+
     if PAPER_TRADING:
         logger.info("ℹ️ [CALIBRATION] 紙上交易模式，跳過交易所校準。")
         return
@@ -134,6 +140,11 @@ async def calibrate_with_exchange(exchange):
         for pos in positions:
             raw_symbol = pos.get('symbol', '')
             sym = raw_symbol.split(':')[0].replace('/', '')
+
+            if sym in ("ENAUSDT", "ZECUSDT", "ENA", "ZEC"):
+                if sym in ctx.STATES:
+                    ctx.STATES[sym]["qty"] = 0.0
+                continue
 
             # ccxt 統一格式的 contracts 欄位永遠是正數（不含方向），只有交易所原始的
             # info.positionAmt 才會正確帶正負號（空單是負的）。原本寫成
@@ -223,6 +234,14 @@ async def main_loop(exchange):
     await fetch_all_sma200(exchange_market_data)
     await fetch_all_ema50_1h(exchange_market_data)
     await fetch_all_ema_15m(exchange_market_data)
+
+    # 啟動時加入小幅隨機抖動，避免多實例同時向交易所發送大量請求（減少權重衝突）
+    try:
+        _startup_jitter = random.uniform(0, min(5, MAIN_LOOP_INTERVAL_SEC))
+        logger.info(f"⏱️ [Startup jitter] 等待 {_startup_jitter:.2f}s 以錯開請求時序")
+        await asyncio.sleep(_startup_jitter)
+    except Exception:
+        pass
 
     last_balance_update = time.time()
 
@@ -325,6 +344,9 @@ async def main_loop(exchange):
 
             elapsed = time.time() - loop_start
             sleep_time = max(1.5, MAIN_LOOP_INTERVAL_SEC - elapsed) + weight_sleep
+            # 每輪加入少量隨機抖動，避免恆定節奏導致兩實例同步請求
+            sleep_time += random.uniform(0, 0.5)
+            logger.debug(f"⏱️ [Loop sleep] base={MAIN_LOOP_INTERVAL_SEC - elapsed:.2f}s weight_sleep={weight_sleep:.2f}s jitter_added={sleep_time:.2f}s")
 
             # ── 持倉間歇快速出場檢查 ──
             # 主迴圈 25s 一輪，但 1-秒內的利潤高點根本看不到

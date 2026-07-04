@@ -657,8 +657,8 @@
                                     <button v-if="isOpenTrade(t)" class="btn-close-trade" @click="closeTradePosition(t)" :disabled="isPlacingOrder">平倉</button>
                                 </td>
                             </tr>
-                            <tr v-if="trades.length === 0">
-                                <td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px 0;">尚無交易紀錄</td>
+                            <tr v-if="sortedTrades.length === 0">
+                                <td colspan="11" style="text-align:center;color:var(--text-muted);padding:20px 0;">尚無交易紀錄</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1766,42 +1766,60 @@ createApp({
         };
 
         const isOpenTrade = (trade) => {
+            // 已平倉記錄直接排除
             if (trade.is_close) return false;
+            // 先查即時持倉
             const pos = getPositionInfo(trade.symbol);
-            if (!pos || Math.abs(pos.qty) === 0) return false;
-            // trades.value 已按 time 降序排列，取第一筆即為最新未平倉交易
-            // 用物件參考比對，避免 paper_state 交易沒有 id 欄位時 undefined===undefined 全部通過
-            const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
-            return latestOpenTrade === trade;
+            if (pos && Math.abs(pos.qty) > 0) {
+                // 持倉存在：同幣種任何未平倉記錄都顯示平倉按鈕
+                // （避免只顯示「最新那筆」導致其他加倉記錄看不到按鈕）
+                return true;
+            }
+            // allPositions 可能因網路暫時失敗而為空，fallback：
+            // 若 trades 中該幣種有未平倉記錄且 allPositions 對應 key 不存在（非 qty=0），
+            // 仍顯示按鈕讓使用者可以嘗試平倉
+            const symHasOpenTrades = trades.value.some(tr => tr.symbol === trade.symbol && !tr.is_close);
+            if (symHasOpenTrades && !pos) {
+                // allPositions 沒有這個幣的記錄（可能暫時抓不到），保守顯示按鈕
+                return true;
+            }
+            return false;
         };
 
         const canCloseTrade = (trade) => {
-            // 與 isOpenTrade 邏輯一致，只有「最新的未平倉」才算可平倉
-            // 避免同幣種舊入場記錄因新倉開啟而被誤判為可平倉並排到最頂端
+            // 用於 sortedTrades 排序：只有「最新的未平倉」才排到最頂，避免所有加倉記錄全部擠上來
             if (trade.is_close) return false;
             const pos = getPositionInfo(trade.symbol);
             if (!pos || Math.abs(pos.qty) === 0) return false;
+            // 只讓時間最新的那筆排到最前
             const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
             return latestOpenTrade === trade;
         };
 
         const closeTradePosition = async (trade) => {
             const sym = trade.symbol.replace(':USDT', 'USDT');
+            // 確認對話框，避免誤觸
+            if (!window.confirm(`確定要平倉 ${sym.replace('USDT', '')} 的所有持倉嗎？`)) return;
             isPlacingOrder.value = true;
             showToast(`⏳ 平倉 ${sym}...`, 'info');
-            addLog(`🔴 平倉 ${sym}...`);
+            addLog(`🔴 手動平倉 ${sym}...`);
             try {
                 const res = await fetch(`${API_BASE}/order/market-sell/${sym}`, { method: 'POST' });
                 const resp = await res.json();
                 const data = resp.data || resp;
-                if (res.ok && (data.status === 'success' || data.detail)) {
+                // 嚴格判斷：HTTP OK 且後端回傳 status=success
+                if (res.ok && data.status === 'success') {
                     showToast(`✅ 平倉 ${sym} 完成!`, 'success');
-                    addLog(`✅ 平倉 ${sym} 成功!`, 'success');
+                    addLog(`✅ 手動平倉 ${sym} 成功! ${data.detail || ''}`, 'success');
                     setTimeout(() => { fetchBotStatus(); fetchPosition(); fetchTrades(); fetchAllPositions(); }, 1200);
-                } else throw new Error(data.detail);
+                } else {
+                    const errMsg = data.detail || data.message || `HTTP ${res.status}`;
+                    throw new Error(errMsg);
+                }
             } catch(e) {
-                addLog(`❌ 平倉 ${sym} 失敗: ${e.message}`, 'danger');
-                showToast(`❌ ${e.message}`, 'danger', 5000);
+                const msg = e.message || '未知錯誤，請查看系統紀錄';
+                addLog(`❌ 手動平倉 ${sym} 失敗: ${msg}`, 'danger');
+                showToast(`❌ 平倉失敗: ${msg}`, 'danger', 6000);
             }
             finally { isPlacingOrder.value = false; }
         };

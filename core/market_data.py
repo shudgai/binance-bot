@@ -136,36 +136,14 @@ async def fetch_all_klines(exchange):
             return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
 
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    # 分批/輪替抓取：每輪只抓取一批，降低瞬時 API 請求量
-    from core.config import MARKET_FETCH_BATCHES
-    total = len(symbols)
-    if total == 0:
-        return
-    batches = max(1, int(MARKET_FETCH_BATCHES))
-    batch_size = (total + batches - 1) // batches
-    idx = getattr(ctx, 'market_fetch_index', 0) if hasattr(ctx, 'market_fetch_index') else 0
-    start = idx * batch_size
-    end = min(total, start + batch_size)
-    batch = symbols[start:end]
-    if not batch:
-        # reset index if out of range
-        idx = 0
-        start = 0
-        end = min(total, batch_size)
-        batch = symbols[start:end]
-
-    tasks = {sym: fetch_with_sem(sym) for sym in batch}
+    tasks = {sym: fetch_with_sem(sym) for sym in symbols}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    for i, sym in enumerate(batch):
+    for i, sym in enumerate(symbols):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["ohlcv"] = results[i]
             ctx.STATES[sym]["close_price"] = results[i][-1][4]
         else:
             logger.info(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
-
-    # 保存下一輪要抓的批次索引
-    idx = (idx + 1) % batches
-    setattr(ctx, 'market_fetch_index', idx)
 
 
 async def fetch_sma200_15m(exchange, sym):
@@ -289,6 +267,8 @@ async def load_open_positions():
             qty = float(pos.get("qty", 0.0))
             if abs(qty) > 0.000001:
                 sym = pk.replace(":", "")
+                if sym in ("ENAUSDT", "ZECUSDT", "ENA", "ZEC"):
+                    continue
                 if sym not in ctx.ALL_SYMBOLS:
                     logger.info(f"⚠️ [發現未監控持倉] {sym} 仍有未平倉位，自動加回監控清單並在介面顯示！")
                     ctx.ALL_SYMBOLS.append(sym)

@@ -232,7 +232,13 @@ async def check_exits(sym):
         if profit_pct < 0 and _adverse_atr_mult >= 2.0:
             cs = 'sell' if is_long else 'buy'
             logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
+            _closed_ok = await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
+            if not _closed_ok:
+                # 平倉失敗（-1007 / 502 等短暫性錯誤），倉位仍然存在，
+                # 不能設置反手否則會出現「多倉未平、又掛空反手」的方向衝突。
+                logger.info(f"⚠️ [Rapid_Reverse_Abort] {sym} 急速逆勢平倉失敗，暫不設置反手，等下一 tick 重新評估")
+                return
+            # 平倉成功，評估是否執行反手
             if _check_reversal_allowed(sym, s):
                 last_reverse = s.get("last_reverse_time", 0)
                 if time.time() - last_reverse > 1800:
@@ -258,9 +264,7 @@ async def check_exits(sym):
         if vol_ratio > 2.5:
             logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
         else:
-            # 進場初期仍要保護真實停損，不能因為「新倉盲區」而直接跳過 Hard_SL / Universal SL。
-            # 這裡不再直接 return，讓後續的停損檢查仍能執行。
-            pass
+            return
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
@@ -478,12 +482,12 @@ async def check_exits(sym):
 
     _disable_dca = COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False)
     # 取得每幣種的最大加倉次數與加倉冷卻（若未設定，使用 state 或全域預設）
-    max_additional = s.get("max_additional_entries", s.get("max_additional_entries", 1))
-    entry_cooldown = s.get("entry_cooldown_sec", s.get("entry_cooldown_sec", 60))
+    max_additional = s.get("max_additional_entries", s.get("max_additional_entries", 3))
+    entry_cooldown = s.get("entry_cooldown_sec", s.get("entry_cooldown_sec", 45))
     time_since_last = time.time() - s.get("last_entry_time", 0)
 
     # 只有在尚未超過最大加倉次數且距離上次加倉超過冷卻時間時，才允許 DCA
-    can_dca = (s.get("entry_count", 0) < max_additional) and (time_since_last >= entry_cooldown)
+    can_dca = (s.get("entry_count", 0) <= max_additional) and (time_since_last >= entry_cooldown)
 
     if not _disable_dca and can_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) >= 1:
         # 防呆：檢查是否正在急跌/急漲 (Falling Knife)
@@ -510,8 +514,8 @@ async def check_exits(sym):
         logger.info(f"ℹ️ [DCA_Disabled] {sym} 虧損 {profit_pct*100:.2f}% 但此幣種已停用 Rescue DCA，等待 ATR-SL 出場")
     
     # ─ DCA 加倉失敗保護：加倉後如果繼續惡化，就提早結束 ─
-    if s.get("entry_count", 0) >= 2 and profit_pct <= -(loss_limit * 1.5):
-        # 加倉後虧損超過初始門檻的 1.5 倍，表示加倉失敗，應該平倉止損
+    if s.get("entry_count", 0) >= 2 and profit_pct <= -(loss_limit * 2.5):
+        # 加倉後虧損超過初始門檻的 2.5 倍，表示加倉失敗，應該平倉止損
         logger.info(f"🚨 [DCA_Failure_Exit] {sym} 加倉後虧損繼續惡化至 {profit_pct*100:.2f}%，超過容忍度，立即平倉止損！")
         cs = "sell" if is_long else "buy"
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[DCA_Failure_Exit]", is_stop_loss=True)
@@ -1000,23 +1004,12 @@ async def check_exits(sym):
     macd_is_up = (s["macd_line"] > s["macd_signal"]) and (s.get("prev_macd_line", 0.0) > s.get("prev_macd_signal", 0.0))
     sl_pct = s.get("hard_stop_loss_pct", 0.02)
     early_exit_limit = -(sl_pct * 0.5)
-    
-    # Trend_Follow 出場：使用柵欄函數防止弱反轉訊號提早平倉
-    if ((is_long and macd_is_down) or (not is_long and macd_is_up)):
-        strong_momentum = has_strong_momentum(sym, is_long)
-        if should_allow_trend_follow_exit(
-            profit_pct=profit_pct,
-            current_atr=s.get("current_atr", 0.0),
-            atr_24h_avg=s.get("atr_24h_avg", 0.0),
-            is_long=is_long,
-            macd_is_down=macd_is_down,
-            macd_is_up=macd_is_up,
-            has_strong_momentum=strong_momentum
-        ):
-            cs = 'sell' if is_long else 'buy'
-            logger.info(f"📉 [反轉出場] {sym} MACD連續兩根確認反向，柵欄檢查通過，立即平倉鎖利 (損益: {profit_pct*100:.2f}%)")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=False)
-            return
+    # 僅在獲利大於 1.5% 時允許 MACD 反向反轉出場，虧損時不主動提早平倉，讓單子有時間等回調
+    if ((is_long and macd_is_down) or (not is_long and macd_is_up)) and (profit_pct > 0.015):
+        cs = 'sell' if is_long else 'buy'
+        logger.info(f"📉 [反轉出場] {sym} MACD連續兩根確認反向且達 1.5% 門檻，立即平倉鎖利 (損益: {profit_pct*100:.2f}%)")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Trend_Follow]", is_stop_loss=False)
+        return
 
     atr_pct = (s.get("entry_atr", atr_val) / avg) if avg > 0 else 0.002
 
@@ -1282,43 +1275,6 @@ def _check_reversal_allowed(sym, s):
     ban_mins = int((ban_until - time.time()) / 60)
     logger.info(f"⛔ [反手禁用] {sym} 連虧 {losses} 次，反手功能禁用 (剩 {ban_mins} 分鐘)")
     return False
-
-
-def should_allow_trend_follow_exit(profit_pct, current_atr=None, atr_24h_avg=None, is_long=True, macd_is_down=False, macd_is_up=False, has_strong_momentum=False):
-    """
-    Trend_Follow 出場的柵欄函數 - 防止在弱反轉訊號上提早平倉
-    
-    規則：
-    1. 利潤 > 1.5% (強勢獲利) → 允許出場
-    2. 虧損在 -1.5% ~ 0% 之間 → 禁止出場 (弱訊號區)
-    3. 虧損 <= -1.5% 但 < -2% (abs值) → 禁止出場
-    4. 虧損 <= -2% (abs值) 或強勢動能中 → 允許出場
-    
-    Returns: True 表示允許出場, False 表示拒絕出場
-    """
-    # 規則 1：利潤 > 1.5%，允許出場
-    if profit_pct > 0.015:
-        return True
-    
-    # 規則 2：虧損在 -1.5% ~ 0% 之間，禁止出場（弱反轉訊號）
-    if -0.015 <= profit_pct <= 0:
-        return False
-    
-    # 規則 3 & 4：虧損超過 -1.5%
-    if profit_pct < -0.015:
-        # 如果強勢動能仍在，允許出場
-        if has_strong_momentum:
-            return True
-        
-        # 如果虧損超過 -2%（絕對值），允許出場
-        if profit_pct <= -0.020:
-            return True
-        
-        # 否則拒絕出場（虧損 -1.5% ~ -2% 之間，等待止損或反彈）
-        return False
-    
-    # 預設允許（不應該執行到這裡）
-    return True
 
 
 async def fast_exit_loop(exchange):

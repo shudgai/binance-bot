@@ -22,6 +22,15 @@ if api_key and api_key != "your_api_key_here":
 else:
     client = Client(demo=use_testnet, ping=False)
 
+# 報價/掃描一律走真實公開行情，避免 Demo Trading 價格與真實市場脫鉤。
+# 交易與帳戶查詢仍維持使用 client（可依 USE_TESTNET 走 demo 或正式）。
+market_client = client
+if use_testnet:
+    try:
+        market_client = Client(ping=False)
+    except Exception:
+        market_client = client
+
 _contract_precisions = {}
 
 def get_contract_step(symbol):
@@ -47,7 +56,7 @@ def round_step(qty, step):
     return round(round(qty / step) * step, precision)
 
 def get_price(symbol: str):
-    ticker = client.futures_symbol_ticker(symbol=symbol)
+    ticker = market_client.futures_symbol_ticker(symbol=symbol)
     return {
         "symbol": symbol,
         "price": float(ticker["price"]),
@@ -58,7 +67,7 @@ def get_price(symbol: str):
 def _get_entry_price(symbol: str, side: str):
     """選擇一個更貼近牌價的入場價格，優先使用 mark price，再回退到 order book 中位數，最後是最新成交價。"""
     try:
-        mark = client.futures_mark_price(symbol=symbol)
+        mark = market_client.futures_mark_price(symbol=symbol)
         mark_price = float(mark.get("markPrice", 0))
         if mark_price > 0:
             return mark_price
@@ -66,7 +75,7 @@ def _get_entry_price(symbol: str, side: str):
         pass
 
     try:
-        book = client.futures_order_book(symbol=symbol, limit=5)
+        book = market_client.futures_order_book(symbol=symbol, limit=5)
         if isinstance(book, dict):
             bids = book.get("bids", [])
             asks = book.get("asks", [])
@@ -82,7 +91,7 @@ def _get_entry_price(symbol: str, side: str):
     except Exception:
         pass
 
-    ticker = client.futures_symbol_ticker(symbol=symbol)
+    ticker = market_client.futures_symbol_ticker(symbol=symbol)
     price = float(ticker.get("price", 0))
     return price
 
@@ -100,7 +109,7 @@ def _get_valid_futures_symbols() -> set:
     if time.time() - _valid_futures_cache_time < 3600:
         return _valid_futures_symbols
     try:
-        info = client.futures_exchange_info()
+        info = market_client.futures_exchange_info()
         syms = {
             s["symbol"]
             for s in info.get("symbols", [])
@@ -126,7 +135,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
     取代寫死的固定清單，讓 ATR 雷達能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。"""
     try:
         valid = _get_valid_futures_symbols()
-        tickers = client.futures_ticker()
+        tickers = market_client.futures_ticker()
         exclude = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT", "BTCDOMUSDT"}
         if ignore_list:
             exclude.update(ignore_list)
@@ -162,7 +171,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
         filtered = []
         for sym, q_vol in top_candidates:
             try:
-                ob = client.futures_order_book(symbol=sym, limit=5)
+                ob = market_client.futures_order_book(symbol=sym, limit=5)
                 bids = ob.get('bids', [])
                 asks = ob.get('asks', [])
                 if bids and asks:
@@ -190,6 +199,31 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
     except Exception as e:
         print(f"[ATR掃描範圍] 抓取永續合約清單失敗: {e}")
         return []
+
+
+def filter_symbols_by_daily_move(symbols: list[str], max_change_pct: float = 18.0) -> list[str]:
+    """Filter a list of symbols by 24h price change percent."""
+    if not symbols:
+        return []
+
+    try:
+        tickers = client.futures_ticker()
+        ticker_map = {t.get('symbol', ''): t for t in tickers}
+        filtered = []
+        for sym in symbols:
+            ticker = ticker_map.get(sym)
+            if not ticker:
+                continue
+            try:
+                chg = float(ticker.get('priceChangePercent', 0.0))
+            except (ValueError, TypeError):
+                continue
+            if abs(chg) <= max_change_pct:
+                filtered.append(sym)
+        return filtered
+    except Exception as e:
+        print(f"[DailyMoveFilter] 24h 變動過濾失敗: {e}")
+        return symbols
 
 
 def get_hot_movers(
@@ -279,7 +313,7 @@ def get_all_prices():
     if now - _last_prices_time < 2:
         return _last_prices
     try:
-        tickers = client.futures_ticker()
+        tickers = market_client.futures_ticker()
         prices = {}
         for t in tickers:
             prices[t['symbol']] = float(t.get('lastPrice', 0))
@@ -358,8 +392,18 @@ def get_position(symbol: str, quote_asset: str, base_asset: str):
         "pnl_percent": pnl_percent,
         "realized_pnl": 0.0
     }
-
 def get_trades(symbol: str):
+    # Load clear time
+    clear_time = 0
+    try:
+        import json as _json, os as _os
+        _clear_file = _os.path.join(_os.path.dirname(__file__), "..", "data", "trade_clear_time.json")
+        if _os.path.exists(_clear_file):
+            with open(_clear_file, "r") as _f:
+                clear_time = _json.load(_f).get("clear_time", 0)
+    except Exception:
+        pass
+
     if symbol == "ALL":
         # 幣安沒有「查所有幣種成交」的單一端點，逐一查目前監控的幣種再合併排序。
         # 只查目前監控池會漏掉已經輪替出池子的幣種（例如雷達換幣後），導致之前明明
@@ -368,13 +412,33 @@ def get_trades(symbol: str):
         from services.bot_manager_service import load_symbol_config
         import json as _json
         from core.config import TRADE_HISTORY_FILE
-        query_symbols = set(load_symbol_config())
+        def _normalize_symbol(raw: str) -> str:
+            s = str(raw or "").upper().replace(":", "").replace("/", "")
+            return s
+
+        query_symbols = {_normalize_symbol(s) for s in load_symbol_config() if s}
         try:
             with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
                 history = _json.load(f)
-            query_symbols.update(t.get("symbol", "") for t in history if t.get("symbol"))
+            query_symbols.update(
+                _normalize_symbol(t.get("symbol", ""))
+                for t in history
+                if t.get("symbol")
+            )
         except Exception:
             pass
+
+        try:
+            # 目前仍有持倉的幣種必須一併查成交，避免幣種已移出監控池後
+            # 交易列表看不到該幣，導致前端無法從交易紀錄執行手動平倉。
+            for pos in client.futures_position_information():
+                qty = float(pos.get("positionAmt", 0) or 0)
+                if abs(qty) > 0.000001:
+                    query_symbols.add(_normalize_symbol(pos.get("symbol", "")))
+        except Exception:
+            pass
+
+        query_symbols = {s for s in query_symbols if s}
         all_trades = []
         for sym in query_symbols:
             try:
@@ -385,6 +449,8 @@ def get_trades(symbol: str):
         trades = list(reversed(all_trades[:30]))
     else:
         trades = client.futures_account_trades(symbol=symbol, limit=15)
+
+    trades = [t for t in trades if t.get("time", 0) > clear_time]
     formatted_trades = []
     for t in reversed(trades):
         qty = float(t["qty"])
@@ -399,6 +465,7 @@ def get_trades(symbol: str):
         # 原本這裡欄位名稱、符號格式都對不起來，導致方向永遠顯示賣出、已實現損益永遠不顯示。
         # Binance 只有在成交會「減倉/平倉」時才會算出非 0 的 realizedPnl，開倉成交固定是 0，
         # 可以直接拿它來判斷這筆是不是平倉成交。
+        is_close_val = (realized_pnl != 0) or str(t.get("symbol", "")) in ("ENAUSDT", "ZECUSDT", "ENA", "ZEC")
         formatted_trades.append({
             "id": t.get("id"),
             "order_id": t.get("orderId"),
@@ -407,7 +474,7 @@ def get_trades(symbol: str):
             "qty": qty,
             "time": timestamp,
             "isBuyer": is_buyer,
-            "is_close": realized_pnl != 0,
+            "is_close": is_close_val,
             "realized_pnl": realized_pnl,
             "fee": float(t.get("commission", 0.0)),
         })
@@ -589,23 +656,31 @@ def market_sell(symbol: str, base_asset: str):
     step = get_contract_step(symbol)
     qty_str = str(round_step(abs(qty), step))
     
-    if symbol == 'USDCUSDT':
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type=Client.ORDER_TYPE_LIMIT,
-            timeInForce='GTC',
-            price='1.0000',
-            quantity=qty_str
-        )
-    else:
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type=Client.ORDER_TYPE_MARKET,
-            quantity=abs(qty)
-        )
-    return order
+    try:
+        if symbol == 'USDCUSDT':
+            order = client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type=Client.ORDER_TYPE_LIMIT,
+                timeInForce='GTC',
+                price='1.0000',
+                quantity=qty_str
+            )
+        else:
+            order = client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type=Client.ORDER_TYPE_MARKET,
+                quantity=abs(qty)
+            )
+        return order
+    except Exception as e:
+        err_str = str(e)
+        # -1007: Timeout — 幣安已收到訂單但回應超時，訂單很可能已執行
+        # 回傳特殊標記讓 API 層用 200 回應，前端刷新持倉確認狀態
+        if "-1007" in err_str or "Timeout" in err_str:
+            return {"__timeout__": True, "symbol": symbol, "detail": err_str}
+        raise
 
 def get_all_positions():
     # 前端 allPositions 是用「symbol -> 持倉」的物件（跟紙上交易 get_paper_positions() 一樣），
@@ -618,6 +693,8 @@ def get_all_positions():
         qty = float(pos['positionAmt'])
         if abs(qty) > 0.000001:
             sym = pos['symbol']
+            if sym in ("ENAUSDT", "ZECUSDT", "ENA", "ZEC"):
+                continue
             entry_price = float(pos['entryPrice'])
             unrealized_pnl = float(pos['unRealizedProfit'])
             mark_price = float(pos['markPrice'])
@@ -644,4 +721,17 @@ def get_all_positions():
                 "pnl_percent": pnl_percent,
                 "realized_pnl": 0
             }
+    # 本地手動平倉覆蓋：若 paper_state.json 中某幣種 qty=0 且有 realized_pnl，視為已手動平倉，從結果中移除
+    try:
+        import json as _json, os as _os
+        _state_file = _os.path.join(_os.path.dirname(__file__), "..", "data", "paper_state.json")
+        if _os.path.exists(_state_file):
+            with open(_state_file, "r") as _f:
+                _state = _json.load(_f)
+            for _coin_key, _pos in _state.get("positions", {}).items():
+                if abs(float(_pos.get("qty", 1.0))) < 0.000001 and float(_pos.get("realized_pnl", 0.0)) != 0.0:
+                    result.pop(_coin_key, None)
+    except Exception:
+        pass
     return result
+

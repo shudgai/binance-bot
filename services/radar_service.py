@@ -9,37 +9,9 @@ from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 
-
-def _resolve_follow_symbols_from(base_dir: str | None = None) -> str:
-    """Resolve the shared symbol source path for strategy sync between deployments.
-
-    Priority:
-    1. Explicit FOLLOW_SYMBOLS_FROM environment variable.
-    2. Shared sibling deployment at ../binance-bot/data/bot_symbols.json.
-    3. Current deployment's local data/bot_symbols.json.
-    """
-    configured = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
-    if configured:
-        return configured
-
-    repo_root = os.path.abspath(base_dir or os.path.dirname(os.path.dirname(__file__)))
-    parent_dir = os.path.dirname(repo_root)
-    candidates = [
-        os.path.join(parent_dir, "binance-bot", "data", "bot_symbols.json"),
-        os.path.join(parent_dir, "binance-bot-live", "data", "bot_symbols.json"),
-        os.path.join(repo_root, "data", "bot_symbols.json"),
-    ]
-
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return candidate
-    return ""
-
-
 # 若設定此環境變數（指向另一份部署的 bot_symbols.json 絕對路徑），本部署不再自己跑 ATR 雷達
 # 掃描，而是直接跟隨來源部署選出的幣種清單，用來讓 8006 長期跟隨 8005 的幣池。
-# 若未明確指定，則會自動從相鄰部署的 bot_symbols.json 讀取，保留各自帳務但同步策略幣池。
-FOLLOW_SYMBOLS_FROM = _resolve_follow_symbols_from()
+FOLLOW_SYMBOLS_FROM = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
 # 若在 8006 部署中設定此變數，則會跟隨來源部署的 bot_symbols.json，不自行跑 ATR 雷達掃描。
 # 來源清單會寫入本地 bot_symbols.json，並保留本地持倉幣種。
 
@@ -120,7 +92,7 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 8    # 核心池固定選出幣數（原本12，精選減少監控幣種數量）
+RADAR_SELECT_COUNT = 10    # 核心池固定選出幣數（根據使用者要求改為 10 幣）
 HOT_MOVERS_COUNT   = 0    # 不再額外加入熱門動能幣，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
 
@@ -144,12 +116,12 @@ HOT_MOVER_PROFILE_BASE = {
     "volume_threshold_factor": 1.2,
 }
 
-# 雷達掃描冷卻：把背景掃描拉慢，避免把 Binance 權重打滿
+# 雷達掃描冷卻
 last_radar_scan = 0
-RADAR_SCAN_COOLDOWN = 45.0
+RADAR_SCAN_COOLDOWN = 10.0
 radar_lock = threading.Lock()
 last_api_call = 0
-API_RATE_LIMIT = 3.0
+API_RATE_LIMIT = 1.0
 
 # 換倉重啟冷卻：5 分鐘內不重複重啟（避免雷達頻繁觸發）
 last_bot_restart = 0.0
