@@ -699,13 +699,15 @@ async def check_entries():
             if not has_pos:
                 logger.info(f"🛒 [ENTRY_DISPATCH] {sym} 將進入 execute_order | side={side} route={route} strength={strength:.2f} allocation={allocation_pct:.3f}")
 
-            async def _entry_task(sym, side, price, alloc_pct):
+            async def _entry_task(sym, side, price, alloc_pct, signal_strength, entry_route):
                 try:
-                    await execute_order(sym, side, price, alloc_pct)
+                    await execute_order(sym, side, price, alloc_pct,
+                                         signal_strength=signal_strength,
+                                         entry_route=entry_route)
                 finally:
                     ctx.STATES[sym]["is_ordering"] = False
 
-            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct))
+            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct, strength, route))
 
         s["pending_side"] = None
         s["pending_confirm_high"] = 0

@@ -561,9 +561,29 @@ async def check_paper_pending_order(sym):
         return
 
 
-async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False):
+def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None):
+    if not entry_mode or entry_mode == "auto":
+        if entry_route == "Automatic_Reverse":
+            return "market" if signal_strength is None or signal_strength >= ENTRY_ORDER_MODE_AUTO_STRONG else "chase"
+        if signal_strength is None:
+            return "pullback"
+        if signal_strength >= ENTRY_ORDER_MODE_AUTO_MARKET:
+            return "market"
+        if signal_strength >= ENTRY_ORDER_MODE_AUTO_STRONG:
+            return "chase"
+        return "pullback"
+    return entry_mode
+
+
+async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
+                        signal_strength=None, entry_route=None, entry_mode_override=None, **kwargs):
     import numpy as np  # 強制防禦局部變量失效漏洞
     s = ctx.STATES[sym]
+    entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
+    actual_entry_mode = _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
+
+    if signal_strength is not None or entry_route is not None:
+        logger.info(f"🧩 [ORDER_CONTEXT] {sym} signal_strength={signal_strength} entry_route={entry_route}")
 
     # ─── 新增：分批入場策略 (Staged Entry) ───
     # 初次進場用 60% 分配，後續加倉用 100%
@@ -737,16 +757,16 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         try:
             # market_price 已在上方用 mark price / 委託簿中位數取得，比 OHLCV 收盤價更貼近牌價
             current_market_price = market_price if market_price > 0 else s.get("close_price", price)
-            if ENTRY_ORDER_MODE == 'market':
+            if actual_entry_mode == 'market':
                 _fill_paper_order(sym, current_market_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper市價成交] {sym} {side} {base_amt:.4f} @ {current_market_price:.6f}")
                 return
-            elif ENTRY_ORDER_MODE == 'chase':
+            elif actual_entry_mode == 'chase':
                 fill_price = current_market_price * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else current_market_price * (1 - ENTRY_CHASE_OFFSET_PCT)
                 _fill_paper_order(sym, fill_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper追價成交] {sym} {side} {base_amt:.4f} @ {fill_price:.6f}")
                 return
-            elif ENTRY_ORDER_MODE == 'pullback':
+            elif actual_entry_mode == 'pullback':
                 atr = s.get("current_atr", 0.0)
                 if atr <= 0:
                     atr = current_market_price * 0.015
@@ -805,11 +825,11 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 prec = await get_contract_precision(sym)
                 tick_size = prec['tick_size']
 
-                if ENTRY_ORDER_MODE == 'market':
+                if actual_entry_mode == 'market':
                     order_type = 'market'
                     limit_price = None
                     logger.info(f"📌 [市價下單] {sym} 執行市價進場")
-                elif ENTRY_ORDER_MODE == 'chase':
+                elif actual_entry_mode == 'chase':
                     limit_price = ask1 if side == 'buy' else bid1
                     if side == 'buy':
                         limit_price = limit_price * (1 + ENTRY_CHASE_OFFSET_PCT)
@@ -829,7 +849,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                             limit_price = max(limit_price, s["avg_price"])
                     limit_price = round_step(limit_price, tick_size)
                     logger.info(f"📌 [追價掛單] {sym} 掛對手價 {limit_price:.6f} 確保成交")
-                elif ENTRY_ORDER_MODE == 'pullback':
+                elif actual_entry_mode == 'pullback':
                     atr = s.get("current_atr", 0.0)
                     if atr <= 0:
                         atr = price * 0.015
@@ -861,12 +881,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             except Exception as e:
                 logger.info(f"⚠️ [計算掛單價失敗] 降級使用信號價: {e}")
                 limit_price = price
-                if ENTRY_ORDER_MODE == 'market':
+                if actual_entry_mode == 'market':
                     order_type = 'market'
                     limit_price = None
 
             params = {'marginMode': 'isolated', 'timeInForce': 'GTC'}
-            if ENTRY_ORDER_MODE == 'chase':
+            if actual_entry_mode == 'chase':
                 params['timeInForce'] = 'IOC'
             if order_type == 'market':
                 params.pop('timeInForce', None)
@@ -908,7 +928,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                 fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
                 logger.info(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
-            elif ENTRY_ORDER_MODE == 'chase':
+            elif actual_entry_mode == 'chase':
                 # 原本這裡不管成交多少（包含完全沒成交），都直接放棄剩餘數量，
                 # 只留下「由逾期止單機制接管」這句話，但實際上從來沒有其他地方
                 # 真的去監控/處理 ctx.PENDING_LIMIT_ORDERS，等於剩餘部位就這樣
