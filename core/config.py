@@ -251,4 +251,7 @@ def get_entry_strictness_profile(mode=None):
 
 # 是否啟用 BTC 大盤過濾鎖定小幣開倉（True=啟用鎖定，False=小幣走自己獨立行情）
 USE_BTC_MACRO_FILTER = False
+# 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
+# 預設 3 批次 → 若有 18 顆幣種，每批 6 顆，降低每輪請求壓力
+MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '3'))
 

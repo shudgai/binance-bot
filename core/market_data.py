@@ -136,14 +136,36 @@ async def fetch_all_klines(exchange):
             return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
 
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    tasks = {sym: fetch_with_sem(sym) for sym in symbols}
+    # 分批/輪替抓取：每輪只抓取一批，降低瞬時 API 請求量
+    from core.config import MARKET_FETCH_BATCHES
+    total = len(symbols)
+    if total == 0:
+        return
+    batches = max(1, int(MARKET_FETCH_BATCHES))
+    batch_size = (total + batches - 1) // batches
+    idx = getattr(ctx, 'market_fetch_index', 0) if hasattr(ctx, 'market_fetch_index') else 0
+    start = idx * batch_size
+    end = min(total, start + batch_size)
+    batch = symbols[start:end]
+    if not batch:
+        # reset index if out of range
+        idx = 0
+        start = 0
+        end = min(total, batch_size)
+        batch = symbols[start:end]
+
+    tasks = {sym: fetch_with_sem(sym) for sym in batch}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    for i, sym in enumerate(symbols):
+    for i, sym in enumerate(batch):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["ohlcv"] = results[i]
             ctx.STATES[sym]["close_price"] = results[i][-1][4]
         else:
             logger.info(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
+
+    # 保存下一輪要抓的批次索引
+    idx = (idx + 1) % batches
+    setattr(ctx, 'market_fetch_index', idx)
 
 
 async def fetch_sma200_15m(exchange, sym):
