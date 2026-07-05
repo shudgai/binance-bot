@@ -362,20 +362,32 @@ def get_all_prices():
         raise e
 
 
+_account_balance_cache = (0, None)
+
 def get_account_balance_usdt() -> float | None:
     """即時查詢合約帳戶 USDT 餘額，給 API 進程自己直接查，不依賴 main.py 進程內快取的 REAL_BALANCE
     （main.py 和 API 是兩個獨立進程，各自的模組全域變數互不相通）。"""
+    global _account_balance_cache
+    now = time.time()
+    if now - _account_balance_cache[0] < 5:  # 快取 5 秒，避免頻繁查詢合約餘額
+        return _account_balance_cache[1]
     if _binance_banned():
         return None
     try:
+        val = None
         for b in client.futures_account_balance():
             if b.get("asset") == "USDT":
-                return float(b.get("balance", 0.0))
+                val = float(b.get("balance", 0.0))
+                break
+        _account_balance_cache = (now, val)
+        return val
     except Exception as e:
         _note_binance_ban(e)
         print(f"[BalanceFetch] 讀取合約餘額失敗: {e}")
     return None
 
+
+_total_pnl_cache = (0, 0.0)
 
 def get_total_realized_pnl_usdt() -> float:
     """加總帳戶累計已實現損益（含手續費），對應紙上交易那邊「total_realized_pnl」的概念，
@@ -386,6 +398,11 @@ def get_total_realized_pnl_usdt() -> float:
     資料不同步的問題，不是查詢方式錯了。改成優先用 futures_account_trades()（透過
     get_trades）加總每筆平倉的 realizedPnl 減去手續費，這個端點比較可靠。income_history
     若有資金費率（FUNDING_FEE，account_trades 查不到這個）資料，一併加總避免漏算。"""
+    global _total_pnl_cache
+    now = time.time()
+    if now - _total_pnl_cache[0] < 15:  # 快取 15 秒，避免頻繁向幣安查詢大容量歷史紀錄
+        return _total_pnl_cache[1]
+
     total = 0.0
     try:
         trades = get_trades("ALL")
@@ -403,6 +420,7 @@ def get_total_realized_pnl_usdt() -> float:
                 total += float(r.get("income", 0.0) or 0.0)
     except Exception:
         pass
+    _total_pnl_cache = (now, total)
     return total
 
 
@@ -747,11 +765,18 @@ def market_sell(symbol: str, base_asset: str):
         )
     return order
 
+_all_positions_cache = (0, {})
+
 def get_all_positions():
     # 前端 allPositions 是用「symbol -> 持倉」的物件（跟紙上交易 get_paper_positions() 一樣），
     # 用 `for (let sym in data)` 取 key 直接當幣種名稱。這裡原本回傳陣列，前端迴圈會拿到
     # 「0」「1」這種索引當 key，導致 getPositionInfo() 永遠對不到持倉，交易列表判斷不出
     # 現價、未實現損益。改成回傳用冒號格式符號（跟 get_trades() 一致）當 key 的字典。
+    global _all_positions_cache
+    now = time.time()
+    if now - _all_positions_cache[0] < 3:  # 快取 3 秒，避免網頁輪詢重複打爆幣安
+        return _all_positions_cache[1]
+
     if _binance_banned():
         return {}
     try:
@@ -771,7 +796,7 @@ def get_all_positions():
             pnl_percent = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0.0
             # 原始持倉資料沒有直接的 leverage 欄位，但可以用 notional/initialMargin 反推
             # 出真實槓桿（名目倉位大小 ÷ 實際佔用保證金）。前端算「槓桿後損益%」原本沒有
-            # 真實槓桿可用時會 fallback 到寫死的 20 倍，跟這個幣種實際設定的 2~5 倍差很多，
+            # 真實槓桿可用時會 fallback 到寫死的 20 倍，跟這個幣種實際設定 of 2~5 倍差很多，
             # 導致百分比顯示被放大成不合理的數字（例如 -4.89% 顯示成 -97.78%）。
             initial_margin = float(pos.get('initialMargin', 0) or 0)
             leverage = round(abs(float(pos.get('notional', 0) or 0)) / initial_margin) if initial_margin > 0 else 0
@@ -790,4 +815,5 @@ def get_all_positions():
                 "pnl_percent": pnl_percent,
                 "realized_pnl": 0
             }
+    _all_positions_cache = (now, result)
     return result
