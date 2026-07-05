@@ -178,23 +178,25 @@ def get_bot_status():
         bot_status["trade_amount"] = max(bot_status["balance_quote"], 10.0)
     else:
         try:
+            from services.binance_service import get_total_realized_pnl_usdt
+            bot_status["total_realized_pnl"] = get_total_realized_pnl_usdt()
+        except Exception:
+            bot_status["total_realized_pnl"] = 0.0
+        try:
             # 用 API 進程自己直接查詢，不依賴 core.balance.REAL_BALANCE
             # （那是 main.py 進程內的模組全域變數，API 是另一個進程看不到它的更新）。
             from services.binance_service import get_account_balance_usdt
             from core.config import LIVE_CAPITAL_CAP
             real_balance = get_account_balance_usdt()
             if real_balance is not None and real_balance > 0:
-                bot_status["balance_quote"] = min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance
+                pnl = bot_status.get("total_realized_pnl", 0.0)
+                display_balance = real_balance + pnl
+                bot_status["balance_quote"] = min(display_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else display_balance
                 bot_status["trade_amount"] = max(bot_status["balance_quote"], 10.0)
             else:
                 print(f"[BotStatus] 取得實盤餘額失敗或回傳無效值，保留先前餘額 {bot_status.get('balance_quote', 0)}")
         except Exception:
             pass
-        try:
-            from services.binance_service import get_total_realized_pnl_usdt
-            bot_status["total_realized_pnl"] = get_total_realized_pnl_usdt()
-        except Exception:
-            bot_status["total_realized_pnl"] = 0.0
 
     # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
     try:
