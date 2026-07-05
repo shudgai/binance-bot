@@ -1183,6 +1183,19 @@ async def check_exits(sym):
             return
         if profit_pct < 0 and await _attempt_forced_rescue(sym, s, is_long, p):
             return
+
+        # 遵照用戶指示：所有虧損交易皆不主動停損，放任持有等待利潤回來。
+        # 除非是：
+        # 1. 達到災難性清算防護閾值（-6.0%，防止爆倉強平）
+        # 2. 或是損益為正/打平的保本平倉 (sl == avg)
+        _is_catastrophic = (profit_pct <= -0.060)
+        _is_breakeven = (sl == avg)
+        if not _is_catastrophic and not _is_breakeven:
+            if time.time() - s.get("last_sl_warn_time", 0) > 300:
+                logger.info(f"🛡️ [虧損持有中] {sym} 觸發一般停損線 ({profit_pct*100:.2f}%)，已依指示跳過停損，繼續持倉等待利潤回升...")
+                s["last_sl_warn_time"] = time.time()
+            return
+
         cs = 'sell' if is_long else 'buy'
         sl_pct = abs(sl - avg) / avg * 100
         reason_str = "[Breakeven_Stop]" if sl == avg else "[Trend_Follow]"
@@ -1191,7 +1204,7 @@ async def check_exits(sym):
         # 用來讓反手驗證知道要不要放寬動能確認（見下方 pending_reverse_after_rescue）。
         _was_rescued = s.get("entry_count", 0) >= 2
         # 出場價鎖定在 SL 觸發價：紙上交易的 tick 可能已經跳過 sl 好幾檔，
-        # 若直接用當下價格 p 成交，會比原本設定的 SL 價位還差（甚至把鎖利誤結算成虧損）。
+        # 若直接用當下價格 p 成交，會比原本設定 of SL 價位還差（甚至把鎖利誤結算成虧損）。
         exit_price = max(p, sl) if is_long else min(p, sl)
         await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason=reason_str, is_stop_loss=True)
         if abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]" and _check_reversal_allowed(sym, s):
