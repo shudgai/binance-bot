@@ -330,45 +330,40 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
     btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
-    bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR")
-    if bear_defense_mode and side == 'buy':
-        current_rsi_macro = s.get("current_rsi", 50.0)
-        divergence_confirmed = (s.get("divergence", "none") == "bullish")
-        extreme_oversold    = (current_rsi_macro < 32.0)
-        ultra_strong        = (strength >= 24.0)  # 幣種自身訊號極強，走自己的行情
-        if not extreme_oversold and not divergence_confirmed and not ultra_strong:
-            logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"
-                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < 24)")
-            return False
-        if ultra_strong:
-            reason = f"幣種極強訊號 {strength:.1f} ≥ 24，走自己行情"
-        elif extreme_oversold:
-            reason = "極端超賣"
-        else:
-            reason = "底背離確認"
-        logger.info(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
-    # 熊市防禦模式下，做空方向完全放行（不封鎖）
+    if USE_BTC_MACRO_FILTER:
+        bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR")
+        if bear_defense_mode and side == 'buy':
+            current_rsi_macro = s.get("current_rsi", 50.0)
+            divergence_confirmed = (s.get("divergence", "none") == "bullish")
+            extreme_oversold    = (current_rsi_macro < 32.0)
+            ultra_strong        = (strength >= 24.0)  # 幣種自身訊號極強，走自己的行情
+            if not extreme_oversold and not divergence_confirmed and not ultra_strong:
+                logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"
+                      f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < 24)")
+                return False
+            if ultra_strong:
+                reason = f"幣種極強訊號 {strength:.1f} ≥ 24，走自己行情"
+            elif extreme_oversold:
+                reason = "極端超賣"
+            else:
+                reason = "底背離確認"
+            logger.info(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
 
-    # =========================================================================
-    # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
-    # BTC 4H 多頭 → 封鎖所有做空訊號（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
-    # 豁免：RSI > 73 極端超買 / Exhaustion 路由且 RSI > 70
-    # 曾經放寬過一個「強度夠高、RSI 50~65 中段區間」也放行空單的分支，數據回測發現
-    # 空單勝率因此明顯拖累整體表現（62.5% vs 多單 78.4%，空單平均還是淨虧損），因為
-    # BTC 持續 4H 多頭時，中段 RSI 的逆勢空單經常被主趨勢碾過去。移除該分支，只保留
-    # RSI 真的極端超買時才豁免，其餘情況維持封鎖。
-    # =========================================================================
-    bull_defense_mode = (btc_4h == "BULL")
-    if bull_defense_mode and side == 'sell':
-        current_rsi_macro = s.get("current_rsi", 50.0)
-        is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-        if current_rsi_macro > 73.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
-        elif is_reversal_route and current_rsi_macro > 70.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
-        else:
-            logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
-            return False
+        # =========================================================================
+        # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
+        # BTC 4H 多頭 → 封鎖所有做空訊號
+        # =========================================================================
+        bull_defense_mode = (btc_4h == "BULL")
+        if bull_defense_mode and side == 'sell':
+            current_rsi_macro = s.get("current_rsi", 50.0)
+            is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
+            if current_rsi_macro > 73.0:
+                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
+            elif is_reversal_route and current_rsi_macro > 70.0:
+                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
+            else:
+                logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
+                return False
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
