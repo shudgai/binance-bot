@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import traceback
+import random
 
 import ccxt
 import requests
@@ -224,6 +225,14 @@ async def main_loop(exchange):
     await fetch_all_ema50_1h(exchange_market_data)
     await fetch_all_ema_15m(exchange_market_data)
 
+    # 啟動時加入小幅隨機抖動，避免多實例同時向交易所發送大量請求（減少權重衝突）
+    try:
+        _startup_jitter = random.uniform(0, min(5, MAIN_LOOP_INTERVAL_SEC))
+        logger.info(f"⏱️ [Startup jitter] 等待 {_startup_jitter:.2f}s 以錯開請求時序")
+        await asyncio.sleep(_startup_jitter)
+    except Exception:
+        pass
+
     last_balance_update = time.time()
 
     while True:
@@ -325,6 +334,9 @@ async def main_loop(exchange):
 
             elapsed = time.time() - loop_start
             sleep_time = max(1.5, MAIN_LOOP_INTERVAL_SEC - elapsed) + weight_sleep
+            # 每輪加入少量隨機抖動，避免恆定節奏導致兩實例同步請求
+            sleep_time += random.uniform(0, 0.5)
+            logger.debug(f"⏱️ [Loop sleep] base={MAIN_LOOP_INTERVAL_SEC - elapsed:.2f}s weight_sleep={weight_sleep:.2f}s jitter_added={sleep_time:.2f}s")
 
             # ── 持倉間歇快速出場檢查 ──
             # 主迴圈 25s 一輪，但 1-秒內的利潤高點根本看不到

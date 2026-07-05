@@ -10,7 +10,8 @@ from core import ctx
 from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
-    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT)
+    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
+    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET)
 from core.exchange_client import exchange_futures, exchange_market_data, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
@@ -273,6 +274,26 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
                 final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
         except Exception as e:
             logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
+            # 交易所逾時（如 -1007 Send status unknown）代表這筆單子到底有沒有真的
+            # 送出去執行，幣安自己也不確定——如果直接當作「沒關成功」放棄，下一輪
+            # 出場條件又會重新觸發，對同一個部位再送一次平倉單。如果剛剛那筆逾時的
+            # 單其實有成交、只是回應遺失，就會變成重複平倉/多送委託。這裡改成先
+            # 主動跟交易所核對一次真實持倉，是不是其實已經關掉了，再決定要不要
+            # 讓下一輪繼續重試。
+            try:
+                ccxt_sym = convert_to_ccxt_symbol(sym)
+                positions = await exchange_futures.fetch_positions([ccxt_sym])
+                real_qty = 0.0
+                for pos in positions:
+                    raw_amt = pos.get('info', {}).get('positionAmt')
+                    real_qty = float(raw_amt) if raw_amt is not None else float(pos.get('contracts', 0.0) or 0.0)
+                if abs(real_qty) < 0.000001:
+                    logger.info(f"✅ [平倉核對] {sym} 逾時後核對交易所，實際已無持倉，判定平倉其實已成功，同步本地狀態。")
+                    s["qty"] = 0.0
+                else:
+                    logger.info(f"ℹ️ [平倉核對] {sym} 逾時後核對交易所，實際仍持有 {real_qty}，確認平倉未成功，留待下一輪再試。")
+            except Exception as ce:
+                logger.info(f"⚠️ [平倉核對失敗] {sym}: {ce}")
             return
 
     # 用真實成交價（實盤）或模擬價（紙上）重新計算最終獲利，取代呼叫端傳入的理論價格
@@ -576,15 +597,12 @@ def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None
 
 
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
-                        signal_strength=None, entry_route=None, entry_mode_override=None, **kwargs):
+                        signal_strength=None, entry_route=None, entry_mode_override=None):
     import numpy as np  # 強制防禦局部變量失效漏洞
     s = ctx.STATES[sym]
     entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
     actual_entry_mode = _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
-
-    if signal_strength is not None or entry_route is not None:
-        logger.info(f"🧩 [ORDER_CONTEXT] {sym} signal_strength={signal_strength} entry_route={entry_route}")
-
+    
     # ─── 新增：分批入場策略 (Staged Entry) ───
     # 初次進場用 60% 分配，後續加倉用 100%
     is_first_entry = (s.get("entry_count", 0) == 0)
@@ -665,7 +683,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         return
 
     try:
-        market_price = await get_reference_price(sym, exchange_futures)
+        market_price = await get_reference_price(sym, exchange_market_data)
     except Exception as e:
         market_price = 0.0
         logger.info(f"⚠️ [價格偏離檢查] {sym} 取得參考價失敗: {e}")
@@ -677,11 +695,18 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     if market_price > 0:
         deviation = abs(price - market_price) / market_price
         if deviation > 0.05:
-            logger.info(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
-            logger.info(f"🧱 [ORDER_BLOCK] {sym} 被價格偏離風控攔截，未進入下單")
-            # 順帶修正被污染的 close_price，避免後續繼續使用錯誤值
-            s["close_price"] = market_price
-            return
+            # 在 paper 模式下允許較寬鬆的測試流程：自動將進場價格調整為市場參考價，繼續執行
+            # 僅在 paper 模式且管理允許時自動修正價格；實盤仍維持攔截
+            from core.config import PAPER_ALLOW_PRICE_FIX
+            if PAPER_TRADING and PAPER_ALLOW_PRICE_FIX:
+                logger.info(f"⚠️ [PriceDeviation-PaperMode] {sym} 訂單價格 {price:.6f} 偏離市場參考價 {market_price:.6f} ({deviation*100:.2f}%)，paper 模式下自動修正為參考價並繼續下單")
+                price = market_price
+            else:
+                logger.info(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
+                logger.info(f"🧱 [ORDER_BLOCK] {sym} 被價格偏離風控攔截，未進入下單")
+                # 順帶修正被污染的 close_price，避免後續繼續使用錯誤值
+                s["close_price"] = market_price
+                return
     else:
         # 完全無法取得市場價格，保守拒絕
         logger.info(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
@@ -757,6 +782,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         try:
             # market_price 已在上方用 mark price / 委託簿中位數取得，比 OHLCV 收盤價更貼近牌價
             current_market_price = market_price if market_price > 0 else s.get("close_price", price)
+            logger.info(f"🧭 [EntryMode] {sym} 選擇 paper 進場模式: {actual_entry_mode}")
             if actual_entry_mode == 'market':
                 _fill_paper_order(sym, current_market_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper市價成交] {sym} {side} {base_amt:.4f} @ {current_market_price:.6f}")

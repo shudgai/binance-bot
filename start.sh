@@ -1,7 +1,24 @@
 #!/bin/bash
 # start.sh — Launch bot + API server
-BIN=/home/shudgai999/project/binance-bot-live/venv/bin
-CONFIG_FILE=/home/shudgai999/project/binance-bot-live/.entry_mode
+
+# Always run from project root so dotenv resolves the expected .env.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Load environment variables deterministically regardless of caller shell.
+if [ -f ".env" ]; then
+  set -a
+  . "./.env"
+  set +a
+fi
+
+if [ -x "$SCRIPT_DIR/.venv/bin/uvicorn" ]; then
+  BIN="$SCRIPT_DIR/.venv/bin"
+else
+  BIN="$SCRIPT_DIR/venv/bin"
+fi
+
+CONFIG_FILE="$SCRIPT_DIR/.entry_mode"
 
 ENTRY_MODE="${ENTRY_STRICTNESS_MODE:-relaxed}"
 if [ -f "$CONFIG_FILE" ]; then

@@ -4,10 +4,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-PAPER_TRADING = False  # 8006 測試網驗證真實下單流程用（USE_TESTNET=true，成交的是幣安測試網模擬資金，不是真錢）
-# Demo Trading 帳戶實際有 5000 USDT，但測試階段只想用 150 當本金算倉位大小，
-# 避免部位算得比紙上交易（150本金）大很多、失去對照意義。
-LIVE_CAPITAL_CAP = 150.0
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+PAPER_TRADING = not BINANCE_API_KEY or BINANCE_API_KEY == "your_api_key_here"
+# 是否允許在 paper 模式下自動將過大偏離的進場價格修正為市場參考價以便測試
+PAPER_ALLOW_PRICE_FIX = os.getenv("PAPER_ALLOW_PRICE_FIX", "True").lower() in ("true", "1", "yes")
+# Demo Trading 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算（僅在非紙上交易時生效）。
+# 設為 0 或留空則不再限制真實交易帳戶的資金上限。
+LIVE_CAPITAL_CAP = float(os.getenv("LIVE_CAPITAL_CAP", "150.0"))
 TIMEFRAME = '5m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 6
@@ -75,9 +79,7 @@ LEVERAGE_TIERS = {
 }
 
 def get_symbol_leverage(sym):
-    conf = COIN_PROFILE_CONFIG.get(sym, {})
-    if "leverage" in conf:
-        return int(conf["leverage"])
+    # Keep leverage fixed globally for parity between multi-instance runs.
     return DEFAULT_LEVERAGE
 
 RSI_PERIOD = 9
@@ -173,7 +175,7 @@ SYMBOL_REVERSAL_SETTINGS = {
     },
 }
 
-MAX_POSITIONS = 3
+MAX_POSITIONS = 5
 COOLDOWN_SEC = 900
 
 DAILY_LOSS_LIMIT_PCT = 0.10
@@ -186,6 +188,7 @@ MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 3.0
 HARD_STOP_LOSS_PCT = 0.025
+EXIT_RR_MULTIPLIER = 1.6
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.004
 PROTECTED_PROFIT_FLOOR   = 0.0025
@@ -197,10 +200,12 @@ PRICE_MOVEMENT_THRESHOLD  = 0.0015
 TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 
-# 進場掛單模式配置：'market' (市價), 'passive' (被動掛買一賣一), 'pullback' (回踩掛單), 'chase' (對手價追價)
-ENTRY_ORDER_MODE = "chase"
-ENTRY_PULLBACK_ATR_MULT = 0.12
-ENTRY_CHASE_OFFSET_PCT = 0.0005
+# 全域調整：進場方式改為自動模式，根據訊號強度選擇 pullback/chase/market
+ENTRY_ORDER_MODE = os.getenv("ENTRY_ORDER_MODE", "auto").lower()
+ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.22))
+ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0003))
+ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 22.0))
+ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 35.0))
 
 ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "relaxed").lower()
 ENTRY_STRICTNESS_PROFILES = {
@@ -246,4 +251,11 @@ def get_entry_strictness_profile(mode=None):
 
 # 是否啟用 BTC 大盤過濾鎖定小幣開倉（True=啟用鎖定，False=小幣走自己獨立行情）
 USE_BTC_MACRO_FILTER = False
+# 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
+# 預設 3 批次 → 若有 18 顆幣種，每批 6 顆，降低每輪請求壓力
+MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '4'))
+# 控制同時對交易所發出的併發請求數（Semaphore 大小），預設降為 2
+REQUEST_SEMAPHORE_SIZE = int(os.getenv('REQUEST_SEMAPHORE_SIZE', '2'))
+# 若需要在同一輪中對批次之間加延遲，可調整此參數（秒）
+KLINE_BATCH_PAUSE_SEC = float(os.getenv('KLINE_BATCH_PAUSE_SEC', '0.0'))
 

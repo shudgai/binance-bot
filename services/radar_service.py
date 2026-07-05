@@ -9,9 +9,39 @@ from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 
+
+def _resolve_follow_symbols_from(base_dir: str | None = None) -> str:
+    """Resolve the shared symbol source path for strategy sync between deployments.
+
+    Priority:
+    1. Explicit FOLLOW_SYMBOLS_FROM environment variable.
+    2. Shared sibling deployment at ../binance-bot/data/bot_symbols.json.
+    3. Current deployment's local data/bot_symbols.json.
+    """
+    configured = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
+    if configured:
+        return configured
+
+    repo_root = os.path.abspath(base_dir or os.path.dirname(os.path.dirname(__file__)))
+    parent_dir = os.path.dirname(repo_root)
+    candidates = [
+        os.path.join(parent_dir, "binance-bot", "data", "bot_symbols.json"),
+        os.path.join(parent_dir, "binance-bot-live", "data", "bot_symbols.json"),
+        os.path.join(repo_root, "data", "bot_symbols.json"),
+    ]
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
 # 若設定此環境變數（指向另一份部署的 bot_symbols.json 絕對路徑），本部署不再自己跑 ATR 雷達
 # 掃描，而是直接跟隨來源部署選出的幣種清單，用來讓 8006 長期跟隨 8005 的幣池。
-FOLLOW_SYMBOLS_FROM = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
+# 若未明確指定，則會自動從相鄰部署的 bot_symbols.json 讀取，保留各自帳務但同步策略幣池。
+FOLLOW_SYMBOLS_FROM = _resolve_follow_symbols_from()
+# 若在 8006 部署中設定此變數，則會跟隨來源部署的 bot_symbols.json，不自行跑 ATR 雷達掃描。
+# 來源清單會寫入本地 bot_symbols.json，並保留本地持倉幣種。
 
 
 def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:
@@ -91,11 +121,11 @@ def _save_radar_profiles(profiles: dict):
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
 RADAR_SELECT_COUNT = 8    # 核心池固定選出幣數（原本12，精選減少監控幣種數量）
-HOT_MOVERS_COUNT   = 2    # 額外加入的熱門動能幣（最多）——上限跟核心池加總為10個
+HOT_MOVERS_COUNT   = 0    # 不再額外加入熱門動能幣，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
 
 # 排除急升/急跌的每日變動閾值（百分比）——若絕對變動超過此值，會從 ATR 掃描候選中剔除
-MAX_DAILY_MOVE_PCT = 30.0
+MAX_DAILY_MOVE_PCT = 18.0
 
 # 熱門幣保守 profile（只走有強訊號的機會）
 HOT_MOVER_PROFILE_BASE = {
@@ -114,12 +144,12 @@ HOT_MOVER_PROFILE_BASE = {
     "volume_threshold_factor": 1.2,
 }
 
-# 雷達掃描冷卻
+# 雷達掃描冷卻：把背景掃描拉慢，避免把 Binance 權重打滿
 last_radar_scan = 0
-RADAR_SCAN_COOLDOWN = 10.0
+RADAR_SCAN_COOLDOWN = 45.0
 radar_lock = threading.Lock()
 last_api_call = 0
-API_RATE_LIMIT = 1.0
+API_RATE_LIMIT = 3.0
 
 # 換倉重啟冷卻：5 分鐘內不重複重啟（避免雷達頻繁觸發）
 last_bot_restart = 0.0
@@ -273,6 +303,7 @@ def auto_radar_switch(force_start=False):
         return get_bot_status().get("active_symbols", [])
     try:
         if FOLLOW_SYMBOLS_FROM:
+            add_system_log(f"🔗 [跟隨幣池] FOLLOW_SYMBOLS_FROM={FOLLOW_SYMBOLS_FROM}，本部署將跟隨來源幣種清單", "info")
             return _follow_source_radar_switch(force_start=force_start)
 
         add_system_log(f"📡 [雷達掃描] 核心 {RADAR_SELECT_COUNT} 幣固定 + 熱門動能最多 {HOT_MOVERS_COUNT} 幣加碼...", "warning")
@@ -357,11 +388,9 @@ def auto_radar_switch(force_start=False):
         for line in analysis_lines:
             add_system_log(f"   ↳ {line}", "info")
 
-        # 合併最終幣列（持倉保護 + 核心 + 熱門，不超上限）
-        new_hot = [s for s in hot_symbols if s not in all_preserved + top_symbols]
-        final_symbols = all_preserved + top_symbols + new_hot
-        if len(final_symbols) > RADAR_SELECT_COUNT + 2:
-            final_symbols = final_symbols[:RADAR_SELECT_COUNT + 2]
+        # 合併最終幣列：持倉保護 + 核心 ATR 8 檔
+        core_limit = max(0, RADAR_SELECT_COUNT - len(all_preserved))
+        final_symbols = all_preserved + top_symbols[:core_limit]
 
         # 排序讓比較不受順序影響
         if sorted(final_symbols) == sorted(current_syms):
@@ -370,11 +399,13 @@ def auto_radar_switch(force_start=False):
                 start_bot(final_symbols, bot_status.get("trade_amount", 150.0))
             return final_symbols
 
+        active_core = top_symbols[:core_limit]
         hot_str = f" + 熱門 {', '.join(hot_symbols)}" if hot_symbols else ""
-        add_system_log(f"🎯 [雷達鎖定] 核心 {', '.join(top_symbols)}{hot_str}", "success")
+        add_system_log(f"🎯 [雷達鎖定] 核心 {', '.join(active_core)}{hot_str}", "success")
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(all_preserved)}", "warning")
         bot_status["active_symbols"] = final_symbols
+        save_symbol_config(final_symbols)
 
         # 換倉冷卻：5 分鐘內不重複重啟，避免雷達頻繁換倉
         global last_bot_restart
@@ -398,29 +429,47 @@ def auto_radar_switch(force_start=False):
     finally:
         radar_lock.release()
 
+
+def _find_atr_replacement(current_syms):
+    try:
+        clean_blacklist()
+        ignore_list = list(set(current_syms) | set(BLACKLIST.keys()))
+        scan_pool = get_atr_scan_universe(ignore_list=ignore_list, max_change_pct=MAX_DAILY_MOVE_PCT)
+        if not scan_pool:
+            scan_pool = [s for s in CORE_SYMBOLS if s not in ignore_list]
+        replacement_candidates, _ = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT + 5)
+        for sym in replacement_candidates:
+            if sym not in current_syms:
+                return sym
+    except Exception as e:
+        add_system_log(f"⚠️ [補位] ATR 補幣失敗: {e}", "warning")
+    return None
+
+
 def replace_dead_coin(symbol: str):
     try:
         bot_status = get_bot_status()
         current_syms = bot_status.get("active_symbols", [])
         if symbol in current_syms:
             current_syms.remove(symbol)
-            
+
         add_system_log(f"💀 [死水汰換] 剔除無波動死水幣 {symbol}，尋找替補...", "warning")
-        
-        # 抓取前 15 名來尋找替補
-        clean_blacklist()
-        ignore_list = list(BLACKLIST.keys())
-        top_15 = get_top_volume_altcoins(15, ignore_list=ignore_list)
-        new_coin = None
-        for coin in top_15:
-            if coin not in current_syms:
-                new_coin = coin
-                break
-                
+
+        new_coin = _find_atr_replacement(current_syms)
+        if not new_coin:
+            clean_blacklist()
+            ignore_list = list(set(current_syms) | set(BLACKLIST.keys()))
+            top_15 = get_top_volume_altcoins(15, ignore_list=ignore_list)
+            for coin in top_15:
+                if coin not in current_syms:
+                    new_coin = coin
+                    break
+
         if new_coin:
             current_syms.append(new_coin)
             bot_status["active_symbols"] = current_syms
-            add_system_log(f"✨ [自動補位] 成功選入候補熱門小幣: {new_coin}", "success")
+            save_symbol_config(current_syms)
+            add_system_log(f"✨ [自動補位] 成功選入候補幣種: {new_coin}", "success")
             start_bot(current_syms, bot_status.get("trade_amount", 10.0))
         else:
             add_system_log(f"⚠️ [自動補位] 找不到合適的候補小幣", "danger")

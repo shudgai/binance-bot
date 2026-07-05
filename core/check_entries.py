@@ -676,6 +676,13 @@ async def check_entries():
 
     for sym, side, strength, route in candidates:
         s = ctx.STATES[sym]
+        
+        # 🔒 平仓锁检查：防止平仓后立即再进场（竞态条件修复）
+        just_closed_lock_time = s.get("just_closed_lock", 0)
+        if just_closed_lock_time > time.time():
+            logger.info(f"🔒 [平仓锁定] {sym} 仍在平仓后冷却期({just_closed_lock_time - time.time():.0f}s)，此轮信号延迟至下次循环")
+            continue
+        
         has_pos = abs(s["qty"]) > 0.000001
 
         if not has_pos:

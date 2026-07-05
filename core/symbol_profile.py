@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 SYMBOL_EXIT_OVERRIDES = dict(_DEFAULT_SYMBOL_EXIT_OVERRIDES)
 SYMBOL_REVERSAL_SETTINGS = dict(_DEFAULT_SYMBOL_REVERSAL_SETTINGS)
 SYMBOL_PROFILES = {}
+MAX_ACTIVE_SYMBOLS = 10
 
 
 def normalize_symbol(sym):
@@ -29,7 +30,7 @@ def normalize_symbol(sym):
     return sym
 
 
-def normalize_symbol_list(symbols, max_count=20):
+def normalize_symbol_list(symbols, max_count=MAX_ACTIVE_SYMBOLS):
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:
@@ -391,16 +392,32 @@ def update_all_dynamic_personalities():
 
 
 def filter_valid_symbols(exchange, symbols):
-    from core.exchange_client import exchange_futures
-    if not exchange_futures.markets:
+    from core.exchange_client import exchange_futures, exchange_market_data
+
+    def _collect_symbol_keys(ex):
+        keys = set()
+        markets = getattr(ex, "markets", None) or {}
+        for m in markets.values():
+            mid = str(m.get("id", "")).upper().strip()
+            msym = str(m.get("symbol", "")).upper().replace("/", "").strip()
+            if mid:
+                keys.add(mid)
+            if msym:
+                keys.add(msym)
+        return keys
+
+    md_keys = _collect_symbol_keys(exchange_market_data)
+    fut_keys = _collect_symbol_keys(exchange_futures)
+
+    # 任一來源可辨識就視為有效，避免 Demo futures 市場清單較舊時把可交易幣誤刪。
+    valid_keys = md_keys | fut_keys
+    if not valid_keys:
         return list(symbols)
+
     valid = []
     for sym in symbols:
-        found = False
-        for m in exchange_futures.markets.values():
-            if m['id'] == sym or m['symbol'] == sym:
-                found = True
-                break
+        normalized = str(sym).upper().replace("/", "").strip()
+        found = normalized in valid_keys
         if found:
             valid.append(sym)
         else:
@@ -416,7 +433,7 @@ def apply_symbol_pool_change(requested_symbols):
 
     new_symbols = []
     used = set()
-    target_count = min(20, max(len(desired), len(ctx.ALL_SYMBOLS)))
+    target_count = max(MAX_ACTIVE_SYMBOLS, len(locked_symbols), len(desired))
 
     for sym in locked_symbols:
         if sym not in used:

@@ -254,6 +254,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         logger.info(f"🛑 [DISABLED_ENTRY] {sym} 已被設定為禁入場，拒絕所有進場信號")
         return False
 
+    # ── 幣種質量檢查：上沖下洗過濾已移除，急跌急升幣種不再於此層阻擋進場 ──
+
     # ── 驟跌/驟漲保護：暫停新進場（不接落下的刀子）──
     # 小幣種有時會短時間劇烈崩跌或暴衝，跟出場端「急速逆勢」用同一套 2.0倍ATR
     # 標準判斷，但這裡要判斷方向：只有「逆著進場方向」的劇烈變動才算危險
@@ -469,28 +471,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
-        current_atr = s.get("current_atr", 0.0)
-        close_tolerance_pct = 0.005
-        if close_price > 0 and current_atr > 0:
-            atr_tolerance_pct = 0.8 * current_atr / close_price
-            close_tolerance_pct = max(close_tolerance_pct, atr_tolerance_pct)
-        if side == 'buy' and not (
-            close_price > prev_close or
-            close_price > open_price or
-            close_price >= prev_close * (1.0 - close_tolerance_pct) or
-            close_price >= open_price * (1.0 - close_tolerance_pct) or
-            strength >= 20.0
-        ):
-            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} <= 前收: {prev_close:.4f} 且 <= 開盤: {open_price:.4f})，容差 {close_tolerance_pct*100:.2f}%。")
+        if side == 'buy' and not (close_price > prev_close or close_price > open_price):
+            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} <= 前收: {prev_close:.4f} 且 <= 開盤: {open_price:.4f})。")
             return False
-        elif side == 'sell' and not (
-            close_price < prev_close or
-            close_price < open_price or
-            close_price <= prev_close * (1.0 + close_tolerance_pct) or
-            close_price <= open_price * (1.0 + close_tolerance_pct) or
-            strength >= 20.0
-        ):
-            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})，容差 {close_tolerance_pct*100:.2f}%。")
+        elif side == 'sell' and not (close_price < prev_close or close_price < open_price):
+            logger.info(f"🛑 [REJECT] [Filter:Candle_Close] {sym} 收盤未確認 (當前收盤: {close_price:.4f} >= 前收: {prev_close:.4f} 且 >= 開盤: {open_price:.4f})。")
             return False
 
     # --- 趨勢斜率過濾 (Trend Slope Filter) ---
@@ -643,10 +628,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # --- [ATR 爆發閘門 (Volatility Spike Gate)] ---
     # 瞬時波動率 > 2× 歷史平均 → 市場正處於「閃崩/閃漲」狀態，SL 必然過寬，拒絕常規進場
     # 豁免：Exhaustion_Entry（耗竭反轉）與 Extreme_Reversal（極端反轉）本就在極端波動中操作
-    # 另外，對於強訊號且僅為輕微 ATR 爆發的情況，放寬一次，避免高品質訊號被過度封鎖。
+    # 另外，對於相對強訊號（≥20.0）且僅為輕微 ATR 爆發的情況，放寬一次，避免高品質訊號被過度封鎖。
+    # 原值 24.0 過於保守，導致 20+ 強度的訊號被誤判為弱訊號而拒絕（TRX 案例：strength=21被擋，但實際 profit=5.42%）
     _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
     _atr_spike_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 0.0
-    _allow_mild_atr_spike = (strength >= 20.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.5)
+    _allow_mild_atr_spike = (strength >= 20.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.3)
     if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
         if _allow_mild_atr_spike:
             logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x) ，放寬進場")
@@ -843,18 +829,25 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     logger.info(f"💚 [PASS] {sym}: 完美通過全套風控，准予開倉！(總得分: {total_score:.1f}, 基礎分: {base_score:.1f}, 加分A: {bonus_a:.1f}, 加分B: {bonus_b:.1f})")
 
-    # --- 【新增】進場方向絕對一致性檢查 (Directional Consistency / Direction_Safety) ---
+    # --- 【新增】進場方向一致性檢查 (Directional Consistency / Direction_Safety) ---
     # 確保進場方向與當前 K 線的收盤動態一致，防止在「反轉 K」上強行進場
     # 豁免：Extreme_Reversal / Exhaustion_Entry / Automatic_Reverse 本就逆勢操作，不受此限
     if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and len(s.get("ohlcv", [])) >= 2:
         prev_close_dc = s["ohlcv"][-2][4]
         current_close_dc = s.get("close_price", s["ohlcv"][-1][4])
 
-        if side == "buy" and current_close_dc < prev_close_dc and strength < 15.0:
-            logger.info(f"🛑 [Direction_Safety] {sym} 多單訊號但當前收盤 ({current_close_dc:.4f}) < 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 15.0)，拒絕進場")
+        if side == "buy" and current_close_dc < prev_close_dc and strength < 20.0:
+            logger.info(f"🛑 [Direction_Safety] {sym} 多單訊號但當前收盤 ({current_close_dc:.4f}) < 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 20.0)，拒絕進場")
             return False
-        elif side == "sell" and current_close_dc > prev_close_dc and strength < 15.0:
-            logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 15.0)，拒絕進場")
+        elif side == "sell" and current_close_dc > prev_close_dc and strength < 20.0:
+            logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 20.0)，拒絕進場")
             return False
 
+    return True
+
+
+def is_stable_ranging_candidate(sym):
+    """
+    目前已禁用上沖下洗篩選，所有幣種皆視為可進場。
+    """
     return True

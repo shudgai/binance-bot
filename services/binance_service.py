@@ -22,6 +22,15 @@ if api_key and api_key != "your_api_key_here":
 else:
     client = Client(demo=use_testnet, ping=False)
 
+# 報價/掃描一律走真實公開行情，避免 Demo Trading 價格與真實市場脫鉤。
+# 交易與帳戶查詢仍維持使用 client（可依 USE_TESTNET 走 demo 或正式）。
+market_client = client
+if use_testnet:
+    try:
+        market_client = Client(ping=False)
+    except Exception:
+        market_client = client
+
 _contract_precisions = {}
 
 def get_contract_step(symbol):
@@ -47,7 +56,7 @@ def round_step(qty, step):
     return round(round(qty / step) * step, precision)
 
 def get_price(symbol: str):
-    ticker = client.futures_symbol_ticker(symbol=symbol)
+    ticker = market_client.futures_symbol_ticker(symbol=symbol)
     return {
         "symbol": symbol,
         "price": float(ticker["price"]),
@@ -58,7 +67,7 @@ def get_price(symbol: str):
 def _get_entry_price(symbol: str, side: str):
     """選擇一個更貼近牌價的入場價格，優先使用 mark price，再回退到 order book 中位數，最後是最新成交價。"""
     try:
-        mark = client.futures_mark_price(symbol=symbol)
+        mark = market_client.futures_mark_price(symbol=symbol)
         mark_price = float(mark.get("markPrice", 0))
         if mark_price > 0:
             return mark_price
@@ -66,7 +75,7 @@ def _get_entry_price(symbol: str, side: str):
         pass
 
     try:
-        book = client.futures_order_book(symbol=symbol, limit=5)
+        book = market_client.futures_order_book(symbol=symbol, limit=5)
         if isinstance(book, dict):
             bids = book.get("bids", [])
             asks = book.get("asks", [])
@@ -82,7 +91,7 @@ def _get_entry_price(symbol: str, side: str):
     except Exception:
         pass
 
-    ticker = client.futures_symbol_ticker(symbol=symbol)
+    ticker = market_client.futures_symbol_ticker(symbol=symbol)
     price = float(ticker.get("price", 0))
     return price
 
@@ -100,7 +109,7 @@ def _get_valid_futures_symbols() -> set:
     if time.time() - _valid_futures_cache_time < 3600:
         return _valid_futures_symbols
     try:
-        info = client.futures_exchange_info()
+        info = market_client.futures_exchange_info()
         syms = {
             s["symbol"]
             for s in info.get("symbols", [])
@@ -116,7 +125,7 @@ def _get_valid_futures_symbols() -> set:
 
 
 def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
-                         max_candidates: int = 60,
+                         max_candidates: int = 24,
                          ignore_list=None,
                          max_change_pct: float = 50.0,
                          min_price: float = 0.01,
@@ -126,7 +135,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
     取代寫死的固定清單，讓 ATR 雷達能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。"""
     try:
         valid = _get_valid_futures_symbols()
-        tickers = client.futures_ticker()
+        tickers = market_client.futures_ticker()
         exclude = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT", "BTCDOMUSDT"}
         if ignore_list:
             exclude.update(ignore_list)
@@ -162,7 +171,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
         filtered = []
         for sym, q_vol in top_candidates:
             try:
-                ob = client.futures_order_book(symbol=sym, limit=5)
+                ob = market_client.futures_order_book(symbol=sym, limit=5)
                 bids = ob.get('bids', [])
                 asks = ob.get('asks', [])
                 if bids and asks:
@@ -192,12 +201,37 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
         return []
 
 
+def filter_symbols_by_daily_move(symbols: list[str], max_change_pct: float = 18.0) -> list[str]:
+    """Filter a list of symbols by 24h price change percent."""
+    if not symbols:
+        return []
+
+    try:
+        tickers = client.futures_ticker()
+        ticker_map = {t.get('symbol', ''): t for t in tickers}
+        filtered = []
+        for sym in symbols:
+            ticker = ticker_map.get(sym)
+            if not ticker:
+                continue
+            try:
+                chg = float(ticker.get('priceChangePercent', 0.0))
+            except (ValueError, TypeError):
+                continue
+            if abs(chg) <= max_change_pct:
+                filtered.append(sym)
+        return filtered
+    except Exception as e:
+        print(f"[DailyMoveFilter] 24h 變動過濾失敗: {e}")
+        return symbols
+
+
 def get_hot_movers(
     min_vol_usdt: float = 10_000_000,
     min_change_pct: float = 5.0,
     max_change_pct: float = 25.0,
     min_price: float = 0.01,
-    limit: int = 3,
+    limit: int = 2,
     ignore_list=None,
     min_orderbook_depth_usdt: float = 2_000.0,
     max_spread_pct: float = 0.003,
@@ -279,7 +313,7 @@ def get_all_prices():
     if now - _last_prices_time < 2:
         return _last_prices
     try:
-        tickers = client.futures_ticker()
+        tickers = market_client.futures_ticker()
         prices = {}
         for t in tickers:
             prices[t['symbol']] = float(t.get('lastPrice', 0))
@@ -292,13 +326,16 @@ def get_all_prices():
         raise e
 
 
-def get_account_balance_usdt() -> float:
+def get_account_balance_usdt() -> float | None:
     """即時查詢合約帳戶 USDT 餘額，給 API 進程自己直接查，不依賴 main.py 進程內快取的 REAL_BALANCE
     （main.py 和 API 是兩個獨立進程，各自的模組全域變數互不相通）。"""
-    for b in client.futures_account_balance():
-        if b.get("asset") == "USDT":
-            return float(b.get("balance", 0.0))
-    return 0.0
+    try:
+        for b in client.futures_account_balance():
+            if b.get("asset") == "USDT":
+                return float(b.get("balance", 0.0))
+    except Exception as e:
+        print(f"[BalanceFetch] 讀取合約餘額失敗: {e}")
+    return None
 
 
 def get_total_realized_pnl_usdt() -> float:

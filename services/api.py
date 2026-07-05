@@ -19,9 +19,9 @@ from typing import List
 
 from services.utils import parse_symbol, paper_key
 from services.system_log_service import get_system_logs, add_system_log, clear_system_logs
-from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols, kill_bot
+from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols, kill_bot, set_pnl_baseline, clear_pnl_baseline
 from services.binance_service import (
-    api_key, client, get_price, get_all_prices, get_position, get_trades, get_klines,
+    api_key, client, get_price, get_all_prices, get_position, get_all_positions, get_trades, get_klines,
     market_buy, market_short, market_sell
 )
 from services.paper_trade_service import (
@@ -47,8 +47,100 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+CLOSE_RETRY_LOCK = threading.Lock()
+CLOSE_RETRY_STATE = {
+    "running": False,
+    "symbols": ["ENAUSDT", "ZECUSDT"],
+    "interval_sec": 15,
+    "max_rounds": 120,
+    "rounds": 0,
+    "last_result": {},
+    "last_error": "",
+    "started_at": 0,
+}
+
+
+def _normalize_retry_symbols(symbols):
+    if not symbols:
+        return ["ENAUSDT", "ZECUSDT"]
+    normalized = []
+    for item in symbols:
+        sym = str(item).strip().upper().replace(":USDT", "USDT")
+        if not sym:
+            continue
+        if not sym.endswith("USDT"):
+            sym = f"{sym}USDT"
+        if sym not in normalized:
+            normalized.append(sym)
+    return normalized or ["ENAUSDT", "ZECUSDT"]
+
+
+def _retry_close_worker():
+    add_system_log("🔁 [平倉重試] 背景任務啟動", "warning")
+    try:
+        while True:
+            with CLOSE_RETRY_LOCK:
+                if not CLOSE_RETRY_STATE["running"]:
+                    break
+                if CLOSE_RETRY_STATE["rounds"] >= CLOSE_RETRY_STATE["max_rounds"]:
+                    CLOSE_RETRY_STATE["running"] = False
+                    CLOSE_RETRY_STATE["last_error"] = "達到最大重試次數"
+                    add_system_log("⏹️ [平倉重試] 達到最大重試次數，停止任務", "warning")
+                    break
+                CLOSE_RETRY_STATE["rounds"] += 1
+                symbols = list(CLOSE_RETRY_STATE["symbols"])
+                interval_sec = int(CLOSE_RETRY_STATE["interval_sec"])
+
+            result = {}
+            all_flat = True
+            try:
+                positions = get_all_positions() if not is_paper_trading() else {}
+            except Exception as e:
+                positions = {}
+                with CLOSE_RETRY_LOCK:
+                    CLOSE_RETRY_STATE["last_error"] = str(e)
+
+            for sym in symbols:
+                key = sym.replace("USDT", ":USDT")
+                pos = (positions or {}).get(key) or {}
+                qty = float(pos.get("qty", 0.0) or 0.0)
+                if abs(qty) <= 0.000001:
+                    result[sym] = "flat"
+                    continue
+
+                all_flat = False
+                try:
+                    base_asset, _ = parse_symbol(sym)
+                    market_sell(sym, base_asset)
+                    result[sym] = f"close_sent_qty={qty}"
+                except Exception as e:
+                    result[sym] = f"error: {e}"
+
+            with CLOSE_RETRY_LOCK:
+                CLOSE_RETRY_STATE["last_result"] = result
+                if all_flat:
+                    CLOSE_RETRY_STATE["running"] = False
+                    CLOSE_RETRY_STATE["last_error"] = ""
+                    add_system_log("✅ [平倉重試] 指定幣種已全部平倉", "success")
+                    break
+
+            time.sleep(max(interval_sec, 3))
+    except Exception as e:
+        with CLOSE_RETRY_LOCK:
+            CLOSE_RETRY_STATE["running"] = False
+            CLOSE_RETRY_STATE["last_error"] = str(e)
+        add_system_log(f"🚨 [平倉重試] 背景任務異常: {e}", "danger")
+
+
+class RetryCloseReq(BaseModel):
+    symbols: List[str] = ["ENAUSDT", "ZECUSDT"]
+    interval_sec: int = 15
+    max_rounds: int = 120
+    stop_bot: bool = True
+
 def is_paper_trading():
-    return not api_key or api_key == "your_api_key_here"
+    from core.config import PAPER_TRADING
+    return PAPER_TRADING
 
 def daily_market_clean_and_reset(is_manual=False):
     """大掃除與即時同步前五名 (模組化)"""
@@ -146,20 +238,32 @@ def api_force_reset():
 @app.get("/api/bot-status")
 def api_get_bot_status():
     status = get_bot_status()
+    from core.config import USE_TESTNET
     if "entry_diagnosis" not in status:
         status["entry_diagnosis"] = "等待訊號"
+    if is_paper_trading():
+        status["environment"] = "paper"
+    else:
+        status["environment"] = "demo" if USE_TESTNET else "live"
     if is_paper_trading():
         status["balance_quote"] = get_paper_balance()
         status["session_start_balance"] = get_session_start_balance()
     else:
         # 實盤餘額的取得可放在 binance_service，為簡化先保留原本邏輯(這部分會用到 binance_service，為快速先這樣)
-        pass
+        pass 
     return status
 
 @app.post("/api/bot-status/toggle")
 def api_toggle_bot():
     is_running = toggle_bot()
     return {"status": "success", "is_running": is_running}
+
+
+@app.post("/api/bot-status/stop")
+def api_stop_bot():
+    """Hard-stop bot process and persist stopped state."""
+    kill_bot()
+    return {"status": "success", "is_running": False}
 
 @app.post("/api/bot-status/set-symbol/{symbol}")
 def api_set_bot_symbol(symbol: str):
@@ -197,6 +301,22 @@ def api_set_bot_amount(amount: float):
         return {"status": "success", "trade_amount": amt}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/bot-status/set-pnl-baseline")
+def api_set_pnl_baseline():
+    try:
+        return {"status": "success", **set_pnl_baseline()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot-status/clear-pnl-baseline")
+def api_clear_pnl_baseline():
+    try:
+        return {"status": "success", **clear_pnl_baseline()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/logs")
 def api_get_logs():
@@ -330,6 +450,8 @@ def api_market_sell(symbol: str):
         else:
             base_asset, _ = parse_symbol(symbol_upper)
             order = market_sell(symbol_upper, base_asset)
+            if isinstance(order, dict) and order.get("__timeout__"):
+                return {"status": "success", "detail": "幣安回應超時，但平倉指令已送出，稍後請確認倉位。"}
             return {"status": "success", "order": order}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"平倉失敗: {str(e)}")
@@ -337,10 +459,67 @@ def api_market_sell(symbol: str):
 @app.post("/api/order/close-all")
 def api_close_all_orders():
     try:
-        force_close_all_positions()
+        if is_paper_trading():
+            force_close_all_positions()
+        else:
+            positions = get_all_positions()
+            for key, pos in (positions or {}).items():
+                qty = float(pos.get("qty", 0.0) or 0.0)
+                if abs(qty) <= 0.000001:
+                    continue
+                sym = str(key).replace(":USDT", "USDT")
+                base_asset, _ = parse_symbol(sym)
+                market_sell(sym, base_asset)
         return {"status": "success", "detail": "已強制平倉所有持有部位"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"一鍵平倉失敗: {str(e)}")
+
+
+@app.post("/api/order/retry-close/start")
+def api_retry_close_start(req: RetryCloseReq):
+    symbols = _normalize_retry_symbols(req.symbols)
+    interval_sec = max(int(req.interval_sec), 3)
+    max_rounds = max(int(req.max_rounds), 1)
+
+    if req.stop_bot:
+        kill_bot()
+
+    with CLOSE_RETRY_LOCK:
+        if CLOSE_RETRY_STATE["running"]:
+            return {
+                "status": "success",
+                "running": True,
+                "detail": "retry-close already running",
+                **CLOSE_RETRY_STATE,
+            }
+
+        CLOSE_RETRY_STATE["running"] = True
+        CLOSE_RETRY_STATE["symbols"] = symbols
+        CLOSE_RETRY_STATE["interval_sec"] = interval_sec
+        CLOSE_RETRY_STATE["max_rounds"] = max_rounds
+        CLOSE_RETRY_STATE["rounds"] = 0
+        CLOSE_RETRY_STATE["last_result"] = {}
+        CLOSE_RETRY_STATE["last_error"] = ""
+        CLOSE_RETRY_STATE["started_at"] = int(time.time())
+
+    t = threading.Thread(target=_retry_close_worker, daemon=True)
+    t.start()
+    add_system_log(f"🔁 [平倉重試] 已啟動: {', '.join(symbols)}", "warning")
+    return {"status": "success", **CLOSE_RETRY_STATE}
+
+
+@app.post("/api/order/retry-close/stop")
+def api_retry_close_stop():
+    with CLOSE_RETRY_LOCK:
+        CLOSE_RETRY_STATE["running"] = False
+    add_system_log("⏹️ [平倉重試] 已手動停止", "warning")
+    return {"status": "success", **CLOSE_RETRY_STATE}
+
+
+@app.get("/api/order/retry-close/status")
+def api_retry_close_status():
+    with CLOSE_RETRY_LOCK:
+        return {"status": "success", **CLOSE_RETRY_STATE}
 
 
 @app.post("/api/paper-state/reset")
@@ -519,12 +698,8 @@ def api_chat(chat_msg: ChatMessage):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/history/summary")
-@app.get("/api/history/summary")
 def api_history_summary():
     try:
-        tz = pytz.timezone('Asia/Taipei')
-        daily = {}
-        
         if is_paper_trading():
             ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
             if not os.path.exists(ps_path):
@@ -532,32 +707,24 @@ def api_history_summary():
             with open(ps_path, "r") as f:
                 state = json.load(f)
             trades = state.get("trades", [])
-            for t in trades:
-                dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
-                date_key = dt.strftime("%Y-%m-%d")
-                entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
-                entry["trades"] += 1
-                if t.get("is_close") and t.get("realized_pnl"):
-                    entry["pnl"] += t["realized_pnl"]
-                fee = t.get("fee", (t["price"] * abs(t["qty"])) * 0.0005)
-                entry["fee"] += fee
         else:
-            from services.binance_service import client
-            records = client.futures_income_history(limit=1000)
-            for r in records:
-                dt = datetime.datetime.fromtimestamp(r["time"] / 1000, tz=tz)
-                date_key = dt.strftime("%Y-%m-%d")
-                entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
-                itype = r.get("incomeType")
-                income = float(r.get("income", 0.0))
-                if itype == "REALIZED_PNL":
-                    entry["trades"] += 1
-                    entry["pnl"] += income
-                elif itype == "COMMISSION":
-                    entry["fee"] += abs(income)
+            from services.binance_service import get_trades
+            trades = get_trades("ALL")
 
-        # 將 fee 也回傳，並將 pnl 扣除 fee
-        summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"] - v["fee"], 4) if is_paper_trading() else round(v["pnl"], 4)} for k, v in sorted(daily.items(), reverse=True)]
+        tz = pytz.timezone('Asia/Taipei')
+        daily = {}
+        for t in trades:
+            dt = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz)
+            date_key = dt.strftime("%Y-%m-%d")
+            entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
+            entry["trades"] += 1
+            if t.get("is_close") and t.get("realized_pnl"):
+                entry["pnl"] += t["realized_pnl"]
+
+            fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+            entry["fee"] += fee
+
+        summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"] - v["fee"], 4)} for k, v in sorted(daily.items(), reverse=True)]
         return {"summaries": summaries}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -565,11 +732,6 @@ def api_history_summary():
 @app.get("/api/history/download/{date}")
 def api_history_download(date: str):
     try:
-        tz = pytz.timezone('Asia/Taipei')
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["時間", "幣種", "方向", "價格", "數量", "手續費", "已實現損益", "平倉"])
-
         if is_paper_trading():
             ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
             if not os.path.exists(ps_path):
@@ -577,72 +739,39 @@ def api_history_download(date: str):
             with open(ps_path, "r") as f:
                 state = json.load(f)
             trades = state.get("trades", [])
-            filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
-            if not filtered:
-                raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
-            
-            for t in filtered:
-                ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
-                side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
-                       "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
-                       "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
-                       "買入(平空)"
-                fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
-                net_pnl = t.get("realized_pnl", 0) - fee
-
-                writer.writerow([
-                    ts, t.get("symbol", "").replace(":USDT", ""), side,
-                    t.get("price", ""), t.get("qty", ""), round(fee, 6),
-                    round(net_pnl, 6), "是" if t.get("is_close") else "否"
-                ])
         else:
-            from services.binance_service import client
-            from services.bot_manager_service import load_symbol_config
-            from core.config import TRADE_HISTORY_FILE
-            
-            query_symbols = set(load_symbol_config())
-            try:
-                with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
-                    history = json.load(f)
-                query_symbols.update(t.get("symbol", "") for t in history if t.get("symbol"))
-            except:
-                pass
-            
-            all_trades = []
-            for sym in query_symbols:
-                try:
-                    sym_trades = client.futures_account_trades(symbol=sym, limit=200)
-                    for t in sym_trades:
-                        if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date:
-                            all_trades.append(t)
-                except:
-                    continue
-            
-            if not all_trades:
-                raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
-                
-            all_trades.sort(key=lambda t: t.get("time", 0))
-            for t in all_trades:
-                ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
-                is_buyer = (t["side"] == "BUY")
-                realized_pnl = float(t.get("realizedPnl", 0.0))
-                is_close = realized_pnl != 0
-                side = "買入(多)" if is_buyer and not is_close else \
-                       "賣出(平多)" if not is_buyer and is_close else \
-                       "賣出(空)" if not is_buyer and not is_close else \
-                       "買入(平空)"
-                
-                fee = float(t.get("commission", 0.0))
-                # For real Binance API, realizedPnl already excludes commission technically, wait, no, realizedPnl is gross. Net = realizedPnl - commission
-                # Commission from Binance is negative (e.g. -0.05), so we add it to get net pnl
-                net_pnl = realized_pnl + fee
-                
-                writer.writerow([
-                    ts, t.get("symbol", "").replace("USDT", ""), side,
-                    t.get("price", ""), t.get("qty", ""), round(abs(fee), 6),
-                    round(net_pnl, 6), "是" if is_close else "否"
-                ])
-        
+            from services.binance_service import get_trades
+            trades = get_trades("ALL")
+
+        tz = pytz.timezone('Asia/Taipei')
+        filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
+        if not filtered:
+            raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["時間", "幣種", "方向", "價格", "數量", "手續費", "已實現損益", "平倉"])
+        for t in filtered:
+            ts = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+            side = "買入(多)" if t.get("isBuyer") and not t.get("is_close") else \
+                   "賣出(平多)" if not t.get("isBuyer") and t.get("is_close") else \
+                   "賣出(空)" if not t.get("isBuyer") and not t.get("is_close") else \
+                   "買入(平空)"
+
+            fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
+            net_pnl = t.get("realized_pnl", 0) - fee
+
+            writer.writerow([
+                ts,
+                t.get("symbol", "").replace(":USDT", ""),
+                side,
+                t.get("price", ""),
+                t.get("qty", ""),
+                round(fee, 6),
+                round(net_pnl, 6),
+                "是" if t.get("is_close") else "否"
+            ])
+
         from fastapi.responses import StreamingResponse
         csv_content = "\ufeff" + output.getvalue()
         return StreamingResponse(
