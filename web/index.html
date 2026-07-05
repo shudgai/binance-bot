@@ -1483,11 +1483,15 @@ createApp({
                 if (res.ok) {
                     const data = await res.json();
                     trades.value = data.sort((a, b) => {
-                        // 未平倉（is_close=false）排最上面
+                        // 1️⃣ 真實持倉（後端補入）排第一
+                        const aPosFlag = a._is_open_position ? 2 : 0;
+                        const bPosFlag = b._is_open_position ? 2 : 0;
+                        if (aPosFlag !== bPosFlag) return bPosFlag - aPosFlag;
+                        // 2️⃣ 普通未平倉入場單排第二
                         const aOpen = !a.is_close ? 1 : 0;
                         const bOpen = !b.is_close ? 1 : 0;
                         if (aOpen !== bOpen) return bOpen - aOpen;
-                        // 同為未平倉或同為已平倉，依時間降冪排列
+                        // 3️⃣ 已平倉依時間降冪
                         return b.time - a.time;
                     });
                 }
