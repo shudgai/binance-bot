@@ -626,10 +626,10 @@
                                     <span v-else-if="!t.isBuyer && !t.is_close" style="color:var(--trade-down);font-weight:700;">賣出(空)</span>
                                     <span v-else-if="t.isBuyer && t.is_close" style="color:var(--trade-up);font-weight:700;">買入(平空)</span>
                                 </td>
-                                <td>{{ t.price }}</td>
+                                <td>{{ (() => { const p = t.price; const abs = Math.abs(p); const d = abs < 0.0001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 5 : abs < 10 ? 4 : abs < 1000 ? 3 : 2; return p.toFixed(d); })() }}</td>
                                 <td>
                                     <span v-if="isOpenTrade(t)" :class="getTradeCurrentPrice(t) > t.price ? (t.isBuyer ? 'up' : 'down') : (getTradeCurrentPrice(t) < t.price ? (t.isBuyer ? 'down' : 'up') : '')" style="font-weight:600;">
-                                        {{ getTradeCurrentPrice(t) > 0 ? getTradeCurrentPrice(t).toFixed(4) : '-' }}
+                                        {{ getTradeCurrentPrice(t) > 0 ? (() => { const p = getTradeCurrentPrice(t); const abs = Math.abs(p); const d = abs < 0.0001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 5 : abs < 10 ? 4 : abs < 1000 ? 3 : 2; return p.toFixed(d); })() : '-' }}
                                     </span>
                                     <span v-else style="color:var(--text-muted);">-</span>
                                 </td>
