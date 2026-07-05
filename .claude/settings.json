@@ -56,7 +56,28 @@
       "Bash(journalctl --user -u binance-api.service --no-pager)",
       "Bash(awk 'NR==159,0' /home/shudgai999/project/binance-bot/core/check_entries.py)",
       "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot/core/check_entries.py /home/shudgai999/project/binance-bot/core/runner.py)",
-      "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot-live/core/check_entries.py /home/shudgai999/project/binance-bot-live/core/runner.py)"
+      "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot-live/core/check_entries.py /home/shudgai999/project/binance-bot-live/core/runner.py)",
+      "Bash(awk -F'2026-07-04 ' '{print $2}')",
+      "Bash(awk '/2026-07-04 04:48/{f=1} f' /home/shudgai999/project/binance-bot-live/logs/bot.log)",
+      "Bash(ps -o pid,lstart,cmd -p 1992878 -p 1993053)",
+      "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot-live/core/orders.py)",
+      "Bash(ps -o pid,lstart,etime,cmd -p 1992750 -p 1992878 -p 1992749)",
+      "Bash(journalctl --user -u binance-live-api.service --no-pager -n 20)",
+      "Bash(kill 1992749 1992750 1992878)",
+      "Bash(ps -o pid,lstart,ppid,cmd -C python3)",
+      "Bash(awk '/2026-07-04 04:56:4[0-9]/{f=1} f' /home/shudgai999/project/binance-bot-live/logs/bot.log)",
+      "Bash(curl -s -o /dev/null -w \"http: %{http_code}\\\\n\" \"http://localhost:8005/api/bot-status\")",
+      "Bash(curl -s -o /dev/null -w \"http: %{http_code}\\\\n\" \"http://localhost:8006/api/bot-status\")",
+      "Bash(systemctl --user is-active binance-api.service binance-live-api.service)",
+      "Bash(ps -o pid,ppid,cmd -C python3)",
+      "Bash(cat /proc/2002650/cgroup 2>/dev/null)",
+      "Read(//proc/2002650/**)",
+      "Bash(sleep 5 *)",
+      "Read(//proc/2162013/**)",
+      "Bash(kill 2162011 2162013 2162538)",
+      "Read(//proc/2169308/**)",
+      "Bash(curl -s -o /dev/null -w \"8006 index: %{http_code} size=%{size_download}\\\\n\" \"http://localhost:8006/\")",
+      "Bash(curl -s \"http://localhost:8006/\")"
     ]
   }
 }
