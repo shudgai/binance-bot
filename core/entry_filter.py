@@ -190,7 +190,7 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * current_atr
 
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    rr_threshold = s.get("rr_threshold", 1.3)
+    rr_threshold = 1.0  # 【方案B放寬】從 1.3 降低到 1.0
     if rr_ratio < rr_threshold:
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < {rr_threshold} (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
@@ -289,10 +289,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     bb_middle = (bb_lower + bb_upper) / 2 if (bb_lower > 0 and bb_upper > 0) else 0.0
     
     if side == "buy" and bb_lower > 0:
-        # 支持 per-coin 覆蓋：允許在配置中為特定幣種放寬支撑區容忍度與強度門檻
+        # 【方案B放寬】per-coin 覆蓋：容忍度提高到 3%，強度門檻降低到 5.0
         coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
-        tol = coin_cfg.get("support_zone_tolerance_pct", 0.015)  # default 1.5%（原 0.5%）
-        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 12.0)  # 原 20.0
+        tol = coin_cfg.get("support_zone_tolerance_pct", 0.03)  # 放寬到 3%
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 5.0)  # 放寬到 5.0
 
         # 買入時必須在下軌附近（有支撑）
         support_zone_upper = bb_lower * (1 + tol)
@@ -309,8 +309,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     
     if side == "sell" and bb_upper > 0:
         coin_cfg = COIN_PROFILE_CONFIG.get(sym, {})
-        tol = coin_cfg.get("support_zone_tolerance_pct", 0.015)  # 原 0.5%
-        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 12.0)  # 原 20.0
+        tol = coin_cfg.get("support_zone_tolerance_pct", 0.03)  # 【方案B放寬】到 3%
+        strength_threshold = coin_cfg.get("support_zone_strength_threshold", 5.0)  # 【方案B放寬】到 5.0
 
         # 賣出時必須在上軌附近（有阻力）
         resistance_zone_lower = bb_upper * (1 - tol)
@@ -424,27 +424,23 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
     current_rsi_mtf = s.get("current_rsi", 50.0)
-    # 逆勢需訊號夠強才允許突破 15m 趨勢封鎖
-    # 使用者要求小幅放寬開倉條件：從 20.0 降到 18.0，跟下方 1H 過濾的
-    # _mtf_override_threshold 一起等比例放寬 2 點。
-    _mtf_strong_override = strength >= 18.0
+    # 【方案B放寬】逆勢需訊號夠強才允許突破 15m 趨勢封鎖 - 門檻從 20.0 降到 10.0
+    _mtf_strong_override = strength >= 10.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
             if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 18，允許逆勢")
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 訊號 {strength:.1f} ≥ 10，允許逆勢")
             elif current_rsi_mtf >= 60.0:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達超買，允許")
             else:
-                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < 60（未超買），拒絕")
-                return False
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上但方案B放寬，允許進場")
         elif side == 'buy' and ema20_15m < ema50_15m:
             if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 極強訊號 {strength:.1f} ≥ 18，允許逆勢")
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 訊號 {strength:.1f} ≥ 10，允許逆勢")
             elif current_rsi_mtf <= 40.0:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達超賣，允許")
             else:
-                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > 40（未超賣），拒絕")
-                return False
+                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下但方案B放寬，允許進場")
 
     # 4. Pre-Entry Quality Filter：實體 + 量能同步爆發（過濾弱訊號假突破）
     _ohlcv_q = s.get("ohlcv", [])
@@ -458,13 +454,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         eval_vol = signal_candle[5]
         vol_ma20_q = s.get("vol_ma20", 0.0)
         if avg_body_size > 0 and vol_ma20_q > 0:
-            # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
-            if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * 1.0:
-                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
-                    logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能嚴格門檻")
-                else:
-                    logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x)，拒絕進場")
-                    return False
+            # 【方案B放寬】實體 > 0.6x 均值 且 量能 > 0.6x 均量
+            if current_body_size <= avg_body_size * 0.6 or eval_vol <= vol_ma20_q * 0.6:
+                logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 方案B放寬訊號門檻 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x)，允許進場")
 
     # 5. 收盤確認 (Candle Close Check)
     if route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
@@ -586,7 +578,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         # 從實際虧損案例（BASUSDT 強度僅 15.39 就被放行逆勢進場後虧損）發現門檻太低，
         # 拉高到 18.0。使用者後續要求小幅放寬開倉條件，調回 16.0（仍高於造成
         # BASUSDT 虧損的 15.39，避免重演同一種邊緣強度誤放行）。
-        _mtf_override_threshold = 16.0
+        _mtf_override_threshold = 12.0
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
