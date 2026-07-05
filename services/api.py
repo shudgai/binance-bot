@@ -673,6 +673,110 @@ def api_history_download(date: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/history/delete/{date}")
+def api_history_delete(date: str):
+    try:
+        if is_paper_trading():
+            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if os.path.exists(ps_path):
+                with open(ps_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                tz = pytz.timezone('Asia/Taipei')
+                trades = state.get("trades", [])
+                new_trades = []
+                for t in trades:
+                    t_date = datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d")
+                    if t_date != date:
+                        new_trades.append(t)
+                state["trades"] = new_trades
+                with open(ps_path, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=4)
+        else:
+            from core.config import TRADE_HISTORY_FILE
+            if os.path.exists(TRADE_HISTORY_FILE):
+                with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                new_history = []
+                for t in history:
+                    timestamp_str = t.get("timestamp")
+                    if timestamp_str:
+                        t_date = timestamp_str.split(" ")[0]
+                        if t_date != date:
+                            new_history.append(t)
+                    else:
+                        new_history.append(t)
+                with open(TRADE_HISTORY_FILE, "w", encoding="utf-8") as f:
+                    json.dump(new_history, f, indent=4)
+        return {"status": "success", "detail": f"已成功刪除 {date} 的交易紀錄"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/history/add/{date}")
+def api_history_add(date: str):
+    try:
+        try:
+            datetime.datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式錯誤，必須為 YYYY-MM-DD")
+
+        if is_paper_trading():
+            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            if os.path.exists(ps_path):
+                with open(ps_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                tz = pytz.timezone('Asia/Taipei')
+                dt = datetime.datetime.strptime(date + " 12:00:00", "%Y-%m-%d %H:%M:%S")
+                dt = tz.localize(dt)
+                t_ms = int(dt.timestamp() * 1000)
+                
+                dummy_trade = {
+                    "symbol": "DUMMY:USDT",
+                    "price": 0.0,
+                    "qty": 0.0,
+                    "time": t_ms,
+                    "isBuyer": True,
+                    "realized_pnl": 0.0,
+                    "fee": 0.0,
+                    "is_close": True
+                }
+                state.setdefault("trades", []).append(dummy_trade)
+                with open(ps_path, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=4)
+        else:
+            from core.config import TRADE_HISTORY_FILE
+            if os.path.exists(TRADE_HISTORY_FILE):
+                with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                
+                dummy_record = {
+                    "timestamp": f"{date} 00:00:00",
+                    "symbol": "DUMMYUSDT",
+                    "entry_reason": "manual",
+                    "exit_reason": "manual",
+                    "profit_pct": 0.0,
+                    "max_profit_reached": 0.0,
+                    "atr_at_exit": 0.0,
+                    "market_mode": "Neutral",
+                    "expected_entry": 0.0,
+                    "expected_exit": 0.0,
+                    "actual_entry": 0.0,
+                    "actual_exit": 0.0,
+                    "fees": 0.0,
+                    "qty": 0.0,
+                    "slippage": 0.0,
+                    "friction_rate": 0.0,
+                    "theoretical_profit": 0.0,
+                    "ai_summary": "手動新增空白日期。"
+                }
+                history.append(dummy_record)
+                with open(TRADE_HISTORY_FILE, "w", encoding="utf-8") as f:
+                    json.dump(history, f, indent=4)
+        return {"status": "success", "detail": f"已成功新增 {date} 的空白歷史占位符"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/coin/{symbol}/toggle")
 def api_toggle_coin(symbol: str):
     from services.bot_manager_service import toggle_coin_disabled
