@@ -268,7 +268,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # 導致 PeakLock 明明鎖利 1.10%，交易所實際卻用市價成交在 -0.10%，
         # 系統內部紀錄卻還是顯示賺錢——這裡改成用真實成交均價回填後續所有計算。
         try:
-            if profit_pct > 0:
+            if profit_pct > 0 and not is_stop_loss:
                 final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
             else:
                 final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
