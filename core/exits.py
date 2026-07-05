@@ -226,8 +226,10 @@ async def check_exits(sym):
     _ref_price = s.get("last_entry_price", avg) or avg
     if _time_since_entry < 180 and current_atr > 0 and _ref_price > 0:
         _adverse_atr_mult = (_ref_price - p) / current_atr if is_long else (p - _ref_price) / current_atr
-        # 門檻拉高到 3.5x，且限制必須至少虧損 1.0% 以上才觸發，避免小波動/點差噪音（例如 -0.2%）被誤判為「急速逆勢」提前出場。
-        if profit_pct < -0.010 and _adverse_atr_mult >= 3.5:
+        # 門檻原本是 1.2x，實際上線後對 ETH/SOL 這類主流大幣太敏感，短暫回檔（現貨
+        # 換算損益只有 -0.24%~-0.6%）就被誤判成「急速逆勢」提前出場，反而讓單子沒機會
+        # 等回本。拉高到 2.0x，只讓真正劇烈的逆勢（例如 MUSDT 那種閃崩）才觸發。
+        if profit_pct < 0 and _adverse_atr_mult >= 2.0:
             cs = 'sell' if is_long else 'buy'
             logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
@@ -607,10 +609,10 @@ async def check_exits(sym):
 
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
     _is_counter_trend = (is_long and btc_4h == "BEAR") or (not is_long and btc_4h == "BULL")
-    _sl_floor_pct = 0.0075  # 提升最低停損保護，避免小幅波動被頻繁洗出場
+    _sl_floor_pct = 0.004
     if _is_counter_trend:
         sl_mult *= 0.9
-        _sl_floor_pct = 0.0065
+        _sl_floor_pct = 0.0035
 
     tp_base = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), is_long)
     if is_low_vol:
@@ -1190,18 +1192,6 @@ async def check_exits(sym):
             logger.info(f"⏳ [攤平觀察期] {sym} 攤平後 {_since_rescue:.0f} 秒內，暫緩停損再觀察（剩餘 {60-_since_rescue:.0f} 秒）")
             return
         if profit_pct < 0 and await _attempt_forced_rescue(sym, s, is_long, p):
-            return
-
-        # 遵照用戶指示：所有虧損交易皆不主動停損，放任持有等待利潤回來。
-        # 除非是：
-        # 1. 達到災難性清算防護閾值（-6.0%，防止爆倉強平）
-        # 2. 或是損益為正/打平的保本平倉 (sl == avg)
-        _is_catastrophic = (profit_pct <= -0.060)
-        _is_breakeven = (sl == avg)
-        if not _is_catastrophic and not _is_breakeven:
-            if time.time() - s.get("last_sl_warn_time", 0) > 300:
-                logger.info(f"🛡️ [虧損持有中] {sym} 觸發一般停損線 ({profit_pct*100:.2f}%)，已依指示跳過停損，繼續持倉等待利潤回升...")
-                s["last_sl_warn_time"] = time.time()
             return
 
         cs = 'sell' if is_long else 'buy'
