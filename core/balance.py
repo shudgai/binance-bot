@@ -57,8 +57,15 @@ async def fetch_real_balance():
 
 def get_balance():
     if not PAPER_TRADING:
-        # 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算，不要用帳戶全部餘額
-        return min(REAL_BALANCE, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else REAL_BALANCE
+        # 帳戶實際餘額加上已實現利潤，並受到本金上限保護（上限只保本金，利潤可再投入）
+        from services.binance_service import get_total_realized_pnl_usdt
+        pnl = 0.0
+        try:
+            pnl = get_total_realized_pnl_usdt()
+        except Exception:
+            pass
+        base_bal = min(REAL_BALANCE, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else REAL_BALANCE
+        return base_bal + pnl
     try:
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), "r") as f:
             state = json.load(f)

@@ -190,9 +190,9 @@ def get_bot_status():
             real_balance = get_account_balance_usdt()
             if real_balance is not None and real_balance > 0:
                 pnl = bot_status.get("total_realized_pnl", 0.0)
-                display_balance = real_balance + pnl
-                bot_status["balance_quote"] = min(display_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else display_balance
-                bot_status["trade_amount"] = max(bot_status["balance_quote"], 10.0)
+                display_balance = (min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance) + pnl
+                bot_status["balance_quote"] = display_balance
+                bot_status["trade_amount"] = max(display_balance, 10.0)
             else:
                 print(f"[BotStatus] 取得實盤餘額失敗或回傳無效值，保留先前餘額 {bot_status.get('balance_quote', 0)}")
         except Exception:
