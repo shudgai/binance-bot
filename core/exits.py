@@ -907,13 +907,13 @@ async def check_exits(sym):
     ts_activation_pct = max(0.0010, 0.020 / _lev, atr_pct * 0.35)
     # 停利停在高點：縮短回檔百分比門檻，更緊密地追蹤最高點/最低點
     if _hp >= 0.05:
-        ts_retracement_pct = atr_pct * 0.30   # 暴利時極度縮緊，只允許 30% ATR 回撤
+        ts_retracement_pct = atr_pct * 0.55   # > 5%：更緊地守高點
     elif _hp >= 0.02:
-        ts_retracement_pct = atr_pct * 0.35   # 中等獲利時縮緊，允許 35% ATR 回撤
+        ts_retracement_pct = atr_pct * 0.45   # 2-5%：更接近高點出場
     elif _hp >= 0.008:
-        ts_retracement_pct = atr_pct * 0.45   # 小利時允許 45% ATR 回撤
+        ts_retracement_pct = atr_pct * 0.65   # 0.8-2%：初期利潤仍需一定緩衝
     else:
-        ts_retracement_pct = atr_pct * 0.55   # 微利時允許 55% ATR 回撤
+        ts_retracement_pct = atr_pct * 0.75   # < 0.8%：微利時允許較大回撤空間
     ts_retracement_pct = max(ts_retracement_pct, 0.0010)      # 絕對下限 0.10%
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
