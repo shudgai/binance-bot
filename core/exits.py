@@ -897,15 +897,15 @@ async def check_exits(sym):
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
     ts_activation_pct = max(0.0010, 0.020 / _lev, atr_pct * 0.35)
-    # 動態追蹤距離：越高越要保留空間，但仍儘量靠近峰值。
+    # 停利停在高點：縮短回檔百分比門檻，更緊密地追蹤最高點/最低點
     if _hp >= 0.05:
-        ts_retracement_pct = atr_pct * 0.55   # > 5%：更緊地守高點
+        ts_retracement_pct = atr_pct * 0.30   # 暴利時極度縮緊，只允許 30% ATR 回撤
     elif _hp >= 0.02:
-        ts_retracement_pct = atr_pct * 0.45   # 2-5%：更接近高點出場
+        ts_retracement_pct = atr_pct * 0.35   # 中等獲利時縮緊，允許 35% ATR 回撤
     elif _hp >= 0.008:
-        ts_retracement_pct = atr_pct * 0.65   # 0.8-2%：初期利潤仍需一定緩衝
+        ts_retracement_pct = atr_pct * 0.45   # 小利時允許 45% ATR 回撤
     else:
-        ts_retracement_pct = atr_pct * 0.75   # < 0.8%：仍允許最小回撤空間
+        ts_retracement_pct = atr_pct * 0.55   # 微利時允許 55% ATR 回撤
     ts_retracement_pct = max(ts_retracement_pct, 0.0010)      # 絕對下限 0.10%
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
@@ -915,7 +915,8 @@ async def check_exits(sym):
             trail_sl_price = peak_price * (1 - ts_retracement_pct)
             if trail_sl_price > s.get("stop_loss", 0):
                 s["stop_loss"] = trail_sl_price
-            if p <= trail_sl_price:
+            # 必須有獲利才允許觸發高點停利，防止利潤吐光變虧損出場
+            if p <= trail_sl_price and profit_pct >= 0.0015:
                 cs = 'sell'
                 lock_pnl = (peak_price - avg) / avg * 100
                 _exit_p = max(p, trail_sl_price)
@@ -930,7 +931,8 @@ async def check_exits(sym):
             trail_sl_price = trough_price * (1 + ts_retracement_pct)
             if s.get("stop_loss", float('inf')) > trail_sl_price:
                 s["stop_loss"] = trail_sl_price
-            if p >= trail_sl_price:
+            # 必須有獲利才允許觸發低點停利，防止利潤吐光變虧損出場
+            if p >= trail_sl_price and profit_pct >= 0.0015:
                 cs = 'buy'
                 lock_pnl = (avg - trough_price) / avg * 100
                 _exit_p = min(p, trail_sl_price)
@@ -1142,7 +1144,7 @@ async def check_exits(sym):
                 _trough_ref = min(s.get("trailing_lowest", avg), avg * (1 - s.get("highest_profit_pct", 0.0)))
                 _should_exit = p >= _trough_ref * limit_up
 
-            if _should_exit:
+            if _should_exit and profit_pct >= 0.0015:
                 cs = 'sell' if is_long else 'buy'
                 # 這道「離高點回撤 X%」是用 trailing_highest/lowest 與 highest_profit_pct 的真實峰值
                 # 共同作為基準，避免 stale 的 trailing_extreme 讓 Trend_Follow 錯誤提早出場。
