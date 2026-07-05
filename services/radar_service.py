@@ -9,9 +9,41 @@ from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 
+
+def _resolve_follow_symbols_from(base_dir: str | None = None) -> str:
+    """Resolve the shared symbol source path for strategy sync between deployments.
+
+    Priority:
+    1. Explicit FOLLOW_SYMBOLS_FROM environment variable.
+    2. Shared sibling deployment at ../binance-bot/data/bot_symbols.json.
+    3. Current deployment's local data/bot_symbols.json.
+    """
+    configured = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
+    if configured:
+        return configured
+
+    repo_root = os.path.abspath(base_dir or os.path.dirname(os.path.dirname(__file__)))
+    parent_dir = os.path.dirname(repo_root)
+    own_config_path = os.path.join(repo_root, "data", "bot_symbols.json")
+    candidates = [
+        os.path.join(parent_dir, "binance-bot", "data", "bot_symbols.json"),
+        os.path.join(parent_dir, "binance-bot-live", "data", "bot_symbols.json"),
+    ]
+
+    for candidate in candidates:
+        # 若候選路徑其實就是自己（例如本部署自己就叫 binance-bot），不能拿自己
+        # 當作跟隨來源——否則會變成每次都在讀自己剛寫入的清單、判定「榜單未變」，
+        # 導致真正的 ATR 排名/波動度過濾邏輯整個被跳過，形同雷達失效（實際發生過：
+        # RADAR_SELECT_COUNT 已改成 8，但幣池一直卡在舊的 12～13 檔不會縮減）。
+        if os.path.exists(candidate) and os.path.abspath(candidate) != os.path.abspath(own_config_path):
+            return candidate
+    return ""
+
+
 # 若設定此環境變數（指向另一份部署的 bot_symbols.json 絕對路徑），本部署不再自己跑 ATR 雷達
 # 掃描，而是直接跟隨來源部署選出的幣種清單，用來讓 8006 長期跟隨 8005 的幣池。
-FOLLOW_SYMBOLS_FROM = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
+# 若未明確指定，則會自動從相鄰部署的 bot_symbols.json 讀取，保留各自帳務但同步策略幣池。
+FOLLOW_SYMBOLS_FROM = _resolve_follow_symbols_from()
 # 若在 8006 部署中設定此變數，則會跟隨來源部署的 bot_symbols.json，不自行跑 ATR 雷達掃描。
 # 來源清單會寫入本地 bot_symbols.json，並保留本地持倉幣種。
 
@@ -92,12 +124,19 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 12    # 核心池固定選出幣數（根據使用者要求改為 12 幣）
+RADAR_SELECT_COUNT = 12    # 核心池固定選出幣數（回到原始配置）
 HOT_MOVERS_COUNT   = 0    # 不再額外加入熱門動能幣，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
 
 # 排除急升/急跌的每日變動閾值（百分比）——若絕對變動超過此值，會從 ATR 掃描候選中剔除
-MAX_DAILY_MOVE_PCT = 18.0
+# 降低至 8% 以排除高波動性幣種（OGN 類型的日內驟升驟跌標的）
+MAX_DAILY_MOVE_PCT = 8.0
+
+# 排除波動度過高的幣種（ATR% > 此值）——這些幣種容易發生日內秒殺，不適合策略
+# 原本 3.5%，但「跟隨自己」的 bug 修好、雷達真正開始套用這道濾網後才發現，現在
+# 市場普遍波動偏高，3.5% 幾乎把所有候選幣都濾光，監控池被砍到只剩 1-2 檔。
+# 使用者確認放寬到 6%，讓幣池能維持接近 8 檔的規模，同時仍排除真正極端(20%+)的幣。
+MAX_ATR_PCT_FOR_ENTRY = 6.0
 
 # 熱門幣保守 profile（只走有強訊號的機會）
 HOT_MOVER_PROFILE_BASE = {
@@ -116,12 +155,12 @@ HOT_MOVER_PROFILE_BASE = {
     "volume_threshold_factor": 1.2,
 }
 
-# 雷達掃描冷卻
+# 雷達掃描冷卻：把背景掃描拉慢，避免把 Binance 權重打滿
 last_radar_scan = 0
-RADAR_SCAN_COOLDOWN = 10.0
+RADAR_SCAN_COOLDOWN = 45.0
 radar_lock = threading.Lock()
 last_api_call = 0
-API_RATE_LIMIT = 1.0
+API_RATE_LIMIT = 3.0
 
 # 換倉重啟冷卻：5 分鐘內不重複重啟（避免雷達頻繁觸發）
 last_bot_restart = 0.0
@@ -132,7 +171,8 @@ BOT_RESTART_COOLDOWN = 300.0  # 5 minutes
 # 用 float('inf') 讓它永遠不會被 clean_blacklist() 的 `v > now` 過濾掉，且直接寫在
 # 初始值裡，即使服務重啟（BLACKLIST 是模組層級的執行期狀態，重啟就歸零）也會回到
 # 這個永久排除的起始狀態，不用另外存檔案。
-BLACKLIST = {"WLDUSDT": float('inf')}
+# OGNUSDT: 用戶報告經常驟跌，不適合策略，永久排除
+BLACKLIST = {"WLDUSDT": float('inf'), "OGNUSDT": float('inf')}
 
 def clean_blacklist():
     global BLACKLIST
@@ -295,9 +335,9 @@ def auto_radar_switch(force_start=False):
         if not scan_pool:
             add_system_log("⚠️ [雷達掃描] 幣安永續合約市場清單抓取失敗，改用固定核心清單", "warning")
             scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
-        top_symbols, full_ranking = get_atr_ranked_coins(scan_pool, limit=CORE_SELECT_COUNT)
+        _, full_ranking = get_atr_ranked_coins(scan_pool, limit=CORE_SELECT_COUNT)
 
-        if not top_symbols:
+        if not full_ranking:
             add_system_log("⚠️ [雷達掃描] 無法計算 ATR 排名，維持原狀", "warning")
             return current_syms
 
@@ -307,12 +347,34 @@ def auto_radar_switch(force_start=False):
 
         # 保留仍有持倉的幣種，避免被換掉
         open_syms = _get_open_position_symbols()
+
+        # ── 波動度過高過濾：從完整排名（不只前8名）由高到低依序檢查，濾網沒過就
+        # 往下一個候選找，直到湊滿 CORE_SELECT_COUNT 檔為止。原本是先取「ATR%最高
+        # 前8名」再濾掉太誇張的，若前8名剛好多數超標（例如都是SIREN/AWE這類超冷門
+        # 高波動新幣），幣池會遠低於設定值且沒有補位機制，實際發生過砍到只剩1-2檔。
+        rank_map_raw = {r["symbol"]: (i + 1, r["atr_pct"], r["price"]) for i, r in enumerate(full_ranking)}
+        filtered_top = []
+        filtered_out = []
+        for r in full_ranking:
+            if len(filtered_top) >= CORE_SELECT_COUNT:
+                break
+            sym = r["symbol"]
+            atr_pct = r["atr_pct"]
+            if atr_pct > MAX_ATR_PCT_FOR_ENTRY:
+                filtered_out.append(f"{sym}(ATR{atr_pct:.2f}%)")
+            else:
+                filtered_top.append(sym)
+
+        if filtered_out:
+            add_system_log(f"⚠️ [波動度過高] 已排除高波動幣種: {', '.join(filtered_out)}", "warning")
+
+        top_symbols = filtered_top
         all_preserved = [s for s in open_syms if s not in top_symbols]
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 強制保留持倉幣種: {', '.join(all_preserved)}", "warning")
 
         # ── AI 輔助自動分析：為核心幣種計算動態個性 ──
-        rank_map = {r["symbol"]: (i + 1, r["atr_pct"], r["price"]) for i, r in enumerate(full_ranking)}
+        rank_map = rank_map_raw
         dynamic_profiles = {}
         analysis_lines = []
         for i, sym in enumerate(top_symbols):

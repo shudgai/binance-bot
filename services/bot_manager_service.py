@@ -17,19 +17,16 @@ bot_status = {
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
-    "lock_trade_amount": False,
     "entry_diagnosis": "等待訊號",
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
-PNL_BASELINE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "pnl_baseline.json")
 DEFAULT_SYMBOLS = [
     "SOLUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT",
     "LINKUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT"
 ]
-MAX_ACTIVE_SYMBOLS = 12
 
 
 def normalize_symbol(sym):
@@ -43,7 +40,7 @@ def normalize_symbol(sym):
     return sym
 
 
-def normalize_symbol_list(symbols, max_count=MAX_ACTIVE_SYMBOLS):
+def normalize_symbol_list(symbols, max_count=20):
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:
@@ -153,21 +150,6 @@ def get_bot_status():
     import os
     import json
 
-    # 若使用者手動指定並鎖定下單金額，優先沿用固定值，避免每次查詢狀態時被
-    # 紙上餘額/實盤損益自動覆寫，造成雙實例金額無法對齊。
-    locked_trade_amount = None
-    try:
-        if os.path.exists(BOT_STATE_PATH):
-            with open(BOT_STATE_PATH, "r") as f:
-                _saved_state = json.load(f)
-            if _saved_state.get("lock_trade_amount", False):
-                locked_trade_amount = float(_saved_state.get("trade_amount", bot_status.get("trade_amount", 150.0)))
-                bot_status["lock_trade_amount"] = True
-            else:
-                bot_status["lock_trade_amount"] = False
-    except Exception:
-        pass
-
     # 改用 core.config.PAPER_TRADING（跟實際下單邏輯同一個判斷依據），
     # 不要再看 TRADING_MODE 這個沒被設定過的環境變數，避免切了真實交易後面板還顯示紙上餘額。
     if PAPER_TRADING:
@@ -214,26 +196,6 @@ def get_bot_status():
         except Exception:
             bot_status["total_realized_pnl"] = 0.0
 
-    # 以「基準點」模式顯示累計已實現損益增量：
-    # total_realized_pnl_raw = 原始累計值
-    # total_realized_pnl = 原始累計值 - 基準點值（若有設定）
-    raw_realized = float(bot_status.get("total_realized_pnl", 0.0) or 0.0)
-    bot_status["total_realized_pnl_raw"] = raw_realized
-    try:
-        if os.path.exists(PNL_BASELINE_PATH):
-            with open(PNL_BASELINE_PATH, "r") as f:
-                baseline_data = json.load(f)
-            baseline_val = float(baseline_data.get("baseline_total_realized_pnl", 0.0) or 0.0)
-            bot_status["total_realized_pnl_baseline"] = baseline_val
-            bot_status["total_realized_pnl"] = raw_realized - baseline_val
-        else:
-            bot_status["total_realized_pnl_baseline"] = None
-    except Exception:
-        bot_status["total_realized_pnl_baseline"] = None
-
-    if locked_trade_amount is not None:
-        bot_status["trade_amount"] = max(locked_trade_amount, 10.0)
-
     # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
     try:
         actual_symbols = load_symbol_config()
@@ -254,9 +216,8 @@ def get_bot_status():
                 source_data = json.load(f)
             source_symbols = source_data.get("symbols", []) if isinstance(source_data, dict) else source_data
             if source_symbols:
-                normalized = normalize_symbol_list(source_symbols)
-                bot_status["active_symbols"] = normalized
-                bot_status["watch_symbols"] = normalized
+                bot_status["active_symbols"] = source_symbols
+                bot_status["watch_symbols"] = source_symbols
     except Exception:
         pass
 
@@ -409,8 +370,9 @@ def start_bot(symbols=None, trade_amt: float = None):
     symbols = normalize_symbol_list(symbols)
     # 保留有持倉的幣種，避免被換掉
     open_syms = _get_open_position_symbols()
-    symbols = open_syms + [s for s in symbols if s not in open_syms]
-    symbols = normalize_symbol_list(symbols)
+    for s in open_syms:
+        if s not in symbols:
+            symbols.append(s)
     save_symbol_config(symbols)
 
     if trade_amt is None:
@@ -423,11 +385,7 @@ def start_bot(symbols=None, trade_amt: float = None):
     # 持久化：後端重啟後可自動恢復
     try:
         with open(BOT_STATE_PATH, "w") as f:
-            json.dump({
-                "is_running": True,
-                "trade_amount": trade_amt,
-                "lock_trade_amount": bot_status.get("lock_trade_amount", False),
-            }, f)
+            json.dump({"is_running": True, "trade_amount": trade_amt}, f)
     except Exception:
         pass
 
@@ -545,47 +503,11 @@ def set_bot_amount(amount: float):
     if amount < 0 or amount > 1000:
         raise ValueError("單次交易數量必須限制在 0 至 1000 之間")
     bot_status["trade_amount"] = amount
-    bot_status["lock_trade_amount"] = True
     bot_status["strategy"] = f"Top 5 Sniper ({amount})"
     add_system_log(f"⚙️ 自動交易單次數量設定為: {amount}", "info")
-
-    try:
-        with open(BOT_STATE_PATH, "w") as f:
-            json.dump({
-                "is_running": bot_status.get("is_running", False),
-                "trade_amount": amount,
-                "lock_trade_amount": True,
-            }, f)
-    except Exception:
-        pass
     
     if bot_status.get("is_running"):
         add_system_log("♻️ 已重新啟動所有機器人以套用新的下單金額", "warning")
         restart_bot()
         
     return bot_status["trade_amount"]
-
-
-def set_pnl_baseline():
-    import time
-    status = get_bot_status()
-    baseline_val = float(status.get("total_realized_pnl_raw", status.get("total_realized_pnl", 0.0)) or 0.0)
-    payload = {
-        "baseline_total_realized_pnl": baseline_val,
-        "set_at": int(time.time()),
-    }
-    with open(PNL_BASELINE_PATH, "w") as f:
-        json.dump(payload, f)
-    add_system_log(f"📍 已設定已實現利潤基準點: {baseline_val:.4f} USDT", "info")
-    return payload
-
-
-def clear_pnl_baseline():
-    try:
-        if os.path.exists(PNL_BASELINE_PATH):
-            os.remove(PNL_BASELINE_PATH)
-            add_system_log("🧹 已清除已實現利潤基準點", "warning")
-            return {"cleared": True}
-    except Exception:
-        pass
-    return {"cleared": False}

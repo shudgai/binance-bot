@@ -232,13 +232,7 @@ async def check_exits(sym):
         if profit_pct < 0 and _adverse_atr_mult >= 2.0:
             cs = 'sell' if is_long else 'buy'
             logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
-            _closed_ok = await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
-            if not _closed_ok:
-                # 平倉失敗（-1007 / 502 等短暫性錯誤），倉位仍然存在，
-                # 不能設置反手否則會出現「多倉未平、又掛空反手」的方向衝突。
-                logger.info(f"⚠️ [Rapid_Reverse_Abort] {sym} 急速逆勢平倉失敗，暫不設置反手，等下一 tick 重新評估")
-                return
-            # 平倉成功，評估是否執行反手
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
             if _check_reversal_allowed(sym, s):
                 last_reverse = s.get("last_reverse_time", 0)
                 if time.time() - last_reverse > 1800:
@@ -264,7 +258,9 @@ async def check_exits(sym):
         if vol_ratio > 2.5:
             logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
         else:
-            return
+            # 進場初期仍要保護真實停損，不能因為「新倉盲區」而直接跳過 Hard_SL / Universal SL。
+            # 這裡不再直接 return，讓後續的停損檢查仍能執行。
+            pass
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
@@ -404,8 +400,8 @@ async def check_exits(sym):
             return
 
     # --- 進場後觀察期快速撤退 (Post-Entry Observation Exit) ---
-    # 首次進場後 1-5 分鐘：檢測三種「開錯方向」情境，若確認錯方向則提前止損。
-    if s.get("entry_count", 0) == 1 and abs(s.get("qty", 0.0)) > 0.000001:
+    # 禁用：不進行快速撤退，給予單子充分時間回本。只靠正常停損線平倉。
+    if False:  # DISABLED - 給予充分的持倉時間
         _obs_time = time.time() - s.get("open_time", time.time())
         _entry_price = s.get("first_entry_price", avg)
         _wrong_dir = False
@@ -487,7 +483,7 @@ async def check_exits(sym):
     time_since_last = time.time() - s.get("last_entry_time", 0)
 
     # 只有在尚未超過最大加倉次數且距離上次加倉超過冷卻時間時，才允許 DCA
-    can_dca = (s.get("entry_count", 0) <= max_additional) and (time_since_last >= entry_cooldown)
+    can_dca = (s.get("entry_count", 0) < max_additional) and (time_since_last >= entry_cooldown)
 
     if not _disable_dca and can_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) >= 1:
         # 防呆：檢查是否正在急跌/急漲 (Falling Knife)

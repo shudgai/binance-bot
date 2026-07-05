@@ -273,11 +273,6 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
                 logger.info(f"🚨 [連續虧損汰換異常] {sym}: {replacement_err}")
             return  # 已被永久汰換，不需再補位
 
-    # 立即平仓锁：防止平仓后立即再进场（30秒内不允许新入场）
-    # 这是竞态条件修复，确保在 check_entries 循环中不会立即重新进场
-    s["just_closed_lock"] = now + 30
-    logger.info(f"🔒 [平仓鎖定] {sym} 30秒内锁定新进场")
-
     # 冷卻/封禁期間補位：讓監控池在這段期間維持原本可交易的幣種數量
     if sym in ctx.ALL_SYMBOLS and sym not in ctx.COOLDOWN_SUBSTITUTES:
         _add_cooldown_substitute(sym)

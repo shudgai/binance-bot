@@ -19,9 +19,9 @@ from typing import List
 
 from services.utils import parse_symbol, paper_key
 from services.system_log_service import get_system_logs, add_system_log, clear_system_logs
-from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols, kill_bot, set_pnl_baseline, clear_pnl_baseline
+from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols, kill_bot
 from services.binance_service import (
-    api_key, client, get_price, get_all_prices, get_position, get_all_positions, get_trades, get_klines,
+    api_key, client, get_price, get_all_prices, get_position, get_trades, get_klines,
     market_buy, market_short, market_sell
 )
 from services.paper_trade_service import (
@@ -46,144 +46,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-RETRY_CLOSE_TOLERANCE = 0.000001
-retry_close_state = {
-    "running": False,
-    "symbols": ["ENAUSDT", "ZECUSDT"],
-    "interval_sec": 8,
-    "max_rounds": 0,
-    "rounds_done": 0,
-    "started_at": 0,
-    "stopped_at": 0,
-    "last_attempt_at": 0,
-    "last_error": "",
-    "last_result": "idle",
-    "fail_streak": 0,
-    "next_retry_sec": 0,
-    "last_round_errors": [],
-}
-retry_close_lock = threading.Lock()
-
-
-def _normalize_symbol(symbol: str) -> str:
-    return str(symbol or "").upper().replace(":", "").replace("/", "")
-
-
-def _get_position_qty_map():
-    out = {}
-    try:
-        positions = get_all_positions() or {}
-    except Exception:
-        return out
-    for key, pos in positions.items():
-        sym = _normalize_symbol(str(key).replace(":USDT", "USDT"))
-        try:
-            out[sym] = float(pos.get("qty", 0.0) or 0.0)
-        except Exception:
-            out[sym] = 0.0
-    return out
-
-
-def _close_symbol_once(symbol_upper: str):
-    if is_paper_trading():
-        pk = paper_key(symbol_upper)
-        return paper_market_sell(symbol_upper, pk)
-    base_asset, _ = parse_symbol(symbol_upper)
-    return market_sell(symbol_upper, base_asset)
-
-
-def _retry_close_worker():
-    while True:
-        with retry_close_lock:
-            running = bool(retry_close_state["running"])
-            symbols = list(retry_close_state["symbols"])
-            interval_sec = int(retry_close_state["interval_sec"])
-            max_rounds = int(retry_close_state["max_rounds"])
-            rounds_done = int(retry_close_state["rounds_done"])
-            fail_streak = int(retry_close_state.get("fail_streak", 0))
-
-        if not running:
-            return
-
-        qty_map = _get_position_qty_map()
-        open_before = [s for s in symbols if abs(float(qty_map.get(s, 0.0) or 0.0)) > RETRY_CLOSE_TOLERANCE]
-        if not open_before:
-            with retry_close_lock:
-                retry_close_state["running"] = False
-                retry_close_state["last_result"] = "all_closed"
-                retry_close_state["stopped_at"] = int(time.time())
-            add_system_log("✅ [背景重試平倉] 所有目標倉位已歸零，停止重試", "success")
-            return
-
-        with retry_close_lock:
-            retry_close_state["last_attempt_at"] = int(time.time())
-
-        round_errors = []
-        round_success = 0
-        for sym in open_before:
-            try:
-                _close_symbol_once(sym)
-                round_success += 1
-            except Exception as e:
-                err = str(e)
-                round_errors.append(f"{sym}: {err}")
-                with retry_close_lock:
-                    retry_close_state["last_error"] = err
-
-        if round_errors:
-            fail_streak += 1
-        else:
-            fail_streak = 0
-
-        with retry_close_lock:
-            retry_close_state["rounds_done"] = rounds_done + 1
-            rounds_done = retry_close_state["rounds_done"]
-            retry_close_state["fail_streak"] = fail_streak
-            retry_close_state["last_round_errors"] = round_errors[-3:]
-
-        qty_after = _get_position_qty_map()
-        still_open = [s for s in symbols if abs(float(qty_after.get(s, 0.0) or 0.0)) > RETRY_CLOSE_TOLERANCE]
-        if not still_open:
-            with retry_close_lock:
-                retry_close_state["running"] = False
-                retry_close_state["last_result"] = "all_closed"
-                retry_close_state["stopped_at"] = int(time.time())
-            add_system_log("✅ [背景重試平倉] 平倉成功，所有目標倉位已關閉", "success")
-            return
-
-        if max_rounds > 0 and rounds_done >= max_rounds:
-            with retry_close_lock:
-                retry_close_state["running"] = False
-                retry_close_state["last_result"] = "max_rounds_reached"
-                retry_close_state["stopped_at"] = int(time.time())
-            add_system_log("⏹️ [背景重試平倉] 已達最大重試輪數，停止重試", "warning")
-            return
-
-        # 交易所持續回 -1007/502 時，使用退避避免每幾秒重轟 API 並洗版日誌。
-        backoff_factor = min(fail_streak, 4)
-        next_retry_sec = min(90, max(1, interval_sec) * (2 ** backoff_factor))
-        if not round_errors:
-            next_retry_sec = max(1, interval_sec)
-
-        with retry_close_lock:
-            retry_close_state["next_retry_sec"] = next_retry_sec
-
-        if round_errors:
-            sample = " | ".join(round_errors[:2])
-            add_system_log(
-                f"⚠️ [背景重試平倉] 第{rounds_done}輪失敗，連續失敗 {fail_streak} 輪，"
-                f"{next_retry_sec}s 後重試；錯誤樣本: {sample}",
-                "warning",
-            )
-        elif round_success > 0:
-            add_system_log(f"🔁 [背景重試平倉] 第{rounds_done}輪已送出 {round_success} 筆平倉請求", "info")
-
-        for _ in range(next_retry_sec):
-            with retry_close_lock:
-                if not retry_close_state["running"]:
-                    return
-            time.sleep(1)
 
 def is_paper_trading():
     from core.config import PAPER_TRADING
@@ -285,13 +147,8 @@ def api_force_reset():
 @app.get("/api/bot-status")
 def api_get_bot_status():
     status = get_bot_status()
-    from core.config import USE_TESTNET
     if "entry_diagnosis" not in status:
         status["entry_diagnosis"] = "等待訊號"
-    if is_paper_trading():
-        status["environment"] = "paper"
-    else:
-        status["environment"] = "demo" if USE_TESTNET else "live"
     if is_paper_trading():
         status["balance_quote"] = get_paper_balance()
         status["session_start_balance"] = get_session_start_balance()
@@ -315,12 +172,6 @@ class WatchSymbolsReq(BaseModel):
 
 class ActiveSymbolsReq(BaseModel):
     symbols: List[str]
-
-
-class RetryCloseStartReq(BaseModel):
-    symbols: List[str] = ["ENAUSDT", "ZECUSDT"]
-    interval_sec: int = 8
-    max_rounds: int = 0
 
 @app.post("/api/bot-status/set-symbols")
 def api_set_bot_symbols(req: ActiveSymbolsReq):
@@ -348,34 +199,9 @@ def api_set_bot_amount(amount: float):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
-@app.post("/api/bot-status/set-pnl-baseline")
-def api_set_pnl_baseline():
-    try:
-        return {"status": "success", **set_pnl_baseline()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/bot-status/clear-pnl-baseline")
-def api_clear_pnl_baseline():
-    try:
-        return {"status": "success", **clear_pnl_baseline()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/api/logs")
 def api_get_logs():
     return get_system_logs()
-
-
-@app.post("/api/logs/clear")
-def api_clear_logs():
-    try:
-        clear_system_logs()
-        return {"status": "success", "detail": "系統紀錄已清空"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"清空紀錄失敗: {str(e)}")
 
 @app.get("/api/sl-states")
 def api_sl_states():
@@ -512,77 +338,10 @@ def api_market_sell(symbol: str):
 @app.post("/api/order/close-all")
 def api_close_all_orders():
     try:
-        if is_paper_trading():
-            force_close_all_positions()
-        else:
-            positions = get_all_positions()
-            for key, pos in (positions or {}).items():
-                qty = float(pos.get("qty", 0.0) or 0.0)
-                if abs(qty) <= 0.000001:
-                    continue
-                sym = str(key).replace(":USDT", "USDT")
-                base_asset, _ = parse_symbol(sym)
-                market_sell(sym, base_asset)
+        force_close_all_positions()
         return {"status": "success", "detail": "已強制平倉所有持有部位"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"一鍵平倉失敗: {str(e)}")
-
-
-@app.post("/api/order/retry-close/start")
-def api_start_retry_close(req: RetryCloseStartReq):
-    try:
-        symbols = [_normalize_symbol(s) for s in (req.symbols or []) if _normalize_symbol(s)]
-        if not symbols:
-            symbols = ["ENAUSDT", "ZECUSDT"]
-
-        interval_sec = max(1, int(req.interval_sec or 8))
-        max_rounds = max(0, int(req.max_rounds or 0))
-
-        with retry_close_lock:
-            if retry_close_state["running"]:
-                return {"status": "success", "detail": "背景重試已在執行中", **retry_close_state}
-
-            retry_close_state["running"] = True
-            retry_close_state["symbols"] = symbols
-            retry_close_state["interval_sec"] = interval_sec
-            retry_close_state["max_rounds"] = max_rounds
-            retry_close_state["rounds_done"] = 0
-            retry_close_state["started_at"] = int(time.time())
-            retry_close_state["stopped_at"] = 0
-            retry_close_state["last_attempt_at"] = 0
-            retry_close_state["last_error"] = ""
-            retry_close_state["last_result"] = "running"
-            retry_close_state["fail_streak"] = 0
-            retry_close_state["next_retry_sec"] = interval_sec
-            retry_close_state["last_round_errors"] = []
-
-        threading.Thread(target=_retry_close_worker, daemon=True).start()
-        add_system_log(f"🚀 [背景重試平倉] 啟動: symbols={symbols}, interval={interval_sec}s, max_rounds={max_rounds}", "warning")
-        with retry_close_lock:
-            return {"status": "success", "detail": "背景重試已啟動", **retry_close_state}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"啟動背景重試失敗: {str(e)}")
-
-
-@app.post("/api/order/retry-close/stop")
-def api_stop_retry_close():
-    with retry_close_lock:
-        retry_close_state["running"] = False
-        retry_close_state["stopped_at"] = int(time.time())
-        if retry_close_state["last_result"] == "running":
-            retry_close_state["last_result"] = "stopped"
-        state = dict(retry_close_state)
-    add_system_log("⏹️ [背景重試平倉] 已手動停止", "warning")
-    return {"status": "success", "detail": "背景重試已停止", **state}
-
-
-@app.get("/api/order/retry-close/status")
-def api_retry_close_status():
-    with retry_close_lock:
-        state = dict(retry_close_state)
-    qty_map = _get_position_qty_map()
-    state["position_qty"] = {s: float(qty_map.get(s, 0.0) or 0.0) for s in state.get("symbols", [])}
-    return state
 
 
 @app.post("/api/paper-state/reset")

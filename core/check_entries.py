@@ -527,11 +527,11 @@ async def check_entries():
                     continue
             else:
                 # ✅ 啟用金字塔加倉：虧損倉位可進行救援 DCA
-                if s.get("entry_count", 0) <= s.get("max_additional_entries", 3):
+                if s.get("entry_count", 0) < s.get("max_additional_entries", 3):
                     logger.info(f"🟢 [加倉允許] {sym} 欲順勢加倉 {side}，檢查冷卻時間...")
                     # 加倉冷卻檢查在下方 execute_order 時進行
                 else:
-                    logger.info(f"🛑 [加倉上限] {sym} 已達最大加倉次數 ({s.get('entry_count', 0)}/1+{s.get('max_additional_entries', 3)})，忽略此訊號。")
+                    logger.info(f"🛑 [加倉上限] {sym} 已達最大加倉次數 ({s.get('entry_count', 0)}/{s.get('max_additional_entries', 3)})，忽略此訊號。")
                     continue
 
         if not is_entry_allowed(sym, side, route, strength):
@@ -587,9 +587,10 @@ async def check_entries():
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
-            # 門檻拉高到 18.0（原本 15.0 太容易在邊緣強度就跳過趨勢過濾），
-            # 跟 core/entry_filter.py 的 _mtf_override_threshold 對齊。
-            if strength > 18.0 or route == "Automatic_Reverse":
+            # 門檻曾拉高到 18.0（原本 15.0 太容易在邊緣強度就跳過趨勢過濾），
+            # 使用者要求小幅放寬開倉條件，調回 16.0，跟 core/entry_filter.py 的
+            # _mtf_override_threshold 對齊。
+            if strength > 16.0 or route == "Automatic_Reverse":
                 logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
@@ -676,13 +677,6 @@ async def check_entries():
 
     for sym, side, strength, route in candidates:
         s = ctx.STATES[sym]
-        
-        # 🔒 平仓锁检查：防止平仓后立即再进场（竞态条件修复）
-        just_closed_lock_time = s.get("just_closed_lock", 0)
-        if just_closed_lock_time > time.time():
-            logger.info(f"🔒 [平仓锁定] {sym} 仍在平仓后冷却期({just_closed_lock_time - time.time():.0f}s)，此轮信号延迟至下次循环")
-            continue
-        
         has_pos = abs(s["qty"]) > 0.000001
 
         if not has_pos:

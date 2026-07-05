@@ -252,3 +252,11 @@ def get_entry_strictness_profile(mode=None):
 # 是否啟用 BTC 大盤過濾鎖定小幣開倉（True=啟用鎖定，False=小幣走自己獨立行情）
 USE_BTC_MACRO_FILTER = False
 
+# 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
+# （輪替），降低每輪瞬間送出的請求量，避免衝高幣安 API 權重
+MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '4'))
+# 控制同時對交易所發出的併發請求數（Semaphore 大小）
+REQUEST_SEMAPHORE_SIZE = int(os.getenv('REQUEST_SEMAPHORE_SIZE', '2'))
+# 批次之間的額外延遲（秒），需要時可拉開批次間隔
+KLINE_BATCH_PAUSE_SEC = float(os.getenv('KLINE_BATCH_PAUSE_SEC', '0.0'))
+

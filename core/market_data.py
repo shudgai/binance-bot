@@ -131,19 +131,39 @@ async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SI
 
 async def fetch_all_klines(exchange):
     from core import ctx
+    from core.config import MARKET_FETCH_BATCHES, KLINE_BATCH_PAUSE_SEC
     async def fetch_with_sem(sym):
         async with ctx.request_semaphore:
             return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
 
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    tasks = {sym: fetch_with_sem(sym) for sym in symbols}
+    total = len(symbols)
+    if total == 0:
+        return
+
+    # 分批輪替抓取：每輪主迴圈只抓一批，而不是把所有監控幣種同時發出去，
+    # 降低瞬間對外請求量、避免衝高幣安 API 權重（曾發生過權重打到 3900+/2400）。
+    batches = max(1, int(MARKET_FETCH_BATCHES))
+    batch_size = (total + batches - 1) // batches
+    idx = getattr(ctx, 'market_fetch_index', 0)
+    start = idx * batch_size
+    batch = symbols[start:start + batch_size]
+    if not batch:
+        idx = 0
+        batch = symbols[:batch_size]
+
+    tasks = {sym: fetch_with_sem(sym) for sym in batch}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    for i, sym in enumerate(symbols):
+    for i, sym in enumerate(batch):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["ohlcv"] = results[i]
             ctx.STATES[sym]["close_price"] = results[i][-1][4]
         else:
             logger.info(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
+
+    ctx.market_fetch_index = (idx + 1) % batches
+    if KLINE_BATCH_PAUSE_SEC > 0:
+        await asyncio.sleep(KLINE_BATCH_PAUSE_SEC)
 
 
 async def fetch_sma200_15m(exchange, sym):
@@ -267,8 +287,6 @@ async def load_open_positions():
             qty = float(pos.get("qty", 0.0))
             if abs(qty) > 0.000001:
                 sym = pk.replace(":", "")
-                if sym in ("ENAUSDT", "ZECUSDT", "ENA", "ZEC"):
-                    continue
                 if sym not in ctx.ALL_SYMBOLS:
                     logger.info(f"⚠️ [發現未監控持倉] {sym} 仍有未平倉位，自動加回監控清單並在介面顯示！")
                     ctx.ALL_SYMBOLS.append(sym)
