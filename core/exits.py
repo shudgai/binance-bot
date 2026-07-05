@@ -608,8 +608,8 @@ async def check_exits(sym):
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
 
-    breakeven_threshold = 0.021  # 2.1% 正利潤啟動保本鎖定
-    fee_buffer = 0.020           # 2.0% 獲利保本平倉線，一旦趨勢回落至此即平倉退場
+    breakeven_threshold = 0.003  # 0.3% 正利潤啟動保本鎖定
+    fee_buffer = 0.002           # 0.2% 獲利保本平倉線，一旦趨勢回落至此即平倉退場
 
     breakeven_price = None
     if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
