@@ -519,6 +519,74 @@ def api_chat(chat_msg: ChatMessage):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _get_real_trades():
+    import json
+    from core.config import TRADE_HISTORY_FILE
+    import datetime
+    import pytz
+    if not os.path.exists(TRADE_HISTORY_FILE):
+        return []
+    try:
+        with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+    except Exception:
+        return []
+    
+    trades = []
+    tz = pytz.timezone('Asia/Taipei')
+    for t in history:
+        try:
+            timestamp_str = t.get("timestamp")
+            if not timestamp_str:
+                continue
+            dt = datetime.datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            dt = tz.localize(dt)
+            exit_time_ms = int(dt.timestamp() * 1000)
+            entry_time_ms = exit_time_ms - 600000  # 預估 10 分鐘前入場
+            
+            ae = float(t.get("actual_entry") or 0.0)
+            ax = float(t.get("actual_exit") or 0.0)
+            qty = float(t.get("qty") or 0.0)
+            profit_pct = float(t.get("profit_pct") or 0.0)
+            fees = float(t.get("fees") or 0.0)
+            sym = str(t.get("symbol", "")).replace("USDT", ":USDT")
+            
+            # 判斷多空方向
+            if profit_pct >= 0:
+                is_long = (ax > ae)
+            else:
+                is_long = (ax < ae)
+                
+            pnl = (ax - ae) * qty if is_long else (ae - ax) * qty
+            
+            # 入場 trade 紀錄
+            trades.append({
+                "symbol": sym,
+                "price": ae,
+                "qty": qty,
+                "time": entry_time_ms,
+                "isBuyer": is_long,
+                "is_close": False,
+                "realized_pnl": 0.0,
+                "fee": fees / 2.0
+            })
+            
+            # 出場 trade 紀錄
+            trades.append({
+                "symbol": sym,
+                "price": ax,
+                "qty": qty,
+                "time": exit_time_ms,
+                "isBuyer": not is_long,
+                "is_close": True,
+                "realized_pnl": pnl,
+                "fee": fees / 2.0
+            })
+        except Exception:
+            continue
+    return trades
+
+
 @app.get("/api/history/summary")
 def api_history_summary():
     try:
@@ -530,8 +598,7 @@ def api_history_summary():
                 state = json.load(f)
             trades = state.get("trades", [])
         else:
-            from services.binance_service import get_trades
-            trades = get_trades("ALL")
+            trades = _get_real_trades()
 
         tz = pytz.timezone('Asia/Taipei')
         daily = {}
@@ -551,6 +618,7 @@ def api_history_summary():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/history/download/{date}")
 def api_history_download(date: str):
     try:
@@ -562,8 +630,7 @@ def api_history_download(date: str):
                 state = json.load(f)
             trades = state.get("trades", [])
         else:
-            from services.binance_service import get_trades
-            trades = get_trades("ALL")
+            trades = _get_real_trades()
 
         tz = pytz.timezone('Asia/Taipei')
         filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
