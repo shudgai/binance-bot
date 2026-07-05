@@ -180,6 +180,51 @@ class EntryFilterTests(unittest.TestCase):
 
         self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=18.5))
 
+    def test_same_side_loss_cooldown_blocks_for_four_hours(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+
+        ctx.MARKET_WIND["allow_long"] = True
+        ctx.MARKET_WIND["allow_short"] = True
+        ctx.MARKET_WIND["btc_trend_4h"] = None
+        ctx.MARKET_WIND["btc_trend_1h"] = None
+
+        s["close_price"] = 1.0
+        s["current_vol"] = 1200.0
+        s["vol_ma20"] = 1000.0
+        s["current_atr"] = 0.00195
+        s["atr_history"] = [0.00096] * 20
+        s["current_rsi"] = 80.0
+        s["ema20"] = 0.99
+        s["ema20_history"] = [0.99] * 3
+        s["ema20_15m"] = 0.0
+        s["ema50_15m"] = 0.0
+        s["ema50_1h"] = 0.0
+        s["sma200_15m"] = 0.0
+        s["mtf_filter"] = False
+        s["bb_up"] = 1.01
+        s["bb_down"] = 0.99
+        s["rsi_history"] = [80.0] * 10
+        s["ohlcv"] = [
+            [0, 0.98 + i * 0.0005, 0.99 + i * 0.0005, 0.97 + i * 0.0005, 0.985 + i * 0.0005, 1000]
+            for i in range(20)
+        ]
+        s["macd_line"] = 0.001
+        s["macd_signal"] = 0.0
+        s["prev_macd_line"] = 0.0005
+        s["prev_macd_signal"] = 0.0
+        s["prev_macd_hist"] = 0.0
+
+        import time
+        s["last_loss_time_long"] = time.time() - 3600
+
+        self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=27.4))
+
+        s["last_loss_time_long"] = time.time() - (5 * 3600)
+        self.assertTrue(is_entry_allowed(sym, "buy", route="a", strength=27.4))
+
 
 if __name__ == "__main__":
     unittest.main()

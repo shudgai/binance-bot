@@ -64,26 +64,29 @@ def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: in
         lev_cap, price_tag = 4, "正常"
 
     # ── 依 ATR% 決定 SL 寬度、槓桿、追蹤停利 ──
+    # ATR 停損可隨波動放寬，但 hard SL 是最後防線；雷達動態幣若缺省不寫，
+    # 會退回全域 3%，讓 10 分鐘內的大虧被放太遠。這裡固定給保守上限。
+    base_hard_sl = base.get("hard_sl_pct", 0.015)
     if atr_pct > 4.0:
         sl_mult   = round(base.get("sl_atr_multiplier", 2.5) + 1.0, 1)
         lev_cap   = min(lev_cap, 2)
-        hard_sl   = max(base.get("hard_sl_pct", 0.0), 0.030)
+        hard_sl   = min(max(base_hard_sl, 0.015), 0.020)
         trail_on  = True
         vol_tag   = "超高波動"
     elif atr_pct > 2.5:
         sl_mult   = round(base.get("sl_atr_multiplier", 2.5) + 0.5, 1)
         lev_cap   = min(lev_cap, 3)
-        hard_sl   = base.get("hard_sl_pct", 0.0)
+        hard_sl   = min(max(base_hard_sl, 0.015), 0.025)
         trail_on  = True
         vol_tag   = "高波動"
     elif atr_pct > 1.5:
         sl_mult   = base.get("sl_atr_multiplier", 2.5)
-        hard_sl   = base.get("hard_sl_pct", 0.0)
+        hard_sl   = min(max(base_hard_sl, 0.015), 0.025)
         trail_on  = True
         vol_tag   = "中波動"
     else:
         sl_mult   = max(round(base.get("sl_atr_multiplier", 2.5) - 0.3, 1), 1.5)
-        hard_sl   = base.get("hard_sl_pct", 0.0)
+        hard_sl   = min(max(base_hard_sl, 0.012), 0.020)
         trail_on  = False
         vol_tag   = "低波動"
 
@@ -101,6 +104,11 @@ def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: in
         "_radar_atr_pct":    round(atr_pct, 3),
         "_radar_rank":       rank,
         "_radar_tag":        f"{price_tag}/{vol_tag}",
+        # 雷達動態選中、沒有寫在 COIN_PROFILE_CONFIG 裡的幣種（例如 BCHUSDT）本來
+        # 對這些幣完全不認識，虧損時還是會照樣觸發 Rescue DCA 加碼攤平，等於在還
+        # 沒真正驗證過、風險認知不足的幣種上額外加碼冒險。跟 HOT_MOVER_PROFILE_BASE
+        # 一樣的保守做法，雷達選出的幣預設關閉 Rescue DCA，虧損就照 SL 出場，不加碼。
+        "disable_rescue_dca": True,
     }
     if hard_sl > 0:
         profile["hard_sl_pct"] = hard_sl

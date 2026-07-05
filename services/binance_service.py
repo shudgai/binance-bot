@@ -392,32 +392,33 @@ _total_pnl_cache = (0, 0.0)
 def get_total_realized_pnl_usdt() -> float:
     """加總帳戶累計已實現損益（含手續費），對應紙上交易那邊「total_realized_pnl」的概念，
     讓實體帳戶也能顯示總已實現利潤。
-    原本只靠 futures_income_history()，但這個端點在 Demo Trading 環境上多次實測發現
-    會回傳空陣列，即使帳戶當下已經有好幾筆真實成交、futures_account_trades() 也查得到
-    正確的 realizedPnl，income_history 卻是空的——這是 Demo Trading 後端某些統計端點
-    資料不同步的問題，不是查詢方式錯了。改成優先用 futures_account_trades()（透過
-    get_trades）加總每筆平倉的 realizedPnl 減去手續費，這個端點比較可靠。income_history
-    若有資金費率（FUNDING_FEE，account_trades 查不到這個）資料，一併加總避免漏算。"""
+    原本用 get_trades("ALL")（futures_account_trades）加總，但 get_trades() 內部把結果
+    截斷成最新 30 筆原始成交（all_trades[:30]，是為了給交易列表 UI 用而故意限制筆數），
+    拿同一個函式來算「總計」就會漏算 30 筆之前的所有交易——實測當天已有 106 筆交易時，
+    這裡只會計入最後 30 筆，導致跟「歷史交易筆記本」（讀 data/trade_history.json 全部
+    紀錄算出來的每日總計）對不起來（一個顯示 +0.67，另一個算出來是 -9.07）。改成跟歷史
+    筆記本用同一份、沒有筆數上限的資料來源（trade_history.json），並套用完全相同的
+    多空判斷／損益計算方式（見 services/api.py 的 _get_real_trades），確保兩邊金額一致。"""
     global _total_pnl_cache
     now = time.time()
-    if now - _total_pnl_cache[0] < 15:  # 快取 15 秒，避免頻繁向幣安查詢大容量歷史紀錄
+    if now - _total_pnl_cache[0] < 15:  # 快取 15 秒，避免頻繁重讀歷史檔案
         return _total_pnl_cache[1]
 
     total = 0.0
     try:
-        trades = get_trades("ALL")
-        for t in trades:
-            if t.get("is_close"):
-                total += float(t.get("realized_pnl", 0.0) or 0.0) - float(t.get("fee", 0.0) or 0.0)
-            else:
-                total -= float(t.get("fee", 0.0) or 0.0)
-    except Exception:
-        pass
-    try:
-        records = client.futures_income_history(limit=1000)
-        for r in records:
-            if r.get("incomeType") == "FUNDING_FEE":
-                total += float(r.get("income", 0.0) or 0.0)
+        from core.config import TRADE_HISTORY_FILE
+        import json as _json
+        with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = _json.load(f)
+        for t in history:
+            ae = float(t.get("actual_entry") or 0.0)
+            ax = float(t.get("actual_exit") or 0.0)
+            qty = float(t.get("qty") or 0.0)
+            profit_pct = float(t.get("profit_pct") or 0.0)
+            fees = float(t.get("fees") or 0.0)
+            is_long = (ax > ae) if profit_pct >= 0 else (ax < ae)
+            pnl = (ax - ae) * qty if is_long else (ae - ax) * qty
+            total += pnl - fees
     except Exception:
         pass
     _total_pnl_cache = (now, total)

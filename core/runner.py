@@ -457,34 +457,34 @@ async def periodic_status_log():
 async def push_paper_live_state():
     """每 2 秒即時更新 paper_state.json 的未實現損益與現價"""
     from services.utils import paper_key
-    _paper_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json")
+    from services.update_paper_state import mutate_paper_state
     while True:
         await asyncio.sleep(2)
         if not PAPER_TRADING:
             continue
         try:
-            with open(_paper_file, "r") as f:
-                state = json.load(f)
-            total_unrealized = 0.0
-            for sym in ctx.ALL_SYMBOLS:
-                pk = paper_key(sym)
-                s = ctx.STATES.get(sym, {})
-                pos = state.get("positions", {}).get(pk, {})
-                qty = float(pos.get("qty", 0.0))
-                avg = float(pos.get("avg_price", 0.0))
-                cur = float(s.get("close_price", 0.0))
-                if abs(qty) > 0.000001 and avg > 0 and cur > 0:
-                    upnl = (cur - avg) * abs(qty) if qty > 0 else (avg - cur) * abs(qty)
-                    pos["unrealized_pnl"] = round(upnl, 6)
-                    pos["current_price"] = cur
-                    total_unrealized += upnl
-                else:
-                    pos.pop("unrealized_pnl", None)
-                    pos.pop("current_price", None)
-            state["total_unrealized_pnl"] = round(total_unrealized, 6)
-            state["last_updated"] = int(time.time())
-            with open(_paper_file, "w") as f:
-                json.dump(state, f, indent=4)
+            def _mutate(state):
+                total_unrealized = 0.0
+                positions = state.get("positions", {})
+                for sym in ctx.ALL_SYMBOLS:
+                    pk = paper_key(sym)
+                    s = ctx.STATES.get(sym, {})
+                    pos = positions.get(pk, {})
+                    qty = float(pos.get("qty", 0.0))
+                    avg = float(pos.get("avg_price", 0.0))
+                    cur = float(s.get("close_price", 0.0))
+                    if abs(qty) > 0.000001 and avg > 0 and cur > 0:
+                        upnl = (cur - avg) * abs(qty) if qty > 0 else (avg - cur) * abs(qty)
+                        pos["unrealized_pnl"] = round(upnl, 6)
+                        pos["current_price"] = cur
+                        total_unrealized += upnl
+                    else:
+                        pos.pop("unrealized_pnl", None)
+                        pos.pop("current_price", None)
+                state["total_unrealized_pnl"] = round(total_unrealized, 6)
+                state["last_updated"] = int(time.time())
+
+            mutate_paper_state(_mutate)
         except Exception:
             pass
 

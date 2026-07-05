@@ -2,6 +2,7 @@ import asyncio
 import unittest
 import sys
 import os
+import time
 from unittest.mock import patch, AsyncMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core import exchange_client
-from core.orders import execute_order
+from core.orders import execute_order, check_paper_pending_order, _entry_pending_adverse_guard
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -38,6 +39,7 @@ class EntryRiskTests(unittest.TestCase):
         ]
 
         mock_exchange = AsyncMock()
+        mock_exchange.fetch_mark_price.side_effect = Exception("no mark")
         mock_exchange.fetch_ticker.return_value = {"last": 110.0}
         mock_exchange.fetch_order_book.return_value = {"bids": [[110.0, 1000.0]], "asks": [[110.1, 100.0]]}
         mock_exchange.fetch_balance.return_value = {"USDT": {"total": 10000.0, "free": 10000.0}}
@@ -51,6 +53,7 @@ class EntryRiskTests(unittest.TestCase):
              patch("core.entry_filter.is_entry_volume_confirmed", return_value=True), \
              patch("core.orders.sanitize_order_qty", side_effect=lambda sym, q: 4.5), \
              patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders.exchange_market_data", mock_exchange), \
              patch("core.orders.exchange_futures", mock_exchange):
             asyncio.run(execute_order(sym, "buy", 110.0))
 
@@ -69,15 +72,59 @@ class EntryRiskTests(unittest.TestCase):
         s["last_entry_time"] = 0.0
 
         mock_exchange = AsyncMock()
+        mock_exchange.fetch_mark_price.side_effect = Exception("no mark")
         mock_exchange.fetch_ticker.return_value = {"last": 95.0}
         mock_exchange.fetch_order_book.return_value = {"bids": [[95.0, 1000.0]], "asks": [[95.1, 100.0]]}
         with patch("core.orders.compute_per_coin_margin", return_value=3000.0), \
              patch("core.orders.get_balance", return_value=10000.0), \
              patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders.exchange_market_data", mock_exchange), \
              patch("core.orders.exchange_futures", mock_exchange):
             asyncio.run(execute_order(sym, "buy", 95.0))
 
         self.assertEqual(s["entry_count"], 1)
+
+    def test_pending_adverse_guard_blocks_wrong_way_move(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["current_atr"] = 1.0
+
+        ok, reason = _entry_pending_adverse_guard(sym, "buy", 100.0, 98.5)
+        self.assertFalse(ok)
+        self.assertIn("pending adverse move", reason)
+
+        ok, reason = _entry_pending_adverse_guard(sym, "sell", 100.0, 101.5)
+        self.assertFalse(ok)
+        self.assertIn("pending adverse move", reason)
+
+        ok, _ = _entry_pending_adverse_guard(sym, "buy", 100.0, 100.3)
+        self.assertTrue(ok)
+
+    def test_paper_pending_order_cancels_when_price_runs_adverse(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["close_price"] = 98.5
+        s["current_atr"] = 1.0
+        s["pending_paper_order"] = {
+            "side": "buy",
+            "limit_price": 99.0,
+            "signal_price": 100.0,
+            "qty": 1.0,
+            "margin": 10.0,
+            "placed_at": time.time(),
+            "timeout": 999999.0,
+            "is_rescue_dca": False,
+        }
+
+        asyncio.run(check_paper_pending_order(sym))
+
+        self.assertIsNone(s["pending_paper_order"])
+        self.assertEqual(s["entry_count"], 0)
+        self.assertEqual(s["qty"], 0.0)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@ venv/
 __pycache__/
 *.pyc
 .env
+.env.*
 api_b64.txt
+backup_keys*
 *.log
 .DS_Store
 .claude/

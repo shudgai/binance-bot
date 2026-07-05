@@ -302,7 +302,7 @@ def reset_coin_state(sym):
     s["entry_count"] = 0
     s["avg_entry_price"] = 0.0
     s["first_entry_price"] = 0.0
-    s["max_additional_entries"] = 2
+    s["max_additional_entries"] = 1  # 只允許攤平一次，避免虧損倉位越攤越大
     s["entry_cooldown_sec"] = 180
     s["entry_size_pct"] = 0.5
     s["add_entry_pct"] = 0.25

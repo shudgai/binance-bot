@@ -30,6 +30,90 @@ def _import_update_trailing_stop():
     return update_trailing_stop
 
 
+def _entry_direction_guard(sym, side, reference_price=None):
+    s = ctx.STATES.get(sym, {})
+    p = float(s.get("close_price", 0.0) or 0.0)
+    if p <= 0:
+        return True, "no_price"
+
+    ref = float(reference_price or s.get("last_entry_signal_price", 0.0) or p)
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    adverse_limit = max((atr * 0.9) if atr > 0 else 0.0, ref * 0.003)
+    adverse_move = (ref - p) if side == "buy" else (p - ref)
+    if adverse_move > adverse_limit:
+        return False, f"price moved adverse {adverse_move:.6f} > {adverse_limit:.6f}"
+
+    ema20 = float(s.get("ema20", 0.0) or 0.0)
+    macd_hist = float(s.get("macd_hist", 0.0) or 0.0)
+    rsi = float(s.get("current_rsi", 50.0) or 50.0)
+    if ema20 > 0:
+        if side == "buy" and p < ema20 and macd_hist < 0 and rsi < 45:
+            return False, f"below EMA20 with weak MACD/RSI ({p:.6f} < {ema20:.6f}, RSI={rsi:.1f})"
+        if side == "sell" and p > ema20 and macd_hist > 0 and rsi > 55:
+            return False, f"above EMA20 with strong MACD/RSI ({p:.6f} > {ema20:.6f}, RSI={rsi:.1f})"
+
+    ohlcv = s.get("ohlcv", [])
+    vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+    if len(ohlcv) >= 3 and vol_ma20 > 0:
+        c1 = ohlcv[-1]
+        c2 = ohlcv[-2]
+        if side == "buy":
+            opposite = c1[4] < c1[1] and c2[4] < c2[1] and p < c2[4]
+        else:
+            opposite = c1[4] > c1[1] and c2[4] > c2[1] and p > c2[4]
+        if opposite and float(c1[5]) >= vol_ma20 * 0.6:
+            return False, "two opposite candles with volume"
+
+    return True, "ok"
+
+
+def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_dca=False):
+    if order_price is None or market_price is None or market_price <= 0:
+        return True, "market_or_no_ref"
+    s = ctx.STATES.get(sym, {})
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    atr_pct = atr / market_price if market_price > 0 else 0.0
+    max_adverse_dev = max(0.003, min(0.018, atr_pct * 1.2 if atr_pct > 0 else 0.006))
+    if is_rescue_dca:
+        max_adverse_dev = min(max_adverse_dev, 0.006)
+
+    adverse_dev = (order_price - market_price) / market_price if side == "buy" else (market_price - order_price) / market_price
+    if adverse_dev > max_adverse_dev:
+        return False, f"adverse price deviation {adverse_dev*100:.2f}% > {max_adverse_dev*100:.2f}%"
+
+    if mode in ("market", "chase"):
+        total_dev = abs(order_price - market_price) / market_price
+        chase_limit = max(0.003, min(0.010, atr_pct * 0.8 if atr_pct > 0 else 0.004))
+        if total_dev > chase_limit:
+            return False, f"chase price drift {total_dev*100:.2f}% > {chase_limit*100:.2f}%"
+
+    return True, "ok"
+
+
+def _entry_pending_adverse_guard(sym, side, reference_price, current_price, is_rescue_dca=False):
+    """Return False when a pending entry has moved too far against the original signal.
+
+    This is deliberately stricter than the generic order-price guard: once a limit
+    order is sitting in the book, a fast adverse move often means the setup has
+    changed from "patient entry" to "catching a falling/rising market".
+    """
+    if not reference_price or not current_price or reference_price <= 0 or current_price <= 0:
+        return True, "no_ref"
+
+    s = ctx.STATES.get(sym, {})
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    atr_pct = atr / reference_price if reference_price > 0 else 0.0
+    max_adverse_dev = max(0.0025, min(0.012, atr_pct * 0.8 if atr_pct > 0 else 0.004))
+    if is_rescue_dca:
+        max_adverse_dev = min(max_adverse_dev, 0.005)
+
+    adverse_dev = (reference_price - current_price) / reference_price if side == "buy" else (current_price - reference_price) / reference_price
+    if adverse_dev > max_adverse_dev:
+        return False, f"pending adverse move {adverse_dev*100:.2f}% > {max_adverse_dev*100:.2f}%"
+
+    return True, "ok"
+
+
 def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
                         expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0, fees=0.0, qty=0.0):
     """
@@ -240,7 +324,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     fee_buffer = 0.015 if sym.replace(":", "") in volatile_coins else 0.0035
 
     # 允許任何型態的止損（is_stop_loss=True）、全域熔斷、或策略主動平倉原因，以避免時間停滯等優化退場機制被攔截
-    allowed_exit_reasons = ["[Time_Stagnation]", "[SafePocket]", "[Trend_Follow]", "[Take_Profit]", "[PeakTrail]", "[Rescue_Trailing_Stop]", "[GLOBAL_MELTDOWN]"]
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -557,6 +641,14 @@ async def check_paper_pending_order(sym):
         return
     filled = (side == 'buy' and p <= limit_price) or (side == 'sell' and p >= limit_price)
     if filled:
+        reference_price = order.get("signal_price") or order.get("reference_price") or limit_price
+        adverse_ok, adverse_reason = _entry_pending_adverse_guard(
+            sym, side, reference_price, p, is_rescue_dca=order.get("is_rescue_dca", False)
+        )
+        if not adverse_ok:
+            s["pending_paper_order"] = None
+            logger.info(f"🛑 [Paper逆向撤單] {sym} {side} 觸價前行情反向偏離：{adverse_reason}，取消掛單")
+            return
         actual_fill_price = min(limit_price, p) if side == 'buy' else max(limit_price, p)
         _fill_paper_order(sym, actual_fill_price)
         return
@@ -686,6 +778,19 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被市場價缺失風控攔截，未進入下單")
         return
 
+    s["last_entry_signal_price"] = price
+    direction_ok, direction_reason = _entry_direction_guard(sym, side, reference_price=price)
+    if not direction_ok:
+        logger.info(f"🛑 [EntryDirectionGuard] {sym} {side} 訊號到執行期間方向變差：{direction_reason}，取消開倉")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被方向守門攔截，未進入下單")
+        return
+
+    pending_ok, pending_reason = _entry_pending_adverse_guard(sym, side, price, market_price, is_rescue_dca=is_rescue_dca)
+    if not pending_ok:
+        logger.info(f"🛑 [EntryAdverseGuard] {sym} {side} 當前價已逆向偏離訊號價：{pending_reason}，取消開倉")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被逆向偏離攔截，未進入下單")
+        return
+
     now = time.time()
     if s["entry_count"] > 0 and not is_rescue_dca:
         logger.info(f"🛑 [加倉停用] {sym} 金字塔順勢加碼功能已完全停用，拒絕加倉！")
@@ -791,7 +896,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
-                    "is_rescue_dca": is_rescue_dca,
+                    "is_rescue_dca": is_rescue_dca, "signal_price": price,
                 }
                 direction = "做多" if side == 'buy' else "做空"
                 logger.info(f"⏳ [Paper回踩掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
@@ -802,7 +907,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
-                    "is_rescue_dca": is_rescue_dca,
+                    "is_rescue_dca": is_rescue_dca, "signal_price": price,
                 }
                 direction = "做多" if side == 'buy' else "做空"
                 logger.info(f"⏳ [Paper被動掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待成交)")
@@ -909,7 +1014,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
             ctx.PENDING_LIMIT_ORDERS[order_id] = {
                 "sym": sym, "side": side, "qty": base_amt,
-                "price": limit_price or price, "timestamp": order_ts
+                "price": limit_price or price, "signal_price": price,
+                "timestamp": order_ts, "is_rescue_dca": is_rescue_dca,
             }
             logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type})")
 
@@ -923,6 +1029,28 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 filled_qty = 0.0
 
             requested_amt = base_amt
+            if status not in ('closed', 'canceled') and filled_qty < base_amt * 0.99:
+                latest_ref_price = 0.0
+                try:
+                    latest_ref_price = await get_reference_price(sym, exchange_futures)
+                except Exception as pe:
+                    logger.info(f"⚠️ [掛單逆向檢查] {sym} 取得最新參考價失敗: {pe}")
+                if latest_ref_price <= 0:
+                    latest_ref_price = float(s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0)
+                adverse_ok, adverse_reason = _entry_pending_adverse_guard(
+                    sym, side, price, latest_ref_price, is_rescue_dca=is_rescue_dca
+                )
+                if not adverse_ok:
+                    try:
+                        await exchange_futures.cancel_order(order_id, sym)
+                    except Exception as ce:
+                        logger.info(f"⚠️ [逆向撤單失敗] {sym} {order_id}: {ce}")
+                    ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
+                    if filled_qty <= 0.000001:
+                        logger.info(f"🛑 [逆向撤單] {sym} {side} 掛單後價格反向偏離：{adverse_reason}，未成交部分已撤，放棄本次進場")
+                        return
+                    logger.info(f"🛑 [逆向撤單] {sym} {side} 掛單後價格反向偏離：{adverse_reason}，撤銷剩餘數量，保留已成交 {filled_qty:.4f}")
+
             if status == 'closed' or filled_qty >= base_amt * 0.99:
                 ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                 fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
@@ -1096,12 +1224,35 @@ async def check_stale_limit_orders():
             if not info:
                 continue
             elapsed = time.time() - info["timestamp"]
-            if elapsed <= MAX_WAIT_SECONDS:
-                continue
 
             sym = info["sym"]
             side = info.get("side", "")
             original_qty = info.get("qty", 0.0)
+            should_cancel = elapsed > MAX_WAIT_SECONDS
+            cancel_reason = (
+                f"已掛單 {elapsed:.1f} 秒 > {MAX_WAIT_SECONDS}s"
+                if should_cancel else ""
+            )
+
+            if not should_cancel:
+                latest_ref_price = 0.0
+                try:
+                    latest_ref_price = await get_reference_price(sym, exchange_futures)
+                except Exception as pe:
+                    logger.info(f"⚠️ [掛單逆向掃描] {sym} 取得最新參考價失敗: {pe}")
+                s_check = ctx.STATES.get(sym, {})
+                if latest_ref_price <= 0:
+                    latest_ref_price = float(s_check.get("last_trade_price", 0.0) or s_check.get("close_price", 0.0) or 0.0)
+                adverse_ok, adverse_reason = _entry_pending_adverse_guard(
+                    sym, side, info.get("signal_price") or info.get("price"), latest_ref_price,
+                    is_rescue_dca=info.get("is_rescue_dca", False),
+                )
+                if not adverse_ok:
+                    should_cancel = True
+                    cancel_reason = adverse_reason
+
+            if not should_cancel:
+                continue
 
             cancel_ok = False
             filled_qty = 0.0
@@ -1118,9 +1269,9 @@ async def check_stale_limit_orders():
                 await exchange_futures.cancel_order(order_id, sym)
                 cancel_ok = True
                 logger.info(
-                    f"⏳ [超時撤單] {sym} 限價單超時未成交 "
-                    f"(已掛單 {elapsed:.1f} 秒 > {MAX_WAIT_SECONDS}s)。"
-                    f"為防止穿價風險，執行自動撤單！ OrderID: {order_id} "
+                    f"⏳ [限價撤單] {sym} 取消待成交進場單 "
+                    f"({cancel_reason})。"
+                    f"為防止穿價/反向偏離風險，執行自動撤單！ OrderID: {order_id} "
                     f"部分成交量: {filled_qty:.4f}/{original_qty:.4f}"
                 )
             except Exception as ce:

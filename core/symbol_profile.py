@@ -225,6 +225,19 @@ def get_effective_exit_setting(sym, key, base_value, is_long):
     return value
 
 
+def is_rescue_dca_disabled(sym) -> bool:
+    """判斷這個幣種是否該停用「救援攤平」(Rescue DCA，虧損時加碼攤平均價)。
+    原本 core/exits.py 是直接讀 COIN_PROFILE_CONFIG（寫死的靜態設定），完全沒看
+    SYMBOL_PROFILES（ATR 雷達動態選出的幣種寫進 bot_symbols.json 的個性設定）—
+    導致雷達動態選中、沒有寫在 COIN_PROFILE_CONFIG 裡的幣種（例如 BCHUSDT），
+    disable_rescue_dca 永遠讀不到、永遠預設可以救援攤平，即使虧損中也會繼續
+    加碼。動態個性優先，沒有才 fallback 回靜態設定。"""
+    profile = SYMBOL_PROFILES.get(sym)
+    if profile and "disable_rescue_dca" in profile:
+        return bool(profile["disable_rescue_dca"])
+    return bool(COIN_PROFILE_CONFIG.get(sym, {}).get("disable_rescue_dca", False))
+
+
 def get_dynamic_atr_multiplier(sym, base_multiplier):
     from core import ctx
     s = ctx.STATES.get(sym)

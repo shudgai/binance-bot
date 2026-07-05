@@ -548,7 +548,7 @@ async def check_entries():
         if last_trade_side != "" and side != last_trade_side and route != "Automatic_Reverse":
             flip_elapsed = time.time() - s.get("last_exit_time", 0)
             last_exit = s.get("last_exit_reason", "")
-            is_stop_loss = "Stop" in last_exit or "Loss" in last_exit or "Trailing" in last_exit or "Momentum_Fade" in last_exit
+            is_stop_loss = any(tag in last_exit for tag in ("Stop", "Loss", "Trailing", "Momentum_Fade", "Universal_SL", "Rapid_Reversal", "Post_Entry_Early_Exit"))
 
             if is_stop_loss:
                 min_flip = 60

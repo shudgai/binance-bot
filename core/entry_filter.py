@@ -634,9 +634,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 原實作埋在 strength > 15 分支裡，導致弱訊號完全繞過 4 小時冷卻保護
     if route not in ("Exhaustion_Entry", "Extreme_Reversal", "Automatic_Reverse"):
         _last_loss = s.get("last_loss_time_short", 0) if side == "sell" else s.get("last_loss_time_long", 0)
+        _cooldown_sec = 4 * 3600
         _cooldown_elapsed = time.time() - _last_loss
-        if _cooldown_elapsed < 60:  # 1 分鐘（放寬便於驗證）
-            _remaining = (60 - _cooldown_elapsed) / 60
+        if _cooldown_elapsed < _cooldown_sec:
+            _remaining = (_cooldown_sec - _cooldown_elapsed) / 60
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向虧損冷卻] 同向({side})虧損後冷卻剩餘 {_remaining:.1f} 分鐘，攔截")
             return False
 

@@ -1750,13 +1750,16 @@ createApp({
             return (trade.price - currentPrice) * trade.qty;
         };
 
-        // 全倉即時未實現損益 — 只計算每個幣種最新一筆未平倉，避免舊幽靈紀錄重複計算
+        // 全倉即時未實現損益 — 原本從 trades.value 逐筆用「進場價 vs 最新成交價」重算，
+        // 但這樣的計算跟交易所直接回報的 unRealizedProfit（用 mark price、且正確處理
+        // 槓桿/保證金）是兩套獨立邏輯，兩邊基準價不同會有落差，遇到一筆倉位由多次
+        // 分批成交組成時（同一次進場被拆成好幾筆 trade 記錄）更只會算到最後一筆的
+        // 數量，其餘分批成交的數量整個漏算。allPositions 就是 /api/positions 回傳、
+        // 交易所自己算好的權威數據，直接加總最準確，不需要在前端重算一次。
         const totalUnrealizedPnl = computed(() => {
             let total = 0;
-            for (const t of trades.value) {
-                if (t.is_close) continue;
-                if (!isOpenTrade(t)) continue;
-                total += getTradeUnrealizedPnl(t);
+            for (const pos of Object.values(allPositions.value)) {
+                total += pos.pnl || pos.unRealizedProfit || 0;
             }
             return total;
         });
@@ -2078,8 +2081,32 @@ createApp({
             }
         };
 
-        const downloadHistory = (date) => {
-            window.location.href = `${API_BASE}/history/download/${date}`;
+        const downloadHistory = async (date) => {
+            // 原本用 window.location.href 直接導向下載端點，靠瀏覽器自己認
+            // Content-Disposition: attachment 觸發存檔——但手機瀏覽器、App 內建
+            // WebView 這類環境常常不理會這個標頭，導致點了「下載 CSV」卻什麼事
+            // 都沒發生（或只是把 CSV 內容直接顯示在頁面上，看起來像下載失敗）。
+            // 改成自己 fetch 拿到內容轉成 Blob，用臨時的 <a download> 觸發存檔，
+            // 這個做法不依賴瀏覽器怎麼詮釋回應標頭，相容性好很多。
+            try {
+                const res = await fetch(`${API_BASE}/history/download/${date}`);
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    addLog(`⚠️ 下載失敗: ${err.detail || res.statusText}`, "danger");
+                    return;
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `trades_${date}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                addLog(`⚠️ 下載失敗: ${e.message || e}`, "danger");
+            }
         };
 
         const addHistoryDate = async () => {
