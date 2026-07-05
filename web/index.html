@@ -822,7 +822,10 @@
     <div v-if="showHistoryNotebook" class="modal-backdrop" @click.self="showHistoryNotebook = false">
         <div class="modal" style="max-width: 600px;">
             <div class="modal-header">
-                <h3>📂 歷史交易筆記本</h3>
+                <h3 style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <span>📂 歷史交易筆記本</span>
+                    <button class="btn" style="background:var(--success); color:#000; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer; margin-left: auto; margin-right: 15px;" @click="addHistoryDate">➕ 新增日期</button>
+                </h3>
                 <span class="close-btn" @click="showHistoryNotebook = false">&times;</span>
             </div>
             <div class="modal-body">
@@ -849,8 +852,9 @@
                             <td :style="{color: h.pnl > 0 ? 'var(--success)' : (h.pnl < 0 ? 'var(--danger)' : 'var(--text-main)')}">
                                 {{ h.pnl > 0 ? '+' : '' }}{{ h.pnl.toFixed(4) }}
                             </td>
-                            <td style="text-align:right;">
+                            <td style="text-align:right; display: flex; justify-content: flex-end; align-items: center; gap: 5px;">
                                 <button class="btn" style="background:var(--primary); color:#000; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" @click="downloadHistory(h.date)">下載 CSV</button>
+                                <button class="btn" style="background:var(--danger); color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" @click="deleteHistory(h.date)">×</button>
                             </td>
                         </tr>
                     </tbody>
@@ -2067,6 +2071,43 @@ createApp({
             window.location.href = `${API_BASE}/history/download/${date}`;
         };
 
+        const addHistoryDate = async () => {
+            const date = prompt("請輸入要新增的日期 (格式: YYYY-MM-DD)，例如 2026-07-06:");
+            if (!date) return;
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                showToast("❌ 日期格式錯誤，請使用 YYYY-MM-DD", "danger");
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/history/add/${date}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast("✅ 日期新增成功!", "success");
+                    fetchHistorySummary();
+                } else {
+                    showToast(`❌ 新增失敗: ${data.detail}`, "danger");
+                }
+            } catch (e) {
+                showToast(`❌ 新增失敗: ${e.message}`, "danger");
+            }
+        };
+
+        const deleteHistory = async (date) => {
+            if (!confirm(`⚠️ 確定要刪除 ${date} 的所有交易紀錄嗎？此動作不可逆！`)) return;
+            try {
+                const res = await fetch(`${API_BASE}/history/delete/${date}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast("✅ 歷史紀錄已刪除!", "success");
+                    fetchHistorySummary();
+                } else {
+                    showToast(`❌ 刪除失敗: ${data.detail}`, "danger");
+                }
+            } catch (e) {
+                showToast(`❌ 刪除失敗: ${e.message}`, "danger");
+            }
+        };
+
         return {
             customSymbol, addCustomCoin, coins, sortedCoins, activeSymbol, activeCoin,
             formattedMainPrice, mainPriceClass,
@@ -2086,7 +2127,7 @@ createApp({
             tradeHistoryFullscreen, toggleTradeHistoryFullscreen,
             showCoinManager, coinProfiles, disabledSymbols, openCoinManager, toggleCoinDisabled,
             loSide, loOrderType, loTpPct, loSlPct, submitLimitOrder,
-            showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory,
+            showHistoryNotebook, historySummaries, fetchHistorySummary, downloadHistory, addHistoryDate, deleteHistory,
             activeTab,
             toast, showToast
         };
