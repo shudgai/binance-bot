@@ -1482,7 +1482,14 @@ createApp({
                 const res = await fetch(`${API_BASE}/trades/ALL`);
                 if (res.ok) {
                     const data = await res.json();
-                    trades.value = data.sort((a, b) => b.time - a.time);
+                    trades.value = data.sort((a, b) => {
+                        // 未平倉（is_close=false）排最上面
+                        const aOpen = !a.is_close ? 1 : 0;
+                        const bOpen = !b.is_close ? 1 : 0;
+                        if (aOpen !== bOpen) return bOpen - aOpen;
+                        // 同為未平倉或同為已平倉，依時間降冪排列
+                        return b.time - a.time;
+                    });
                 }
             } catch(e) {}
         };
