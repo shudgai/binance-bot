@@ -148,6 +148,8 @@ def _get_valid_futures_symbols() -> set:
     return _valid_futures_symbols
 
 
+_atr_scan_universe_cache = {}
+
 def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
                          max_candidates: int = 48,
                          ignore_list=None,
@@ -164,8 +166,18 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
     改用真實市場才能反映真正的流動性。"""
     if _binance_banned():
         return []
+    import time as _time
+    now = _time.time()
+    cache_key = (min_vol_usdt, max_candidates, tuple(sorted(ignore_list or [])), max_change_pct, min_price, min_orderbook_depth_usdt, max_spread_pct)
+    if cache_key in _atr_scan_universe_cache:
+        cache_time, cached_val = _atr_scan_universe_cache[cache_key]
+        if now - cache_time < 600:  # 快取 10 分鐘，降低委託簿權重消耗
+            return cached_val
+
     try:
-        valid = _get_valid_futures_symbols()
+        valid = _get_valid_symbols() if hasattr(market_client, "_get_valid_symbols") else []
+        if not valid:
+            valid = _get_valid_futures_symbols()
         tickers = market_client.futures_ticker()
         exclude = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT", "BTCDOMUSDT"}
         if ignore_list:
@@ -226,6 +238,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
                 pass
             filtered.append(sym)
 
+        _atr_scan_universe_cache[cache_key] = (now, filtered)
         return filtered
     except Exception as e:
         print(f"[ATR掃描範圍] 抓取永續合約清單失敗: {e}")
@@ -560,10 +573,21 @@ def get_1h_volatility(symbol: str):
         pass
     return symbol, 0
 
+_atr_rankings_cache = {}
+
 def get_atr_ranked_coins(symbols, limit=8):
     """Rank given symbols by 14-day ATR% (ATR / price). Returns (selected_list, full_ranked_list)."""
     if _binance_banned():
         return [], []
+    import time as _time
+    now = _time.time()
+    cache_key = tuple(sorted(symbols))
+    if cache_key in _atr_rankings_cache:
+        cache_time, cached_val = _atr_rankings_cache[cache_key]
+        if now - cache_time < 600:  # 快取 10 分鐘，因為日線波動改變極慢
+            selected = [r["symbol"] for r in cached_val[:limit]]
+            return selected, cached_val
+
     ranked = []
     for sym in symbols:
         try:
@@ -584,6 +608,7 @@ def get_atr_ranked_coins(symbols, limit=8):
         except Exception as e:
             print(f"[ATR Rank] {sym} error: {e}")
     ranked.sort(key=lambda x: x["atr_pct"], reverse=True)
+    _atr_rankings_cache[cache_key] = (now, ranked)
     selected = [r["symbol"] for r in ranked[:limit]]
     return selected, ranked
 
