@@ -129,7 +129,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
                          ignore_list=None,
                          max_change_pct: float = 50.0,
                          min_price: float = 0.01,
-                         min_orderbook_depth_usdt: float = 2_000.0,
+                         min_orderbook_depth_usdt: float = 100.0,
                          max_spread_pct: float = 0.003) -> list:
     """從幣安永續合約市場即時抓取候選幣種清單（依24h成交量篩選/排序），供 ATR 雷達排名使用。
     取代寫死的固定清單，讓 ATR 雷達能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。"""

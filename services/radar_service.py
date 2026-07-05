@@ -92,7 +92,7 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 10    # 核心池固定選出幣數（根據使用者要求改為 10 幣）
+RADAR_SELECT_COUNT = 12    # 核心池固定選出幣數（根據使用者要求改為 12 幣）
 HOT_MOVERS_COUNT   = 0    # 不再額外加入熱門動能幣，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
 
