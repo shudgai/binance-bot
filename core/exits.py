@@ -274,6 +274,17 @@ async def check_exits(sym):
         max(0.0, _intra_peak_early)
     )
 
+    # ── 時間停滯平倉停利 (Stagnation Take Profit) ──
+    # 如果持倉超過 40 分鐘 (2400秒)，且目前處於獲利狀態 (profit_pct >= 0.0015)，
+    # 但利潤一直上不去（未達常規停利門檻），則主動平倉停利釋放倉位，讓其他幣種進場。
+    if hold_sec > 2400 and profit_pct >= 0.0015:
+        cs = 'sell' if is_long else 'buy'
+        logger.info(f"⏳ [時間停滯停利] {sym} 持倉已達 {hold_sec/60:.1f} 分鐘，利潤持續平平 ({profit_pct*100:.2f}%)，主動平倉停利釋放資金")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Stagnation]")
+        s["highest_profit_pct"] = 0.0
+        return
+
+
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     _sl_mult   = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     _rr_thresh = get_effective_exit_setting(sym, "rr_threshold", 1.3, is_long)
