@@ -1015,7 +1015,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["qty"] -= base_amt
 
             slippage = abs(fill_price - price) / price if price > 0 else 0
-            logger.info(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price:.6f} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
+            limit_price_str = f"{limit_price:.6f}" if limit_price is not None else "Market"
+            logger.info(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price_str} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
 
             if s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
