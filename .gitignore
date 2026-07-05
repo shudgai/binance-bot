@@ -11,3 +11,5 @@ backup_keys*
 .venv/
 __pycache__/
 .env
+data/*
+!data/.gitkeep
