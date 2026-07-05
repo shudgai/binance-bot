@@ -552,6 +552,40 @@ def get_trades(symbol: str):
             "realized_pnl": realized_pnl,
             "fee": float(t.get("commission", 0.0)),
         })
+    # ── 補入「有持倉但不在成交列表」的幣種 ──────────────────────────────────
+    # 目的：確保 AVAX/HBAR 等已開倉但入場成交超過 30 筆之外的幣種，
+    #       仍然能以「開倉中」狀態顯示在前端交易記錄最頂端。
+    if symbol == "ALL":
+        try:
+            existing_syms = {t["symbol"] for t in formatted_trades if not t.get("is_close")}
+            all_pos = get_all_positions()
+            import time as _time_mod
+            now_ms = int(_time_mod.time() * 1000)
+            for pos_key, pos in all_pos.items():
+                if pos_key not in existing_syms:
+                    qty = float(pos.get("qty", 0))
+                    if abs(qty) < 0.000001:
+                        continue
+                    entry_price = float(pos.get("entryPrice", 0))
+                    # 判斷方向：qty > 0 → 做多 (買入)，qty < 0 → 做空 (賣出)
+                    is_long = qty > 0
+                    # 以幣安的入場時間為準（若有），否則用當前時間
+                    formatted_trades.append({
+                        "id": f"pos_{pos_key}",
+                        "order_id": None,
+                        "symbol": pos_key,
+                        "price": entry_price,
+                        "qty": abs(qty),
+                        "time": now_ms,        # 佔位；確保排在最前面由前端處理
+                        "isBuyer": is_long,
+                        "is_close": False,     # 開倉中
+                        "realized_pnl": 0.0,
+                        "fee": 0.0,
+                        "_is_open_position": True,  # 標記為補入的持倉記錄
+                    })
+        except Exception:
+            pass
+    # ─────────────────────────────────────────────────────────────────────────
     _trades_cache[symbol] = (now, formatted_trades)
     return formatted_trades
 
