@@ -3,9 +3,12 @@ import sys
 import time
 import json
 import ccxt
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 WHITELIST = ["BTCUSDT", "ETHUSDT"]
@@ -26,7 +29,7 @@ def run_scan():
             exchange.urls['api']['fapiPublic'] = 'https://testnet.binancefuture.com/fapi/v1'
             exchange.urls['api']['fapiPrivate'] = 'https://testnet.binancefuture.com/fapi/v1'
 
-        print("🔍 Loading markets and fetching 24h tickers...")
+        logger.info("🔍 Loading markets and fetching 24h tickers...")
         tickers = exchange.fetch_tickers()
 
         candidates = []
@@ -63,8 +66,8 @@ def run_scan():
             try:
                 with open(STATE_FILE, 'r', encoding='utf-8') as f:
                     prev_volumes = json.load(f)
-            except Exception as e:
-                print(f"⚠️ Error loading state file: {e}")
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"⚠️ Error loading state file: {e}")
 
         # Compute volume growth rates
         growth_rates = []
@@ -98,7 +101,7 @@ def run_scan():
         selected_symbols.sort()
 
         # Save to bot_symbols.json and preserve existing symbol profiles if any
-        print(f"🎯 Selected {len(selected_symbols)} symbols (sorted): {selected_symbols}")
+        logger.info(f"🎯 Selected {len(selected_symbols)} symbols (sorted): {selected_symbols}")
         payload = {"symbols": selected_symbols}
         if os.path.exists(CONFIG_FILE):
             try:
@@ -106,8 +109,8 @@ def run_scan():
                     existing = json.load(f)
                 if isinstance(existing, dict) and isinstance(existing.get('profiles'), dict):
                     payload['profiles'] = existing['profiles']
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError):
+                logger.warning("⚠️ Existing symbol config could not be read; profiles were not preserved")
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(payload, f, ensure_ascii=False)
 
@@ -115,21 +118,22 @@ def run_scan():
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(current_volumes, f, ensure_ascii=False)
 
-        print("✅ Volume growth scan completed successfully!")
+        logger.info("✅ Volume growth scan completed successfully!")
 
     except Exception as e:
-        print(f"❌ Scanner Error: {e}")
+        logger.exception(f"❌ Scanner Error: {e}")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     # Check arguments
     once_mode = "--once" in sys.argv
     
     if once_mode:
-        print("🏃 Starting one-shot volume scan...")
+        logger.info("🏃 Starting one-shot volume scan...")
         run_scan()
     else:
-        print(f"🌀 Starting daemon volume scanner (Interval: {SCAN_INTERVAL_SEC}s)...")
+        logger.info(f"🌀 Starting daemon volume scanner (Interval: {SCAN_INTERVAL_SEC}s)...")
         while True:
             run_scan()
-            print(f"💤 Sleeping for {SCAN_INTERVAL_SEC} seconds...")
+            logger.info(f"💤 Sleeping for {SCAN_INTERVAL_SEC} seconds...")
             time.sleep(SCAN_INTERVAL_SEC)

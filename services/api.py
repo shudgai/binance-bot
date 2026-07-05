@@ -10,6 +10,7 @@ import time
 import numpy as np
 import requests
 import pytz
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, HTMLResponse
@@ -37,7 +38,18 @@ from services.radar_service import trigger_manual_radar, auto_radar_switch, CORE
 
 load_dotenv()
 
-app = FastAPI(title="Binance Bot API Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 啟動 6:00 AM 定時器
+    threading.Thread(target=daily_reset_daemon, daemon=True).start()
+    # 每 4 小時定期 ATR 雷達重掃
+    threading.Thread(target=_periodic_radar_daemon, daemon=True).start()
+    # 啟動時跑雷達更新幣池（選最強 RADAR_SELECT_COUNT 隻）再恢復機器人
+    threading.Thread(target=_startup_radar_restore, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Binance Bot API Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -116,14 +128,6 @@ def _startup_radar_restore():
         auto_restore_bot_on_startup()
 
 
-@app.on_event("startup")
-async def startup_event():
-    # 啟動 6:00 AM 定時器
-    threading.Thread(target=daily_reset_daemon, daemon=True).start()
-    # 每 4 小時定期 ATR 雷達重掃
-    threading.Thread(target=_periodic_radar_daemon, daemon=True).start()
-    # 啟動時跑雷達更新幣池（選最強 RADAR_SELECT_COUNT 隻）再恢復機器人
-    threading.Thread(target=_startup_radar_restore, daemon=True).start()
 
 @app.get("/")
 def read_root():
