@@ -177,9 +177,12 @@ def compute_signal_strength(sym):
     if last_two_candles_short:
         short_trend_score += 3
 
-    # Gate 1: EMA50 方向
-    ema50_gate_long  = ema50 <= 0 or close > ema50
-    ema50_gate_short = ema50 <= 0 or close < ema50
+    profile = get_entry_strictness_profile()
+    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+
+    # Gate 1: EMA50 方向 (寬鬆模式下僅供參考，不強制硬攔截)
+    ema50_gate_long  = ema50 <= 0 or close > ema50 or is_relaxed
+    ema50_gate_short = ema50 <= 0 or close < ema50 or is_relaxed
 
     # Gate 2: RSI 方向區間（25-75，填補 Extreme_Reversal ≤20 和正常多頭 >35 之間的 20-35 死區）
     rsi_direction_long  = rsi > 25.0

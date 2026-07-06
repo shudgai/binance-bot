@@ -75,7 +75,7 @@ def load_pending_signals():
 
 def _effective_min_signal_strength(route, coin_min, profile_min):
     if float(profile_min) <= 10.0:
-        coin_min = max(float(coin_min) - 4.0, 10.0)
+        coin_min = max(float(coin_min) * 0.75, 10.0)
     minimum = max(float(coin_min), float(profile_min))
     if route == "Exhaustion_Entry":
         return min(minimum, 15.0)

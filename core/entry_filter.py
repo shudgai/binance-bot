@@ -446,10 +446,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         eval_vol = signal_candle[5]
         vol_ma20_q = s.get("vol_ma20", 0.0)
         if avg_body_size > 0 and vol_ma20_q > 0:
-            # 【方案B放寬】實體 > 0.6x 均值 且 量能 > 0.6x 均量
-            if current_body_size <= avg_body_size * 0.6 or eval_vol <= vol_ma20_q * 0.6:
+            quality_mult = 0.3 if is_relaxed else 0.6
+            if current_body_size <= avg_body_size * quality_mult or eval_vol <= vol_ma20_q * quality_mult:
                 if strength < 24.0 and route not in ("Exhaustion_Entry", "Automatic_Reverse"):
-                    logger.info(f"🛑 [Filter:Quality] {sym} K線實體或量能不足，拒絕弱突破")
+                    logger.info(f"🛑 [Filter:Quality] {sym} K線實體或量能不足，拒絕弱突破 (門檻={quality_mult}x)")
                     return False
                 logger.info(f"⚠️ [Filter:Quality] {sym} 品質偏弱，但反轉/極強訊號保留")
 
