@@ -558,12 +558,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [K線不足] 當前長度 {len(s['ohlcv'])} < 20")
         return False
 
-    # --- MTF 1H & 15m 趨勢過濾 (放寬為軟性警告) ---
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        # 1H EMA50 趨勢只有強度至少 18 才能覆蓋，避免邊緣訊號逆勢進場。
-        _mtf_override_threshold = 18.0
+        profile = get_entry_strictness_profile()
+        is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+        # 1H EMA50 趨勢只有強度至少達到門檻才能覆蓋，避免邊緣訊號逆勢進場。
+        _mtf_override_threshold = 12.0 if is_relaxed else 18.0
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
