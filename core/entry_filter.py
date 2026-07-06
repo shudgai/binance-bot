@@ -425,7 +425,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     current_rsi_mtf = s.get("current_rsi", 50.0)
     # 逆勢需訊號夠強才允許突破 15m 趨勢封鎖
     _mtf_strong_override = strength >= 20.0
-    if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
+    if not is_relaxed and ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
             if _mtf_strong_override:
                 logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
@@ -464,7 +464,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                     return False
 
     # 5. 收盤確認 (Candle Close Check)
-    if route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
+    if not is_relaxed and route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
@@ -629,11 +629,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
     _atr_spike_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 0.0
     _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.3)
-    if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
+    _atr_spike_threshold = 3.5 if is_relaxed else 2.0
+    if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * _atr_spike_threshold:
         if _allow_mild_atr_spike:
             logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x) ，放寬進場")
         else:
-            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2x ({atr_24h_avg*2:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 {_atr_spike_threshold}x ({atr_24h_avg*_atr_spike_threshold:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
             return False
     if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and not is_entry_pin_safe(sym, side):
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
