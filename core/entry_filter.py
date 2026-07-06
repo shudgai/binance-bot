@@ -328,9 +328,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
     # BTC 4H + 1H 雙熊 → 封鎖做多；BTC 4H 多頭 → 封鎖做空
     # =========================================================================
+    profile = get_entry_strictness_profile()
+    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
     btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
-    bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR")
+    bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR") and USE_BTC_MACRO_FILTER and not is_relaxed
     if bear_defense_mode and side == 'buy':
         current_rsi_macro = s.get("current_rsi", 50.0)
         divergence_confirmed = (s.get("divergence", "none") == "bullish")
@@ -353,12 +356,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
     # BTC 4H 多頭 → 封鎖所有做空訊號（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
     # 豁免：RSI > 73 極端超買 / Exhaustion 路由且 RSI > 70
-    # 曾經放寬過一個「強度夠高、RSI 50~65 中段區間」也放行空單的分支，數據回測發現
-    # 空單勝率因此明顯拖累整體表現（62.5% vs 多單 78.4%，空單平均還是淨虧損），因為
-    # BTC 持續 4H 多頭時，中段 RSI 的逆勢空單經常被主趨勢碾過去。移除該分支，只保留
-    # RSI 真的極端超買時才豁免，其餘情況維持封鎖。
     # =========================================================================
-    bull_defense_mode = (btc_4h == "BULL")
+    bull_defense_mode = (btc_4h == "BULL") and USE_BTC_MACRO_FILTER and not is_relaxed
     if bull_defense_mode and side == 'sell':
         current_rsi_macro = s.get("current_rsi", 50.0)
         is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
@@ -456,12 +455,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         eval_vol = signal_candle[5]
         vol_ma20_q = s.get("vol_ma20", 0.0)
         if avg_body_size > 0 and vol_ma20_q > 0:
-            # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
-            if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * 1.0:
+            quality_mult_vol = 0.4 if is_relaxed else 1.0
+            if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * quality_mult_vol:
                 if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
-                    logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能嚴格門檻")
+                    logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能門檻")
                 else:
-                    logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x)，拒絕進場")
+                    logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x，門檻: {quality_mult_vol}x)，拒絕進場")
                     return False
 
     # 5. 收盤確認 (Candle Close Check)
