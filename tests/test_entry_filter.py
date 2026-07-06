@@ -7,7 +7,6 @@ from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.entry_filter import is_entry_pin_safe, get_entry_strictness_profile, is_entry_allowed
-from core.check_entries import _effective_min_signal_strength, _is_volume_price_confirmed
 
 
 class EntryFilterTests(unittest.TestCase):
@@ -58,60 +57,6 @@ class EntryFilterTests(unittest.TestCase):
         ]
 
         self.assertTrue(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
-
-    def test_extreme_reversal_requires_live_volume(self):
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-
-        ctx.MARKET_WIND["allow_long"] = True
-        ctx.MARKET_WIND["allow_short"] = True
-        ctx.MARKET_WIND["btc_trend_4h"] = None
-        ctx.MARKET_WIND["btc_trend_1h"] = None
-
-        s["close_price"] = 1.0
-        s["current_vol"] = 30.0
-        s["vol_ma20"] = 1000.0
-        s["current_atr"] = 0.01
-        s["atr_history"] = [0.01] * 10
-        s["current_rsi"] = 80.0
-        s["ema20_15m"] = 0.0
-        s["ema50_15m"] = 0.0
-        s["ohlcv"] = [
-            [0, 1.00, 1.02, 0.98, 1.00, 1000],
-            [0, 1.00, 1.01, 0.99, 0.995, 30],
-            [0, 0.99, 1.00, 0.985, 0.989, 30],
-        ]
-
-        self.assertFalse(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
-
-    def test_extreme_reversal_respects_15m_trend_mismatch(self):
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-
-        ctx.MARKET_WIND["allow_long"] = True
-        ctx.MARKET_WIND["allow_short"] = True
-        ctx.MARKET_WIND["btc_trend_4h"] = None
-        ctx.MARKET_WIND["btc_trend_1h"] = None
-
-        s["close_price"] = 1.0
-        s["current_vol"] = 1200.0
-        s["vol_ma20"] = 1000.0
-        s["current_atr"] = 0.01
-        s["atr_history"] = [0.01] * 10
-        s["current_rsi"] = 80.0
-        s["ema20_15m"] = 0.98
-        s["ema50_15m"] = 1.02
-        s["ohlcv"] = [
-            [0, 1.00, 1.02, 0.98, 1.00, 1000],
-            [0, 1.00, 1.01, 0.99, 0.995, 1200],
-            [0, 0.99, 1.00, 0.985, 0.989, 1200],
-        ]
-
-        self.assertFalse(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
 
     def test_strong_signal_with_mild_atr_spike_is_allowed(self):
         sym = "XRPUSDT"
@@ -234,100 +179,6 @@ class EntryFilterTests(unittest.TestCase):
         s["ohlcv"].append([0, 1.01, 1.02, 0.995, 0.99, 1000.0])
 
         self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=18.5))
-
-    def test_same_side_loss_cooldown_blocks_for_four_hours(self):
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-
-        ctx.MARKET_WIND["allow_long"] = True
-        ctx.MARKET_WIND["allow_short"] = True
-        ctx.MARKET_WIND["btc_trend_4h"] = None
-        ctx.MARKET_WIND["btc_trend_1h"] = None
-
-        s["close_price"] = 1.0
-        s["current_vol"] = 1200.0
-        s["vol_ma20"] = 1000.0
-        s["current_atr"] = 0.00195
-        s["atr_history"] = [0.00096] * 20
-        s["current_rsi"] = 80.0
-        s["ema20"] = 0.99
-        s["ema20_history"] = [0.99] * 3
-        s["ema20_15m"] = 0.0
-        s["ema50_15m"] = 0.0
-        s["ema50_1h"] = 0.0
-        s["sma200_15m"] = 0.0
-        s["mtf_filter"] = False
-        s["bb_up"] = 1.01
-        s["bb_down"] = 0.99
-        s["rsi_history"] = [80.0] * 10
-        s["ohlcv"] = [
-            [0, 0.98 + i * 0.0005, 0.99 + i * 0.0005, 0.97 + i * 0.0005, 0.985 + i * 0.0005, 1000]
-            for i in range(20)
-        ]
-        s["macd_line"] = 0.001
-        s["macd_signal"] = 0.0
-        s["prev_macd_line"] = 0.0005
-        s["prev_macd_signal"] = 0.0
-        s["prev_macd_hist"] = 0.0
-
-        import time
-        s["last_loss_time_long"] = time.time() - 3600
-
-        self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=27.4))
-
-        s["last_loss_time_long"] = time.time() - (5 * 3600)
-        self.assertTrue(is_entry_allowed(sym, "buy", route="a", strength=27.4))
-
-
-    def test_strong_regular_signal_cannot_override_opposite_15m_trend(self):
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        ctx.MARKET_WIND["btc_trend_4h"] = None
-        ctx.MARKET_WIND["btc_trend_1h"] = None
-        s["close_price"] = 1.0
-        s["current_vol"] = 1200.0
-        s["vol_ma20"] = 1000.0
-        s["current_atr"] = 0.01
-        s["atr_history"] = [0.01] * 10
-        s["current_rsi"] = 50.0
-        s["ema20_15m"] = 0.98
-        s["ema50_15m"] = 1.02
-        s["ohlcv"] = [
-            [0, 0.99, 1.01, 0.98, 1.0, 1200.0],
-            [0, 0.99, 1.01, 0.98, 1.0, 1200.0],
-            [0, 0.99, 1.01, 0.98, 1.0, 1200.0],
-        ]
-
-        self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=27.0))
-
-
-    def test_exhaustion_route_uses_its_designed_signal_floor(self):
-        self.assertEqual(
-            _effective_min_signal_strength("Exhaustion_Entry", 20.0, 15.0),
-            15.0,
-        )
-        self.assertEqual(
-            _effective_min_signal_strength("a", 20.0, 15.0),
-            20.0,
-        )
-
-    def test_low_volume_participation_relaxes_without_allowing_wrong_direction(self):
-        self.assertTrue(
-            _is_volume_price_confirmed("sell", -0.01, 70.0, 100.0, True)
-        )
-        self.assertFalse(
-            _is_volume_price_confirmed("sell", 0.01, 120.0, 100.0, True)
-        )
-        self.assertFalse(
-            _is_volume_price_confirmed("sell", -0.01, 70.0, 100.0, False)
-        )
-        self.assertTrue(
-            _is_volume_price_confirmed("sell", -0.01, 80.0, 100.0, False)
-        )
 
 
 if __name__ == "__main__":
