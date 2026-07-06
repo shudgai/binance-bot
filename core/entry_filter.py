@@ -582,7 +582,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         # 需要強訊號才能繞過 1H EMA50 趨勢過濾。這裡曾被改成 14.0（低於原本的 16.0），
         # 從實際虧損案例（BASUSDT 強度僅 15.39 就被放行逆勢進場後虧損）發現門檻太低，
         # 拉高到 18.0，比原始的 16.0 更保守，減少邊緣強度訊號被誤放行進場。
-        _mtf_override_threshold = 18.0
+        _mtf_override_threshold = 12.0 if is_relaxed else 18.0
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:
@@ -636,7 +636,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         else:
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 {_atr_spike_threshold}x ({atr_24h_avg*_atr_spike_threshold:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
             return False
-    if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and not is_entry_pin_safe(sym, side):
+    if not is_relaxed and route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and not is_entry_pin_safe(sym, side):
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
         return False
 
