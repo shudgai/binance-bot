@@ -686,6 +686,12 @@ async def check_exits(sym):
 
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
+    hard_sl_pct = get_effective_exit_setting(
+        sym,
+        "hard_stop_loss_pct",
+        s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT),
+        is_long,
+    )
 
     # 保本線至少覆蓋最低淨利門檻；多留 0.1% 空間後才啟動，避免剛碰到
     # 門檻就立即回落觸發。
@@ -711,11 +717,12 @@ async def check_exits(sym):
                     logger.info(f"🛡️ [{sym}] 獲利達標 {breakeven_threshold*100:.1f}% ，保本線已鎖定在：{breakeven_price:.4f}")
 
     from core.config import EXIT_RR_MULTIPLIER
-    min_tp_dist = sl_dist * EXIT_RR_MULTIPLIER
+    risk_dist = max(sl_dist, avg * hard_sl_pct)
+    min_tp_dist = risk_dist * EXIT_RR_MULTIPLIER
     if tp_dist < min_tp_dist:
         orig_tp_dist = tp_dist
         tp_dist = min_tp_dist
-        logger.info(f"⚠️ [Exit RR Fix] {sym} 停利距離 {orig_tp_dist/avg*100:.2f}% < 停損 {sl_dist/avg*100:.2f}%×{EXIT_RR_MULTIPLIER}，已強制拉至 {tp_dist/avg*100:.2f}%")
+        logger.info(f"⚠️ [Exit RR Fix] {sym} 停利距離 {orig_tp_dist/avg*100:.2f}% < 風險 {risk_dist/avg*100:.2f}%×{EXIT_RR_MULTIPLIER}，已強制拉至 {tp_dist/avg*100:.2f}%")
 
     tp = avg + tp_dist if is_long else avg - tp_dist
 
@@ -789,13 +796,6 @@ async def check_exits(sym):
             sl_floor = first_entry + atr_half - avg * 0.001
             sl_floor = max(sl_floor, avg)
             sl = min(sl, sl_floor)
-
-    hard_sl_pct = get_effective_exit_setting(
-        sym,
-        "hard_stop_loss_pct",
-        s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT),
-        is_long,
-    )
 
     if is_long:
         hard_sl_limit = avg * (1 - hard_sl_pct)

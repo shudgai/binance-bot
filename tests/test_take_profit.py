@@ -467,5 +467,24 @@ class TakeProfitTests(unittest.TestCase):
         asyncio.run(run_check())
 
 
+    def test_entry_rr_uses_hard_stop_loss_when_wider_than_atr_sl(self):
+        from core.indicators import _calc_sl_tp
+
+        state = {
+            "current_atr": 0.1,
+            "atr_history": [],
+            "sl_atr_multiplier": 1.0,
+            "tp_atr_multiplier": 1.0,
+            "hard_stop_loss_pct": 0.03,
+        }
+
+        _atr, sl_dist, tp_dist, expected_rr = _calc_sl_tp("TESTUSDT", "buy", state, 100.0)
+
+        self.assertLess(sl_dist, 3.0)
+        self.assertGreaterEqual(tp_dist, 4.5)
+        self.assertAlmostEqual(expected_rr, 1.5)
+
+
+
 if __name__ == "__main__":
     unittest.main()
