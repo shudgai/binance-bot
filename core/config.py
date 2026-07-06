@@ -26,6 +26,7 @@ COIN_PROFILE_CONFIG = {
     "AVAXUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 17.0, "disable_rescue_dca": False},
     "NEARUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.025},
     "ADAUSDT":  {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 7.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 2, "rr_threshold": 1.5, "min_signal_strength": 16.0, "hard_sl_pct": 0.025, "disable_rescue_dca": False},
+    "XLMUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 2, "rr_threshold": 1.7, "min_signal_strength": 18.0, "hard_sl_pct": 0.020, "disable_rescue_dca": False},
     "AAVEUSDT": {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 20.0, "disable_rescue_dca": False, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.8},
     "BNBUSDT":  {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": False},
     "XRPUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 4, "rr_threshold": 2.0, "min_signal_strength": 20.0, "disable_rescue_dca": False, "hard_sl_pct": 0.025},
@@ -91,9 +92,8 @@ ATR_WARMUP_PAUSE_SEC = 0.4
 TIME_STOP_MINUTES = 30
 
 DEFAULT_SYMBOLS = [
-    "SOLUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOTUSDT", "LTCUSDT",
-    "LINKUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT",
-    "HYPEUSDT", "AAVEUSDT", "AVAXUSDT", "DOGEUSDT",
+    "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT",
+    "SUIUSDT", "LINKUSDT", "AVAXUSDT", "XLMUSDT", "ADAUSDT",
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
 

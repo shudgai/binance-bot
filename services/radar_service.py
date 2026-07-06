@@ -4,7 +4,7 @@ import time
 import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
-from services.binance_service import get_top_volume_altcoins, get_atr_ranked_coins, get_atr_scan_universe, get_hot_movers as _get_hot_movers
+from services.binance_service import get_atr_ranked_coins, get_hot_movers as _get_hot_movers
 from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
@@ -131,19 +131,19 @@ def _save_radar_profiles(profiles: dict):
     except Exception as e:
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
-CORE_SYMBOLS = list(COIN_PROFILE_CONFIG.keys())
-RADAR_SELECT_COUNT = 12    # 核心池固定選出幣數（回到原始配置）
+ATR_ELIGIBLE_SYMBOLS = [
+    "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT",
+    "SUIUSDT", "LINKUSDT", "AVAXUSDT", "XLMUSDT", "ADAUSDT",
+]
+CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
+RADAR_SELECT_COUNT = len(ATR_ELIGIBLE_SYMBOLS)
 HOT_MOVERS_COUNT   = 0    # 不再額外加入熱門動能幣，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
-
-# 排除急升/急跌的每日變動閾值（百分比）——若絕對變動超過此值，會從 ATR 掃描候選中剔除
-# 降低至 8% 以排除高波動性幣種（OGN 類型的日內驟升驟跌標的）
-MAX_DAILY_MOVE_PCT = 8.0
 
 # 排除波動度過高的幣種（ATR% > 此值）——這些幣種容易發生日內秒殺，不適合策略
 # 原本 3.5%，但「跟隨自己」的 bug 修好、雷達真正開始套用這道濾網後才發現，現在
 # 市場普遍波動偏高，3.5% 幾乎把所有候選幣都濾光，監控池被砍到只剩 1-2 檔。
-# 使用者確認放寬到 6%，讓幣池能維持接近 8 檔的規模，同時仍排除真正極端(20%+)的幣。
+# 使用者確認放寬到 6%，讓幣池能維持接近 10 檔的規模，同時仍排除真正極端(20%+)的幣。
 MAX_ATR_PCT_FOR_ENTRY = 6.0
 
 # 熱門幣保守 profile（只走有強訊號的機會）
@@ -337,12 +337,8 @@ def auto_radar_switch(force_start=False):
         current_syms = bot_status.get("active_symbols", [])
 
         clean_blacklist()
-        # 直接從幣安永續合約市場即時抓活躍幣種清單，取代寫死的 CORE_SYMBOLS，
-        # 這樣 ATR 雷達才能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。
-        scan_pool = get_atr_scan_universe(ignore_list=list(BLACKLIST.keys()), max_change_pct=MAX_DAILY_MOVE_PCT)
-        if not scan_pool:
-            add_system_log("⚠️ [雷達掃描] 幣安永續合約市場清單抓取失敗，改用固定核心清單", "warning")
-            scan_pool = [s for s in CORE_SYMBOLS if s not in BLACKLIST]
+        # ATR 僅在核准的成熟、高流動性幣種內排名，避免事件幣或新幣自動混入。
+        scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
         _, full_ranking = get_atr_ranked_coins(scan_pool, limit=CORE_SELECT_COUNT)
 
         if not full_ranking:
@@ -430,7 +426,7 @@ def auto_radar_switch(force_start=False):
         for line in analysis_lines:
             add_system_log(f"   ↳ {line}", "info")
 
-        # 合併最終幣列：持倉保護 + 核心 ATR 8 檔
+        # 合併最終幣列：持倉保護 + 核准清單內的 ATR 核心幣。
         core_limit = max(0, RADAR_SELECT_COUNT - len(all_preserved))
         final_symbols = all_preserved + top_symbols[:core_limit]
 
@@ -476,9 +472,7 @@ def _find_atr_replacement(current_syms):
     try:
         clean_blacklist()
         ignore_list = list(set(current_syms) | set(BLACKLIST.keys()))
-        scan_pool = get_atr_scan_universe(ignore_list=ignore_list, max_change_pct=MAX_DAILY_MOVE_PCT)
-        if not scan_pool:
-            scan_pool = [s for s in CORE_SYMBOLS if s not in ignore_list]
+        scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in ignore_list]
         replacement_candidates, _ = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT + 5)
         for sym in replacement_candidates:
             if sym not in current_syms:
@@ -498,15 +492,6 @@ def replace_dead_coin(symbol: str):
         add_system_log(f"💀 [死水汰換] 剔除無波動死水幣 {symbol}，尋找替補...", "warning")
 
         new_coin = _find_atr_replacement(current_syms)
-        if not new_coin:
-            clean_blacklist()
-            ignore_list = list(set(current_syms) | set(BLACKLIST.keys()))
-            top_15 = get_top_volume_altcoins(15, ignore_list=ignore_list)
-            for coin in top_15:
-                if coin not in current_syms:
-                    new_coin = coin
-                    break
-
         if new_coin:
             current_syms.append(new_coin)
             bot_status["active_symbols"] = current_syms

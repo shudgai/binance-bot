@@ -13,7 +13,10 @@ bot_status = {
     "balance_quote": 150.0,
     "active_orders": 0,
     "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
-    "watch_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"], # 使用者自訂的關注幣種
+    "watch_symbols": [
+        "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT",
+        "SUIUSDT", "LINKUSDT", "AVAXUSDT", "XLMUSDT", "ADAUSDT",
+    ],
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
@@ -24,8 +27,8 @@ bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
-    "SOLUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT",
-    "LINKUSDT", "SUIUSDT", "INJUSDT", "NEARUSDT"
+    "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT",
+    "SUIUSDT", "LINKUSDT", "AVAXUSDT", "XLMUSDT", "ADAUSDT",
 ]
 
 
@@ -495,8 +498,7 @@ def set_bot_symbol(symbols):
 def set_bot_watch_symbols(symbols):
     if not isinstance(symbols, list):
         symbols = [symbols]
-    # 限定 5 隻
-    symbols = [s.upper() for s in symbols][:5]
+    symbols = [s.upper() for s in symbols][:10]
     bot_status["watch_symbols"] = symbols
     add_system_log(f"📋 使用者更新自選關注清單: {', '.join(symbols)}", "info")
     return symbols

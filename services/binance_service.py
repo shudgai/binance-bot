@@ -663,7 +663,7 @@ def get_1h_volatility(symbol: str):
 
 _atr_rankings_cache = {}
 
-def get_atr_ranked_coins(symbols, limit=8):
+def get_atr_ranked_coins(symbols, limit=10):
     """Rank given symbols by 14-day ATR% (ATR / price). Returns (selected_list, full_ranked_list)."""
     if _binance_banned():
         return [], []
