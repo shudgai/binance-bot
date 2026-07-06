@@ -304,9 +304,11 @@ async def check_exits(sym):
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     _sl_mult   = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
     _rr_thresh = get_effective_exit_setting(sym, "rr_threshold", 1.3, is_long)
-    _hard_sl   = max(
-        get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long),
-        PROFIT_FIRST_CATASTROPHIC_LOSS_PCT,
+    _hard_sl = get_effective_exit_setting(
+        sym,
+        "hard_stop_loss_pct",
+        s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT),
+        is_long,
     )
     _atr_sl_pct = (_sl_mult * _entry_atr / avg) if avg > 0 else 0.006
     expected_loss_pct = max(_hard_sl, _atr_sl_pct, 0.005)
@@ -378,14 +380,11 @@ async def check_exits(sym):
     # 但 ATR 停損距離沒有上限，暴漲暴跌時 get_dynamic_atr_multiplier 還會把倍數放寬到 1.2x，
     # 兩者疊加曾讓單筆虧損跑到 -14%（MUSDT 實際案例）。改用全域 HARD_STOP_LOSS_PCT 當預設值，
     # 讓每個幣種至少都有一道固定百分比的最後防線。
-    _hard_sl = max(
-        get_effective_exit_setting(
-            sym,
-            "hard_stop_loss_pct",
-            s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT),
-            is_long,
-        ),
-        PROFIT_FIRST_CATASTROPHIC_LOSS_PCT,
+    _hard_sl = get_effective_exit_setting(
+        sym,
+        "hard_stop_loss_pct",
+        s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT),
+        is_long,
     )
     if _hard_sl > 0:
         # 提早在門檻 75% 處就評估要不要攤平，而不是等真正跌破停損線才評估——
@@ -757,9 +756,11 @@ async def check_exits(sym):
             sl_floor = max(sl_floor, avg)
             sl = min(sl, sl_floor)
 
-    hard_sl_pct = max(
-        get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long),
-        PROFIT_FIRST_CATASTROPHIC_LOSS_PCT,
+    hard_sl_pct = get_effective_exit_setting(
+        sym,
+        "hard_stop_loss_pct",
+        s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT),
+        is_long,
     )
 
     if is_long:

@@ -316,7 +316,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_profit_first_ignores_sub_catastrophic_profile_stop(self):
+    def test_hard_stop_loss_uses_state_profile_pct(self):
         from unittest.mock import patch, AsyncMock
         sym = "HBARUSDT"
         init_states([sym])
@@ -347,7 +347,9 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                mock_close.assert_not_called()
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Hard_SL]")
+                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
 
         asyncio.run(run_check())
 
