@@ -4,6 +4,7 @@ from services.radar_service import (
     ATR_ELIGIBLE_SYMBOLS,
     CORE_SYMBOLS,
     RADAR_SELECT_COUNT,
+    MAX_ATR_PCT_FOR_ENTRY,
 )
 
 
@@ -19,6 +20,7 @@ def test_all_default_symbol_sources_use_the_approved_ten():
     assert ATR_ELIGIBLE_SYMBOLS == EXPECTED_SYMBOLS
     assert CORE_SYMBOLS == EXPECTED_SYMBOLS
     assert RADAR_SELECT_COUNT == 10
+    assert MAX_ATR_PCT_FOR_ENTRY == 8.0
 
 
 def test_atr_pool_excludes_event_and_unapproved_coins():
