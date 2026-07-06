@@ -543,8 +543,15 @@ def _get_real_trades():
             timestamp_str = t.get("timestamp")
             if not timestamp_str:
                 continue
+            # trade_history.json 的 timestamp 是 record_trade_result() 用
+            # time.strftime() 寫入的，這支伺服器系統時區是 UTC，所以存進去的其實
+            # 是 UTC 時間字串。原本這裡直接 tz.localize(dt) 把它當成台北時間標記，
+            # 等於把 UTC 的數字原封不動當台北時間顯示，導致歷史筆記本的時間、以及
+            # 用來分天的日期都跟真正的台北時間差了 8 小時。改成先標記為 UTC 再轉換
+            # 成台北時間，這樣後面算出來的 exit_time_ms 才是真正對應的時刻，任何
+            # 用 tz=Asia/Taipei 顯示出來的時間才會是正確的台北時間。
             dt = datetime.datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            dt = tz.localize(dt)
+            dt = pytz.utc.localize(dt).astimezone(tz)
             exit_time_ms = int(dt.timestamp() * 1000)
             entry_time_ms = exit_time_ms - 600000  # 預估 10 分鐘前入場
             
@@ -701,10 +708,18 @@ def api_history_delete(date: str):
                 with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
                     history = json.load(f)
                 new_history = []
+                tz = pytz.timezone('Asia/Taipei')
                 for t in history:
                     timestamp_str = t.get("timestamp")
                     if timestamp_str:
-                        t_date = timestamp_str.split(" ")[0]
+                        # timestamp 存的是 UTC 時間字串（見 _get_real_trades 的說明），
+                        # 直接切字串取日期會跟摘要/下載頁面顯示的台北日期對不起來，
+                        # 一樣要先轉成台北時間才能正確判斷屬於哪一天。
+                        try:
+                            dt = datetime.datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                            t_date = pytz.utc.localize(dt).astimezone(tz).strftime("%Y-%m-%d")
+                        except Exception:
+                            t_date = timestamp_str.split(" ")[0]
                         if t_date != date:
                             new_history.append(t)
                     else:
