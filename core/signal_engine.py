@@ -199,7 +199,7 @@ def compute_signal_strength(sym):
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         macd_ok_long and
-        (last_two_candles_long or last_candle_long or is_relaxed) and
+        (last_two_candles_long or last_candle_long) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -208,7 +208,7 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         macd_ok_short and
-        (last_two_candles_short or last_candle_short or is_relaxed) and
+        (last_two_candles_short or last_candle_short) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -227,7 +227,7 @@ def compute_signal_strength(sym):
         macd_ok_long and
         rsi_direction_long and
         rsi_ok_long and
-        (last_two_candles_long or last_candle_long or is_relaxed)
+        (last_two_candles_long or last_candle_long)
     )
 
     route_b_short = (
@@ -237,7 +237,7 @@ def compute_signal_strength(sym):
         macd_ok_short and
         rsi_direction_short and
         rsi_ok_short and
-        (last_two_candles_short or last_candle_short or is_relaxed)
+        (last_two_candles_short or last_candle_short)
     )
 
     long_base_ok  = route_a_long or route_b_long

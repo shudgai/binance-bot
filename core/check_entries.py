@@ -71,6 +71,22 @@ def load_pending_signals():
         logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
 
 
+def is_entry_price_direction_aligned(side, price_change):
+    if side == "buy":
+        return price_change >= 0
+    if side == "sell":
+        return price_change <= 0
+    return False
+
+
+def is_divergence_blocking(side, divergence_type, strength, is_relaxed):
+    conflicts = (
+        (side == "buy" and divergence_type == "bearish") or
+        (side == "sell" and divergence_type == "bullish")
+    )
+    return conflicts and not (is_relaxed and strength >= 20.0)
+
+
 def is_pending_confirmation_valid(side, candle):
     """Return whether the prior signal candle is still valid after the next bar closes."""
     if not candle or len(candle) < 5:
@@ -470,11 +486,8 @@ async def check_entries():
             h24_quote_volume_est = vol_ma20 * cp * 288
             liquidity_check = h24_quote_volume_est > 1000000
 
-            volume_price_sync = False
-            if side == "buy" and cp <= s["ohlcv"][-2][4] and price_change > 0 and current_vol > prev_vol:
-                volume_price_sync = True
-            elif side == "sell" and price_change < 0 and current_vol > prev_vol:
-                volume_price_sync = True
+            price_direction_ok = is_entry_price_direction_aligned(side, price_change)
+            volume_expanding = current_vol > prev_vol
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
@@ -486,8 +499,12 @@ async def check_entries():
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
-                if not volume_price_sync:
-                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
+                if not price_direction_ok:
+                    logger.info(f"🛑 [DIRECTION_MISMATCH] {sym} 被攔截：價格方向與 {side} 訊號相反 (價格變動: {price_change:.6f})")
+                    set_entry_diagnosis(f"{sym}: 價格方向與訊號相反，放棄進場")
+                    continue
+                if not volume_expanding:
+                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 成交量未增加，但方向一致，維持進場資格")
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry" and strength <= 15.0:
@@ -578,12 +595,13 @@ async def check_entries():
             else:
                 strength *= 0.9
         else:
-            if divergence_type == "bearish" and side == "buy":
-                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 頂背離阻擋做多 → 訊號取消")
+            _is_relaxed_divergence = profile.get("min_signal_strength", 10.0) <= 10.0
+            if is_divergence_blocking(side, divergence_type, strength, _is_relaxed_divergence):
+                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 背離方向與 {side} 衝突 → 訊號取消")
                 continue
-            if divergence_type == "bullish" and side == "sell":
-                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 底背離阻擋做空 → 訊號取消")
-                continue
+            if ((side == "buy" and divergence_type == "bearish") or
+                    (side == "sell" and divergence_type == "bullish")):
+                logger.info(f"⚠️ [Divergence_Override] {sym} relaxed 強訊號 {strength:.1f}，背離僅警告不攔截")
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):

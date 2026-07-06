@@ -455,12 +455,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         eval_vol = signal_candle[5]
         vol_ma20_q = s.get("vol_ma20", 0.0)
         if avg_body_size > 0 and vol_ma20_q > 0:
+            quality_mult_body = profile.get("min_body_ratio", 0.35)
             quality_mult_vol = 0.4 if is_relaxed else 1.0
-            if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * quality_mult_vol:
+            if current_body_size <= avg_body_size * quality_mult_body or eval_vol <= vol_ma20_q * quality_mult_vol:
                 if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
                     logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能門檻")
                 else:
-                    logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x，門檻: {quality_mult_vol}x)，拒絕進場")
+                    logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x/{quality_mult_body:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x/{quality_mult_vol:.2f}x)，拒絕進場")
                     return False
 
     # 5. 收盤確認 (Candle Close Check)

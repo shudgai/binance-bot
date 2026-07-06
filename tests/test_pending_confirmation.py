@@ -3,10 +3,27 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.check_entries import is_pending_confirmation_valid
+from core.check_entries import (
+    is_divergence_blocking,
+    is_entry_price_direction_aligned,
+    is_pending_confirmation_valid,
+)
 
 
 class PendingConfirmationTests(unittest.TestCase):
+    def test_entry_price_direction_requires_alignment(self):
+        self.assertTrue(is_entry_price_direction_aligned("buy", 0.01))
+        self.assertTrue(is_entry_price_direction_aligned("buy", 0.0))
+        self.assertFalse(is_entry_price_direction_aligned("buy", -0.01))
+        self.assertTrue(is_entry_price_direction_aligned("sell", -0.01))
+        self.assertTrue(is_entry_price_direction_aligned("sell", 0.0))
+        self.assertFalse(is_entry_price_direction_aligned("sell", 0.01))
+
+    def test_relaxed_strong_signal_can_override_divergence(self):
+        self.assertFalse(is_divergence_blocking("buy", "bearish", 20.0, True))
+        self.assertTrue(is_divergence_blocking("buy", "bearish", 19.9, True))
+        self.assertTrue(is_divergence_blocking("sell", "bullish", 25.0, False))
+
     def test_allows_bullish_candle_with_modest_upper_shadow(self):
         candle = [0, 100, 103, 98, 102, 1000]
         self.assertTrue(is_pending_confirmation_valid("buy", candle))
