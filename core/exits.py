@@ -488,12 +488,39 @@ async def check_exits(sym):
 
         _stagnation = False
 
+        # 錯向提早退出需至少兩項獨立確認，避免單一指標雜訊造成頻繁小停損。
+        _last_candle = s.get("ohlcv", [])[-1] if s.get("ohlcv") else None
+        _opposite_candle = bool(_last_candle) and (
+            (is_long and _last_candle[4] < _last_candle[1]) or
+            (not is_long and _last_candle[4] > _last_candle[1])
+        )
+        _volume_reversal = s.get("current_vol", 0.0) > s.get("vol_ma20", 1e-8) * 1.5
+        _macd_now = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+        _macd_prev = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+        _macd_wrong = (_macd_now < 0 and _macd_now < _macd_prev) if is_long else (_macd_now > 0 and _macd_now > _macd_prev)
+        _ema20_now = s.get("ema20", 0.0)
+        _ema_wrong = (_ema20_now > 0 and p < _ema20_now) if is_long else (_ema20_now > 0 and p > _ema20_now)
+        _price_wrong = profit_pct <= _strong_rev_limit
+        _wrong_confirmations = sum((
+            _price_wrong,
+            _opposite_candle,
+            _volume_reversal,
+            _macd_wrong,
+            _ema_wrong,
+        ))
+        _confirmed_early_exit = _price_wrong and _wrong_confirmations >= 2
+
         if _wrong_dir:
-            if profit_pct > -PROFIT_FIRST_RAPID_REVERSAL_LOSS_PCT:
+            if not _confirmed_early_exit and profit_pct > -PROFIT_FIRST_RAPID_REVERSAL_LOSS_PCT:
                 if time.time() - s.get("profit_first_skip_log_time", 0) > 60:
-                    logger.info(f"⏳ [Profit_First_Hold] {sym} {_reason}，但虧損 {profit_pct*100:.2f}% 未達災難停損，繼續等待獲利/追蹤出場")
+                    logger.info(
+                        f"⏳ [Profit_First_Hold] {sym} {_reason}，錯向確認 "
+                        f"{_wrong_confirmations}/5 尚不足，繼續等待"
+                    )
                     s["profit_first_skip_log_time"] = time.time()
                 return
+            if _confirmed_early_exit:
+                _reason += f"，錯向確認 {_wrong_confirmations}/5"
             logger.info(f"🚨 [Post_Entry_Early_Exit] {sym} {_reason}，快速撤退！")
             cs = "sell" if is_long else "buy"
             s["wrong_dir_time"] = time.time()

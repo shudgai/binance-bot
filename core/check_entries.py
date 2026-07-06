@@ -35,6 +35,7 @@ def save_pending_signals():
                 snapshot[sym] = {
                     "pending_side": s["pending_side"],
                     "pending_time": s.get("pending_time", 0),
+                    "pending_signal_price": s.get("pending_signal_price", 0.0),
                     "pending_strength": s.get("pending_strength", 5.0),
                     "pending_route": s.get("pending_route", "confirmed"),
                     "saved_at": time.time(),
@@ -62,6 +63,7 @@ def load_pending_signals():
             s = ctx.STATES[sym]
             s["pending_side"] = data.get("pending_side")
             s["pending_time"] = data.get("pending_time", 0)
+            s["pending_signal_price"] = data.get("pending_signal_price", 0.0)
             s["pending_strength"] = data.get("pending_strength", 5.0)
             s["pending_route"] = data.get("pending_route", "confirmed")
             restored.append(sym)
@@ -92,6 +94,43 @@ def is_pending_confirmation_valid(side, candle):
         return body > 0 and lower_shadow < body * 2.0
 
     return False
+
+
+def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0):
+    """Revalidate a delayed entry against the latest direction and risk state."""
+    s = ctx.STATES.get(sym)
+    if not s:
+        return False, "missing state"
+
+    current_price = float(s.get("close_price", 0.0) or 0.0)
+    reference_price = float(signal_price or current_price)
+    if current_price <= 0 or reference_price <= 0:
+        return False, "invalid price"
+
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    adverse_limit = max(reference_price * 0.0025, atr * 0.5)
+    adverse_move = reference_price - current_price if side == "buy" else current_price - reference_price
+    if adverse_move > adverse_limit:
+        return False, (
+            f"price moved adverse {adverse_move/reference_price*100:.2f}% "
+            f"(limit {adverse_limit/reference_price*100:.2f}%)"
+        )
+
+    divergence = s.get("divergence", "none")
+    if side == "buy" and divergence == "bearish":
+        return False, "bearish divergence"
+    if side == "sell" and divergence == "bullish":
+        return False, "bullish divergence"
+
+    if route != "Automatic_Reverse":
+        refreshed = compute_signal_strength(sym)
+        if not refreshed or refreshed[0] != side:
+            return False, f"latest signal no longer supports {side}"
+
+    if not is_entry_allowed(sym, side, route, strength):
+        return False, "latest entry filters rejected setup"
+
+    return True, "ok"
 
 
 def detect_divergence(sym):
@@ -272,27 +311,33 @@ async def check_entries():
         if not has_position and open_count >= MAX_POSITIONS:
             continue
 
-        # --- [NEW] 等待回踩 (Pullback Entry) 處理 ---
+        # --- 等待回踩 (Pullback Entry) 處理 ---
         if not has_position and s.get("waiting_pullback"):
             wp = s["waiting_pullback"]
+            wp_side = wp.get("side")
             _wait_time = time.time() - wp["time"]
-            if _wait_time > 3600:  # 1 小時沒回踩就放棄
+            if _wait_time > 3600:
                 logger.info(f"⌛ [回踩過期] {sym} 經過 1 小時未回到支撐/壓力位，取消回踩計畫。")
                 s["waiting_pullback"] = None
             else:
                 p = s["close_price"]
                 ema20 = s.get("ema20", 0.0)
-                if ema20 > 0:
-                    # 判斷是否回踩到 EMA20 (允許 0.2% 誤差)
-                    if wp["side"] == "buy" and p <= ema20 * 1.002:
-                        logger.info(f"🎯 [回踩進場] {sym} 成功回踩 (現價 {p:.4f} 接近 EMA20 {ema20:.4f})，準備建多單！")
-                        candidates.append((sym, wp["side"], wp["strength"], wp["route"]))
-                        s["waiting_pullback"] = None
-                    elif wp["side"] == "sell" and p >= ema20 * 0.998:
-                        logger.info(f"🎯 [回踩進場] {sym} 成功回抽 (現價 {p:.4f} 接近 EMA20 {ema20:.4f})，準備建空單！")
-                        candidates.append((sym, wp["side"], wp["strength"], wp["route"]))
-                        s["waiting_pullback"] = None
-                continue  # 處於等回踩狀態時，跳過底下一般的新訊號判定
+                touched = (
+                    (wp_side == "buy" and ema20 > 0 and p <= ema20 * 1.002) or
+                    (wp_side == "sell" and ema20 > 0 and p >= ema20 * 0.998)
+                )
+                if touched:
+                    still_valid, reason = is_entry_candidate_still_valid(
+                        sym, wp_side, wp.get("route", "a"), wp.get("strength", 0.0),
+                        wp.get("signal_price", 0.0),
+                    )
+                    if still_valid:
+                        logger.info(f"🎯 [回踩進場] {sym} 回踩完成且最新方向確認通過，準備建立 {wp_side} 倉位")
+                        candidates.append((sym, wp_side, wp.get("strength", 0.0), wp.get("route", "a")))
+                    else:
+                        logger.info(f"🛑 [回踩失效] {sym} 等待期間條件改變：{reason}")
+                    s["waiting_pullback"] = None
+                continue
 
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
@@ -320,73 +365,53 @@ async def check_entries():
                 # 還在同一根 K 線，繼續觀察
                 continue
 
-        # --- 新增：等待收盤確認機制 ---
+        # --- 等待收盤確認機制 ---
         if s.get("pending_side"):
             if current_candle_time <= s.get("pending_time", 0):
                 continue
 
-            # 換線了，檢查前一根(訊號K線)是否反轉
             if len(s["ohlcv"]) >= 2:
                 prev_candle = s["ohlcv"][-2]
-                prev_open = prev_candle[1]
                 prev_close = prev_candle[4]
-
-                is_valid = is_pending_confirmation_valid(s["pending_side"], prev_candle)
+                pending_side = s["pending_side"]
+                is_valid = is_pending_confirmation_valid(pending_side, prev_candle)
 
                 if is_valid:
-                    # Second-Bar Confirmation：對比訊號K收盤價（非最高/低點）
-                    # 原邏輯用 trigger_high * 0.985：下根開盤在 CLOSE 附近往往低於 HIGH 1-2%，
-                    # 導致大量有效訊號被誤判為假突破。改用收盤價作基準更合理。
-                    current_price = s["close_price"]
-                    trigger_high = prev_candle[2]
-                    trigger_low = prev_candle[3]
-
-                    if s["pending_side"] == "buy":
-                        if current_price < prev_close * 0.985:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 低於訊號K收盤 {prev_close:.4f} 的 98.5%，但已放寬為小幅回抽，保留多單。")
-                        elif current_price < prev_close * 0.990:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微回抽，保留多單。")
-                    elif s["pending_side"] == "sell":
-                        if current_price > prev_close * 1.015:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 高於訊號K收盤 {prev_close:.4f} 的 101.5%，但已放寬為小幅反彈，保留空單。")
-                        elif current_price > prev_close * 1.010:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微反彈，保留空單。")
-
-                    # [新增] 量能續航檢查：放寬為跟進量 >= 訊號量的 10%，避免小量回抽被誤判
-                    if is_valid:
-                        signal_vol = prev_candle[5]
-                        follow_vol = s.get("current_vol", 0)
-                        if signal_vol > 0 and follow_vol < signal_vol * 0.1:
-                            logger.info(f"⚠️ [量能續航] {sym} 跟進量 {follow_vol:.0f} 低於訊號量 {signal_vol:.0f} × 10%，但已放寬保留訊號")
-                        elif signal_vol > 0 and follow_vol < signal_vol * 0.2:
-                            logger.info(f"⚠️ [量能續航] {sym} 跟進量 {follow_vol:.0f} 略低於訊號量 {signal_vol:.0f} × 20%，保留訊號")
+                    still_valid, reason = is_entry_candidate_still_valid(
+                        sym,
+                        pending_side,
+                        s.get("pending_route", "confirmed"),
+                        s.get("pending_strength", 5.0),
+                        s.get("pending_signal_price", prev_close),
+                    )
+                    if not still_valid:
+                        is_valid = False
+                        logger.info(f"🛑 [Pending_Revalidation] {sym} 等待期間條件改變：{reason}")
 
                 if not is_valid:
-                    # 記錄假突破事件，同區間再次觸發時提高閾值
-                    if s.get("pending_side"):
-                        s["fake_breakout"] = {
-                            "time": time.time(),
-                            "side": s["pending_side"],
-                            "level_high": prev_candle[2],
-                            "level_low": prev_candle[3],
-                        }
-
-                if is_valid:
-                    s["fake_breakout"] = None
-                    logger.info(f"✅ [訊號確認] {sym} {s['pending_side']} 訊號已確認 (K線收盤通過)")
-                    side = s["pending_side"]
-                    strength = s.get("pending_strength", 5.0)
-                    route = s.get("pending_route", "confirmed")
+                    s["fake_breakout"] = {
+                        "time": time.time(),
+                        "side": pending_side,
+                        "level_high": prev_candle[2],
+                        "level_low": prev_candle[3],
+                    }
+                    logger.info(f"❌ [訊號失效] {sym} {pending_side} 訊號未通過最新方向確認，取消開倉。")
                     s["pending_side"] = None
-                    logger.info(f"🧭 [ENTRY_GATE] {sym} pending確認通過，加入候選隊列 | side={side} route={route} strength={strength:.2f}")
-                    # 所有關卡在進入 pending 前已完成篩選，確認後直接放行
-                    candidates.append((sym, side, strength, route))
+                    s["pending_signal_price"] = 0.0
                     continue
-                else:
-                    logger.info(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
-                    s["pending_side"] = None
+
+                s["fake_breakout"] = None
+                side = pending_side
+                strength = s.get("pending_strength", 5.0)
+                route = s.get("pending_route", "confirmed")
+                s["pending_side"] = None
+                s["pending_signal_price"] = 0.0
+                logger.info(f"✅ [訊號確認] {sym} {side} 訊號及最新方向均確認通過")
+                logger.info(f"🧭 [ENTRY_GATE] {sym} pending確認通過，加入候選隊列 | side={side} route={route} strength={strength:.2f}")
+                candidates.append((sym, side, strength, route))
             else:
                 s["pending_side"] = None
+                s["pending_signal_price"] = 0.0
             continue
 
         # 原本的計算邏輯
@@ -587,10 +612,8 @@ async def check_entries():
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
-            # 門檻曾拉高到 18.0（原本 15.0 太容易在邊緣強度就跳過趨勢過濾），
-            # 使用者要求小幅放寬開倉條件，調回 16.0，跟 core/entry_filter.py 的
-            # _mtf_override_threshold 對齊。
-            if strength > 12.0 or route == "Automatic_Reverse":
+            # 只有強度至少 18 的訊號可覆蓋 1H 趨勢；一般訊號維持硬性方向限制。
+            if strength >= 18.0 or route == "Automatic_Reverse":
                 logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
@@ -657,6 +680,7 @@ async def check_entries():
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         s["pending_side"] = side
         s["pending_time"] = current_candle_time
+        s["pending_signal_price"] = cp
         s["pending_strength"] = strength
         s["pending_route"] = route
         s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN

@@ -28,13 +28,12 @@ def compute_signal_strength(sym):
     rsi_extreme_high = s.get("rsi_extreme_high", 75)
 
     if rsi < rsi_extreme_low:
-        macd_line_v = s.get("macd_line", 0.0)
-        macd_sig_v = s.get("macd_signal", 0.0)
-        macd_trending_down = (macd_line_v - macd_sig_v) < 0
+        macd_hist_now = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+        macd_hist_prev = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
         rsi_history = s.get("rsi_history", [])
         is_hooking_up = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
-        if not macd_trending_down and not is_hooking_up:
-            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [極值防禦] RSI ({rsi:.1f}) < {rsi_extreme_low} 且未見轉折向上，拒絕進場防接刀")
+        if not (is_hooking_up and macd_hist_now > macd_hist_prev):
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} [極值防禦] RSI {rsi:.1f} 尚未回勾且 MACD 未改善，拒絕接刀")
             return (None, 0, None)
 
     if rsi > rsi_extreme_high:
@@ -133,14 +132,21 @@ def compute_signal_strength(sym):
 
     logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 預估強度(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
-    # 💥 極端反轉路線 (Extreme Reversal)
+    # 極端反轉必須同時有 RSI 回勾、MACD 改善與反轉 K，不能只靠極端值猜底/猜頂。
+    rsi_history = s.get("rsi_history", [])
     if rsi >= 80.0:
-        strength = 15.0 + ((rsi - 80.0) / 2.0)
-        return ("sell", strength, "Extreme_Reversal")
+        rsi_hook = len(rsi_history) >= 2 and rsi_history[-1] < rsi_history[-2]
+        if rsi_hook and macd_hist < prev_macd_hist and last_candle_short:
+            strength = 15.0 + ((rsi - 80.0) / 2.0)
+            return ("sell", strength, "Extreme_Reversal")
+        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI 極端超買但反轉三確認未齊，暫不做空")
 
     if rsi <= 20.0:
-        strength = 15.0 + ((20.0 - rsi) / 2.0)
-        return ("buy", strength, "Extreme_Reversal")
+        rsi_hook = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
+        if rsi_hook and macd_hist > prev_macd_hist and last_candle_long:
+            strength = 15.0 + ((20.0 - rsi) / 2.0)
+            return ("buy", strength, "Extreme_Reversal")
+        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI 極端超賣但反轉三確認未齊，暫不做多")
 
     rsi_ok_long  = rsi < profile.get("rsi_long_ceiling", 75.0) and (rsi > profile.get("rsi_long_floor", 25.0) or (rsi >= max(profile.get("rsi_long_floor", 25.0) - 7.0, 20.0) and (long_macd_cross  or macd_hist > 0)))
     rsi_ok_short = rsi > profile.get("rsi_short_floor", 25.0) and (rsi < profile.get("rsi_short_ceiling", 68.0) or (rsi <= profile.get("rsi_short_ceiling", 68.0) + 7.0 and (short_macd_cross or macd_hist < 0)))
@@ -187,14 +193,10 @@ def compute_signal_strength(sym):
     sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
 
-    # 強度 ≥ 25 的極強訊號豁免 K 線方向確認（動能強到K線偶爾反向仍可進）
-    # 強度 < 25 仍需最後 K 線確認，防止在價格明確反向時開錯方向
-    _bypass_candle = raw_long_str >= 25.0 or raw_short_str >= 25.0
-
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         macd_ok_long and
-        (last_two_candles_long or last_candle_long or _bypass_candle) and
+        (last_two_candles_long or last_candle_long) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -203,7 +205,7 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         macd_ok_short and
-        (last_two_candles_short or last_candle_short or _bypass_candle) and
+        (last_two_candles_short or last_candle_short) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and

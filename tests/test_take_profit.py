@@ -123,7 +123,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_profit_first_holds_small_wrong_direction_loss(self):
+    def test_confirmed_wrong_direction_exits_small_loss(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -154,9 +154,46 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Post_Entry_Early_Exit]")
+                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
+                self.assertEqual(s.get("wrong_dir_side"), "buy")
+
+        asyncio.run(run_check())
+
+    def test_unconfirmed_wrong_direction_small_loss_is_held(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["entry_count"] = 1
+        s["last_entry_direction"] = "buy"
+        s["close_price"] = 99.2
+        s["open_time"] = time.time() - 240
+        s["current_atr"] = 0.5
+        s["current_rsi"] = 45.0
+        s["prev_rsi"] = 47.0
+        s["prev_macd_line"] = 0.01
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.02
+        s["macd_signal"] = 0.0
+        s["ema20"] = 98.0
+        s["current_vol"] = 100.0
+        s["vol_ma20"] = 1000.0
+        s["ohlcv"] = [[0, 100.0, 100.5, 99.0, 99.2, 1200], [0, 99.1, 99.4, 99.0, 99.3, 100]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
                 mock_close.assert_not_called()
                 self.assertIsNone(s.get("wrong_dir_side"))
-                self.assertIsNone(s.get("pending_reverse"))
 
         asyncio.run(run_check())
 

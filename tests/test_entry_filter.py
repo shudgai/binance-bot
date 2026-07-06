@@ -226,5 +226,29 @@ class EntryFilterTests(unittest.TestCase):
         self.assertTrue(is_entry_allowed(sym, "buy", route="a", strength=27.4))
 
 
+    def test_strong_regular_signal_cannot_override_opposite_15m_trend(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        ctx.MARKET_WIND["btc_trend_4h"] = None
+        ctx.MARKET_WIND["btc_trend_1h"] = None
+        s["close_price"] = 1.0
+        s["current_vol"] = 1200.0
+        s["vol_ma20"] = 1000.0
+        s["current_atr"] = 0.01
+        s["atr_history"] = [0.01] * 10
+        s["current_rsi"] = 50.0
+        s["ema20_15m"] = 0.98
+        s["ema50_15m"] = 1.02
+        s["ohlcv"] = [
+            [0, 0.99, 1.01, 0.98, 1.0, 1200.0],
+            [0, 0.99, 1.01, 0.98, 1.0, 1200.0],
+            [0, 0.99, 1.01, 0.98, 1.0, 1200.0],
+        ]
+
+        self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=27.0))
+
+
 if __name__ == "__main__":
     unittest.main()

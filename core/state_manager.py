@@ -61,6 +61,7 @@ def build_symbol_state(sym):
         "trade_signal_reason": "",
         "pending_side": None,
         "pending_time": 0,
+        "pending_signal_price": 0.0,
         "pending_confirm_high": 0,
         "pending_confirm_low": 0,
         "close_price": 0.0,
@@ -295,6 +296,7 @@ def reset_coin_state(sym):
     s["stop_loss"] = 0.0
     s["pending_side"] = None
     s["pending_time"] = 0
+    s["pending_signal_price"] = 0.0
     s["pending_confirm_high"] = 0
     s["pending_confirm_low"] = 0
     s["has_been_negative"] = False

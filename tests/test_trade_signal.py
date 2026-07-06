@@ -105,5 +105,51 @@ class TradeSignalTests(unittest.TestCase):
             self.fail(f"check_entries should not crash: {exc}")
 
 
+    def test_extreme_oversold_without_reversal_confirmations_is_rejected(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["closes"] = [100.0] * 20
+        s["close_price"] = 99.0
+        s["prev_close"] = 100.0
+        s["current_rsi"] = 15.0
+        s["rsi_history"] = [16.0, 15.0]
+        s["macd_line"] = -2.0
+        s["macd_signal"] = 0.0
+        s["prev_macd_line"] = -1.0
+        s["prev_macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100.0, 101.0, 98.0, 99.0, 1000.0]] * 20
+
+        side, strength, route = compute_signal_strength(sym)
+
+        self.assertIsNone(side)
+        self.assertEqual(strength, 0)
+        self.assertIsNone(route)
+
+    def test_extreme_oversold_requires_rsi_macd_and_candle_reversal(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["closes"] = [100.0] * 20
+        s["close_price"] = 100.5
+        s["prev_close"] = 100.0
+        s["current_rsi"] = 15.0
+        s["rsi_history"] = [14.0, 15.0]
+        s["macd_line"] = -0.5
+        s["macd_signal"] = 0.0
+        s["prev_macd_line"] = -1.0
+        s["prev_macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100.0, 101.0, 99.0, 100.0, 1000.0] for _ in range(19)]
+        s["ohlcv"].append([0, 100.0, 101.0, 99.5, 100.5, 1200.0])
+
+        side, strength, route = compute_signal_strength(sym)
+
+        self.assertEqual(side, "buy")
+        self.assertGreaterEqual(strength, 15.0)
+        self.assertEqual(route, "Extreme_Reversal")
+
+
 if __name__ == "__main__":
     unittest.main()

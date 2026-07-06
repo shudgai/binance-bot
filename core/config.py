@@ -207,7 +207,7 @@ ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0005))
 ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 18.0))
 ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 30.0))
 
-ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "relaxed").lower()
+ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "balanced").lower()
 ENTRY_STRICTNESS_PROFILES = {
     "relaxed": {
         "volume_ratio": 0.35,
@@ -247,10 +247,10 @@ ENTRY_STRICTNESS_PROFILES = {
 
 def get_entry_strictness_profile(mode=None):
     mode_name = (mode or ENTRY_STRICTNESS_MODE).lower()
-    return ENTRY_STRICTNESS_PROFILES.get(mode_name, ENTRY_STRICTNESS_PROFILES["relaxed"])
+    return ENTRY_STRICTNESS_PROFILES.get(mode_name, ENTRY_STRICTNESS_PROFILES["balanced"])
 
 # 是否啟用 BTC 大盤過濾鎖定小幣開倉（True=啟用鎖定，False=小幣走自己獨立行情）
-USE_BTC_MACRO_FILTER = False
+USE_BTC_MACRO_FILTER = os.getenv("USE_BTC_MACRO_FILTER", "true").lower() in ("1", "true", "yes", "on")
 
 # 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
 # （輪替），降低每輪瞬間送出的請求量，避免衝高幣安 API 權重
