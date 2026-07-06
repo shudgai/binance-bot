@@ -7,7 +7,7 @@ import numpy as np
 
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE, MAX_POSITIONS,
-    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, get_entry_strictness_profile)
+    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, PAPER_TRADING, USE_TESTNET, get_entry_strictness_profile)
 from core.indicators import (_get_atr, _macd_vals, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -47,6 +47,8 @@ def save_pending_signals():
 
 def load_pending_signals():
     """啟動時還原上次存檔、還在等待確認中的訊號。超過 _PENDING_MAX_AGE_SEC 視為過期不還原。"""
+    if (PAPER_TRADING or USE_TESTNET) and get_entry_strictness_profile().get("min_signal_strength", 10.0) <= 10.0:
+        return
     try:
         if not os.path.exists(_PENDING_CACHE_PATH):
             return
@@ -69,6 +71,10 @@ def load_pending_signals():
             logger.info(f"💾 [快取] 已還原 {len(restored)} 個等待確認中的訊號: {', '.join(restored)}")
     except Exception as e:
         logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
+
+
+def should_wait_for_entry_confirmation(paper_trading, is_relaxed, strength):
+    return not (paper_trading and is_relaxed and strength >= 12.0)
 
 
 def is_entry_price_direction_aligned(side, price_change):
@@ -670,6 +676,13 @@ async def check_entries():
                     continue
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
+
+        _is_relaxed_confirmation = profile.get("min_signal_strength", 10.0) <= 10.0
+        if not should_wait_for_entry_confirmation(PAPER_TRADING or USE_TESTNET, _is_relaxed_confirmation, strength):
+            s["entry_reason"] = route
+            candidates.append((sym, side, strength, route))
+            logger.info(f"⚡ [PAPER_DIRECT_ENTRY] {sym} relaxed 強訊號直接加入候選 | side={side} route={route} strength={strength:.2f}")
+            continue
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         s["pending_side"] = side

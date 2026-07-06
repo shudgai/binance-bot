@@ -7,10 +7,16 @@ from core.check_entries import (
     is_divergence_blocking,
     is_entry_price_direction_aligned,
     is_pending_confirmation_valid,
+    should_wait_for_entry_confirmation,
 )
 
 
 class PendingConfirmationTests(unittest.TestCase):
+    def test_paper_relaxed_strong_signal_skips_pending_confirmation(self):
+        self.assertFalse(should_wait_for_entry_confirmation(True, True, 12.0))
+        self.assertTrue(should_wait_for_entry_confirmation(True, True, 11.9))
+        self.assertTrue(should_wait_for_entry_confirmation(False, True, 30.0))
+
     def test_entry_price_direction_requires_alignment(self):
         self.assertTrue(is_entry_price_direction_aligned("buy", 0.01))
         self.assertTrue(is_entry_price_direction_aligned("buy", 0.0))

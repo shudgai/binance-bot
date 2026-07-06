@@ -9,10 +9,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core import exchange_client
-from core.orders import execute_order
+from core.orders import execute_order, should_block_order_flow
 
 
 class EntryRiskTests(unittest.TestCase):
+    def test_order_flow_is_warning_only_in_paper_trading(self):
+        self.assertFalse(should_block_order_flow("buy", 60.0, 100.0, 0.8, True))
+        self.assertTrue(should_block_order_flow("buy", 60.0, 100.0, 0.8, False))
+        self.assertFalse(should_block_order_flow("sell", 100.0, 60.0, 0.8, True))
+        self.assertTrue(should_block_order_flow("sell", 100.0, 60.0, 0.8, False))
+
     def test_additional_entry_updates_average_price_safely(self):
         sym = "XRPUSDT"
         init_states([sym])

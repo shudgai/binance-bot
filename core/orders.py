@@ -7,7 +7,7 @@ from datetime import datetime
 
 from core import ctx
 
-from core.config import (PAPER_TRADING, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
+from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
     ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
@@ -24,6 +24,14 @@ from services.update_paper_state import update_paper_state
 from services.ai_manager import ai_engine
 
 logger = logging.getLogger(__name__)
+
+
+def should_block_order_flow(side, bids, asks, threshold, paper_trading):
+    if side == "buy":
+        imbalanced = asks == 0 or bids / asks < threshold
+    else:
+        imbalanced = bids == 0 or asks / bids < threshold
+    return imbalanced and not paper_trading
 
 
 def _import_update_trailing_stop():
@@ -948,14 +956,18 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if side == 'buy':
                 if asks == 0 or bids / asks < _flow_threshold:
-                    logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
-                    logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
-                    return
+                    if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
+                        logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
+                        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
+                        return
+                    logger.info(f"⚠️ [OrderFlow_Paper_Override] {sym} 買盤較弱，但模擬交易放行以收集樣本")
             else:
                 if bids == 0 or asks / bids < _flow_threshold:
-                    logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
-                    logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
-                    return
+                    if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
+                        logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
+                        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
+                        return
+                    logger.info(f"⚠️ [OrderFlow_Paper_Override] {sym} 賣盤較弱，但模擬交易放行以收集樣本")
         except Exception as e:
             logger.info(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:

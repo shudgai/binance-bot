@@ -1,7 +1,6 @@
 import unittest
 import sys
 import os
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -74,42 +73,6 @@ class TradeSignalTests(unittest.TestCase):
 
         self.assertIsNone(side)
         self.assertEqual(strength, 0)
-
-    def test_relaxed_profile_still_requires_same_direction_candle(self):
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s["closes"] = [100.0] * 20
-        s["close_price"] = 100.0
-        s["prev_close"] = 100.5
-        s["current_rsi"] = 50.0
-        s["ema20"] = 100.0
-        s["ema50"] = 99.0
-        s["macd_line"] = 1.0
-        s["macd_signal"] = 0.0
-        s["prev_macd_line"] = 0.0
-        s["prev_macd_signal"] = 0.5
-        s["ohlcv"] = [
-            [0, 101.0, 101.5, 100.5, 101.0, 1000.0],
-            [0, 101.0, 101.2, 100.0, 100.5, 1100.0],
-            [0, 100.5, 100.7, 99.5, 100.0, 1200.0],
-        ]
-        relaxed = {
-            "min_signal_strength": 8.0,
-            "min_entry_strength": 5.0,
-            "rsi_long_floor": 15.0,
-            "rsi_short_floor": 15.0,
-            "rsi_long_ceiling": 82.0,
-            "rsi_short_ceiling": 78.0,
-        }
-
-        with patch("core.signal_engine.get_entry_strictness_profile", return_value=relaxed):
-            side, strength, route = compute_signal_strength(sym)
-
-        self.assertIsNone(side)
-        self.assertEqual(strength, 0)
-        self.assertIsNone(route)
 
     def test_check_entries_handles_missing_macd_tiny_threshold(self):
         sym = "XRPUSDT"

@@ -380,10 +380,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
     current_atr_v = s.get("current_atr", 0.0)
     is_low_vol_mode = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
-    vol_multiplier = (0.15 if is_low_vol_mode else 0.2)
+    if is_relaxed:
+        vol_multiplier = 0.08 if is_low_vol_mode else 0.10
+    else:
+        vol_multiplier = 0.15 if is_low_vol_mode else 0.20
     dynamic_vol_threshold = volume_ma20 * vol_multiplier
     if current_volume <= dynamic_vol_threshold:
-        mode_label = "低波動放寬模式 30%" if is_low_vol_mode else "高波動放寬 40%"
+        mode_label = f"{'低' if is_low_vol_mode else '高'}波動量能底線 {vol_multiplier:.0%}"
         if route in ("Extreme_Reversal", "Exhaustion_Entry"):
             # Exhaustion_Entry 仍需最低 5% 均量，避免完全沒人的行情反手
             _min_vol_floor = volume_ma20 * 0.05
