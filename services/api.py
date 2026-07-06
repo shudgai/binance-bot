@@ -858,8 +858,10 @@ def get_open_orders(symbol: str):
         return {"status": "success", "data": cached[1]}
     try:
         orders = client.futures_get_open_orders(symbol=symbol)
-        _open_orders_cache[symbol] = (now, orders)
-        return {"status": "success", "data": orders}
+        algo_orders = client.futures_get_open_algo_orders(symbol=symbol)
+        combined_orders = list(orders or []) + list(algo_orders or [])
+        _open_orders_cache[symbol] = (now, combined_orders)
+        return {"status": "success", "data": combined_orders}
     except Exception as e:
         if cached:
             return {"status": "success", "data": cached[1]}

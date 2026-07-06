@@ -39,12 +39,16 @@ class ExchangeCalibrationTests(unittest.TestCase):
         exchange = AsyncMock()
         exchange.fetch_positions.return_value = []
 
-        with patch("core.runner.PAPER_TRADING", False):
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.orders._cancel_exchange_exit_order_id", new=AsyncMock()) as cancel_exit:
             asyncio.run(calibrate_with_exchange(exchange))
 
         self.assertEqual(
-            exchange.cancel_order.await_args_list,
-            [call("sl-1", self.sym), call("tp-1", self.sym)],
+            cancel_exit.await_args_list,
+            [
+                call(self.sym, "sl-1", "校準殘留止損"),
+                call(self.sym, "tp-1", "校準殘留停利"),
+            ],
         )
         self.assertEqual(state["qty"], 0.0)
         self.assertEqual(state["avg_price"], 0.0)
@@ -60,15 +64,35 @@ class ExchangeCalibrationTests(unittest.TestCase):
 
         exchange = AsyncMock()
         exchange.fetch_positions.return_value = []
-        exchange.cancel_order.side_effect = [RuntimeError("unknown order"), None]
+        cancel_exit = AsyncMock(side_effect=[RuntimeError("unknown order"), None])
 
-        with patch("core.runner.PAPER_TRADING", False):
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.orders._cancel_exchange_exit_order_id", new=cancel_exit):
             asyncio.run(calibrate_with_exchange(exchange))
 
-        self.assertEqual(exchange.cancel_order.await_count, 2)
+        self.assertEqual(cancel_exit.await_count, 2)
         self.assertEqual(state["qty"], 0.0)
         self.assertIsNone(state["exchange_stop_order_id"])
         self.assertIsNone(state["exchange_take_profit_order_id"])
+
+
+    def test_live_position_calibration_ensures_exchange_exit_orders(self):
+        exchange = AsyncMock()
+        exchange.fetch_positions.return_value = [{
+            "symbol": "XRP/USDT:USDT",
+            "contracts": 2.0,
+            "side": "long",
+            "entryPrice": 100.0,
+            "info": {"positionAmt": "2.0"},
+        }]
+
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.orders._ensure_exchange_exit_orders", new=AsyncMock()) as ensure_orders:
+            asyncio.run(calibrate_with_exchange(exchange))
+
+        ensure_orders.assert_awaited_once_with(self.sym)
+        self.assertEqual(ctx.STATES[self.sym]["qty"], 2.0)
+        self.assertEqual(ctx.STATES[self.sym]["avg_price"], 100.0)
 
 
 if __name__ == "__main__":

@@ -31,16 +31,36 @@ def _import_update_trailing_stop():
     return update_trailing_stop
 
 
+async def _cancel_exchange_exit_order_id(sym, order_id, label):
+    if not order_id or PAPER_TRADING:
+        return True
+    try:
+        await exchange_futures.fapiPrivateDeleteAlgoOrder({
+            "symbol": sym,
+            "algoId": order_id,
+        })
+        logger.info(f"✅ [{label}取消] {sym} 已撤銷交易所 Algo {label}單 {order_id}")
+        return True
+    except Exception as algo_error:
+        try:
+            await exchange_futures.cancel_order(order_id, sym)
+            logger.info(f"✅ [{label}取消] {sym} 已撤銷交易所{label}單 {order_id}")
+            return True
+        except Exception as order_error:
+            logger.info(
+                f"⚠️ [取消{label}單失敗] {sym} {order_id}: "
+                f"algo={algo_error}; order={order_error}"
+            )
+            return False
+
+
 async def _cancel_exchange_exit_order(sym, state_key, label):
     s = ctx.STATES[sym]
     order_id = s.get(state_key)
     if not order_id or PAPER_TRADING:
         return
     try:
-        await exchange_futures.cancel_order(order_id, sym)
-        logger.info(f"✅ [{label}取消] {sym} 已撤銷交易所{label}單")
-    except Exception as ce:
-        logger.info(f"⚠️ [取消{label}單失敗] {sym}: {ce}")
+        await _cancel_exchange_exit_order_id(sym, order_id, label)
     finally:
         s[state_key] = None
 
@@ -84,6 +104,85 @@ async def _replace_exchange_exit_orders(sym):
     )
     s["exchange_take_profit_order_id"] = tp_order["id"]
     logger.info(f"🎯 [交易所挂單] {sym} 成功挂出 Take Profit Market 停利單 @ {take_profit_price} (數量: {qty})")
+
+
+async def _fetch_open_exchange_exit_orders(sym):
+    try:
+        return await exchange_futures.fapiPrivateGetOpenAlgoOrders({"symbol": sym})
+    except Exception as algo_error:
+        logger.info(f"⚠️ [Algo退出單查詢失敗] {sym}: {algo_error}，回退一般委託查詢")
+        open_orders = await exchange_futures.fetch_open_orders(sym)
+        normalized = []
+        for order in open_orders or []:
+            info = order.get("info", {})
+            normalized.append({
+                "algoId": order.get("id") or info.get("orderId"),
+                "orderType": order.get("type") or info.get("type"),
+                "quantity": order.get("amount") or info.get("origQty") or 0,
+                "side": order.get("side") or info.get("side"),
+                "reduceOnly": order.get("reduceOnly", info.get("reduceOnly", False)),
+                "algoStatus": str(order.get("status", "")).upper(),
+                "createTime": order.get("timestamp") or info.get("time") or 0,
+            })
+        return normalized
+
+
+async def _ensure_exchange_exit_orders(sym):
+    if PAPER_TRADING:
+        return
+
+    s = ctx.STATES[sym]
+    qty = abs(s.get("qty", 0.0))
+    if qty <= 0.000001 or s.get("avg_price", 0.0) <= 0:
+        return
+
+    try:
+        open_orders = await _fetch_open_exchange_exit_orders(sym)
+    except Exception as exc:
+        logger.info(f"⚠️ [交易所退出單檢查失敗] {sym}: {exc}")
+        return
+
+    close_side = "SELL" if s["qty"] > 0 else "BUY"
+    candidates = {"stop": [], "take_profit": []}
+    all_exit_orders = []
+    for order in open_orders or []:
+        order_type = str(order.get("orderType") or "").upper()
+        reduce_only = str(order.get("reduceOnly", False)).lower() in ("true", "1")
+        status = str(order.get("algoStatus") or "").upper()
+        if not reduce_only or status not in ("NEW", "OPEN"):
+            continue
+        if order_type not in ("STOP_MARKET", "STOP", "TAKE_PROFIT_MARKET", "TAKE_PROFIT"):
+            continue
+        all_exit_orders.append(order)
+        order_qty = float(order.get("quantity") or 0.0)
+        side_matches = str(order.get("side") or "").upper() == close_side
+        qty_matches = abs(order_qty - qty) <= max(0.000001, qty * 0.001)
+        if not side_matches or not qty_matches:
+            continue
+        key = "stop" if order_type in ("STOP_MARKET", "STOP") else "take_profit"
+        candidates[key].append(order)
+
+    chosen = {}
+    for key, orders in candidates.items():
+        if orders:
+            chosen[key] = max(orders, key=lambda order: int(order.get("createTime") or 0))
+
+    chosen_ids = {str(order.get("algoId")) for order in chosen.values()}
+    for order in all_exit_orders:
+        order_id = str(order.get("algoId"))
+        if order_id in chosen_ids:
+            continue
+        label = "止損" if str(order.get("orderType", "")).upper().startswith("STOP") else "停利"
+        await _cancel_exchange_exit_order_id(sym, order_id, f"殘留{label}")
+
+    s["exchange_stop_order_id"] = chosen.get("stop", {}).get("algoId")
+    s["exchange_take_profit_order_id"] = chosen.get("take_profit", {}).get("algoId")
+    if s.get("exchange_stop_order_id") and s.get("exchange_take_profit_order_id"):
+        logger.info(f"✅ [交易所退出單確認] {sym} Algo 止損/停利單皆存在且數量正確")
+        return
+
+    logger.info(f"🛡️ [交易所退出單修復] {sym} 缺少止損或停利單，重新建立 bracket")
+    await _replace_exchange_exit_orders(sym)
 
 
 def _entry_direction_guard(sym, side, reference_price=None):
@@ -181,6 +280,35 @@ def _find_exchange_position(positions, sym):
         if pos_sym == sym and abs(qty) > 0.000001:
             return pos, qty
     return None, 0.0
+
+
+async def _recover_market_entry_fill(sym, side, prior_qty, requested_qty, fallback_price):
+    try:
+        positions = await exchange_futures.fetch_positions([sym])
+    except Exception as exc:
+        logger.info(f"⚠️ [市價成交回查失敗] {sym}: {exc}")
+        return None
+
+    pos, exchange_qty = _find_exchange_position(positions, sym)
+    requested_sign = 1 if side == "buy" else -1
+    if pos is None or exchange_qty * requested_sign <= 0:
+        return None
+
+    filled_qty = (exchange_qty - prior_qty) * requested_sign
+    if filled_qty <= 0.000001:
+        return None
+    filled_qty = min(filled_qty, requested_qty)
+    fill_price = float(
+        pos.get("entryPrice")
+        or pos.get("info", {}).get("entryPrice")
+        or fallback_price
+    )
+    return {
+        "status": "closed",
+        "filled": filled_qty,
+        "average": fill_price,
+        "_recovered_from_position": True,
+    }
 
 
 async def _entry_exchange_direction_guard(sym, side):
@@ -1120,6 +1248,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             # 不含後面故意等待成交的 sleep(3)——那是設計上刻意的等待，混進去量會讓
             # 每一筆都必然超過門檻，量不出真正的網路/交易所處理延遲。這裡量到的才是
             # 判斷 chase 這種要求快速掛單/追價的高動態模式，實際環境是否跟得上的依據。
+            entry_prior_qty = float(s.get("qty", 0.0) or 0.0)
             _api_call_start = time.time()
             order = await exchange_futures.create_order(
                 sym, type=order_type, side=side, amount=abs(base_amt), price=limit_price,
@@ -1141,13 +1270,27 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type})")
 
             await asyncio.sleep(3)
+            fetched = order
             try:
                 fetched = await exchange_futures.fetch_order(order_id, sym)
-                status = fetched.get('status', '')
-                filled_qty = float(fetched.get('filled', 0.0))
-            except Exception:
-                status = 'unknown'
-                filled_qty = 0.0
+            except Exception as fetch_error:
+                logger.info(f"⚠️ [成交查詢失敗] {sym} {order_id}: {fetch_error}")
+
+            status = fetched.get("status", "")
+            filled_qty = float(fetched.get("filled", 0.0) or 0.0)
+            if order_type == "market" and filled_qty <= 0.000001:
+                recovered_fill = await _recover_market_entry_fill(
+                    sym, side, entry_prior_qty, base_amt, market_price,
+                )
+                if recovered_fill:
+                    fetched = recovered_fill
+                    status = "closed"
+                    filled_qty = float(recovered_fill["filled"])
+                    recovered_avg = float(recovered_fill.get("average", market_price))
+                    logger.info(
+                        f"✅ [市價成交回復] {sym} 從交易所持倉回查成交 "
+                        f"{filled_qty:.4f} @ {recovered_avg:.6f}"
+                    )
 
             requested_amt = base_amt
             if status not in ('closed', 'canceled') and filled_qty < base_amt * 0.99:
@@ -1174,7 +1317,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
             if status == 'closed' or filled_qty >= base_amt * 0.99:
                 ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
-                fill_price = float(fetched.get('average') or fetched.get('price') or limit_price)
+                fill_price = float(fetched.get('average') or fetched.get('price') or limit_price or market_price)
                 logger.info(f"✅ [限價成交] {sym} {side} {filled_qty:.4f} @ {fill_price:.6f}")
             elif actual_entry_mode == 'chase':
                 # 原本這裡不管成交多少（包含完全沒成交），都直接放棄剩餘數量，

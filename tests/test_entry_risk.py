@@ -11,7 +11,8 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core import exchange_client
 from core.orders import (execute_order, check_paper_pending_order, _entry_pending_adverse_guard,
-                         _replace_exchange_exit_orders, _entry_exchange_direction_guard)
+                         _replace_exchange_exit_orders, _entry_exchange_direction_guard,
+                         _ensure_exchange_exit_orders, _recover_market_entry_fill)
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -302,6 +303,99 @@ class EntryRiskTests(unittest.TestCase):
         exchange.create_order.assert_not_awaited()
         exchange.fetch_positions.assert_not_awaited()
         self.assertEqual(s["qty"], 0.0)
+
+
+    def test_ensure_exit_orders_adopts_existing_exchange_bracket(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 2.0
+        s["avg_price"] = 100.0
+
+        exchange = AsyncMock()
+        exchange.fapiPrivateGetOpenAlgoOrders.return_value = [
+            {"algoId": "sl-live", "orderType": "STOP_MARKET", "reduceOnly": True,
+             "quantity": "2.0", "side": "SELL", "algoStatus": "NEW", "createTime": "1"},
+            {"algoId": "tp-live", "orderType": "TAKE_PROFIT_MARKET", "reduceOnly": True,
+             "quantity": "2.0", "side": "SELL", "algoStatus": "NEW", "createTime": "2"},
+        ]
+
+        with patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders.exchange_futures", exchange), \
+             patch("core.orders._replace_exchange_exit_orders", new=AsyncMock()) as replace_orders:
+            asyncio.run(_ensure_exchange_exit_orders(sym))
+
+        replace_orders.assert_not_awaited()
+        self.assertEqual(s["exchange_stop_order_id"], "sl-live")
+        self.assertEqual(s["exchange_take_profit_order_id"], "tp-live")
+
+    def test_ensure_exit_orders_cancels_stale_algo_orders(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 2.0
+        s["avg_price"] = 100.0
+
+        exchange = AsyncMock()
+        exchange.fapiPrivateGetOpenAlgoOrders.return_value = [
+            {"algoId": "sl-current", "orderType": "STOP_MARKET", "reduceOnly": True,
+             "quantity": "2.0", "side": "SELL", "algoStatus": "NEW", "createTime": "3"},
+            {"algoId": "tp-current", "orderType": "TAKE_PROFIT_MARKET", "reduceOnly": True,
+             "quantity": "2.0", "side": "SELL", "algoStatus": "NEW", "createTime": "4"},
+            {"algoId": "sl-stale", "orderType": "STOP_MARKET", "reduceOnly": True,
+             "quantity": "1.0", "side": "SELL", "algoStatus": "NEW", "createTime": "1"},
+        ]
+
+        with patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders.exchange_futures", exchange), \
+             patch("core.orders._replace_exchange_exit_orders", new=AsyncMock()) as replace_orders:
+            asyncio.run(_ensure_exchange_exit_orders(sym))
+
+        replace_orders.assert_not_awaited()
+        exchange.fapiPrivateDeleteAlgoOrder.assert_awaited_once_with({
+            "symbol": sym, "algoId": "sl-stale",
+        })
+
+    def test_ensure_exit_orders_repairs_missing_exchange_bracket(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 2.0
+        s["avg_price"] = 100.0
+
+        exchange = AsyncMock()
+        exchange.fapiPrivateGetOpenAlgoOrders.return_value = []
+
+        with patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders.exchange_futures", exchange), \
+             patch("core.orders._replace_exchange_exit_orders", new=AsyncMock()) as replace_orders:
+            asyncio.run(_ensure_exchange_exit_orders(sym))
+
+        replace_orders.assert_awaited_once_with(sym)
+
+    def test_market_fill_recovers_from_exchange_position_delta(self):
+        sym = "XRPUSDT"
+        exchange = AsyncMock()
+        exchange.fetch_positions.return_value = [{
+            "symbol": "XRP/USDT:USDT",
+            "contracts": 1.5,
+            "side": "long",
+            "entryPrice": 100.25,
+            "info": {"positionAmt": "1.5"},
+        }]
+
+        with patch("core.orders.exchange_futures", exchange):
+            recovered = asyncio.run(_recover_market_entry_fill(
+                sym, "buy", prior_qty=0.5, requested_qty=1.0,
+                fallback_price=100.0,
+            ))
+
+        self.assertEqual(recovered["status"], "closed")
+        self.assertEqual(recovered["filled"], 1.0)
+        self.assertEqual(recovered["average"], 100.25)
 
 
 if __name__ == "__main__":

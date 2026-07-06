@@ -210,6 +210,15 @@ async def calibrate_with_exchange(exchange):
                             ctx.STATES[sym]["entry_count"] = 1
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 
+        from core.orders import _ensure_exchange_exit_orders, _cancel_exchange_exit_order_id
+        for sym in live_position_symbols:
+            if sym not in ctx.STATES:
+                continue
+            try:
+                await _ensure_exchange_exit_orders(sym)
+            except Exception as exit_order_error:
+                logger.info(f"🚨 [CALIBRATION] {sym} 交易所退出單修復失敗: {exit_order_error}")
+
         for sym, state in list(ctx.STATES.items()):
             if abs(state.get("qty", 0.0)) <= 0.000001 or sym in live_position_symbols:
                 continue
@@ -219,8 +228,7 @@ async def calibrate_with_exchange(exchange):
                 if not order_id:
                     continue
                 try:
-                    await exchange.cancel_order(order_id, sym)
-                    logger.info(f"✅ [CALIBRATION] 已撤銷 {sym} 殘留交易所{label}單 {order_id}")
+                    await _cancel_exchange_exit_order_id(sym, order_id, f"校準殘留{label}")
                 except Exception as ce:
                     logger.info(f"⚠️ [CALIBRATION] 撤銷 {sym} 殘留交易所{label}單失敗: {ce}")
                 finally:
