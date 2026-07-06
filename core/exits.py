@@ -290,13 +290,20 @@ async def check_exits(sym):
 
     min_profit_exit_pct = _min_profit_exit_pct(sym)
 
-    # ── 時間停滯平倉停利 (Stagnation Take Profit) ──
-    # 如果持倉超過 40 分鐘 (2400秒)，且目前至少達到最低淨利門檻，
-    # 但利潤一直上不去（未達常規停利門檻），則主動平倉停利釋放倉位，讓其他幣種進場。
-    if hold_sec > 2400 and profit_pct >= min_profit_exit_pct:
+    # ── 高點回吐停利 (Peak Giveback Take Profit) ──
+    # 不看持倉時間、也不看淨利出場門檻（那道門檻對 SUI 這類波動幣種高達 1.5%）：
+    # 只要曾經有過一點獲利高點，之後利潤上不去、開始從高點回吐，就直接在還剩多少
+    # 算多少的時候出場，不要賭它會漲更多。原本的版本是「持倉超過 40 分鐘才檢查」，
+    # 但實際發生過 SUIUSDT 獲利一度到 0.73%，還沒撐到 40 分鐘、也還沒達到 1.5%
+    # 門檻，利潤就已經整個回吐甚至轉虧損——等時間到，利潤早就不見了。改成即時比較
+    # 「目前利潤」跟「曾經到過的最高利潤」，只要回吐超過兩成，不管過了多久、也不管
+    # 有沒有到達正常停利門檻，都立刻停利了結。0.15% 的最低門檻只是為了濾掉手續費/
+    # 價差造成的雜訊誤判，不是真正的獲利目標。
+    _peak_giveback_floor = 0.0015
+    if s["highest_profit_pct"] >= _peak_giveback_floor and profit_pct <= s["highest_profit_pct"] * 0.8:
         cs = 'sell' if is_long else 'buy'
-        logger.info(f"⏳ [時間停滯停利] {sym} 持倉已達 {hold_sec/60:.1f} 分鐘，利潤持續平平 ({profit_pct*100:.2f}%)，主動平倉停利釋放資金")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Time_Stagnation]")
+        logger.info(f"⏳ [高點回吐停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回吐至 {profit_pct*100:.2f}%，不再等待，立即鎖利了結")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Peak_Giveback]")
         s["highest_profit_pct"] = 0.0
         return
 
