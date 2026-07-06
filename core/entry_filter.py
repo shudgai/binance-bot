@@ -412,15 +412,16 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     # 2. 空單 RSI 極限保護：RSI > 75 才允許做空（超買區），RSI 太低反而不能追空
     current_rsi = s.get("current_rsi", 50.0)
-    if side == 'sell' and current_rsi < 25.0:
-        logger.info(f"🛑 [REJECT] [Filter:RSI_Limit] {sym} 觸發RSI極限保護 (RSI: {current_rsi:.1f} < 25.0)，拒絕在極端超賣區追空。")
+    profile = get_entry_strictness_profile()
+    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+    rsi_limit = 15.0 if is_relaxed else 25.0
+    if side == 'sell' and current_rsi < rsi_limit:
+        logger.info(f"🛑 [REJECT] [Filter:RSI_Limit] {sym} 觸發RSI極限保護 (RSI: {current_rsi:.1f} < {rsi_limit:.1f})，拒絕在極端超賣區追空。")
         return False
 
     # 3. 15m 跨時框趨勢對齊：常規策略不得逆著 EMA20/EMA50 方向進場。
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
-    profile = get_entry_strictness_profile()
-    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Exhaustion_Entry", "Automatic_Reverse"):
         if is_relaxed and route in ("a", "b"):
             # 寬鬆模式下，常規策略（a/b 路由）允許逆勢回踩/突破進場，不強加 15m 趨勢對齊
@@ -453,7 +454,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 logger.info(f"⚠️ [Filter:Quality] {sym} 品質偏弱，但反轉/極強訊號保留")
 
     # 5. 收盤確認 (Candle Close Check)
-    if route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
+    if not is_relaxed and route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
