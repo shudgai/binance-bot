@@ -9,7 +9,12 @@
     "AVAXUSDT",
     "FILUSDT",
     "LDOUSDT",
-    "ARBUSDT"
+    "ARBUSDT",
+    "INJUSDT",
+    "RENDERUSDT",
+    "SEIUSDT",
+    "FETUSDT",
+    "STXUSDT"
   ],
   "profiles": {
     "ADAUSDT": {

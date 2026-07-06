@@ -11,6 +11,7 @@ from services.radar_service import (
 EXPECTED_SYMBOLS = [
     "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
     "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
+    "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
 ]
 
 
@@ -19,7 +20,7 @@ def test_all_default_symbol_sources_use_the_approved_ten():
     assert MANAGER_DEFAULT_SYMBOLS == EXPECTED_SYMBOLS
     assert ATR_ELIGIBLE_SYMBOLS == EXPECTED_SYMBOLS
     assert CORE_SYMBOLS == EXPECTED_SYMBOLS
-    assert RADAR_SELECT_COUNT == 10
+    assert RADAR_SELECT_COUNT == 15
     assert MAX_ATR_PCT_FOR_ENTRY == 8.0
 
 

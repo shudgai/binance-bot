@@ -16,6 +16,7 @@ bot_status = {
     "watch_symbols": [
         "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
         "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
+        "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
     ],
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
@@ -29,6 +30,7 @@ BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"
 DEFAULT_SYMBOLS = [
     "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
     "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
+    "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
 ]
 
 
