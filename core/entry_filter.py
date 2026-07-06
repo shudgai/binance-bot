@@ -604,8 +604,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     bb_down = s.get("bb_down", 0.0)
     bb_width_pct = (bb_up - bb_down) / cp if cp > 0 else 0
 
-    if atr_24h_avg > 0 and current_atr < atr_24h_avg * 0.25:
-        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f})")
+    _vol_min_mult = 0.10 if is_relaxed else 0.25
+    if atr_24h_avg > 0 and current_atr < atr_24h_avg * _vol_min_mult:
+        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 當前 ATR 過小，處於極度盤整 (current={current_atr:.5f}, avg={atr_24h_avg:.5f}, mult={_vol_min_mult})")
         return False
     if bb_width_pct > 0 and bb_width_pct < 0.0015:
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [波動率過濾] 布林帶極度收斂 (寬度={bb_width_pct*100:.2f}%)，避免洗盤")
@@ -734,15 +735,17 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             # 反轉路由不應被此條件完全擋下，因為它們本來就可能在 RSI 尚未回撤時立即反轉
             if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and "rsi_history" in s and len(s["rsi_history"]) > 0:
                 recent_rsis = s["rsi_history"][-10:]
+                rsi_buy_pullback = 65.0 if is_relaxed else 55.0
+                rsi_sell_pullback = 35.0 if is_relaxed else 45.0
                 if side == "sell":
                     highest_rsi = max(recent_rsis)
-                    if highest_rsi < 45.0:
-                        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< 45.0)，未經歷過熱，視為逆勢空單假突破，攔截")
+                    if highest_rsi < rsi_sell_pullback:
+                        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢空單進場前，近 10 根 RSI 最高僅 {highest_rsi:.1f} (< {rsi_sell_pullback:.1f})，未經歷過熱，視為逆勢空單假突破，攔截")
                         return False
                 else:
                     lowest_rsi = min(recent_rsis)
-                    if lowest_rsi > 55.0:
-                        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> 55.0)，未見明顯回撤，視為逆勢多單假突破，攔截")
+                    if lowest_rsi > rsi_buy_pullback:
+                        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [RSI歷史確認] 逆勢多單進場前，近 10 根 RSI 最低僅 {lowest_rsi:.1f} (> {rsi_buy_pullback:.1f})，未見明顯回撤，視為逆勢多單假突破，攔截")
                         return False
 
     # 實盤最小量限制
