@@ -376,13 +376,12 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     dynamic_vol_threshold = volume_ma20 * vol_multiplier
     if current_volume <= dynamic_vol_threshold:
         mode_label = "低波動放寬模式 30%" if is_low_vol_mode else "高波動放寬 40%"
-        if route in ("Extreme_Reversal", "Exhaustion_Entry"):
-            # Exhaustion_Entry 仍需最低 5% 均量，避免完全沒人的行情反手
+        if route == "Exhaustion_Entry":
             _min_vol_floor = volume_ma20 * 0.05
-            if route == "Exhaustion_Entry" and current_volume < _min_vol_floor:
+            if current_volume < _min_vol_floor:
                 logger.info(f"🛑 [EXHAUSTION_NO_VOL] {sym} Exhaustion_Entry 量能太低 (當前: {current_volume:.1f} < 均量5%: {_min_vol_floor:.1f})，完全死水拒絕反手")
                 return False
-            logger.info(f"⚡ [ALLOW] [Filter:Volume] {sym} {route} 路由豁免死水量能攔截 (當前: {current_volume:.1f} | 門檻: {dynamic_vol_threshold:.1f} | {mode_label})")
+            logger.info(f"⚡ [ALLOW] [Filter:Volume] {sym} Exhaustion_Entry 路由保留最低量能豁免 (當前: {current_volume:.1f} | 門檻: {dynamic_vol_threshold:.1f} | {mode_label})")
         else:
             logger.info(f"🛑 [REJECT] [Filter:Volume] {sym} 量能嚴重不足 (當前: {current_volume:.1f} <= 門檻: {dynamic_vol_threshold:.1f} | {mode_label})，判定為死水行情。")
             return False
@@ -413,7 +412,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 3. 15m 跨時框趨勢對齊：常規策略不得逆著 EMA20/EMA50 方向進場。
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
-    if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse"):
+    if ema20_15m > 0 and ema50_15m > 0 and route not in ("Exhaustion_Entry", "Automatic_Reverse"):
         if side == "sell" and ema20_15m > ema50_15m:
             logger.info(f"🛑 [Filter:MTF_Trend] {sym} 15m 趨勢向上，拒絕常規逆勢空單")
             return False
@@ -435,7 +434,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if avg_body_size > 0 and vol_ma20_q > 0:
             # 【方案B放寬】實體 > 0.6x 均值 且 量能 > 0.6x 均量
             if current_body_size <= avg_body_size * 0.6 or eval_vol <= vol_ma20_q * 0.6:
-                if strength < 24.0 and route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse"):
+                if strength < 24.0 and route not in ("Exhaustion_Entry", "Automatic_Reverse"):
                     logger.info(f"🛑 [Filter:Quality] {sym} K線實體或量能不足，拒絕弱突破")
                     return False
                 logger.info(f"⚠️ [Filter:Quality] {sym} 品質偏弱，但反轉/極強訊號保留")
@@ -732,7 +731,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                         return False
 
     # 實盤最小量限制
-    if route not in ("Exhaustion_Entry", "Extreme_Reversal"):
+    if route != "Exhaustion_Entry":
         min_volume = s["vol_ma20"] * 0.05
         if s["current_vol"] < min_volume:
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [實盤最小量過濾] 當前 {s['current_vol']:.2f} < 均量 10% ({min_volume:.2f})")

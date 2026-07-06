@@ -424,9 +424,7 @@ async def check_entries():
         # [Layer 0] 每幣種最低信號強度門檻
         profile = get_entry_strictness_profile()
         coin_profile_min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
-        min_sig = min(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
-        if profile.get("min_signal_strength", 10.0) <= 10.0:
-            min_sig = max(min_sig - 1.5, 6.0)
+        min_sig = max(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
         if strength < min_sig:
             set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
@@ -477,7 +475,7 @@ async def check_entries():
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
         _d_multiplier = 0.03 if _is_low_vol_ce else 0.04
-        if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
+        if route != "Exhaustion_Entry" and volume < (vol_ma20 * _d_multiplier):
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             set_entry_diagnosis(f"{sym}: 量能不足，無法進場")
             continue
@@ -512,7 +510,9 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
-                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
+                    logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})")
+                    set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
+                    continue
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry" and strength <= 15.0:

@@ -58,6 +58,60 @@ class EntryFilterTests(unittest.TestCase):
 
         self.assertTrue(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
 
+    def test_extreme_reversal_requires_live_volume(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+
+        ctx.MARKET_WIND["allow_long"] = True
+        ctx.MARKET_WIND["allow_short"] = True
+        ctx.MARKET_WIND["btc_trend_4h"] = None
+        ctx.MARKET_WIND["btc_trend_1h"] = None
+
+        s["close_price"] = 1.0
+        s["current_vol"] = 30.0
+        s["vol_ma20"] = 1000.0
+        s["current_atr"] = 0.01
+        s["atr_history"] = [0.01] * 10
+        s["current_rsi"] = 80.0
+        s["ema20_15m"] = 0.0
+        s["ema50_15m"] = 0.0
+        s["ohlcv"] = [
+            [0, 1.00, 1.02, 0.98, 1.00, 1000],
+            [0, 1.00, 1.01, 0.99, 0.995, 30],
+            [0, 0.99, 1.00, 0.985, 0.989, 30],
+        ]
+
+        self.assertFalse(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
+
+    def test_extreme_reversal_respects_15m_trend_mismatch(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+
+        ctx.MARKET_WIND["allow_long"] = True
+        ctx.MARKET_WIND["allow_short"] = True
+        ctx.MARKET_WIND["btc_trend_4h"] = None
+        ctx.MARKET_WIND["btc_trend_1h"] = None
+
+        s["close_price"] = 1.0
+        s["current_vol"] = 1200.0
+        s["vol_ma20"] = 1000.0
+        s["current_atr"] = 0.01
+        s["atr_history"] = [0.01] * 10
+        s["current_rsi"] = 80.0
+        s["ema20_15m"] = 0.98
+        s["ema50_15m"] = 1.02
+        s["ohlcv"] = [
+            [0, 1.00, 1.02, 0.98, 1.00, 1000],
+            [0, 1.00, 1.01, 0.99, 0.995, 1200],
+            [0, 0.99, 1.00, 0.985, 0.989, 1200],
+        ]
+
+        self.assertFalse(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
+
     def test_strong_signal_with_mild_atr_spike_is_allowed(self):
         sym = "XRPUSDT"
         init_states([sym])
