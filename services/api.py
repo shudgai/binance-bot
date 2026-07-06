@@ -23,6 +23,7 @@ from services.system_log_service import get_system_logs, add_system_log, clear_s
 from services.bot_manager_service import get_bot_status, toggle_bot, set_bot_symbol, set_bot_amount, set_bot_watch_symbols, kill_bot
 from services.binance_service import (
     api_key, client, get_price, get_all_prices, get_position, get_trades, get_klines,
+    get_all_positions,
     market_buy, market_short, market_sell
 )
 from services.paper_trade_service import (
@@ -282,7 +283,19 @@ def api_get_position(symbol: str):
             pk = paper_key(symbol_upper)
             return get_paper_position(symbol_upper, quote_asset, base_asset, pk)
         else:
-            return get_position(symbol_upper, quote_asset, base_asset)
+            positions = get_all_positions()
+            key = symbol_upper.replace("USDT", ":USDT")
+            if key in positions:
+                return positions[key]
+            return {
+                "asset": base_asset,
+                "quote_asset": quote_asset,
+                "qty": 0.0,
+                "avg_price": 0.0,
+                "current_price": 0.0,
+                "pnl": 0.0,
+                "pnl_percent": 0.0,
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"獲取持倉狀態失敗: {str(e)}")
 
@@ -294,7 +307,32 @@ def api_get_trades(symbol: str):
             pk = paper_key(symbol_upper)
             return get_paper_trades(symbol_upper, pk)
         else:
-            return get_trades(symbol_upper)
+            if symbol_upper != "ALL":
+                return get_trades(symbol_upper)
+
+            # 儀表板只需本機已記錄的成交與目前持倉；不再為每個歷史幣種逐一呼叫
+            # futures_account_trades，避免單次刷新累積數十個高權重請求。
+            trades = _get_real_trades()[-100:]
+            open_positions = get_all_positions()
+            now_ms = int(time.time() * 1000)
+            for key, pos in open_positions.items():
+                qty = float(pos.get("qty", 0.0) or 0.0)
+                if abs(qty) <= 0.000001:
+                    continue
+                trades.append({
+                    "id": f"pos_{key}",
+                    "order_id": None,
+                    "symbol": key,
+                    "price": float(pos.get("entryPrice", 0.0) or 0.0),
+                    "qty": abs(qty),
+                    "time": now_ms,
+                    "isBuyer": qty > 0,
+                    "is_close": False,
+                    "realized_pnl": 0.0,
+                    "fee": 0.0,
+                    "_is_open_position": True,
+                })
+            return trades
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -811,12 +849,22 @@ def api_get_coin_profiles():
         return {"error": str(e)}
 
 
+_open_orders_cache = {}
+
+
 @app.get("/api/open-orders")
 def get_open_orders(symbol: str):
+    now = time.time()
+    cached = _open_orders_cache.get(symbol)
+    if cached and now - cached[0] < 10:
+        return {"status": "success", "data": cached[1]}
     try:
         orders = client.futures_get_open_orders(symbol=symbol)
+        _open_orders_cache[symbol] = (now, orders)
         return {"status": "success", "data": orders}
     except Exception as e:
+        if cached:
+            return {"status": "success", "data": cached[1]}
         return {"status": "error", "message": str(e)}
 
 

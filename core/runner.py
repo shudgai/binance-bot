@@ -11,7 +11,10 @@ import ccxt
 import requests
 
 from core import ctx
-from core.config import (PAPER_TRADING, MAX_POSITIONS, MAIN_LOOP_INTERVAL_SEC)
+from core.config import (
+    PAPER_TRADING, MAX_POSITIONS, MAIN_LOOP_INTERVAL_SEC,
+    TRADE_POLL_INTERVAL_SEC, TRADE_POLL_LIMIT, API_RATE_LIMIT_COOLDOWN_SEC,
+)
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state
 from core.balance import fetch_real_balance
@@ -42,19 +45,39 @@ def send_alert(message):
         logger.info(f"⚠️ [通知失敗] 無法發送 Telegram 訊息: {e}")
 
 
-async def watch_symbol_trades(exchange, sym):
+def activate_api_cooldown(seconds=API_RATE_LIMIT_COOLDOWN_SEC):
+    ctx.api_cooldown_until = max(ctx.api_cooldown_until, time.time() + max(1.0, seconds))
+
+
+async def wait_for_api_cooldown():
+    remaining = ctx.api_cooldown_until - time.time()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+
+
+async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
+    if initial_delay > 0:
+        await asyncio.sleep(initial_delay)
     while True:
         try:
+            await wait_for_api_cooldown()
             async with ctx.request_semaphore:
-                trades = await exchange.fetch_trades(sym, limit=50)
+                trades = await exchange.fetch_trades(sym, limit=TRADE_POLL_LIMIT)
             if isinstance(trades, list):
                 for trade in trades:
                     update_trade_signal(sym, trade)
             elif trades:
                 update_trade_signal(sym, trades)
+        except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
+            activate_api_cooldown()
+            logger.info(f"🚨 [成交流限流] {sym} 暫停所有行情 REST 請求 {API_RATE_LIMIT_COOLDOWN_SEC:.0f} 秒: {e}")
         except Exception as e:
-            logger.info(f"⚠️ [成交流監聽異常] {sym}: {e}")
-        await asyncio.sleep(8)
+            if "429" in str(e) or "-1003" in str(e):
+                activate_api_cooldown()
+                logger.info(f"🚨 [成交流限流] {sym} 觸發全域冷卻: {e}")
+            else:
+                logger.info(f"⚠️ [成交流監聽異常] {sym}: {e}")
+        await asyncio.sleep(TRADE_POLL_INTERVAL_SEC)
 
 
 async def ensure_watch_tasks(exchange):
@@ -66,13 +89,18 @@ async def ensure_watch_tasks(exchange):
         if task is not None:
             task.cancel()
 
-    for sym in desired_symbols - current_symbols:
-        ctx.WATCH_TASKS[sym] = asyncio.create_task(watch_symbol_trades(exchange, sym))
+    new_symbols = sorted(desired_symbols - current_symbols)
+    for index, sym in enumerate(new_symbols):
+        # 錯開首次請求，避免啟動瞬間所有幣種同時撞向 REST API。
+        ctx.WATCH_TASKS[sym] = asyncio.create_task(
+            watch_symbol_trades(exchange, sym, initial_delay=float(index))
+        )
 
 
 async def market_wind_loop(exchange):
     while True:
         try:
+            await wait_for_api_cooldown()
             await update_market_wind(exchange)
         except Exception as e:
             logger.info(f"⚠️ [大盤風向更新失敗] {e}")
@@ -333,6 +361,10 @@ async def main_loop(exchange):
             _remaining = sleep_time
             from core.strategy.factory import StrategyFactory
             while _remaining > _mini_iv:
+                if ctx.api_cooldown_until > time.time():
+                    await wait_for_api_cooldown()
+                    _remaining = 0
+                    break
                 await asyncio.sleep(_mini_iv)
                 _remaining -= _mini_iv
                 _open_syms = [s for s in ctx.ALL_SYMBOLS
@@ -356,15 +388,18 @@ async def main_loop(exchange):
             if _remaining > 0:
                 await asyncio.sleep(_remaining)
         except ccxt.DDoSProtection as e:
-            logger.info(f"🚨 [API限流 429] 檢測到 DDoSProtection 限流，冷卻 10 秒: {e}")
-            await asyncio.sleep(10)
+            activate_api_cooldown()
+            logger.info(f"🚨 [API限流 429] DDoSProtection，啟動全域冷卻 {API_RATE_LIMIT_COOLDOWN_SEC:.0f} 秒: {e}")
+            await wait_for_api_cooldown()
         except ccxt.RateLimitExceeded as e:
-            logger.info(f"🚨 [API限流 429] 檢測到 RateLimitExceeded 限流，冷卻 10 秒: {e}")
-            await asyncio.sleep(10)
+            activate_api_cooldown()
+            logger.info(f"🚨 [API限流 429] RateLimitExceeded，啟動全域冷卻 {API_RATE_LIMIT_COOLDOWN_SEC:.0f} 秒: {e}")
+            await wait_for_api_cooldown()
         except Exception as e:
-            if "429" in str(e):
-                logger.info(f"🚨 [API限流 429] 檢測到 429 錯誤，冷卻 10 秒: {e}")
-                await asyncio.sleep(10)
+            if "429" in str(e) or "-1003" in str(e):
+                activate_api_cooldown()
+                logger.info(f"🚨 [API限流] 啟動全域冷卻 {API_RATE_LIMIT_COOLDOWN_SEC:.0f} 秒: {e}")
+                await wait_for_api_cooldown()
                 continue
             error_msg = f"發生未預期的錯誤：\n{str(e)}\n{traceback.format_exc()}"
             logger.info(f"❌ [系統錯誤] {error_msg}")
@@ -396,6 +431,7 @@ async def main_loop(exchange):
 async def periodic_htf_update(exchange):
     while True:
         await asyncio.sleep(900)
+        await wait_for_api_cooldown()
         await fetch_all_sma200(exchange)
         await fetch_all_ema50_1h(exchange)
         await fetch_all_ema_15m(exchange)

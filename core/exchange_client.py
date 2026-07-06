@@ -1,6 +1,7 @@
 import logging
 import os
 import math
+import time
 import ccxt
 import ccxt.pro as ccxtpro
 from dotenv import load_dotenv
@@ -152,21 +153,33 @@ async def get_reference_price(sym: str, exchange=None) -> float:
 
 def check_binance_weight():
     try:
-        headers = getattr(exchange_futures, 'last_response_headers', {})
-        weight = None
-        for k, v in headers.items():
-            if k.lower() == 'x-mbx-used-weight-1m':
-                weight = int(v)
-                break
-        if weight is not None:
-            # 幣安期貨真實權重上限是每分鐘 2400（不是 1200，那是下單次數的獨立限制），
-            # 門檻對應調整，避免權重還有很多餘裕就誤觸發不必要的自我限速。
-            if weight > 1800:
-                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發重度防護，冷卻 10 秒")
-                return 10.0
-            elif weight > 1400:
-                logger.info(f"⚠️ [API限流警報] 幣安目前權重已達 {weight}/2400，觸發輕度防護，冷卻 3 秒")
-                return 3.0
+        weights = []
+        for exchange in (exchange_futures, exchange_market_data):
+            headers = getattr(exchange, "last_response_headers", {}) or {}
+            for key, value in headers.items():
+                if key.lower() == "x-mbx-used-weight-1m":
+                    weights.append(int(value))
+                    break
+        if not weights:
+            return 0.0
+
+        weight = max(weights)
+        if weight >= 1800:
+            cooldown = 60.0
+            level = "重度"
+        elif weight >= 1400:
+            cooldown = 20.0
+            level = "中度"
+        elif weight >= 1000:
+            cooldown = 5.0
+            level = "輕度"
+        else:
+            return 0.0
+
+        from core import ctx
+        ctx.api_cooldown_until = max(ctx.api_cooldown_until, time.time() + cooldown)
+        logger.info(f"⚠️ [API限流警報] 幣安目前權重 {weight}/2400，{level}防護冷卻 {cooldown:.0f} 秒")
+        return cooldown
     except Exception as e:
         logger.info(f"⚠️ [API權重讀取失敗] {e}")
-    return 0.0
+        return 0.0

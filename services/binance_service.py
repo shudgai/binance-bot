@@ -57,6 +57,13 @@ market_client = Client(ping=False)
 
 _contract_precisions = {}
 
+DASHBOARD_PRICE_CACHE_SEC = float(os.getenv("DASHBOARD_PRICE_CACHE_SEC", "15"))
+DASHBOARD_POSITION_CACHE_SEC = float(os.getenv("DASHBOARD_POSITION_CACHE_SEC", "10"))
+DASHBOARD_TRADE_CACHE_SEC = float(os.getenv("DASHBOARD_TRADE_CACHE_SEC", "30"))
+DASHBOARD_KLINE_CACHE_SEC = float(os.getenv("DASHBOARD_KLINE_CACHE_SEC", "30"))
+_single_price_cache = {}
+_kline_cache = {}
+
 def get_contract_step(symbol):
     if symbol in _contract_precisions:
         return _contract_precisions[symbol]
@@ -80,12 +87,26 @@ def round_step(qty, step):
     return round(round(qty / step) * step, precision)
 
 def get_price(symbol: str):
-    ticker = client.futures_symbol_ticker(symbol=symbol)
-    return {
-        "symbol": symbol,
-        "price": float(ticker["price"]),
-        "timestamp": ticker.get("time")
-    }
+    now = time.time()
+    cached = _single_price_cache.get(symbol)
+    if cached and now - cached[0] < DASHBOARD_PRICE_CACHE_SEC:
+        return cached[1]
+    if _binance_banned() and cached:
+        return cached[1]
+    try:
+        ticker = client.futures_symbol_ticker(symbol=symbol)
+        result = {
+            "symbol": symbol,
+            "price": float(ticker["price"]),
+            "timestamp": ticker.get("time"),
+        }
+        _single_price_cache[symbol] = (now, result)
+        return result
+    except Exception as e:
+        _note_binance_ban(e)
+        if cached:
+            return cached[1]
+        raise
 
 
 def _get_entry_price(symbol: str, side: str):
@@ -333,10 +354,10 @@ def get_all_prices():
     client.futures_ticker() 不帶 symbol 會查全市場（近400檔合約）24hr行情，
     這支端點權重高達 40，前端每 5 秒輪詢一次、內部又只快取 2 秒，等於幾乎每次
     輪詢都真的打一次權重40的重量級請求，是 API 權重衝高的主要來源之一。改成只
-    查監控池內的幣種（逐檔權重僅 1），並把快取拉長到 5 秒對齊前端輪詢頻率。"""
+    查監控池內的幣種（逐檔權重僅 1），並把快取拉長到可設定的 15 秒，進一步降低儀表板權重。"""
     global _last_prices, _last_prices_time
     now = time.time()
-    if now - _last_prices_time < 5:
+    if now - _last_prices_time < DASHBOARD_PRICE_CACHE_SEC:
         return _last_prices
     if _binance_banned():
         return _last_prices
@@ -476,7 +497,7 @@ def get_trades(symbol: str):
     now = _time.time()
     if symbol in _trades_cache:
         cache_time, cached_val = _trades_cache[symbol]
-        if now - cache_time < 15:  # Cache for 15 seconds
+        if now - cache_time < DASHBOARD_TRADE_CACHE_SEC:
             return cached_val
 
     if symbol == "ALL":
@@ -591,7 +612,20 @@ def get_trades(symbol: str):
     return formatted_trades
 
 def get_klines(symbol: str, interval: str, limit: int):
-    klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+    cache_key = (symbol, interval, int(limit))
+    now = time.time()
+    cached = _kline_cache.get(cache_key)
+    if cached and now - cached[0] < DASHBOARD_KLINE_CACHE_SEC:
+        return cached[1]
+    if _binance_banned() and cached:
+        return cached[1]
+    try:
+        klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+    except Exception as e:
+        _note_binance_ban(e)
+        if cached:
+            return cached[1]
+        raise
     result = []
     for k in klines:
         result.append({
@@ -604,6 +638,7 @@ def get_klines(symbol: str, interval: str, limit: int):
             "volume": float(k[5]),
             "close_time": k[6] / 1000.0,
         })
+    _kline_cache[cache_key] = (now, result)
     return result
 
 def get_1h_volatility(symbol: str):
@@ -809,15 +844,17 @@ def get_all_positions():
     # 現價、未實現損益。改成回傳用冒號格式符號（跟 get_trades() 一致）當 key 的字典。
     global _all_positions_cache
     now = time.time()
-    if now - _all_positions_cache[0] < 3:  # 快取 3 秒，避免網頁輪詢重複打爆幣安
+    if now - _all_positions_cache[0] < DASHBOARD_POSITION_CACHE_SEC:
         return _all_positions_cache[1]
 
     if _binance_banned():
-        return {}
+        return _all_positions_cache[1]
     try:
         positions = client.futures_position_information()
     except Exception as e:
         _note_binance_ban(e)
+        if _all_positions_cache[1]:
+            return _all_positions_cache[1]
         raise
     result = {}
     for pos in positions:

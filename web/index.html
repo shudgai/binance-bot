@@ -1867,7 +1867,7 @@ createApp({
             if (isUsingFallback) return;
             isUsingFallback = true;
             addLog('⚠️ WS 無回應，啟用 HTTP 輪詢...', 'warning');
-            fallbackInterval = setInterval(fetchPricesBatch, 2000);
+            fallbackInterval = setInterval(fetchPricesBatch, 10000);
         };
 
         const wsConnections = [];
@@ -2033,15 +2033,15 @@ createApp({
             fetchBackendLogs();
 
             statusInterval       = setInterval(fetchBotStatus, 5000);
-            positionInterval     = setInterval(fetchPosition, 5000);
-            allPositionsInterval = setInterval(fetchAllPositions, 3000);
-            tradesInterval       = setInterval(fetchTrades, 8000);
+            positionInterval     = setInterval(fetchPosition, 10000);
+            allPositionsInterval = setInterval(fetchAllPositions, 10000);
+            tradesInterval       = setInterval(fetchTrades, 30000);
             rateInterval         = setInterval(fetchExchangeRate, 60000);
             logsInterval         = setInterval(fetchBackendLogs, 2000);
             klineInterval        = setInterval(loadKlines, 60000);
-            openOrdersInterval   = setInterval(fetchOpenOrders, 5000);
+            openOrdersInterval   = setInterval(fetchOpenOrders, 10000);
             slInterval           = setInterval(fetchSlStates, 3000);
-            pricesInterval        = setInterval(fetchPricesBatch, 5000);
+            pricesInterval        = setInterval(fetchPricesBatch, 15000);
             trendBiasInterval     = setInterval(fetchTrendBias, 10000);
             fetchSlStates();
             fetchTrendBias();
