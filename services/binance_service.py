@@ -410,9 +410,11 @@ def get_account_balance_usdt() -> float | None:
 
 _total_pnl_cache = (0, 0.0)
 
-def get_total_realized_pnl_usdt() -> float:
-    """加總帳戶累計已實現損益（含手續費），對應紙上交易那邊「total_realized_pnl」的概念，
-    讓實體帳戶也能顯示總已實現利潤。
+PNL_BASELINE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_baseline.json")
+
+
+def _compute_raw_total_realized_pnl() -> float:
+    """從 data/trade_history.json 加總帳戶累計已實現損益（含手續費），不扣 baseline。
     原本用 get_trades("ALL")（futures_account_trades）加總，但 get_trades() 內部把結果
     截斷成最新 30 筆原始成交（all_trades[:30]，是為了給交易列表 UI 用而故意限制筆數），
     拿同一個函式來算「總計」就會漏算 30 筆之前的所有交易——實測當天已有 106 筆交易時，
@@ -420,11 +422,6 @@ def get_total_realized_pnl_usdt() -> float:
     紀錄算出來的每日總計）對不起來（一個顯示 +0.67，另一個算出來是 -9.07）。改成跟歷史
     筆記本用同一份、沒有筆數上限的資料來源（trade_history.json），並套用完全相同的
     多空判斷／損益計算方式（見 services/api.py 的 _get_real_trades），確保兩邊金額一致。"""
-    global _total_pnl_cache
-    now = time.time()
-    if now - _total_pnl_cache[0] < 15:  # 快取 15 秒，避免頻繁重讀歷史檔案
-        return _total_pnl_cache[1]
-
     total = 0.0
     try:
         from core.config import TRADE_HISTORY_FILE
@@ -437,13 +434,57 @@ def get_total_realized_pnl_usdt() -> float:
             qty = float(t.get("qty") or 0.0)
             profit_pct = float(t.get("profit_pct") or 0.0)
             fees = float(t.get("fees") or 0.0)
-            is_long = (ax > ae) if profit_pct >= 0 else (ax < ae)
-            pnl = (ax - ae) * qty if is_long else (ae - ax) * qty
-            total += pnl - fees
+            exact_pnl = t.get("realized_pnl_usdt")
+            if exact_pnl is None:
+                is_long = (ax > ae) if profit_pct >= 0 else (ax < ae)
+                exact_pnl = (ax - ae) * qty if is_long else (ae - ax) * qty
+            total += float(exact_pnl) - fees
     except Exception:
         pass
-    _total_pnl_cache = (now, total)
     return total
+
+
+def _get_pnl_baseline() -> float:
+    """使用者要求「總已實現利潤歸零，重新計算」時，用這個 baseline 值扣掉，讓畫面上的
+    總已實現利潤從這個時間點歸零重新累計，但不去動 data/trade_history.json 本身——
+    那份檔案是「歷史交易筆記本」的資料來源，砍掉會連歷史紀錄都一起不見。baseline
+    只影響這支函式回傳的數字，不影響底層歷史資料。"""
+    try:
+        import json as _json
+        if os.path.exists(PNL_BASELINE_PATH):
+            with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            return float(data.get("baseline_total_realized_pnl", 0.0) or 0.0)
+    except Exception:
+        pass
+    return 0.0
+
+
+def get_total_realized_pnl_usdt() -> float:
+    """對外回傳的總已實現利潤（已扣掉 baseline，見 reset_total_realized_pnl_baseline）。"""
+    global _total_pnl_cache
+    now = time.time()
+    if now - _total_pnl_cache[0] < 15:  # 快取 15 秒，避免頻繁重讀歷史檔案
+        raw_total = _total_pnl_cache[1]
+    else:
+        raw_total = _compute_raw_total_realized_pnl()
+        _total_pnl_cache = (now, raw_total)
+    return raw_total - _get_pnl_baseline()
+
+
+def reset_total_realized_pnl_baseline() -> float:
+    """把目前算出來的總已實現利潤（原始值，未扣 baseline）存成新的 baseline，
+    讓 get_total_realized_pnl_usdt() 之後回傳的數字從 0 重新累計。"""
+    global _total_pnl_cache
+    import json as _json
+    raw_total = _compute_raw_total_realized_pnl()
+    _total_pnl_cache = (time.time(), raw_total)
+    try:
+        with open(PNL_BASELINE_PATH, "w", encoding="utf-8") as f:
+            _json.dump({"baseline_total_realized_pnl": raw_total, "set_at": time.time()}, f)
+    except Exception:
+        pass
+    return raw_total
 
 
 def get_position(symbol: str, quote_asset: str, base_asset: str):
@@ -488,6 +529,49 @@ def get_position(symbol: str, quote_asset: str, base_asset: str):
     }
 
 _trades_cache = {}
+
+
+def _aggregate_fills_by_order(raw_trades: list) -> list:
+    """把同一張委託單（同一個 orderId）底下的多筆分批成交合併成一筆。
+    幣安的市價/限價單常常不是跟單一對手方一次成交完，而是依序吃掉委託簿上好幾個
+    價位，一張委託單因此會產生好幾筆各自獨立的原始成交紀錄——這在交易列表上會讓
+    使用者以為同一次進出場「分好幾批下單」，也讓 get_trades("ALL") 那個「全部幣種
+    合計最新 30 筆」的裁切機制被灌爆：一次補倉/進場動輒拆成 10~20 筆小額成交，
+    多佔用好幾個名額，導致真正重要、稍早一點（甚至只是幾十分鐘前）的其他平倉紀錄
+    被擠出前 30 筆，使用者自己手動平倉的紀錄反而在畫面上找不到。合併後同一張委託
+    只算一筆，數量加總、價格用成交金額加權平均、已實現損益與手續費加總。"""
+    if not raw_trades:
+        return []
+    groups = {}
+    order_ids = []
+    for t in raw_trades:
+        key = t.get("orderId")
+        if key is None:
+            key = f"_no_order_{t.get('id')}"
+        if key not in groups:
+            groups[key] = []
+            order_ids.append(key)
+        groups[key].append(t)
+
+    merged = []
+    for key in order_ids:
+        fills = groups[key]
+        if len(fills) == 1:
+            merged.append(fills[0])
+            continue
+        total_qty = sum(float(f["qty"]) for f in fills)
+        total_notional = sum(float(f["qty"]) * float(f["price"]) for f in fills)
+        avg_price = total_notional / total_qty if total_qty > 0 else float(fills[0]["price"])
+        merged.append({
+            **fills[-1],
+            "price": avg_price,
+            "qty": total_qty,
+            "time": max(f.get("time", 0) for f in fills),
+            "realizedPnl": sum(float(f.get("realizedPnl", 0.0) or 0.0) for f in fills),
+            "commission": sum(float(f.get("commission", 0.0) or 0.0) for f in fills),
+        })
+    return merged
+
 
 def get_trades(symbol: str):
     if _binance_banned():
@@ -544,10 +628,11 @@ def get_trades(symbol: str):
             except Exception as e:
                 _note_binance_ban(e)
                 continue
+        all_trades = _aggregate_fills_by_order(all_trades)
         all_trades.sort(key=lambda t: t.get("time", 0), reverse=True)
         trades = list(reversed(all_trades[:30]))
     else:
-        trades = client.futures_account_trades(symbol=symbol, limit=15)
+        trades = _aggregate_fills_by_order(client.futures_account_trades(symbol=symbol, limit=15))
     formatted_trades = []
     for t in reversed(trades):
         qty = float(t["qty"])

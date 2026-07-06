@@ -148,6 +148,82 @@ async def safe_execute(func, sym, *args):
         return None
 
 
+async def _record_external_position_close(exchange, sym, state):
+    """Record a position closed outside the bot before local state is reset."""
+    old_qty = float(state.get("qty", 0.0) or 0.0)
+    avg_price = float(state.get("avg_price", 0.0) or 0.0)
+    if abs(old_qty) <= 0.000001 or avg_price <= 0:
+        return False
+
+    try:
+        trades = await exchange.fetch_my_trades(sym, limit=50)
+    except Exception as exc:
+        logger.info(f"⚠️ [ExternalClose] {sym} 無法取得手動平倉成交: {exc}")
+        return False
+    if not isinstance(trades, list):
+        return False
+
+    close_side = "sell" if old_qty > 0 else "buy"
+    opened_ms = int(max(
+        float(state.get("open_time", 0.0) or 0.0),
+        float(state.get("last_entry_time", 0.0) or 0.0),
+    ) * 1000)
+    candidates = []
+    for trade in trades:
+        side = str(trade.get("side") or trade.get("info", {}).get("side") or "").lower()
+        timestamp = int(trade.get("timestamp") or trade.get("info", {}).get("time") or 0)
+        if side != close_side or (opened_ms and timestamp and timestamp < opened_ms - 120000):
+            continue
+        candidates.append(trade)
+    if not candidates:
+        logger.info(f"⚠️ [ExternalClose] {sym} 找不到對應的手動平倉成交，僅清理本地狀態")
+        return False
+
+    latest = max(candidates, key=lambda item: int(item.get("timestamp") or item.get("info", {}).get("time") or 0))
+    order_id = latest.get("order") or latest.get("info", {}).get("orderId") or latest.get("id")
+    fills = [
+        trade for trade in candidates
+        if (trade.get("order") or trade.get("info", {}).get("orderId") or trade.get("id")) == order_id
+    ]
+    close_qty = sum(abs(float(t.get("amount") or t.get("info", {}).get("qty") or 0.0)) for t in fills)
+    if close_qty <= 0:
+        close_qty = abs(old_qty)
+    notional = sum(
+        abs(float(t.get("amount") or t.get("info", {}).get("qty") or 0.0))
+        * float(t.get("price") or t.get("info", {}).get("price") or 0.0)
+        for t in fills
+    )
+    exit_price = notional / close_qty if notional > 0 and close_qty > 0 else float(latest.get("price") or 0.0)
+    realized_pnl = sum(float(t.get("info", {}).get("realizedPnl") or t.get("realizedPnl") or 0.0) for t in fills)
+    fees = sum(float((t.get("fee") or {}).get("cost") or t.get("info", {}).get("commission") or 0.0) for t in fills)
+    close_time = max(int(t.get("timestamp") or t.get("info", {}).get("time") or 0) for t in fills)
+    history_id = f"{sym}:{order_id}"
+    position_value = avg_price * abs(old_qty)
+    profit_pct = realized_pnl / position_value if position_value > 0 else 0.0
+
+    from core.orders import record_trade_result
+    recorded = record_trade_result(
+        symbol=sym,
+        entry_reason=state.get("entry_reason", "UNKNOWN"),
+        exit_reason="[External_Manual_Close]",
+        profit_pct=profit_pct,
+        current_atr=state.get("current_atr", 0.0),
+        max_profit_reached=state.get("highest_profit_pct", 0.0),
+        expected_entry=avg_price,
+        expected_exit=exit_price,
+        actual_entry=avg_price,
+        actual_exit=exit_price,
+        fees=fees,
+        qty=abs(old_qty),
+        exchange_close_id=history_id,
+        realized_pnl_usdt=realized_pnl,
+        timestamp_ms=close_time,
+    )
+    if recorded:
+        logger.info(f"🧾 [ExternalClose] {sym} 已同步手動平倉：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
+    return bool(recorded)
+
+
 async def calibrate_with_exchange(exchange):
     """
     與交易所進行實際持倉校準。
@@ -222,6 +298,7 @@ async def calibrate_with_exchange(exchange):
         for sym, state in list(ctx.STATES.items()):
             if abs(state.get("qty", 0.0)) <= 0.000001 or sym in live_position_symbols:
                 continue
+            await _record_external_position_close(exchange, sym, state)
             logger.info(f"🔄 [CALIBRATION] {sym} 本地仍有持倉 {state.get('qty', 0.0):.4f}，但交易所已無倉位；清理本地狀態與交易所退出單追蹤")
             for key, label in (("exchange_stop_order_id", "止損"), ("exchange_take_profit_order_id", "停利")):
                 order_id = state.get(key)

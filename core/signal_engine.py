@@ -414,9 +414,13 @@ async def is_eligible_for_reverse(sym, current_strength):
     if not s or s.get("is_banned"):
         return False
 
-    # 1. 反手強度門檻 ≥ 15
-    if current_strength < 15.0:
-        logger.info(f"⏳ [REVERSE_DENIED] {sym} 反手強度不足 ({current_strength:.1f} < 15.0)")
+    qty = float(s.get("qty", 0.0) or 0.0)
+    avg = float(s.get("avg_price", 0.0) or 0.0)
+    current = float(s.get("close_price", 0.0) or 0.0)
+    losing = ((qty > 0 and current < avg) or (qty < 0 and current > avg)) and avg > 0 and current > 0
+    reverse_threshold = 12.0 if losing else 15.0
+    if current_strength < reverse_threshold:
+        logger.info(f"⏳ [REVERSE_DENIED] {sym} 反手強度不足 ({current_strength:.1f} < {reverse_threshold:.1f})")
         return False
 
     # 2. 距上次反手至少 30 分鐘

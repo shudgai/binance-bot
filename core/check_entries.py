@@ -505,10 +505,13 @@ async def check_entries():
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
-                if not price_direction_ok:
+                is_position_reversal = has_position and side != current_direction
+                if not price_direction_ok and not is_position_reversal:
                     logger.info(f"🛑 [DIRECTION_MISMATCH] {sym} 被攔截：價格方向與 {side} 訊號相反 (價格變動: {price_change:.6f})")
                     set_entry_diagnosis(f"{sym}: 價格方向與訊號相反，放棄進場")
                     continue
+                if not price_direction_ok and is_position_reversal:
+                    logger.info(f"⏳ [REVERSAL_DIRECTION_PENDING] {sym} 保留 {side} 反向訊號，交由下一根 K 線確認")
                 if not volume_expanding:
                     logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 成交量未增加，但方向一致，維持進場資格")
 

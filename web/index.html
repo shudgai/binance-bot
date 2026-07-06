@@ -1305,6 +1305,10 @@ createApp({
             toastTimer = setTimeout(() => { toast.show = false; }, duration);
         };
 
+        const futuresWsBase = () => bot.value.use_testnet !== false
+            ? "wss://fstream.binancefuture.com/ws"
+            : "wss://fstream.binance.com/ws";
+
         let liveTradesWs = null;
         const initLiveTradesWs = () => {
             if (liveTradesWs) {
@@ -1314,7 +1318,7 @@ createApp({
             if (!activeSymbol.value) return;
             
             const sym = activeSymbol.value.toLowerCase();
-            liveTradesWs = new WebSocket(`wss://fstream.binance.com/ws/${sym}@aggTrade`);
+            liveTradesWs = new WebSocket(`${futuresWsBase()}/${sym}@aggTrade`);
             liveTradesWs.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -1726,17 +1730,19 @@ createApp({
         };
 
         const getTradeCurrentPrice = (trade) => {
+            const sym = trade.symbol.replace(':USDT', 'USDT');
+            const coin = coins.value.find(c => c.symbol === sym);
+            if (coin && coin.price > 0) return coin.price;
+
             const cp = parseFloat(trade.current_price);
             if (cp > 0) return cp;
-            const sym = trade.symbol.replace(':USDT', 'USDT');
             const pos = getPositionInfo(trade.symbol);
             if (pos && pos.current_price > 0) return pos.current_price;
             const activeSymClean = activeSymbol.value.replace(':USDT', 'USDT');
             if (sym === activeSymClean && position.value && position.value.current_price > 0) {
                 return position.value.current_price;
             }
-            const coin = coins.value.find(c => c.symbol === sym);
-            return coin?.price || 0;
+            return 0;
         };
 
         const getTradeUnrealizedPnl = (trade) => {
@@ -1891,7 +1897,7 @@ createApp({
                 }
             }, 5000);
 
-            const url = `wss://fstream.binance.com/ws/!ticker@arr`;
+            const url = `${futuresWsBase()}/!ticker@arr`;
             const w = new WebSocket(url);
             addLog('🔌 WebSocket 連線中...');
             

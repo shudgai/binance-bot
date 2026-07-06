@@ -106,7 +106,7 @@ class TakeProfitTests(unittest.TestCase):
         s["macd_line"] = 0.0
         s["macd_signal"] = 0.0
         s["ohlcv"] = [
-            [0, 100.0, 100.60, 99.8, 100.37, 500],
+            [int((s["open_time"] + 60) * 1000), 100.0, 100.60, 99.8, 100.37, 500],
         ]
         s["prev_close"] = 100.37
         s["highest_profit_pct"] = 0.006
@@ -123,7 +123,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_confirmed_wrong_direction_small_loss_is_held_until_real_sl(self):
+    def test_entry_candle_pre_entry_high_does_not_trigger_peak_giveback(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -155,7 +155,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_not_called()
-                self.assertIsNone(s.get("wrong_dir_side"))
+                self.assertEqual(s["highest_profit_pct"], 0.0)
 
         asyncio.run(run_check())
 
@@ -356,6 +356,29 @@ class TakeProfitTests(unittest.TestCase):
         self.assertEqual(s["qty"], 1.0)
         self.assertFalse(mock_exchange.create_order.called)
 
+    def test_peak_giveback_bypasses_min_profit_gate(self):
+        from core.orders import close_position
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 100.2
+
+        with patch("core.orders.PAPER_TRADING", True), \
+             patch("core.orders.update_paper_state"), \
+             patch("core.orders.sanitize_order_qty", AsyncMock(return_value=1.0)), \
+             patch("core.orders.record_trade_result"), \
+             patch("core.orders.accrue_daily_realized_pnl"):
+            asyncio.run(close_position(
+                sym, "sell", 1.0, 100.2, 100.0,
+                reason="[Peak_Giveback]",
+            ))
+
+        self.assertEqual(s["qty"], 0.0)
+
     def test_time_stagnation_below_min_profit_does_not_take_profit(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
@@ -464,7 +487,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_universal_stop_loss_uses_clear_reason(self):
+    def test_peak_giveback_precedes_universal_stop_after_profit_retrace(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -486,7 +509,7 @@ class TakeProfitTests(unittest.TestCase):
         s["macd_signal"] = 0.0
         s["ohlcv"] = [[0, 100.0, 100.6, 99.8, 100.3, 1000]]
         s["prev_close"] = 100.0
-        s["highest_profit_pct"] = 0.0
+        s["highest_profit_pct"] = 0.006
         s["is_breakeven_locked"] = True
         s["stop_loss"] = 100.4
         s["highest_sl"] = 100.4
@@ -498,8 +521,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Universal_SL]")
-                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Peak_Giveback]")
 
         asyncio.run(run_check())
 

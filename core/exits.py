@@ -22,6 +22,22 @@ PROFIT_FIRST_CATASTROPHIC_LOSS_PCT = 0.03
 PROFIT_FIRST_RAPID_REVERSAL_LOSS_PCT = 0.02
 
 
+def _opposite_signal_blocks_rescue(sym, is_long):
+    s = ctx.STATES.get(sym, {})
+    opposite_side = "sell" if is_long else "buy"
+    trigger = s.get("pending_reverse_trigger") or {}
+    if s.get("pending_reverse") == opposite_side or trigger.get("side") == opposite_side:
+        return True, "反手訊號正在等待確認"
+    try:
+        from core.signal_engine import compute_signal_strength
+        side, strength, _route = compute_signal_strength(sym)
+    except Exception:
+        return False, ""
+    if side == opposite_side and float(strength or 0.0) >= 12.0:
+        return True, f"偵測到 {opposite_side} 反向訊號，強度 {strength:.1f}"
+    return False, ""
+
+
 def _min_profit_exit_pct(sym):
     volatile_coins = {"ORDIUSDT", "INJUSDT", "SUIUSDT", "APTUSDT", "GUAUSDT", "SIRENUSDT"}
     normalized = str(sym).replace(":", "").upper()
@@ -275,18 +291,25 @@ async def check_exits(sym):
             pass
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
-    # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
+    # 含 K 線盤中尖峰（HIGH/LOW），但進場所在的那根 K 線可能在成交前就已經
+    # 出現 high/low，不能把「進場前的價格」誤認成持倉後曾經賺到的峰值。
     # ⚠️ 舊版本此更新在 update_trailing_stop(line~642) 才跑，保本/PeakLock 全讀舊值
     _ohlcv_early = s.get("ohlcv", [])
     _intra_peak_early = 0.0
     if _ohlcv_early and avg > 0:
         _lc = _ohlcv_early[-1]
-        if is_long:
-            s["trailing_highest"] = max(s.get("trailing_highest", avg), _lc[2])
-            _intra_peak_early = (_lc[2] - avg) / avg
-        else:
-            s["trailing_lowest"] = min(s.get("trailing_lowest", avg), _lc[3])
-            _intra_peak_early = (avg - _lc[3]) / avg
+        _candle_start_ms = float(_lc[0] or 0.0)
+        _open_time_ms = float(s.get("open_time", 0.0) or 0.0) * 1000.0
+        _candle_started_after_entry = (
+            _open_time_ms <= 0 or _candle_start_ms >= _open_time_ms
+        )
+        if _candle_started_after_entry:
+            if is_long:
+                s["trailing_highest"] = max(s.get("trailing_highest", avg), _lc[2])
+                _intra_peak_early = (_lc[2] - avg) / avg
+            else:
+                s["trailing_lowest"] = min(s.get("trailing_lowest", avg), _lc[3])
+                _intra_peak_early = (avg - _lc[3]) / avg
     s["highest_profit_pct"] = max(
         s.get("highest_profit_pct", 0.0),
         profit_pct,
@@ -304,14 +327,14 @@ async def check_exits(sym):
     # 「目前利潤」跟「曾經到過的最高利潤」，只要回吐超過兩成，不管過了多久、也不管
     # 有沒有到達正常停利門檻，都立刻停利了結。0.15% 的最低門檻只是為了濾掉手續費/
     # 價差造成的雜訊誤判，不是真正的獲利目標。
-    _peak_giveback_floor = max(0.0015, min_profit_exit_pct)
-    if (s["highest_profit_pct"] >= _peak_giveback_floor and
-            profit_pct >= min_profit_exit_pct and
-            profit_pct <= s["highest_profit_pct"] * 0.8):
+    _peak_giveback_floor = 0.0015
+    if s["highest_profit_pct"] >= _peak_giveback_floor and profit_pct <= s["highest_profit_pct"] * 0.8:
         cs = 'sell' if is_long else 'buy'
-        logger.info(f"⏳ [高點回吐停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回吐至 {profit_pct*100:.2f}%，淨利達標，立即鎖利了結")
+        logger.info(f"⏳ [高點回吐停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回吐至 {profit_pct*100:.2f}%，不再等待，立即鎖利了結")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Peak_Giveback]")
-        s["highest_profit_pct"] = 0.0
+        # 只有持倉確實清空才能清除峰值；交易所錯誤時保留原高點，下一輪繼續保護。
+        if abs(s.get("qty", 0.0)) < 0.000001:
+            s["highest_profit_pct"] = 0.0
         return
 
 
@@ -557,18 +580,41 @@ async def check_exits(sym):
     # 只有在尚未超過最大加倉次數且距離上次加倉超過冷卻時間時，才允許 DCA
     can_dca = (s.get("entry_count", 0) < max_additional) and (time_since_last >= entry_cooldown)
 
-    if not _disable_dca and can_dca and profit_pct <= -loss_limit and s.get("entry_count", 0) >= 1:
+    dca_candidate = (
+        not _disable_dca and can_dca and profit_pct <= -loss_limit
+        and s.get("entry_count", 0) >= 1
+    )
+    opposite_blocks, opposite_reason = (
+        _opposite_signal_blocks_rescue(sym, is_long) if dca_candidate else (False, "")
+    )
+    if dca_candidate and opposite_blocks:
+        logger.info(f"🔄 [反向訊號禁止攤平] {sym} {opposite_reason}；等待先平倉再反手")
+
+    if dca_candidate and not opposite_blocks:
+        # 趨勢確認：攤平的前提是「原本方向的判斷還是對的，現在只是短線雜訊/回檔」，
+        # 如果 1H 大趨勢已經明確跟部位方向相反（多單但 1H 在跌、空單但 1H 在漲），
+        # 代表很可能不是雜訊、是真的趨勢反轉，往原方向加碼只是在錯的方向上越壓越大。
+        # 使用者要求：逆勢的情況下，不管 MACD 動能有沒有還在加速，一律不攤平。
+        ema50_1h_dca = s.get("ema50_1h", 0.0)
+        against_major_trend = (
+            (is_long and ema50_1h_dca > 0 and p < ema50_1h_dca) or
+            (not is_long and ema50_1h_dca > 0 and p > ema50_1h_dca)
+        )
         # 防呆：檢查是否正在急跌/急漲 (Falling Knife)
         macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
         prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
-        
+
         is_falling_knife = False
         if is_long and macd_hist < 0 and macd_hist < prev_macd_hist:
             is_falling_knife = True
         elif not is_long and macd_hist > 0 and macd_hist > prev_macd_hist:
             is_falling_knife = True
-            
-        if is_falling_knife:
+
+        if against_major_trend:
+            if s.get("knife_warning_logged", 0) < time.time() - 30:
+                logger.info(f"🧭 [逆勢不攤平] {sym} 1H 大趨勢與部位方向相反 (現價 {p:.6f} vs 1H EMA50 {ema50_1h_dca:.6f})，判定非雜訊回檔，不攤平")
+                s["knife_warning_logged"] = time.time()
+        elif is_falling_knife:
             if s.get("knife_warning_logged", 0) < time.time() - 30:
                 logger.info(f"🔪 [接刀保護] {sym} 走勢太兇猛，暫緩攤平！等待動能衰減... (目前虧損: {profit_pct*100:.2f}%)")
                 s["knife_warning_logged"] = time.time()
@@ -1318,6 +1364,19 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
         return False
     if is_rescue_dca_disabled(sym):
         logger.info(f"ℹ️ [補救略過] {sym} 此幣種已停用 Rescue DCA，不評估攤平救援")
+        return False
+
+    opposite_blocks, opposite_reason = _opposite_signal_blocks_rescue(sym, is_long)
+    if opposite_blocks:
+        logger.info(f"🔄 [反向訊號禁止攤平] {sym} {opposite_reason}；不執行強制補救")
+        return False
+
+    # 趨勢確認：跟一般救援攤平用同一套判斷，1H 大趨勢已經明確跟部位方向相反時，
+    # 判定不是雜訊回檔而是真趨勢反轉，不管動能有沒有趨緩都不攤平，直接讓停損出場。
+    ema50_1h_forced = s.get("ema50_1h", 0.0)
+    if (is_long and ema50_1h_forced > 0 and p < ema50_1h_forced) or \
+       (not is_long and ema50_1h_forced > 0 and p > ema50_1h_forced):
+        logger.info(f"🧭 [逆勢不攤平] {sym} 1H 大趨勢與部位方向相反，判定非雜訊回檔，不評估攤平救援")
         return False
 
     # 接刀防呆：跟一般救援攤平用同一套判斷，急跌/急漲中不硬攤，直接讓停損正常出場

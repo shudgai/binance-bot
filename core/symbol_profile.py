@@ -225,13 +225,34 @@ def get_effective_exit_setting(sym, key, base_value, is_long):
     return value
 
 
+_DCA_OVERRIDE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "dca_overrides.json")
+
+
+def _load_dca_overrides() -> dict:
+    try:
+        if os.path.exists(_DCA_OVERRIDE_PATH):
+            with open(_DCA_OVERRIDE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
 def is_rescue_dca_disabled(sym) -> bool:
     """判斷這個幣種是否該停用「救援攤平」(Rescue DCA，虧損時加碼攤平均價)。
     原本 core/exits.py 是直接讀 COIN_PROFILE_CONFIG（寫死的靜態設定），完全沒看
     SYMBOL_PROFILES（ATR 雷達動態選出的幣種寫進 bot_symbols.json 的個性設定）—
     導致雷達動態選中、沒有寫在 COIN_PROFILE_CONFIG 裡的幣種（例如 BCHUSDT），
     disable_rescue_dca 永遠讀不到、永遠預設可以救援攤平，即使虧損中也會繼續
-    加碼。動態個性優先，沒有才 fallback 回靜態設定。"""
+    加碼。動態個性優先，沒有才 fallback 回靜態設定。
+    data/dca_overrides.json 是使用者手動針對個別幣種的暫時性覆蓋（優先權最高），
+    專門用來處理「這幾筆已經開著的倉位，現在想讓它試著攤平」這種情況——每次
+    ATR 雷達重新掃描/重啟都會用 _compute_dynamic_profile() 重算 SYMBOL_PROFILES，
+    把 disable_rescue_dca 強制寫回 True，如果只改 bot_symbols.json 本身，下一次
+    雷達重掃就會被覆蓋回去，這個獨立檔案雷達完全不會碰，才能撐過重啟不被蓋掉。"""
+    overrides = _load_dca_overrides()
+    if sym in overrides:
+        return bool(overrides[sym].get("disable_rescue_dca", False)) if isinstance(overrides[sym], dict) else bool(overrides[sym])
     profile = SYMBOL_PROFILES.get(sym)
     if profile and "disable_rescue_dca" in profile:
         return bool(profile["disable_rescue_dca"])

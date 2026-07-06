@@ -188,18 +188,15 @@ def get_bot_status():
         except Exception:
             bot_status["total_realized_pnl"] = 0.0
         try:
-            # 用 API 進程自己直接查詢，不依賴 core.balance.REAL_BALANCE
-            # （那是 main.py 進程內的模組全域變數，API 是另一個進程看不到它的更新）。
-            from services.binance_service import get_account_balance_usdt
+            # 使用者要求交易成本固定在 LIVE_CAPITAL_CAP（150），不要再跟著 Demo Trading
+            # 帳戶的實際餘額走。原本是拿 real_balance 跟 150 取較小值再加回已實現損益，
+            # 導致虧損會讓交易金額跟著縮水（例如虧了13.33，交易金額變成136.67）——
+            # 這是刻意的複利式風控設計，但使用者現在要固定成本，不要因為虧損就縮小
+            # 部位、也不要因為獲利就放大，一律用固定的 150 計算倉位大小。
             from core.config import LIVE_CAPITAL_CAP
-            real_balance = get_account_balance_usdt()
-            if real_balance is not None and real_balance > 0:
-                pnl = bot_status.get("total_realized_pnl", 0.0)
-                display_balance = (min(real_balance, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else real_balance) + pnl
-                bot_status["balance_quote"] = display_balance
-                bot_status["trade_amount"] = max(display_balance, 10.0)
-            else:
-                print(f"[BotStatus] 取得實盤餘額失敗或回傳無效值，保留先前餘額 {bot_status.get('balance_quote', 0)}")
+            fixed_amount = LIVE_CAPITAL_CAP if LIVE_CAPITAL_CAP else 150.0
+            bot_status["balance_quote"] = fixed_amount
+            bot_status["trade_amount"] = fixed_amount
         except Exception:
             pass
 

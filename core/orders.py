@@ -253,6 +253,58 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
     return True, "ok"
 
 
+def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=True,
+                              is_rescue_dca=False):
+    """Prevent a fresh position from chasing materially beyond its signal price."""
+    if not is_first_entry or is_rescue_dca:
+        return True, "not_first_entry"
+    signal_price = float(signal_price or 0.0)
+    order_price = float(order_price or 0.0)
+    if signal_price <= 0 or order_price <= 0:
+        return False, "missing signal or order price"
+    side = str(side).lower()
+    adverse_chase = (
+        (order_price - signal_price) / signal_price
+        if side == "buy"
+        else (signal_price - order_price) / signal_price
+    )
+    max_chase_pct = 0.0015
+    if adverse_chase > max_chase_pct:
+        return False, f"signal chase {adverse_chase*100:.3f}% > {max_chase_pct*100:.2f}%"
+    return True, "ok"
+
+
+def is_effective_rescue_dca(s, side, order_price, add_qty=None):
+    """確認救援單確實能改善現有均價，而不是只放大曝險。"""
+    avg_price = float(s.get("avg_price", 0.0) or 0.0)
+    current_qty = float(s.get("qty", 0.0) or 0.0)
+    order_price = float(order_price or 0.0)
+    side = str(side).lower()
+    if avg_price <= 0 or abs(current_qty) <= 0 or order_price <= 0:
+        return False, "missing position or price"
+    current_side = "buy" if current_qty > 0 else "sell"
+    if side != current_side:
+        return False, f"opposite side {side} is a reversal, not rescue DCA"
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    min_gap_pct = max(0.008, (atr / avg_price) * 1.1)
+    favorable_gap_pct = ((avg_price - order_price) / avg_price if side == "buy"
+                          else (order_price - avg_price) / avg_price)
+    if favorable_gap_pct < min_gap_pct:
+        return False, (f"price gap {favorable_gap_pct*100:.2f}% < required "
+                       f"{min_gap_pct*100:.2f}%")
+    if add_qty is not None:
+        add_qty = abs(float(add_qty or 0.0))
+        if add_qty <= 0:
+            return False, "rescue quantity is zero"
+        old_qty = abs(current_qty)
+        projected_avg = ((avg_price * old_qty) + (order_price * add_qty)) / (old_qty + add_qty)
+        improvement_pct = abs(projected_avg - avg_price) / avg_price
+        if improvement_pct < 0.0035:
+            return False, (f"projected average improvement {improvement_pct*100:.2f}% "
+                           f"< required 0.35%")
+    return True, "ok"
+
+
 def _entry_pending_adverse_guard(sym, side, reference_price, current_price, is_rescue_dca=False):
     """Return False when a pending entry has moved too far against the original signal.
 
@@ -350,7 +402,9 @@ async def _entry_exchange_direction_guard(sym, side):
 
 
 def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
-                        expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0, fees=0.0, qty=0.0):
+                        expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0,
+                        fees=0.0, qty=0.0, exchange_close_id=None,
+                        realized_pnl_usdt=None, timestamp_ms=None):
     """
     將每筆交易的結果記錄到 trade_history.json 中，並生成 AI 友好的經驗摘要。
     """
@@ -379,7 +433,10 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         summary += " (⚠️ 異常交易，需重點關注)"
 
     trade_data = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(timestamp_ms / 1000.0))
+            if timestamp_ms else time.strftime("%Y-%m-%d %H:%M:%S")
+        ),
         "symbol": symbol,
         "entry_reason": entry_reason or "UNKNOWN",
         "exit_reason": exit_reason,
@@ -398,6 +455,10 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "theoretical_profit": round((expected_exit - expected_entry)/expected_entry if expected_entry > 0 else 0.0, 4),
         "ai_summary": summary
     }
+    if exchange_close_id is not None:
+        trade_data["exchange_close_id"] = str(exchange_close_id)
+    if realized_pnl_usdt is not None:
+        trade_data["realized_pnl_usdt"] = round(float(realized_pnl_usdt), 8)
 
     if os.path.exists(history_file):
         with open(history_file, 'r', encoding='utf-8') as f:
@@ -408,14 +469,23 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
     else:
         history = []
 
+    if exchange_close_id is not None and any(
+        str(item.get("exchange_close_id")) == str(exchange_close_id)
+        for item in history
+    ):
+        logger.info(f"ℹ️ [ExternalClose] {symbol} 平倉成交 {exchange_close_id} 已記錄，略過重複寫入")
+        return False
+
     history.append(trade_data)
 
     try:
         with open(history_file, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=4, ensure_ascii=False)
         logger.info(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
+        return True
     except Exception as e:
         logger.info(f"⚠️ [AI Memory] 紀錄失敗: {e}")
+        return False
 
 
 async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
@@ -559,7 +629,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     fee_buffer = 0.015 if sym.replace(":", "") in volatile_coins else 0.0035
 
     # 允許任何型態的止損（is_stop_loss=True）、全域熔斷、或策略主動平倉原因，以避免時間停滯等優化退場機制被攔截
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]"]
+    # Peak_Giveback 是動態鎖利／回撤保護，不能再被一般 0.35% 或高波動幣
+    # 1.5% 的固定獲利門檻擋掉，否則會出現「觸發停利卻拒絕平倉」。
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -800,6 +872,12 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
     side = order["side"]
     base_amt = order["qty"]
     margin = order["margin"]
+    if is_rescue_dca:
+        rescue_ok, rescue_reason = is_effective_rescue_dca(s, side, fill_price, add_qty=base_amt)
+        if not rescue_ok:
+            logger.info(f"🛑 [RescueDCAIneffective] {sym} 模擬攤平成交取消：{rescue_reason}")
+            s["pending_paper_order"] = None
+            return
     now = time.time()
     try:
         update_paper_state(pk, side, fill_price, base_amt)
@@ -1029,6 +1107,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被開倉價格偏離攔截，未進入下單")
         return
 
+    if is_rescue_dca:
+        rescue_ok, rescue_reason = is_effective_rescue_dca(s, side, price)
+        if not rescue_ok:
+            logger.info(f"🛑 [RescueDCAIneffective] {sym} 取消攤平：{rescue_reason}")
+            return
+
     if entry_route and entry_route != "Automatic_Reverse":
         from core.check_entries import is_entry_candidate_still_valid
         still_valid, invalid_reason = is_entry_candidate_still_valid(
@@ -1103,17 +1187,35 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被數量計算為 0 攔截，未進入下單")
         return
 
+    if is_rescue_dca:
+        rescue_ok, rescue_reason = is_effective_rescue_dca(s, side, price, add_qty=base_amt)
+        if not rescue_ok:
+            logger.info(f"🛑 [RescueDCAIneffective] {sym} 取消攤平：{rescue_reason}")
+            return
+
     if PAPER_TRADING:
         try:
             # market_price 已在上方用 mark price / 委託簿中位數取得，比 OHLCV 收盤價更貼近牌價
             current_market_price = market_price if market_price > 0 else s.get("close_price", price)
             logger.info(f"🧭 [EntryMode] {sym} 選擇 paper 進場模式: {actual_entry_mode}")
             if actual_entry_mode == 'market':
+                chase_ok, chase_reason = _entry_signal_chase_guard(
+                    side, price, current_market_price, is_first_entry, is_rescue_dca,
+                )
+                if not chase_ok:
+                    logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉市價取消：{chase_reason}")
+                    return
                 _fill_paper_order(sym, current_market_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper市價成交] {sym} {side} {base_amt:.4f} @ {current_market_price:.6f}")
                 return
             elif actual_entry_mode == 'chase':
                 fill_price = current_market_price * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else current_market_price * (1 - ENTRY_CHASE_OFFSET_PCT)
+                chase_ok, chase_reason = _entry_signal_chase_guard(
+                    side, price, fill_price, is_first_entry, is_rescue_dca,
+                )
+                if not chase_ok:
+                    logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉追價取消：{chase_reason}")
+                    return
                 _fill_paper_order(sym, fill_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper追價成交] {sym} {side} {base_amt:.4f} @ {fill_price:.6f}")
                 return
@@ -1140,6 +1242,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
                         limit_price = min(recent_high, current_market_price + atr * (_pb_mult * 3))
                         limit_price = max(limit_price, current_market_price + atr * _pb_mult)
+                chase_ok, chase_reason = _entry_signal_chase_guard(
+                    side, price, limit_price, is_first_entry, is_rescue_dca,
+                )
+                if not chase_ok:
+                    logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉回踩委託取消：{chase_reason}")
+                    return
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
@@ -1151,6 +1259,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             else:
                 spread_pct = 0.0003
                 limit_price = current_market_price * (1 - spread_pct) if side == 'buy' else current_market_price * (1 + spread_pct)
+                chase_ok, chase_reason = _entry_signal_chase_guard(
+                    side, price, limit_price, is_first_entry, is_rescue_dca,
+                )
+                if not chase_ok:
+                    logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉被動委託取消：{chase_reason}")
+                    return
                 s["pending_paper_order"] = {
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
@@ -1249,6 +1363,23 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if not order_price_ok:
                 logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 委託價偏離即時牌價：{order_price_reason}，取消開倉")
                 logger.info(f"🧱 [ORDER_BLOCK] {sym} 被委託價格偏離攔截，未送單")
+                return
+
+            if is_rescue_dca:
+                final_rescue_price = limit_price if limit_price is not None else market_price
+                rescue_ok, rescue_reason = is_effective_rescue_dca(
+                    s, side, final_rescue_price, add_qty=base_amt,
+                )
+                if not rescue_ok:
+                    logger.info(f"🛑 [RescueDCAIneffective] {sym} 最終委託取消：{rescue_reason}")
+                    return
+
+            final_order_price = limit_price if limit_price is not None else market_price
+            chase_ok, chase_reason = _entry_signal_chase_guard(
+                side, price, final_order_price, is_first_entry, is_rescue_dca,
+            )
+            if not chase_ok:
+                logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉最終委託取消：{chase_reason}")
                 return
 
             exchange_direction_ok, exchange_direction_reason = await _entry_exchange_direction_guard(sym, side)
@@ -1375,6 +1506,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 if not reprice_ok:
                     logger.info(f"🛑 [EntryPriceGuard] {sym} 二次追價偏離即時牌價：{reprice_reason}，放棄剩餘進場量")
                     remaining_amt = 0.0
+                if is_rescue_dca and remaining_amt > 0.000001:
+                    rescue_ok, rescue_reason = is_effective_rescue_dca(
+                        s, side, reprice, add_qty=remaining_amt,
+                    )
+                    if not rescue_ok:
+                        logger.info(f"🛑 [RescueDCAIneffective] {sym} 二次追價取消：{rescue_reason}")
+                        remaining_amt = 0.0
+                if remaining_amt > 0.000001:
+                    chase_ok, chase_reason = _entry_signal_chase_guard(
+                        side, price, reprice, is_first_entry, is_rescue_dca,
+                    )
+                    if not chase_ok:
+                        logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉二次追價取消：{chase_reason}")
+                        remaining_amt = 0.0
 
                 if remaining_amt > 0.000001:
                     try:

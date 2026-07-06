@@ -9,10 +9,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core import exchange_client
-from core.orders import execute_order, should_block_order_flow
+from core.orders import (
+    _entry_signal_chase_guard, execute_order, should_block_order_flow,
+)
 
 
 class EntryRiskTests(unittest.TestCase):
+    def test_first_buy_entry_rejects_more_than_point_fifteen_percent_chase(self):
+        ok, reason = _entry_signal_chase_guard("buy", 2.064, 2.070)
+        self.assertFalse(ok)
+        self.assertIn("signal chase", reason)
+
+    def test_first_sell_entry_rejects_more_than_point_fifteen_percent_chase(self):
+        ok, reason = _entry_signal_chase_guard("sell", 100.0, 99.8)
+        self.assertFalse(ok)
+        self.assertIn("signal chase", reason)
+
+    def test_first_entry_allows_better_or_small_chase_price(self):
+        self.assertTrue(_entry_signal_chase_guard("buy", 100.0, 100.14)[0])
+        self.assertTrue(_entry_signal_chase_guard("buy", 100.0, 99.5)[0])
+        self.assertTrue(_entry_signal_chase_guard("sell", 100.0, 99.86)[0])
+        self.assertTrue(_entry_signal_chase_guard("sell", 100.0, 100.5)[0])
+
+    def test_rescue_or_non_first_entry_is_not_blocked_by_first_entry_guard(self):
+        self.assertTrue(
+            _entry_signal_chase_guard("buy", 100.0, 101.0, is_first_entry=False)[0]
+        )
+        self.assertTrue(
+            _entry_signal_chase_guard("buy", 100.0, 101.0, is_rescue_dca=True)[0]
+        )
+
     def test_order_flow_is_warning_only_in_paper_trading(self):
         self.assertFalse(should_block_order_flow("buy", 60.0, 100.0, 0.8, True))
         self.assertTrue(should_block_order_flow("buy", 60.0, 100.0, 0.8, False))

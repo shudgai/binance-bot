@@ -1,6 +1,9 @@
 import asyncio
+import json
 import os
 import sys
+import tempfile
+import time
 import unittest
 from unittest.mock import AsyncMock, call, patch
 
@@ -74,6 +77,70 @@ class ExchangeCalibrationTests(unittest.TestCase):
         self.assertEqual(state["qty"], 0.0)
         self.assertIsNone(state["exchange_stop_order_id"])
         self.assertIsNone(state["exchange_take_profit_order_id"])
+
+    def test_external_manual_close_records_exchange_realized_pnl_before_reset(self):
+        state = ctx.STATES[self.sym]
+        state["qty"] = -2.0
+        state["avg_price"] = 100.0
+        state["open_time"] = time.time() - 600
+        state["entry_reason"] = "test-entry"
+
+        exchange = AsyncMock()
+        exchange.fetch_positions.return_value = []
+        exchange.fetch_my_trades.return_value = [{
+            "id": "trade-1",
+            "order": "manual-order-1",
+            "timestamp": int(time.time() * 1000),
+            "side": "buy",
+            "amount": 2.0,
+            "price": 105.0,
+            "fee": {"cost": 0.2},
+            "info": {"realizedPnl": "-10.0"},
+        }]
+
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.orders._cancel_exchange_exit_order_id", new=AsyncMock()), \
+             patch("core.orders.record_trade_result", return_value=True) as record_result:
+            asyncio.run(calibrate_with_exchange(exchange))
+
+        kwargs = record_result.call_args.kwargs
+        self.assertEqual(kwargs["exchange_close_id"], "XRPUSDT:manual-order-1")
+        self.assertEqual(kwargs["realized_pnl_usdt"], -10.0)
+        self.assertEqual(kwargs["fees"], 0.2)
+        self.assertEqual(kwargs["actual_exit"], 105.0)
+        self.assertEqual(state["qty"], 0.0)
+
+    def test_exchange_close_id_is_deduplicated_in_trade_history(self):
+        from core.orders import record_trade_result
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            history_path = os.path.join(temp_dir, "trade_history.json")
+            with patch("core.orders.TRADE_HISTORY_FILE", history_path):
+                first = record_trade_result(
+                    "XRPUSDT", "entry", "[External_Manual_Close]", -0.05, 1.0,
+                    expected_entry=100.0, expected_exit=105.0,
+                    actual_entry=100.0, actual_exit=105.0,
+                    fees=0.2, qty=2.0,
+                    exchange_close_id="XRPUSDT:manual-order-1",
+                    realized_pnl_usdt=-10.0,
+                    timestamp_ms=1700000000000,
+                )
+                second = record_trade_result(
+                    "XRPUSDT", "entry", "[External_Manual_Close]", -0.05, 1.0,
+                    expected_entry=100.0, expected_exit=105.0,
+                    actual_entry=100.0, actual_exit=105.0,
+                    fees=0.2, qty=2.0,
+                    exchange_close_id="XRPUSDT:manual-order-1",
+                    realized_pnl_usdt=-10.0,
+                    timestamp_ms=1700000000000,
+                )
+            with open(history_path, "r", encoding="utf-8") as handle:
+                history = json.load(handle)
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["realized_pnl_usdt"], -10.0)
 
 
     def test_live_position_calibration_ensures_exchange_exit_orders(self):

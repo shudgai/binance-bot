@@ -340,8 +340,19 @@ def get_active_count():
 
 
 def get_open_position_count():
+    """算目前佔用倉位額度的幣種數（給 MAX_POSITIONS 開倉上限判斷用）。
+    原本只算 qty!=0 的幣種，但 check_entries() 的進場單是用 asyncio.create_task
+    背景派發，不會等訂單真的成交才回傳——execute_order() 從查委託簿、算保證金
+    到真的送出訂單，實測要 1~3 秒以上，比主迴圈一輪的間隔還久。這段「已經派發
+    但 qty 還沒更新」的空窗期完全不算在這裡，導致下一輪主迴圈重新計算開倉數時
+    看不到這些已經在路上的訂單，若剛好又有其他幣種同時觸發訊號，會一路疊加派發
+    超過 MAX_POSITIONS 的上限（實際發生過同時開到 7 筆，遠超過設定的 3 筆）。
+    改成連 is_ordering（訂單正在派發中，還沒確認成交）也一起算進佔用額度。"""
     from core import ctx
-    return sum(1 for s in ctx.STATES.values() if abs(s["qty"]) > 0.000001)
+    return sum(
+        1 for s in ctx.STATES.values()
+        if abs(s["qty"]) > 0.000001 or s.get("is_ordering")
+    )
 
 
 def get_open_symbols():

@@ -152,6 +152,9 @@ def api_force_reset():
 @app.get("/api/bot-status")
 def api_get_bot_status():
     status = get_bot_status()
+    from core.config import USE_TESTNET
+    status["use_testnet"] = USE_TESTNET
+    status["environment"] = "testnet" if USE_TESTNET else "live"
     if "entry_diagnosis" not in status:
         status["entry_diagnosis"] = "等待訊號"
     if is_paper_trading():
@@ -203,6 +206,15 @@ def api_set_bot_amount(amount: float):
         return {"status": "success", "trade_amount": amt}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/bot-status/reset-realized-pnl")
+def api_reset_realized_pnl():
+    try:
+        from services.binance_service import reset_total_realized_pnl_baseline
+        raw_total = reset_total_realized_pnl_baseline()
+        return {"status": "success", "previous_total": raw_total, "total_realized_pnl": 0.0}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/logs")
 def api_get_logs():
@@ -604,7 +616,11 @@ def _get_real_trades():
             else:
                 is_long = (ax < ae)
                 
-            pnl = (ax - ae) * qty if is_long else (ae - ax) * qty
+            pnl = (
+                float(t["realized_pnl_usdt"])
+                if t.get("realized_pnl_usdt") is not None
+                else ((ax - ae) * qty if is_long else (ae - ax) * qty)
+            )
             
             # 入場 trade 紀錄
             trades.append({
