@@ -145,7 +145,7 @@ CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
 # 原本 3.5%，但「跟隨自己」的 bug 修好、雷達真正開始套用這道濾網後才發現，現在
 # 市場普遍波動偏高，3.5% 幾乎把所有候選幣都濾光，監控池被砍到只剩 1-2 檔。
 # 核准主流幣放寬到 8%，讓幣池能維持接近 10 檔的規模，同時仍排除真正極端(20%+)的幣。
-MAX_ATR_PCT_FOR_ENTRY = 8.0
+MAX_ATR_PCT_FOR_ENTRY = 10.0
 
 # 熱門幣保守 profile（只走有強訊號的機會）
 HOT_MOVER_PROFILE_BASE = {
