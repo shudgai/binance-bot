@@ -413,6 +413,8 @@ async def check_exits(sym):
         # 攤平後的停損線不能比「原始進場價的停損線」更寬鬆：取新均價停損線跟原始
         # 進場價停損線中「較緊」的那一個，避免攤平失敗時虧損被無限放大。
         first_ep = s.get("first_entry_price", avg)
+        if not first_ep or first_ep <= 0:
+            first_ep = avg
         if is_long:
             _hard_sl_price = max(avg * (1 - _hard_sl), first_ep * (1 - _hard_sl))
             _hard_sl_hit = p <= _hard_sl_price
@@ -454,6 +456,8 @@ async def check_exits(sym):
     if True:
         _obs_time = time.time() - s.get("open_time", time.time())
         _entry_price = s.get("first_entry_price", avg)
+        if not _entry_price or _entry_price <= 0:
+            _entry_price = avg
         _wrong_dir = False
         _reason = ""
 
