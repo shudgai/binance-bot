@@ -353,10 +353,17 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if bull_defense_mode and side == 'sell':
             current_rsi_macro = s.get("current_rsi", 50.0)
             is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-            if current_rsi_macro > 73.0:
-                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
-            elif is_reversal_route and current_rsi_macro > 70.0:
-                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
+            profile = get_entry_strictness_profile()
+            is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+            exempt_rsi_limit = 65.0 if is_relaxed else 73.0
+            exempt_reversal_rsi_limit = 60.0 if is_relaxed else 70.0
+
+            if current_rsi_macro > exempt_rsi_limit:
+                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI較高 {current_rsi_macro:.1f}>{exempt_rsi_limit}，豁免允許空單 (Relaxed={is_relaxed})")
+            elif is_reversal_route and current_rsi_macro > exempt_reversal_rsi_limit:
+                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>{exempt_reversal_rsi_limit}，豁免允許空單 (Relaxed={is_relaxed})")
+            elif is_relaxed and strength >= 18.0:
+                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但在寬鬆模式下，訊號強度 {strength:.1f} >= 18.0，豁免允許空單")
             else:
                 logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
                 return False

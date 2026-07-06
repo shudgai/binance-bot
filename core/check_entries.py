@@ -74,6 +74,8 @@ def load_pending_signals():
 
 
 def _effective_min_signal_strength(route, coin_min, profile_min):
+    if float(profile_min) <= 10.0:
+        coin_min = max(float(coin_min) - 4.0, 10.0)
     minimum = max(float(coin_min), float(profile_min))
     if route == "Exhaustion_Entry":
         return min(minimum, 15.0)
@@ -526,7 +528,7 @@ async def check_entries():
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
-                if not volume_price_sync:
+                if not volume_price_sync and profile.get("min_signal_strength", 10.0) > 10.0:
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})")
                     set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
                     continue
