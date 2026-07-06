@@ -73,6 +73,23 @@ def load_pending_signals():
         logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
 
 
+def _effective_min_signal_strength(route, coin_min, profile_min):
+    minimum = max(float(coin_min), float(profile_min))
+    if route == "Exhaustion_Entry":
+        return min(minimum, 15.0)
+    return minimum
+
+
+def _is_volume_price_confirmed(side, price_change, current_vol, prev_vol, is_low_vol):
+    direction_ok = price_change > 0 if side == "buy" else price_change < 0
+    if not direction_ok:
+        return False
+    if current_vol > prev_vol:
+        return True
+    min_retained_volume = 0.65 if is_low_vol else 0.80
+    return prev_vol > 0 and current_vol >= prev_vol * min_retained_volume
+
+
 def is_pending_confirmation_valid(side, candle):
     """Return whether the prior signal candle is still valid after the next bar closes."""
     if not candle or len(candle) < 5:
@@ -424,7 +441,9 @@ async def check_entries():
         # [Layer 0] 每幣種最低信號強度門檻
         profile = get_entry_strictness_profile()
         coin_profile_min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
-        min_sig = max(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
+        min_sig = _effective_min_signal_strength(
+            route, coin_profile_min_sig, profile.get("min_signal_strength", 10.0),
+        )
         if strength < min_sig:
             set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
@@ -493,11 +512,9 @@ async def check_entries():
             h24_quote_volume_est = vol_ma20 * cp * 288
             liquidity_check = h24_quote_volume_est > 1000000
 
-            volume_price_sync = False
-            if side == "buy" and cp <= s["ohlcv"][-2][4] and price_change > 0 and current_vol > prev_vol:
-                volume_price_sync = True
-            elif side == "sell" and price_change < 0 and current_vol > prev_vol:
-                volume_price_sync = True
+            volume_price_sync = _is_volume_price_confirmed(
+                side, price_change, current_vol, prev_vol, _is_low_vol_ce,
+            )
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:

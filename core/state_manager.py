@@ -47,6 +47,8 @@ def build_symbol_state(sym):
         "has_partial_closed": False,
         "pending_stop_loss": False,
         "stop_loss_price": 0.0,
+        "exchange_stop_order_id": None,
+        "exchange_take_profit_order_id": None,
         "ohlcv": [],
         "closes": [],
         "tr_list": [],
@@ -313,6 +315,8 @@ def reset_coin_state(sym):
     s["sl_atr_multiplier"] = 1.5
     s["tp_atr_multiplier"] = 2.5
     s["hard_stop_loss_pct"] = COIN_PROFILE_CONFIG.get(sym, {}).get("hard_sl_pct", HARD_STOP_LOSS_PCT)
+    s["exchange_stop_order_id"] = None
+    s["exchange_take_profit_order_id"] = None
     s["personality"] = "balanced"
     s["personality_source"] = "infer"
     s["last_personality_update"] = 0.0

@@ -18,6 +18,7 @@ import core.balance as _bal
 from core.state_manager import mark_exit, reset_coin_state, build_symbol_state
 from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES
 from core.config import get_symbol_leverage
+from core.indicators import _calc_sl_tp
 from services.utils import paper_key
 from services.update_paper_state import update_paper_state
 from services.ai_manager import ai_engine
@@ -28,6 +29,61 @@ logger = logging.getLogger(__name__)
 def _import_update_trailing_stop():
     from core.exits import update_trailing_stop
     return update_trailing_stop
+
+
+async def _cancel_exchange_exit_order(sym, state_key, label):
+    s = ctx.STATES[sym]
+    order_id = s.get(state_key)
+    if not order_id or PAPER_TRADING:
+        return
+    try:
+        await exchange_futures.cancel_order(order_id, sym)
+        logger.info(f"✅ [{label}取消] {sym} 已撤銷交易所{label}單")
+    except Exception as ce:
+        logger.info(f"⚠️ [取消{label}單失敗] {sym}: {ce}")
+    finally:
+        s[state_key] = None
+
+
+async def _replace_exchange_exit_orders(sym):
+    if PAPER_TRADING:
+        return
+
+    s = ctx.STATES[sym]
+    qty = abs(s.get("qty", 0.0))
+    avg = s.get("avg_price", 0.0)
+    if qty <= 0.000001 or avg <= 0:
+        return
+
+    await _cancel_exchange_exit_order(sym, "exchange_stop_order_id", "止損")
+    await _cancel_exchange_exit_order(sym, "exchange_take_profit_order_id", "停利")
+
+    prec = await get_contract_precision(sym)
+    close_side = "sell" if s["qty"] > 0 else "buy"
+    is_long = s["qty"] > 0
+
+    hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
+    stop_price = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
+    stop_price = round_step(stop_price, prec["tick_size"])
+
+    route = s.get("entry_reason", "a")
+    _, _, tp_dist, _ = _calc_sl_tp(sym, "buy" if is_long else "sell", s, avg, route)
+    take_profit_price = avg + tp_dist if is_long else avg - tp_dist
+    take_profit_price = round_step(take_profit_price, prec["tick_size"])
+
+    stop_order = await exchange_futures.create_order(
+        sym, type="STOP_MARKET", side=close_side, amount=qty,
+        params={"stopPrice": stop_price, "reduceOnly": True}
+    )
+    s["exchange_stop_order_id"] = stop_order["id"]
+    logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {qty})")
+
+    tp_order = await exchange_futures.create_order(
+        sym, type="TAKE_PROFIT_MARKET", side=close_side, amount=qty,
+        params={"stopPrice": take_profit_price, "reduceOnly": True}
+    )
+    s["exchange_take_profit_order_id"] = tp_order["id"]
+    logger.info(f"🎯 [交易所挂單] {sym} 成功挂出 Take Profit Market 停利單 @ {take_profit_price} (數量: {qty})")
 
 
 def _entry_direction_guard(sym, side, reference_price=None):
@@ -111,6 +167,49 @@ def _entry_pending_adverse_guard(sym, side, reference_price, current_price, is_r
     if adverse_dev > max_adverse_dev:
         return False, f"pending adverse move {adverse_dev*100:.2f}% > {max_adverse_dev*100:.2f}%"
 
+    return True, "ok"
+
+
+def _find_exchange_position(positions, sym):
+    for pos in positions or []:
+        raw_symbol = str(pos.get("symbol", ""))
+        pos_sym = raw_symbol.split(":")[0].replace("/", "")
+        raw_amt = pos.get("info", {}).get("positionAmt")
+        qty = float(raw_amt) if raw_amt is not None else float(pos.get("contracts", 0) or 0)
+        if raw_amt is None and str(pos.get("side", "")).lower() == "short":
+            qty = -abs(qty)
+        if pos_sym == sym and abs(qty) > 0.000001:
+            return pos, qty
+    return None, 0.0
+
+
+async def _entry_exchange_direction_guard(sym, side):
+    if PAPER_TRADING:
+        return True, "paper"
+    try:
+        positions = await exchange_futures.fetch_positions([sym])
+    except Exception as exc:
+        return False, f"position preflight failed: {exc}"
+
+    pos, exchange_qty = _find_exchange_position(positions, sym)
+    if pos is None:
+        return True, "flat"
+
+    s = ctx.STATES[sym]
+    local_qty = float(s.get("qty", 0.0) or 0.0)
+    exchange_avg = float(pos.get("entryPrice") or pos.get("info", {}).get("entryPrice") or 0.0)
+    if abs(local_qty) <= 0.000001 or local_qty * exchange_qty < 0:
+        s["qty"] = exchange_qty
+        if exchange_avg > 0:
+            s["avg_price"] = exchange_avg
+        return False, (
+            f"local position stale: local={local_qty:.6f}, "
+            f"exchange={exchange_qty:.6f}"
+        )
+
+    requested_sign = 1 if side == "buy" else -1
+    if exchange_qty * requested_sign < 0:
+        return False, f"exchange already has opposite position {exchange_qty:.6f}"
     return True, "ok"
 
 
@@ -421,12 +520,8 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     if remaining < 0.01:
         if remaining > 0.000001:
             logger.info(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
-        if s.get("exchange_stop_order_id") and not PAPER_TRADING:
-            try:
-                await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
-                logger.info(f"✅ [止損單取消] {sym} 部位已全平，撤銷交易所止損單")
-            except Exception as ce:
-                logger.info(f"⚠️ [取消止損單失敗] {sym}: {ce}")
+        await _cancel_exchange_exit_order(sym, "exchange_stop_order_id", "止損")
+        await _cancel_exchange_exit_order(sym, "exchange_take_profit_order_id", "停利")
 
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=profit_pct)
         reset_coin_state(sym)
@@ -448,21 +543,11 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
 
         logger.info(f"✅ [部分平] {sym} 平{qty} 剩{abs(s['qty']):.4f} {full_reason}")
 
-        if s.get("exchange_stop_order_id") and not PAPER_TRADING:
-            try:
-                await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
-                stop_side = "sell" if s["qty"] > 0 else "buy"
-                hard_sl_pct = s.get("hard_stop_loss_pct", 0.02)
-                stop_price = s["avg_price"] * (1 - hard_sl_pct) if s["qty"] > 0 else s["avg_price"] * (1 + hard_sl_pct)
-                stop_price = round_step(stop_price, prec["tick_size"])
-                new_stop = await exchange_futures.create_order(
-                    sym, type="STOP_MARKET", side=stop_side, amount=abs(s["qty"]),
-                    params={"stopPrice": stop_price, "reduceOnly": True}
-                )
-                s["exchange_stop_order_id"] = new_stop["id"]
-                logger.info(f"🛡️ [止損單更新] {sym} 部分平倉後更新止損單 @ {stop_price} (數量: {abs(s['qty'])})")
-            except Exception as ce:
-                logger.info(f"⚠️ [更新止損單失敗] {sym}: {ce}")
+        try:
+            await _replace_exchange_exit_orders(sym)
+            logger.info(f"🛡️ [交易所退出單更新] {sym} 部分平倉後已同步更新止損/停利單 (數量: {abs(s['qty'])})")
+        except Exception as ce:
+            logger.info(f"⚠️ [更新交易所退出單失敗] {sym}: {ce}")
 
 
 def should_recover_from_reversal(sym, is_long):
@@ -671,6 +756,10 @@ def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
                         signal_strength=None, entry_route=None, entry_mode_override=None):
     import numpy as np  # 強制防禦局部變量失效漏洞
+    side = str(side).lower()
+    if side not in ("buy", "sell"):
+        logger.info(f"🛑 [InvalidEntrySide] {sym} 收到無效開倉方向 {side!r}，拒絕下單")
+        return
     s = ctx.STATES[sym]
     entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
     actual_entry_mode = _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
@@ -790,6 +879,24 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🛑 [EntryAdverseGuard] {sym} {side} 當前價已逆向偏離訊號價：{pending_reason}，取消開倉")
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被逆向偏離攔截，未進入下單")
         return
+
+    price_ok, price_reason = _entry_price_guard(
+        sym, side, price, market_price,
+        mode=actual_entry_mode, is_rescue_dca=is_rescue_dca,
+    )
+    if not price_ok:
+        logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 訊號價與即時牌價偏離：{price_reason}，取消開倉")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被開倉價格偏離攔截，未進入下單")
+        return
+
+    if entry_route and entry_route != "Automatic_Reverse":
+        from core.check_entries import is_entry_candidate_still_valid
+        still_valid, invalid_reason = is_entry_candidate_still_valid(
+            sym, side, entry_route, signal_strength or 0.0, price,
+        )
+        if not still_valid:
+            logger.info(f"🛑 [FinalDirectionGuard] {sym} {side} 下單前方向重驗失敗：{invalid_reason}")
+            return
 
     now = time.time()
     if s["entry_count"] > 0 and not is_rescue_dca:
@@ -995,6 +1102,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if order_type == 'market':
                 params.pop('timeInForce', None)
 
+            order_price_ok, order_price_reason = _entry_price_guard(
+                sym, side, limit_price, market_price,
+                mode=actual_entry_mode, is_rescue_dca=is_rescue_dca,
+            )
+            if not order_price_ok:
+                logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 委託價偏離即時牌價：{order_price_reason}，取消開倉")
+                logger.info(f"🧱 [ORDER_BLOCK] {sym} 被委託價格偏離攔截，未送單")
+                return
+
+            exchange_direction_ok, exchange_direction_reason = await _entry_exchange_direction_guard(sym, side)
+            if not exchange_direction_ok:
+                logger.info(f"🛑 [ExchangeDirectionGuard] {sym} {side} 實盤持倉方向預檢失敗：{exchange_direction_reason}")
+                return
+
             # API 延遲量測：只量「送出委託→交易所回應」這通 API 呼叫本身的耗時，
             # 不含後面故意等待成交的 sleep(3)——那是設計上刻意的等待，混進去量會讓
             # 每一筆都必然超過門檻，量不出真正的網路/交易所處理延遲。這裡量到的才是
@@ -1092,6 +1213,14 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     logger.info(f"⚠️ [追價報價失敗] {sym}: {re_e}")
                     reprice = limit_price
 
+                reprice_ok, reprice_reason = _entry_price_guard(
+                    sym, side, reprice, market_price,
+                    mode="chase", is_rescue_dca=is_rescue_dca,
+                )
+                if not reprice_ok:
+                    logger.info(f"🛑 [EntryPriceGuard] {sym} 二次追價偏離即時牌價：{reprice_reason}，放棄剩餘進場量")
+                    remaining_amt = 0.0
+
                 if remaining_amt > 0.000001:
                     try:
                         order2 = await exchange_futures.create_order(
@@ -1124,33 +1253,39 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 return
 
             old_qty = s["qty"]
+            expected_qty = old_qty + (base_amt if side == "buy" else -base_amt)
+            exchange_entry_price = 0.0
+            position_synced = False
             try:
                 positions = await exchange_futures.fetch_positions([sym])
-                actual_pos = next((p for p in positions if p.get('symbol') == sym and abs(float(p.get('contracts', 0) or 0)) > 0), None)
+                actual_pos, actual_qty = _find_exchange_position(positions, sym)
                 if actual_pos:
-                    actual_qty = float(actual_pos.get('contracts', 0) or 0)
-                    actual_side_sign = 1 if side == 'buy' else -1
-                    s["qty"] = actual_qty * actual_side_sign
-                    logger.info(f"📊 [持倉同步] {sym} 交易所實際持倉: {s['qty']:.4f}")
+                    s["qty"] = actual_qty
+                    position_synced = True
+                    exchange_entry_price = float(
+                        actual_pos.get("entryPrice")
+                        or actual_pos.get("info", {}).get("entryPrice")
+                        or 0.0
+                    )
+                    logger.info(f"📊 [持倉同步] {sym} 交易所實際持倉: {actual_qty:.4f}")
             except Exception as pe:
                 logger.info(f"⚠️ [持倉同步失敗] {sym}: {pe}")
-                s["qty"] = old_qty
 
-            old_qty = s["qty"]
-            if side == 'buy':
-                s["qty"] += base_amt
-            else:
-                s["qty"] -= base_amt
+            if not position_synced:
+                s["qty"] = expected_qty
 
             slippage = abs(fill_price - price) / price if price > 0 else 0
             limit_price_str = f"{limit_price:.6f}" if limit_price is not None else "Market"
             logger.info(f"✅ [實盤開倉成功] {sym} {side} | 信號價: {price:.6f} | 限價: {limit_price_str} | 實際: {fill_price:.6f} | 滑價: {slippage*100:.3f}%")
 
-            if s["avg_price"] <= 0:
+            if exchange_entry_price > 0:
+                s["avg_price"] = exchange_entry_price
+                s["entry_atr"] = max(s.get("current_atr", 0.0), exchange_entry_price * 0.005)
+            elif s["avg_price"] <= 0:
                 s["avg_price"] = fill_price
                 s["entry_atr"] = max(s.get("current_atr", 0.0), fill_price * 0.005)
             else:
-                old_abs_qty = abs(old_qty) if 'old_qty' in locals() else 0.0
+                old_abs_qty = abs(old_qty)
                 s["avg_price"] = ((s["avg_price"] * old_abs_qty) + (fill_price * base_amt)) / abs(s["qty"])
 
             if "entries" not in s:
@@ -1182,26 +1317,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             s["last_flip_time"] = now
 
             try:
-                stop_side = 'sell' if s["qty"] > 0 else 'buy'
-                hard_sl_pct = s.get("hard_stop_loss_pct", 0.02)
-                stop_price = s["avg_price"] * (1 - hard_sl_pct) if s["qty"] > 0 else s["avg_price"] * (1 + hard_sl_pct)
-                prec = await get_contract_precision(sym)
-                stop_price = round_step(stop_price, prec['tick_size'])
-
-                if s.get("exchange_stop_order_id"):
-                    try:
-                        await exchange_futures.cancel_order(s["exchange_stop_order_id"], sym)
-                    except Exception as ce:
-                        logger.info(f"⚠️ [取消舊止損單失敗] {sym}: {ce}")
-
-                stop_order = await exchange_futures.create_order(
-                    sym, type='STOP_MARKET', side=stop_side, amount=abs(s["qty"]),
-                    params={'stopPrice': stop_price, 'reduceOnly': True}
-                )
-                s["exchange_stop_order_id"] = stop_order['id']
-                logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {abs(s['qty'])})")
+                await _replace_exchange_exit_orders(sym)
             except Exception as se:
-                logger.info(f"🚨 [交易所止損挂單失敗] {sym}: {se}")
+                logger.info(f"🚨 [交易所退出單挂單失敗] {sym}: {se}")
 
         except Exception as e:
             logger.info(f"🚨 [開倉錯誤] {sym}: {e}")

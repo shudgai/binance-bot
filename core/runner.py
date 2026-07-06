@@ -159,6 +159,7 @@ async def calibrate_with_exchange(exchange):
 
     try:
         positions = await exchange.fetch_positions()
+        live_position_symbols = set()
         for pos in positions:
             raw_symbol = pos.get('symbol', '')
             sym = raw_symbol.split(':')[0].replace('/', '')
@@ -171,6 +172,7 @@ async def calibrate_with_exchange(exchange):
             raw_amt = pos.get('info', {}).get('positionAmt')
             real_qty = float(raw_amt) if raw_amt is not None else float(pos.get('contracts', 0.0) or 0.0)
             if abs(real_qty) > 0.000001:
+                live_position_symbols.add(sym)
                 if sym not in ctx.ALL_SYMBOLS:
                     logger.info(f"⚠️ [發現未監控持倉] 交易所內 {sym} 仍有實盤倉位，自動加回監控清單並在介面顯示！")
                     ctx.ALL_SYMBOLS.append(sym)
@@ -207,6 +209,23 @@ async def calibrate_with_exchange(exchange):
                         if ctx.STATES[sym].get("entry_count", 0) == 0:
                             ctx.STATES[sym]["entry_count"] = 1
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
+
+        for sym, state in list(ctx.STATES.items()):
+            if abs(state.get("qty", 0.0)) <= 0.000001 or sym in live_position_symbols:
+                continue
+            logger.info(f"🔄 [CALIBRATION] {sym} 本地仍有持倉 {state.get('qty', 0.0):.4f}，但交易所已無倉位；清理本地狀態與交易所退出單追蹤")
+            for key, label in (("exchange_stop_order_id", "止損"), ("exchange_take_profit_order_id", "停利")):
+                order_id = state.get(key)
+                if not order_id:
+                    continue
+                try:
+                    await exchange.cancel_order(order_id, sym)
+                    logger.info(f"✅ [CALIBRATION] 已撤銷 {sym} 殘留交易所{label}單 {order_id}")
+                except Exception as ce:
+                    logger.info(f"⚠️ [CALIBRATION] 撤銷 {sym} 殘留交易所{label}單失敗: {ce}")
+                finally:
+                    state[key] = None
+            reset_coin_state(sym)
 
     except Exception as e:
         logger.info(f"⚠️ [CALIBRATION_FAIL] 無法連線交易所校準: {e}")

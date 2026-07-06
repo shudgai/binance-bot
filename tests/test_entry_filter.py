@@ -7,6 +7,7 @@ from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.entry_filter import is_entry_pin_safe, get_entry_strictness_profile, is_entry_allowed
+from core.check_entries import _effective_min_signal_strength, _is_volume_price_confirmed
 
 
 class EntryFilterTests(unittest.TestCase):
@@ -302,6 +303,31 @@ class EntryFilterTests(unittest.TestCase):
         ]
 
         self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=27.0))
+
+
+    def test_exhaustion_route_uses_its_designed_signal_floor(self):
+        self.assertEqual(
+            _effective_min_signal_strength("Exhaustion_Entry", 20.0, 15.0),
+            15.0,
+        )
+        self.assertEqual(
+            _effective_min_signal_strength("a", 20.0, 15.0),
+            20.0,
+        )
+
+    def test_low_volume_participation_relaxes_without_allowing_wrong_direction(self):
+        self.assertTrue(
+            _is_volume_price_confirmed("sell", -0.01, 70.0, 100.0, True)
+        )
+        self.assertFalse(
+            _is_volume_price_confirmed("sell", 0.01, 120.0, 100.0, True)
+        )
+        self.assertFalse(
+            _is_volume_price_confirmed("sell", -0.01, 70.0, 100.0, False)
+        )
+        self.assertTrue(
+            _is_volume_price_confirmed("sell", -0.01, 80.0, 100.0, False)
+        )
 
 
 if __name__ == "__main__":
