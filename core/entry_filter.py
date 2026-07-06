@@ -530,7 +530,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         pass  # is_trend 已由上方統一的 EMA 距離過濾處理，不需重複
 
     # --- [15m EMA 趨勢過濾] ---
-    if is_trend:
+    if is_trend and not is_relaxed:
         if strength >= 20.0:
             pass  # 僅極強訊號可跳過 15m EMA 價格位置過濾
         else:

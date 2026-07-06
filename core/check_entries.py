@@ -688,10 +688,12 @@ async def check_entries():
             _current_dist = abs(p - _fb_level) / max(_fb_level, 1e-8)
             _atr_fb = s.get("current_atr", 0)
             if _current_dist < (_atr_fb * 2 / max(p, 1e-8)) and side == _fb["side"]:
-                _boost_needed = 5.0
+                profile = get_entry_strictness_profile()
+                is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+                _boost_needed = 0.0 if is_relaxed else 5.0
                 _effective_min = min_sig + _boost_needed
                 if strength < _effective_min:
-                    logger.info(f"⏳ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR ({_current_dist*100:.3f}%)，強度 {strength:.1f} < {_effective_min:.1f}，暫停進場")
+                    logger.info(f"⏳ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR ({_current_dist*100:.3f}%)，強度 {strength:.1f} < {_effective_min:.1f}，暫停進場 (Relaxed={is_relaxed})")
                     continue
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
