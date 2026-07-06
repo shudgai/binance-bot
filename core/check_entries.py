@@ -712,3 +712,38 @@ async def check_entries():
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
         s["pending_confirm_low"] = 0
+
+
+def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0):
+    """Revalidate a delayed entry against the latest direction and risk state."""
+    s = ctx.STATES.get(sym)
+    if not s:
+        return False, "missing state"
+
+    current_price = float(s.get("close_price", 0.0) or 0.0)
+    reference_price = float(signal_price or current_price)
+    if current_price <= 0 or reference_price <= 0:
+        return False, "invalid price"
+
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    adverse_limit = max(reference_price * 0.0025, atr * 0.5)
+    adverse_move = reference_price - current_price if side == "buy" else current_price - reference_price
+    if adverse_move > adverse_limit:
+        return False, (
+            f"price moved adverse {adverse_move/reference_price*100:.2f}% "
+            f"(limit {adverse_limit/reference_price*100:.2f}%)"
+        )
+
+    divergence = s.get("divergence", "none")
+    if side == "buy" and divergence == "bearish":
+        return False, "bearish divergence"
+    if side == "sell" and divergence == "bullish":
+        return False, "bullish divergence"
+
+    if route != "Automatic_Reverse":
+        refreshed = compute_signal_strength(sym)
+        if not refreshed or refreshed[0] != side:
+            return False, f"latest signal no longer supports {side}"
+
+    return True, "ok"
+
