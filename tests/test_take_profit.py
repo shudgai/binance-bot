@@ -123,7 +123,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_post_entry_early_exit_triggers_on_wrong_direction(self):
+    def test_profit_first_holds_small_wrong_direction_loss(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -154,9 +154,9 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(s.get("wrong_dir_side"), "buy")
-                self.assertEqual(s.get("pending_reverse"), "sell")
+                mock_close.assert_not_called()
+                self.assertIsNone(s.get("wrong_dir_side"))
+                self.assertIsNone(s.get("pending_reverse"))
 
         asyncio.run(run_check())
 
@@ -316,7 +316,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_hard_stop_loss_uses_state_profile_pct(self):
+    def test_profit_first_ignores_sub_catastrophic_profile_stop(self):
         from unittest.mock import patch, AsyncMock
         sym = "HBARUSDT"
         init_states([sym])
@@ -347,6 +347,41 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
+                mock_close.assert_not_called()
+
+        asyncio.run(run_check())
+
+    def test_catastrophic_hard_stop_still_exits(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "HBARUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["close_price"] = 96.9
+        s["open_time"] = time.time() - 600
+        s["current_atr"] = 0.5
+        s["entry_atr"] = 0.5
+        s["hard_stop_loss_pct"] = 0.015
+        s["entry_count"] = 0
+        s["current_rsi"] = 50.0
+        s["prev_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100.0, 100.0, 96.9, 96.9, 1000]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
                 mock_close.assert_called_once()
                 self.assertEqual(mock_close.await_args.kwargs["reason"], "[Hard_SL]")
                 self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
@@ -359,10 +394,10 @@ class TakeProfitTests(unittest.TestCase):
         init_states([sym])
         s = STATES[sym]
         reset_coin_state(sym)
-        s["qty"] = -1.0
+        s["qty"] = 1.0
         s["avg_price"] = 100.0
         s["first_entry_price"] = 100.0
-        s["close_price"] = 101.0
+        s["close_price"] = 100.3
         s["open_time"] = time.time() - 1200
         s["current_atr"] = 0.5
         s["entry_atr"] = 0.5
@@ -373,12 +408,12 @@ class TakeProfitTests(unittest.TestCase):
         s["prev_macd_signal"] = 0.0
         s["macd_line"] = 0.0
         s["macd_signal"] = 0.0
-        s["ohlcv"] = [[0, 100.0, 101.2, 99.8, 101.0, 1000]]
+        s["ohlcv"] = [[0, 100.0, 100.6, 99.8, 100.3, 1000]]
         s["prev_close"] = 100.0
         s["highest_profit_pct"] = 0.0
         s["is_breakeven_locked"] = True
-        s["stop_loss"] = 100.8
-        s["lowest_sl"] = 100.8
+        s["stop_loss"] = 100.4
+        s["highest_sl"] = 100.4
         s["pnl_history"] = []
         s["vol_ma20"] = 1000.0
         s["current_vol"] = 100.0
