@@ -123,7 +123,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_confirmed_wrong_direction_exits_small_loss(self):
+    def test_confirmed_wrong_direction_small_loss_is_held_until_real_sl(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -154,10 +154,8 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Post_Entry_Early_Exit]")
-                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
-                self.assertEqual(s.get("wrong_dir_side"), "buy")
+                mock_close.assert_not_called()
+                self.assertIsNone(s.get("wrong_dir_side"))
 
         asyncio.run(run_check())
 
@@ -194,6 +192,45 @@ class TakeProfitTests(unittest.TestCase):
                 await check_exits(sym)
                 mock_close.assert_not_called()
                 self.assertIsNone(s.get("wrong_dir_side"))
+
+        asyncio.run(run_check())
+
+
+    def test_post_entry_observation_does_not_cut_before_hard_sl(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "SUIUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 0.755
+        s["first_entry_price"] = 0.755
+        s["entry_count"] = 1
+        s["last_entry_direction"] = "buy"
+        s["close_price"] = 0.7483
+        s["open_time"] = time.time() - 600
+        s["current_atr"] = 0.002
+        s["entry_atr"] = 0.002
+        s["hard_stop_loss_pct"] = 0.015
+        s["profile_type"] = "High_Beta_Momentum"
+        s["current_rsi"] = 45.0
+        s["prev_rsi"] = 47.0
+        s["prev_macd_line"] = 0.01
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = -0.01
+        s["macd_signal"] = 0.0
+        s["ema20"] = 0.756
+        s["current_vol"] = 2000.0
+        s["vol_ma20"] = 1000.0
+        s["ohlcv"] = [[0, 0.755, 0.756, 0.748, 0.7483, 2000]]
+        s["prev_close"] = 0.755
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_not_called()
 
         asyncio.run(run_check())
 

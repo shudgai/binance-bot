@@ -281,7 +281,12 @@ async def check_exits(sym):
     _intra_peak_early = 0.0
     if _ohlcv_early and avg > 0:
         _lc = _ohlcv_early[-1]
-        _intra_peak_early = (_lc[2] - avg) / avg if is_long else (avg - _lc[3]) / avg
+        if is_long:
+            s["trailing_highest"] = max(s.get("trailing_highest", avg), _lc[2])
+            _intra_peak_early = (_lc[2] - avg) / avg
+        else:
+            s["trailing_lowest"] = min(s.get("trailing_lowest", avg), _lc[3])
+            _intra_peak_early = (avg - _lc[3]) / avg
     s["highest_profit_pct"] = max(
         s.get("highest_profit_pct", 0.0),
         profit_pct,
@@ -299,10 +304,12 @@ async def check_exits(sym):
     # 「目前利潤」跟「曾經到過的最高利潤」，只要回吐超過兩成，不管過了多久、也不管
     # 有沒有到達正常停利門檻，都立刻停利了結。0.15% 的最低門檻只是為了濾掉手續費/
     # 價差造成的雜訊誤判，不是真正的獲利目標。
-    _peak_giveback_floor = 0.0015
-    if s["highest_profit_pct"] >= _peak_giveback_floor and profit_pct <= s["highest_profit_pct"] * 0.8:
+    _peak_giveback_floor = max(0.0015, min_profit_exit_pct)
+    if (s["highest_profit_pct"] >= _peak_giveback_floor and
+            profit_pct >= min_profit_exit_pct and
+            profit_pct <= s["highest_profit_pct"] * 0.8):
         cs = 'sell' if is_long else 'buy'
-        logger.info(f"⏳ [高點回吐停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回吐至 {profit_pct*100:.2f}%，不再等待，立即鎖利了結")
+        logger.info(f"⏳ [高點回吐停利] {sym} 利潤從最高 {s['highest_profit_pct']*100:.2f}% 回吐至 {profit_pct*100:.2f}%，淨利達標，立即鎖利了結")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Peak_Giveback]")
         s["highest_profit_pct"] = 0.0
         return
@@ -515,32 +522,18 @@ async def check_exits(sym):
             _macd_wrong,
             _ema_wrong,
         ))
-        _confirmed_early_exit = _price_wrong and _wrong_confirmations >= 2
 
         if _wrong_dir:
-            if not _confirmed_early_exit and profit_pct > -PROFIT_FIRST_RAPID_REVERSAL_LOSS_PCT:
-                if time.time() - s.get("profit_first_skip_log_time", 0) > 60:
-                    logger.info(
-                        f"⏳ [Profit_First_Hold] {sym} {_reason}，錯向確認 "
-                        f"{_wrong_confirmations}/5 尚不足，繼續等待"
-                    )
-                    s["profit_first_skip_log_time"] = time.time()
-                return
-            if _confirmed_early_exit:
-                _reason += f"，錯向確認 {_wrong_confirmations}/5"
-            logger.info(f"🚨 [Post_Entry_Early_Exit] {sym} {_reason}，快速撤退！")
-            cs = "sell" if is_long else "buy"
-            s["wrong_dir_time"] = time.time()
-            s["wrong_dir_side"] = s.get("last_entry_direction", cs)
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Post_Entry_Early_Exit]", is_stop_loss=True)
-            if not _stagnation and _check_reversal_allowed(sym, s):
-                rev_side = "buy" if not is_long else "sell"
-                logger.info(f"🔄 [Early_Exit_Reverse] {sym} 方向錯誤確認，順勢反手 {rev_side}")
-                if s.get("consecutive_losses", 0) >= 2:
-                    s["reversal_ban_until"] = time.time() + 14400
-                s["pending_reverse"] = rev_side
-                s["pending_reverse_time"] = time.time()
-                s["last_reverse_time"] = time.time()
+            # Profit-first: the observation window can flag a bad entry, but it must
+            # not realize ordinary losses before the real SL layers are reached.
+            # Recent XRP/SUI trades were cut around -0.9% to -1.2% by this block,
+            # even though Hard_SL had not fired yet. Keep holding in that zone.
+            if time.time() - s.get("profit_first_skip_log_time", 0) > 60:
+                logger.info(
+                    f"⏳ [Profit_First_Hold] {sym} {_reason}，觀察期錯向確認 "
+                    f"{_wrong_confirmations}/5，但未觸及 Hard/Universal SL，繼續等待"
+                )
+                s["profit_first_skip_log_time"] = time.time()
             return
     base_loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
     atr_val = s.get("entry_atr", s.get("current_atr", p * 0.01))
