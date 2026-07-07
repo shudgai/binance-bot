@@ -238,6 +238,8 @@ def is_entry_pin_safe(sym, side):
 def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = ctx.STATES[sym]
     cp = s["close_price"]
+    from core.config import ENTRY_STRICTNESS_MODE
+    is_relaxed = (ENTRY_STRICTNESS_MODE == "relaxed")
 
     # 新幣沒設定檔 → 自動套用保守預設，避免 DEFAULT_LEVERAGE=5 失控
     if sym not in COIN_PROFILE_CONFIG:
@@ -462,14 +464,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if avg_body_size > 0 and vol_ma20_q > 0:
             # 嚴格 AND 條件：實體 > 1.3x 均值 且 量能 > 1.4x 均量
             if current_body_size <= avg_body_size * 0.8 or eval_vol <= vol_ma20_q * 1.0:
-                if strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
-                    logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})或特殊路由，豁免實體/量能嚴格門檻")
+                if is_relaxed or strength >= 20.0 or route in ("Exhaustion_Entry", "Automatic_Reverse", "Extreme_Reversal"):
+                    logger.info(f"⚡ [ALLOW] [Filter:Quality] {sym} 強勢({strength:.1f})、特殊路由或寬鬆模式，豁免實體/量能嚴格門檻")
                 else:
                     logger.info(f"🛑 [WEAK_SIGNAL_SKIP] {sym} 訊號缺乏爆發力 (實體: {current_body_size/avg_body_size:.2f}x | 量能: {eval_vol/vol_ma20_q:.2f}x)，拒絕進場")
                     return False
 
     # 5. 收盤確認 (Candle Close Check)
-    if route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
+    if not is_relaxed and route not in ("Extreme_Reversal",) and len(s["ohlcv"]) >= 2:
         prev_close = s["ohlcv"][-2][4]
         open_price = s["ohlcv"][-1][1]
         close_price = s["ohlcv"][-1][4]
