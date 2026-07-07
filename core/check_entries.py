@@ -225,6 +225,8 @@ async def check_entries():
     open_count = get_open_position_count()
     remaining_slots = MAX_POSITIONS - open_count
 
+    from core.config import ENTRY_STRICTNESS_MODE
+    is_relaxed = (ENTRY_STRICTNESS_MODE == "relaxed")
     candidates = []
     for sym in ctx.ALL_SYMBOLS:
         s = ctx.STATES[sym]
@@ -322,6 +324,14 @@ async def check_entries():
 
         # --- 新增：等待收盤確認機制 ---
         if s.get("pending_side"):
+            if is_relaxed:
+                logger.info(f"⚡ [寬鬆即時確認] {sym} 寬鬆模式直接放行已還原的 pending {s['pending_side']} 訊號")
+                side = s["pending_side"]
+                strength = s.get("pending_strength", 5.0)
+                route = s.get("pending_route", "confirmed")
+                s["pending_side"] = None
+                candidates.append((sym, side, strength, route))
+                continue
             if current_candle_time <= s.get("pending_time", 0):
                 continue
 
@@ -654,6 +664,11 @@ async def check_entries():
                 strength *= 0.85
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
+        if is_relaxed:
+            logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
+            candidates.append((sym, side, strength, route))
+            continue
+
         s["pending_side"] = side
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
