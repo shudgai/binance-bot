@@ -488,7 +488,9 @@ async def main_loop(exchange):
                 _open_syms = [s for s in ctx.ALL_SYMBOLS
                               if abs(ctx.STATES[s].get("qty", 0)) > 0.000001]
                 if not _open_syms:
-                    continue
+                    # 沒有持倉了，直接退出微型快速檢查，防範死循環
+                    break
+
                 try:
                     for _sym in _open_syms:
                         try:
