@@ -701,14 +701,19 @@ async def main():
     asyncio.create_task(periodic_momentum_swap())  # 每 5 分鐘自動偵測並汰換動能不足幣種
 
     try:
+        from core.runner import MAIN_LOOP_INTERVAL_SEC
         while True:
             try:
                 await main_loop(exchange_futures)
+                # 核心防護：每一次主循環執行完畢後，強制等待 25 秒（主間隔），
+                # 避免 main_loop 提早退出導致 while True 零延遲高速空轉吃滿 CPU 的死鎖漏洞。
+                await asyncio.sleep(MAIN_LOOP_INTERVAL_SEC)
             except Exception as e:
                 logger.info(f"🚨 [致命錯誤] main_loop 崩潰: {e}")
                 traceback.print_exc()
                 logger.info("⏳ 將在 10 秒後由內部自動重啟主程序...")
                 await asyncio.sleep(10)
+
     finally:
         # 在同一個 event loop 內關閉 ccxt 連線，避免跨 loop 的資源殘留
         try:

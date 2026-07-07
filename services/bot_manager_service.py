@@ -9,7 +9,7 @@ from services.system_log_service import add_system_log
 # 模擬交易機器人狀態 (支援多幣種多進程)
 bot_status = {
     "is_running": False,
-    "strategy": "Top 5 Sniper Mode",
+    "strategy": "Top 12 Radar / 3 Slots",
     "balance_quote": 150.0,
     "active_orders": 0,
     "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
@@ -489,7 +489,7 @@ def set_bot_symbol(symbols):
     bot_status["active_symbols"] = symbols
 
     amt = bot_status.get("trade_amount", 150.0)
-    bot_status["strategy"] = f"Top 5 Sniper ({amt})"
+    bot_status["strategy"] = f"Top 12 Radar ({amt})"
     add_system_log(f"🎯 自動交易監聽目標切換為: {', '.join(symbols)}", "info")
 
     return symbols
@@ -506,7 +506,7 @@ def set_bot_amount(amount: float):
     if amount < 0 or amount > 1000:
         raise ValueError("單次交易數量必須限制在 0 至 1000 之間")
     bot_status["trade_amount"] = amount
-    bot_status["strategy"] = f"Top 5 Sniper ({amount})"
+    bot_status["strategy"] = f"Top 12 Radar ({amount})"
     add_system_log(f"⚙️ 自動交易單次數量設定為: {amount}", "info")
     
     if bot_status.get("is_running"):

@@ -339,8 +339,11 @@ async def check_exits(sym):
 
     _stagnant_sec = _cur_time - s["_last_peak_time"]
 
-    # 只要獲利達到 0.15% 且停滯超過 90 秒（1.5 分鐘），立刻獲利了結
-    if _highest_p >= 0.0015 and _stagnant_sec >= 90.0:
+    # 停滯停利可以較早啟動：若 0.15% 就是這波高點，且 90 秒沒有再創高，就先落袋。
+    # 但目前利潤也必須仍在 0.15% 以上，避免高點已回吐成小虧還被當成停利。
+    _stagnation_profit_floor = 0.0015
+    _profit_protect_floor = max(0.0035, min(min_profit_exit_pct, 0.0050))
+    if _highest_p >= _stagnation_profit_floor and profit_pct >= _stagnation_profit_floor and _stagnant_sec >= 90.0:
         cs = 'sell' if is_long else 'buy'
         logger.info(
             f"🎯 [Stagnation_Stop] {sym} 利潤達到 {_highest_p*100:.2f}% 後停滯不前已 {_stagnant_sec:.0f} 秒 (無新高)，立即平倉鎖利！"
@@ -368,8 +371,9 @@ async def check_exits(sym):
             _is_counter_trend = True
 
 
-    # 逆勢單快速鎖利參數：啟動更早 (0.10%)、拉得極緊 (僅容許回吐 5%)
-    _trail_start_pct = 0.0010 if _is_counter_trend else 0.0015
+    # 移動停利至少要有 0.35% 原始浮盈才啟動；0.10%~0.20% 的雜訊不值得保護，
+    # 否則會像 SUI 這類單子一樣，曾小幅浮盈後被追蹤線打成虧損出場。
+    _trail_start_pct = _profit_protect_floor
     _highest_p = s.get("highest_profit_pct", 0.0)
 
     if _highest_p >= _trail_start_pct:
@@ -381,8 +385,9 @@ async def check_exits(sym):
             
         _exit_trigger_p = _highest_p * (1.0 - _giveback_ratio)
 
-        # 如果當前利潤跌破了移動停利線，立刻平倉
-        if profit_pct < _exit_trigger_p:
+        # 如果當前利潤跌破了移動停利線，且仍保有可接受獲利，才平倉。
+        # 跌回負數時不把它當停利處理，避免「保護利潤」實際變成小虧停損。
+        if profit_pct >= _profit_protect_floor and profit_pct < _exit_trigger_p:
             cs = 'sell' if is_long else 'buy'
             _type_str = "逆勢快速停利" if _is_counter_trend else "移動停利"
             logger.info(
@@ -393,9 +398,7 @@ async def check_exits(sym):
             if abs(s.get("qty", 0.0)) < 0.000001:
                 s["highest_profit_pct"] = 0.0
             return
-        else:
-            # 獲利還在往上衝，或是還在安全區內 → 繼續持有，不往下跑其他出場邏輯，讓利潤繼續跑！
-            return
+
 
 
     # ── 純動能追蹤停利 (Momentum_Tracker_Exit) ──
@@ -417,11 +420,11 @@ async def check_exits(sym):
     #
     # 動能仍存活時（MACD hist 還在擴大，RSI 還在支撐，價格還在創新高）→ 繼續抱倉。
     _mt_hold_sec = time.time() - s.get("open_time", time.time())
-    _mt_ever_profitable = s.get("highest_profit_pct", 0.0) >= 0.001  # 曾到過 0.1% 以上
-    # 只有「曾有獲利但現在可能要轉弱」才適用，避免跟虧損停損邏輯搞混
-    _mt_not_deep_loss = profit_pct >= -0.002  # 不在深度虧損中（交給 Hard_SL / Universal_SL 處理）
+    _mt_ever_profitable = s.get("highest_profit_pct", 0.0) >= _profit_protect_floor
+    # Momentum_Tracker 是停利工具，不是停損工具；小浮盈或已回到虧損時不可出場。
+    _mt_profit_protectable = profit_pct >= _profit_protect_floor
 
-    if _mt_hold_sec >= 60 and _mt_ever_profitable and _mt_not_deep_loss:
+    if _mt_hold_sec >= 60 and _mt_ever_profitable and _mt_profit_protectable:
         _macd_h      = s.get("macd_hist", 0.0)
         _prev_macd_h = s.get("prev_macd_hist", 0.0)
         _rsi         = s.get("current_rsi", 50.0)

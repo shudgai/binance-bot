@@ -151,18 +151,18 @@ ATR_ELIGIBLE_SYMBOLS = [
     "DOGEUSDT", "SOLUSDT",
 ]
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
-# 選幣數從 8 縮至 5：只挑當下動能最強的精銳幣種，避免持有太多半死不活的幣。
-# 3 個倉位槽 + 2 個備用，確保每檔都有足夠資金和信號密度。
-RADAR_SELECT_COUNT = 5
+# 選幣數擴大到 12：新倉條件變嚴後，需要更多候選給 3 個倉位槽篩選。
+# 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 12 檔而同時開更多單。
+RADAR_SELECT_COUNT = 12
 HOT_MOVERS_COUNT   = 0    # 不追熱門暴衝榜，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
-# 動能篩選門檻（收緊）：
-#   ATR 2.5%~6.3%：有真實波動但不過度劇烈（舊 2.0%~6.5% 太寬，NEARUSDT/ADAUSDT 的 6.9%/6.6% 會被納入）
-#   1h 波動 0.60%~2.8%：最近一小時要有明確方向（舊 0.35% 太低，XRPUSDT 的 0.48% 也能過）
+# 動能篩選門檻（12 檔候選版）：
+#   ATR 2.5%~7.2%：保留中高動能，允許 NEAR/ADA/AAVE 這類高流動性強波動候選進池。
+#   1h 波動 0.42%~2.8%：條件變嚴後放寬候選池，但仍排除完全不動的死水幣。
 MIN_ATR_PCT_FOR_ENTRY = 2.5
-MAX_ATR_PCT_FOR_ENTRY = 6.3
-MIN_1H_VOL_PCT_FOR_ENTRY = 0.60
+MAX_ATR_PCT_FOR_ENTRY = 7.2
+MIN_1H_VOL_PCT_FOR_ENTRY = 0.42
 MAX_1H_VOL_PCT_FOR_ENTRY = 2.8
 MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY = 14.0
 
@@ -451,6 +451,7 @@ def auto_radar_switch(force_start=False):
         if all_preserved:
             add_system_log(f"🔒 [持倉保護] 保留持倉幣種: {', '.join(all_preserved)}", "warning")
         bot_status["active_symbols"] = final_symbols
+        bot_status["watch_symbols"] = final_symbols
         save_symbol_config(final_symbols)
 
         # 換倉冷卻：5 分鐘內不重複重啟，避免雷達頻繁換倉
@@ -502,7 +503,9 @@ def replace_dead_coin(symbol: str):
         new_coin = _find_atr_replacement(current_syms)
         if new_coin:
             current_syms.append(new_coin)
+            current_syms = current_syms[:RADAR_SELECT_COUNT]
             bot_status["active_symbols"] = current_syms
+            bot_status["watch_symbols"] = current_syms
             save_symbol_config(current_syms)
             add_system_log(f"✨ [自動補位] 成功選入候補幣種: {new_coin}", "success")
             start_bot(current_syms, bot_status.get("trade_amount", 10.0))

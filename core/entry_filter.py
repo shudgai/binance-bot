@@ -324,6 +324,43 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if is_in_resistance_zone:
             logger.info(f"✅ [RESISTANCE_ZONE] {sym} 賣出價在阻力區 [{resistance_zone_lower:.6f} ~ {bb_upper:.6f}]，有阻力，允許進場")
 
+
+    # --- 追價位置防呆：避免空在地板、多在天花板 ---
+    if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and bb_lower > 0 and bb_upper > bb_lower:
+        bb_pos = (cp - bb_lower) / (bb_upper - bb_lower)
+        current_rsi = s.get("current_rsi", 50.0)
+        # 空單若已在布林區間下半部，代表價格已偏低；即使訊號強，也先等反彈到中上緣再空。
+        if side == "sell" and bb_pos <= 0.35 and current_rsi < 58.0:
+            logger.info(
+                f"🛑 [CHASE_LOW_SHORT] {sym} 空單位置過低：BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}，"
+                f"避免在下緣附近追空，等待反彈後再進場"
+            )
+            return False
+        # 多單若已在布林區間上半部，代表價格已偏高；先等回測再多。
+        if side == "buy" and bb_pos >= 0.65 and current_rsi > 42.0:
+            logger.info(
+                f"🛑 [CHASE_HIGH_LONG] {sym} 多單位置過高：BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}，"
+                f"避免在上緣附近追多，等待回測後再進場"
+            )
+            return False
+
+        macd_hist = s.get("macd_hist", 0.0)
+        prev_macd_hist = s.get("prev_macd_hist", macd_hist)
+        # 低位多單不是不能做，但必須看到動能正在轉強；否則容易接到還在下跌的刀。
+        if side == "buy" and bb_pos <= 0.35 and current_rsi < 45.0 and macd_hist <= prev_macd_hist:
+            logger.info(
+                f"🛑 [FALLING_KNIFE_LONG] {sym} 低位多單但動能未轉強：BB位置 {bb_pos*100:.1f}%、"
+                f"RSI {current_rsi:.1f}、MACD hist {prev_macd_hist:.6f}->{macd_hist:.6f}，等待止跌確認"
+            )
+            return False
+        # 高位空單同理：價格偏高但動能仍在轉強時，不急著摸頂。
+        if side == "sell" and bb_pos >= 0.65 and current_rsi > 55.0 and macd_hist >= prev_macd_hist:
+            logger.info(
+                f"🛑 [RISING_KNIFE_SHORT] {sym} 高位空單但上漲動能未衰退：BB位置 {bb_pos*100:.1f}%、"
+                f"RSI {current_rsi:.1f}、MACD hist {prev_macd_hist:.6f}->{macd_hist:.6f}，等待轉弱確認"
+            )
+            return False
+
     # =========================================================================
     # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
     # BTC 4H + 1H 雙熊 → 封鎖做多；BTC 4H 多頭 → 封鎖做空

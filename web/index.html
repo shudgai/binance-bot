@@ -642,7 +642,7 @@
                                         ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
                                     </span>
                                 </td>
-                                <td :class="(() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const netPnl = t.is_close ? t.realized_pnl - fee : -(fee); return netPnl > 0 ? 'up' : (netPnl < 0 ? 'down' : '') })()">
+                                <td :class="(() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const netPnl = t.is_close ? t.realized_pnl - fee : 0; return netPnl > 0 ? 'up' : (netPnl < 0 ? 'down' : '') })()">
                                     <template v-if="t.is_close">
                                         {{ (() => { const fee = t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005); const net = t.realized_pnl - fee; return (net > 0 ? '+' : '') + net.toFixed(4) })() }}
                                         <span style="font-size:10px; opacity:0.8; margin-left:4px;">
@@ -650,7 +650,7 @@
                                         </span>
                                     </template>
                                     <template v-else>
-                                        <span style="color:#888; font-size:10px;">-{{ (t.fee !== undefined ? t.fee : (t.price * Math.abs(t.qty) * 0.0005)).toFixed(4) }} 手續費</span>
+                                        <span style="color:#888; font-size:10px;">-</span>
                                     </template>
                                 </td>
                                 <td>
@@ -1752,6 +1752,7 @@ createApp({
         // 重算出的損益會跟交易所實際持倉損益對不上。
         const getTradeUnrealizedPnl = (trade) => {
             if (trade.is_close) return 0;
+            if (trade._is_open_position && typeof trade.unrealized_pnl === "number") return trade.unrealized_pnl;
             const pos = getPositionInfo(trade.symbol);
             if (!pos || Math.abs(pos.qty) < 0.001) return 0;
             // 直接用交易所算好的權威未實現損益，不在前端重算

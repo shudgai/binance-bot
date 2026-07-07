@@ -338,14 +338,27 @@ def api_get_trades(symbol: str):
                 real_time = int(pos.get("open_time_ms") or now_ms)
                 try:
                     raw_sym = str(key).replace(":", "").replace("/", "").upper()
-                    fills = client.futures_account_trades(symbol=raw_sym, limit=20)
-                    entry_fills = [f for f in fills if float(f.get("realizedPnl", 0.0) or 0.0) == 0.0]
-                    if entry_fills:
-                        total_qty = sum(float(f["qty"]) for f in entry_fills)
-                        total_notional = sum(float(f["qty"]) * float(f["price"]) for f in entry_fills)
-                        real_price = total_notional / total_qty if total_qty > 0 else real_price
-                        real_fee = sum(float(f.get("commission", 0.0) or 0.0) for f in entry_fills)
-                        real_time = max(f.get("time", real_time) for f in entry_fills)
+                    fills = client.futures_account_trades(symbol=raw_sym, limit=50)
+                    entry_side = "BUY" if qty > 0 else "SELL"
+                    remaining_qty = abs(qty)
+                    matched_times = []
+                    for f in sorted(fills, key=lambda x: int(x.get("time", 0) or 0), reverse=True):
+                        if remaining_qty <= 0:
+                            break
+                        if str(f.get("side", "")).upper() != entry_side:
+                            continue
+                        if float(f.get("realizedPnl", 0.0) or 0.0) != 0.0:
+                            continue
+                        fill_qty = float(f.get("qty", 0.0) or 0.0)
+                        if fill_qty <= 0:
+                            continue
+                        used_qty = min(fill_qty, remaining_qty)
+                        ratio = used_qty / fill_qty
+                        real_fee += float(f.get("commission", 0.0) or 0.0) * ratio
+                        matched_times.append(int(f.get("time", real_time) or real_time))
+                        remaining_qty -= used_qty
+                    if matched_times:
+                        real_time = min(matched_times)
                 except Exception:
                     pass
                 trades.append({
@@ -358,6 +371,8 @@ def api_get_trades(symbol: str):
                     "isBuyer": qty > 0,
                     "is_close": False,
                     "realized_pnl": 0.0,
+                    "unrealized_pnl": float(pos.get("pnl", pos.get("unRealizedProfit", 0.0)) or 0.0),
+                    "unrealized_pnl_percent": float(pos.get("pnl_percent", 0.0) or 0.0),
                     "fee": real_fee,
                     "_is_open_position": True,
                 })
@@ -401,55 +416,80 @@ def api_market_sell(symbol: str):
             return {"status": "success", "detail": msg}
         else:
             base_asset, _ = parse_symbol(symbol_upper)
-            
-            # 手動平倉前，先獲取當前持倉詳情以用於計算已實現盈虧明細
-            from services.binance_service import client, get_total_realized_pnl_usdt, _total_pnl_cache
+
+            # 手動平倉不能用下單回傳的 average/price 估算，市價單常常剛送出時還沒有
+            # 完整成交資訊。平倉後改查交易所成交明細，用 realizedPnl/commission 寫入
+            # trade_history，避免畫面紀錄消失、總已實現損益漏算。
+            from services.binance_service import client
             from core.orders import record_trade_result
+            import services.binance_service as bs
             import time
-            
+
             positions = client.futures_position_information(symbol=symbol_upper)
             entry_price = 0.0
             qty = 0.0
+            open_time_ms = 0
             if positions:
                 qty = float(positions[0].get("positionAmt", 0.0) or 0.0)
                 entry_price = float(positions[0].get("entryPrice", 0.0) or 0.0)
-                
-            # 執行交易所平倉
+                open_time_ms = int(positions[0].get("updateTime", 0) or 0)
+
+            before_ms = int(time.time() * 1000) - 3000
             order = market_sell(symbol_upper, base_asset)
-            
-            # 異步/立即清除已實現盈虧的快取，讓下次狀態輪詢立刻看到最新損益金額
-            import services.binance_service as bs
+
             bs._total_pnl_cache = (0, None)
-            
-            # 如果成功抓到舊有持倉，在此刻手動補登明細
+            bs._trades_cache.clear()
+
             if abs(qty) > 0.000001 and entry_price > 0:
-                is_long = qty > 0
-                # 抓取成交單價格（如果拿到）
-                avg_fill = float(order.get("average") or order.get("price") or 0.0)
-                if avg_fill <= 0:
-                    # 補救：如果下單回傳中沒有，就讀取當前標記價
-                    avg_fill = float(positions[0].get("markPrice", entry_price) if positions else entry_price)
-                
-                profit_pct = (avg_fill - entry_price) / entry_price if is_long else (entry_price - avg_fill) / entry_price
-                realized_pnl = float(order.get("cumQty", 0.0)) * profit_pct * entry_price # 估計值
-                
-                record_trade_result(
-                    symbol=symbol_upper,
-                    entry_reason="MANUAL",
-                    exit_reason="[手動平倉] [落袋為安]",
-                    profit_pct=profit_pct,
-                    current_atr=0.0,
-                    max_profit_reached=max(0.0, profit_pct),
-                    expected_entry=entry_price,
-                    expected_exit=avg_fill,
-                    actual_entry=entry_price,
-                    actual_exit=avg_fill,
-                    fees=0.0,
-                    qty=abs(qty),
-                    exchange_close_id=order.get("orderId"),
-                    realized_pnl_usdt=realized_pnl
-                )
-                
+                close_side = "SELL" if qty > 0 else "BUY"
+                order_id = order.get("orderId") or order.get("id")
+                fills = []
+                for _ in range(6):
+                    raw_fills = client.futures_account_trades(symbol=symbol_upper, limit=50)
+                    if order_id is not None:
+                        fills = [f for f in raw_fills if str(f.get("orderId")) == str(order_id)]
+                    if not fills:
+                        fills = [
+                            f for f in raw_fills
+                            if str(f.get("side", "")).upper() == close_side
+                            and int(f.get("time", 0) or 0) >= before_ms
+                            and abs(float(f.get("realizedPnl", 0.0) or 0.0)) > 0.0
+                        ]
+                    if fills:
+                        break
+                    time.sleep(0.5)
+
+                if fills:
+                    close_qty = sum(float(f.get("qty", 0.0) or 0.0) for f in fills)
+                    notional = sum(float(f.get("qty", 0.0) or 0.0) * float(f.get("price", 0.0) or 0.0) for f in fills)
+                    exit_price = notional / close_qty if close_qty > 0 else entry_price
+                    realized_pnl = sum(float(f.get("realizedPnl", 0.0) or 0.0) for f in fills)
+                    fees = sum(float(f.get("commission", 0.0) or 0.0) for f in fills)
+                    close_time = max(int(f.get("time", 0) or 0) for f in fills)
+                    close_order_id = fills[-1].get("orderId") or order_id or close_time
+                    position_value = entry_price * abs(qty)
+                    profit_pct = realized_pnl / position_value if position_value > 0 else 0.0
+                    record_trade_result(
+                        symbol=symbol_upper,
+                        entry_reason="MANUAL",
+                        exit_reason="[手動平倉] [落袋為安]",
+                        profit_pct=profit_pct,
+                        current_atr=0.0,
+                        max_profit_reached=max(0.0, profit_pct),
+                        expected_entry=entry_price,
+                        expected_exit=exit_price,
+                        actual_entry=entry_price,
+                        actual_exit=exit_price,
+                        fees=fees,
+                        qty=abs(qty),
+                        exchange_close_id=f"{symbol_upper}:{close_order_id}",
+                        realized_pnl_usdt=realized_pnl,
+                        timestamp_ms=close_time,
+                        entry_timestamp_ms=open_time_ms or None,
+                    )
+                else:
+                    add_system_log(f"⚠️ [手動平倉同步] {symbol_upper} 找不到交易所平倉成交，已平倉但未寫入本機歷史", "warning")
+
             return {"status": "success", "order": order}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"平倉失敗: {str(e)}")
