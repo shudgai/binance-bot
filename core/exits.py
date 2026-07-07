@@ -513,11 +513,7 @@ async def check_exits(sym):
             if abs(s.get("qty", 0.0)) < 0.000001:
                 s["highest_profit_pct"] = 0.0
             return
-        else:
-            # 動能仍活著 → 直接 return，不跑後面任何傳統停利/停損機制，
-            # 確保「動能活著就繼續抱」，讓利潤有機會跑到更高點。
-            # 只有 Hard_SL / Universal_SL（在本函數更前面已執行）才能強制平倉。
-            return
+
 
 
     # ── 高點回吐停利 (Peak_Giveback) —— 兜底防線 ──
@@ -1234,7 +1230,7 @@ async def check_exits(sym):
     atr_pct = atr_val / avg if avg > 0 else 0.005
     _lev = s.get("leverage", 4)
     _hp = s.get("highest_profit_pct", 0.0)
-    ts_activation_pct = max(0.0015, 0.010 / max(_lev, 1), atr_pct * 0.25)
+    ts_activation_pct = 0.0005
     # 停利停在高點：縮短回檔百分比門檻，更緊密地追蹤最高點/最低點
     if _hp >= 0.05:
         ts_retracement_pct = atr_pct * 0.55   # > 5%：更緊地守高點
@@ -1253,7 +1249,7 @@ async def check_exits(sym):
             trail_sl_price = peak_price * (1 - ts_retracement_pct)
             if trail_sl_price > s.get("stop_loss", 0):
                 s["stop_loss"] = trail_sl_price
-            if p <= trail_sl_price and profit_pct >= 0.0015:
+            if p <= trail_sl_price and profit_pct >= 0.0005:
                 cs = 'sell'
                 lock_pnl = (peak_price - avg) / avg * 100
                 # 紙上交易以追蹤停利線結算；實盤會再由 close_position 用真實成交均價覆寫。
@@ -1269,7 +1265,7 @@ async def check_exits(sym):
             trail_sl_price = trough_price * (1 + ts_retracement_pct)
             if s.get("stop_loss", float('inf')) > trail_sl_price:
                 s["stop_loss"] = trail_sl_price
-            if p >= trail_sl_price and profit_pct >= 0.0015:
+            if p >= trail_sl_price and profit_pct >= 0.0005:
                 cs = 'buy'
                 lock_pnl = (avg - trough_price) / avg * 100
                 # 紙上交易以追蹤停利線結算；實盤會再由 close_position 用真實成交均價覆寫。
