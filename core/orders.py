@@ -232,6 +232,10 @@ def _entry_direction_guard(sym, side, reference_price=None):
 
 
 def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_dca=False):
+    from core.config import ENTRY_STRICTNESS_MODE
+    if ENTRY_STRICTNESS_MODE == "relaxed":
+        return True, "relaxed_bypass"
+
     if order_price is None or market_price is None or market_price <= 0:
         return True, "market_or_no_ref"
     s = ctx.STATES.get(sym, {})
@@ -257,6 +261,10 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
 def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=True,
                               is_rescue_dca=False):
     """Prevent a fresh position from chasing materially beyond its signal price."""
+    from core.config import ENTRY_STRICTNESS_MODE
+    if ENTRY_STRICTNESS_MODE == "relaxed":
+        return True, "relaxed_bypass"
+
     if not is_first_entry or is_rescue_dca:
         return True, "not_first_entry"
     signal_price = float(signal_price or 0.0)
