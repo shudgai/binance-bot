@@ -273,7 +273,7 @@ class MacroContextFilter:
         # --- 第二層：個幣特殊優勢判斷 (Target Layer) ---
         # 判斷是否為「狙擊手機會」：大盤極弱但個幣出現強烈底背離/頂背離且RSI符合極限
         is_sniper_opportunity = False
-        if side == 'buy' and has_divergence and coin_rsi < 40:
+        if side == 'buy' and has_divergence and coin_rsi < 45:
             is_sniper_opportunity = True
         elif side == 'sell' and has_divergence and coin_rsi > 70:
             is_sniper_opportunity = True
@@ -307,6 +307,8 @@ class MacroContextFilter:
 def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = ctx.STATES[sym]
     cp = s["close_price"]
+    profile = get_entry_strictness_profile()
+    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
 
     # 新幣沒設定檔 → 自動套用保守預設，避免 DEFAULT_LEVERAGE=5 失控
     if sym not in COIN_PROFILE_CONFIG:
@@ -445,8 +447,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (三段式條件樹過濾)
     # =========================================================================
-    profile = get_entry_strictness_profile()
-    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
+
 
     if USE_BTC_MACRO_FILTER and not is_relaxed:
         coin_rsi = s.get("current_rsi", 50.0)
@@ -641,8 +642,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
     # --- [15m EMA 趨勢過濾] ---
     if is_trend:
-        if strength >= 10.0:
-            pass  # 強勢 Override，跳過 15m EMA 過濾
+        if is_relaxed or strength >= 10.0:
+            pass  # 強勢 Override 或 relaxed 模式，跳過 15m EMA 過濾
         else:
             ema20_15m = s.get("ema20_15m", 0.0)
             if ema20_15m > 0:

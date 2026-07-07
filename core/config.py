@@ -219,7 +219,7 @@ ENTRY_STRICTNESS_PROFILES = {
     "relaxed": {
         "volume_ratio": 0.35,
         "pin_threshold": 3.2,
-        "min_body_ratio": 0.15,
+        "min_body_ratio": 0.10,
         "min_signal_strength": 8.0,
         "rsi_long_floor": 15.0,
         "rsi_short_floor": 15.0,
