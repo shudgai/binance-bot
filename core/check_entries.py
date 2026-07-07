@@ -7,7 +7,7 @@ import numpy as np
 
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE, MAX_POSITIONS,
-    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, PAPER_TRADING, USE_TESTNET, get_entry_strictness_profile)
+    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, get_entry_strictness_profile)
 from core.indicators import (_get_atr, _macd_vals, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -47,8 +47,6 @@ def save_pending_signals():
 
 def load_pending_signals():
     """啟動時還原上次存檔、還在等待確認中的訊號。超過 _PENDING_MAX_AGE_SEC 視為過期不還原。"""
-    if (PAPER_TRADING or USE_TESTNET) and get_entry_strictness_profile().get("min_signal_strength", 10.0) <= 10.0:
-        return
     try:
         if not os.path.exists(_PENDING_CACHE_PATH):
             return
@@ -73,26 +71,6 @@ def load_pending_signals():
         logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
 
 
-def should_wait_for_entry_confirmation(paper_trading, is_relaxed, strength):
-    return not (paper_trading and is_relaxed and strength >= 12.0)
-
-
-def is_entry_price_direction_aligned(side, price_change):
-    if side == "buy":
-        return price_change >= 0
-    if side == "sell":
-        return price_change <= 0
-    return False
-
-
-def is_divergence_blocking(side, divergence_type, strength, is_relaxed):
-    conflicts = (
-        (side == "buy" and divergence_type == "bearish") or
-        (side == "sell" and divergence_type == "bullish")
-    )
-    return conflicts and not (is_relaxed and strength >= 20.0)
-
-
 def is_pending_confirmation_valid(side, candle):
     """Return whether the prior signal candle is still valid after the next bar closes."""
     if not candle or len(candle) < 5:
@@ -113,24 +91,6 @@ def is_pending_confirmation_valid(side, candle):
         lower_shadow = close_price - low_price
         return body > 0 and lower_shadow < body * 2.0
 
-    return False
-
-
-def is_second_bar_adverse(side, current_price, signal_close, atr=0.0):
-    """Reject pending entries when the confirmation bar already moved against us."""
-    current_price = float(current_price or 0.0)
-    signal_close = float(signal_close or 0.0)
-    atr = float(atr or 0.0)
-    if current_price <= 0 or signal_close <= 0:
-        return False
-
-    # Use a tight floor plus ATR so normal noise can breathe, while a real
-    # second-bar failure is cancelled before order dispatch.
-    adverse_limit = max(signal_close * 0.004, atr * 0.35)
-    if side == "buy":
-        return (signal_close - current_price) > adverse_limit
-    if side == "sell":
-        return (current_price - signal_close) > adverse_limit
     return False
 
 
@@ -273,12 +233,6 @@ async def check_entries():
         if sym in disabled_syms:
             continue
 
-        # 如果該幣種已有進場掛單在等待成交，跳過，防止重複開倉
-        has_pending_order = any(info.get("symbol") == sym for info in ctx.PENDING_LIMIT_ORDERS.values())
-        if has_pending_order:
-            logger.info(f"⏳ [掛單中] {sym} 尚有未完全成交的進場掛單，暫停發起新訂單。")
-            continue
-
         # --- 自動反手快速通道 ---
         pending_rev = s.get("pending_reverse")
         if pending_rev:
@@ -295,7 +249,7 @@ async def check_entries():
 
                         async def _rev_task(sym, pending_rev, price):
                             try:
-                                await execute_order(sym, pending_rev, price, entry_route="Automatic_Reverse")
+                                await execute_order(sym, pending_rev, price)
                             finally:
                                 ctx.STATES[sym]["is_ordering"] = False
                                 await load_open_positions()
@@ -345,50 +299,18 @@ async def check_entries():
         # --- [新增] 自動反手訊號緩衝與 K 線收盤確認機制 ---
         if s.get("pending_reverse_trigger"):
             pending_rev_data = s["pending_reverse_trigger"]
-            pending_side = pending_rev_data.get("side")
-            pending_strength = float(pending_rev_data.get("strength", 0.0) or 0.0)
-            avg_price = float(s.get("avg_price", 0.0) or 0.0)
-            current_price = float(s.get("close_price", 0.0) or 0.0)
-            if (
-                has_position and current_direction and pending_side
-                and pending_side != current_direction
-                and avg_price > 0 and current_price > 0
-            ):
-                profit_pct = (
-                    (current_price - avg_price) / avg_price
-                    if current_direction == "buy"
-                    else (avg_price - current_price) / avg_price
-                )
-                if pending_strength >= 22.0 and profit_pct <= -0.006:
-                    close_side = "sell" if current_direction == "buy" else "buy"
-                    logger.info(
-                        f"🛡️ [{sym}] [Opposite_Strong_Close] 強反向訊號 "
-                        f"{pending_side}({pending_strength:.1f}) 且舊倉虧損 "
-                        f"{profit_pct*100:.2f}%，先平倉避險，反手仍等待 K 線確認"
-                    )
-                    await close_position(
-                        sym, close_side, abs(s["qty"]), current_price, avg_price,
-                        reason="[Opposite_Strong_Close]", is_stop_loss=True,
-                    )
-                    continue
-
             if current_candle_time > pending_rev_data.get("time", 0):
                 logger.info(f"⏳ [{sym}] 進入新 K 線，驗證自動反手趨勢持續性...")
                 if await is_reversal_still_valid(sym, pending_rev_data["side"]):
                     src = pending_rev_data.get("source", "Signal")
                     logger.info(f"⚡ [{sym}] [Reversal_Confirmed] {src} 反手確認！平倉並反手建倉 ({pending_rev_data['side']})，強度 {pending_rev_data.get('strength',0):.1f}")
                     # 1. 平倉舊倉位
-                    close_side = "sell" if current_direction == "buy" else "buy"
-                    await close_position(sym, close_side, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
+                    await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
                     await asyncio.sleep(1)
                     reset_coin_state(sym)
                     # 2. 反手建倉，並記錄反手時間（冷卻 30 分鐘防連續反手）
                     s["last_reverse_time"] = time.time()
-                    await execute_order(
-                        sym, pending_rev_data["side"], s["close_price"],
-                        signal_strength=pending_rev_data.get("strength", 0.0),
-                        entry_route="Automatic_Reverse",
-                    )
+                    await execute_order(sym, pending_rev_data["side"], s["close_price"])
                 else:
                     logger.info(f"❌ [{sym}] [Reversal_Cancelled] 觀察期間趨勢失效，取消反手，保留原倉位。")
 
@@ -419,12 +341,16 @@ async def check_entries():
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
 
-                    if is_second_bar_adverse(s["pending_side"], current_price, prev_close, s.get("current_atr", 0.0)):
-                        logger.info(
-                            f"[SecondBar_Adverse] {sym} cancel {s['pending_side']}: "
-                            f"current={current_price:.6f}, signal_close={prev_close:.6f}"
-                        )
-                        is_valid = False
+                    if s["pending_side"] == "buy":
+                        if current_price < prev_close * 0.985:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 低於訊號K收盤 {prev_close:.4f} 的 98.5%，但已放寬為小幅回抽，保留多單。")
+                        elif current_price < prev_close * 0.990:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微回抽，保留多單。")
+                    elif s["pending_side"] == "sell":
+                        if current_price > prev_close * 1.015:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 高於訊號K收盤 {prev_close:.4f} 的 101.5%，但已放寬為小幅反彈，保留空單。")
+                        elif current_price > prev_close * 1.010:
+                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微反彈，保留空單。")
 
                     # [新增] 量能續航檢查：放寬為跟進量 >= 訊號量的 10%，避免小量回抽被誤判
                     if is_valid:
@@ -544,8 +470,11 @@ async def check_entries():
             h24_quote_volume_est = vol_ma20 * cp * 288
             liquidity_check = h24_quote_volume_est > 1000000
 
-            price_direction_ok = is_entry_price_direction_aligned(side, price_change)
-            volume_expanding = current_vol > prev_vol
+            volume_price_sync = False
+            if side == "buy" and cp <= s["ohlcv"][-2][4] and price_change > 0 and current_vol > prev_vol:
+                volume_price_sync = True
+            elif side == "sell" and price_change < 0 and current_vol > prev_vol:
+                volume_price_sync = True
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
@@ -557,15 +486,8 @@ async def check_entries():
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
-                is_position_reversal = has_position and side != current_direction
-                if not price_direction_ok and not is_position_reversal and profile.get("min_signal_strength", 10.0) > 10.0:
-                    logger.info(f"🛑 [DIRECTION_MISMATCH] {sym} 被攔截：價格方向與 {side} 訊號相反 (價格變動: {price_change:.6f})")
-                    set_entry_diagnosis(f"{sym}: 價格方向與訊號相反，放棄進場")
-                    continue
-                if not price_direction_ok and is_position_reversal:
-                    logger.info(f"⏳ [REVERSAL_DIRECTION_PENDING] {sym} 保留 {side} 反向訊號，交由下一根 K 線確認")
-                if not volume_expanding:
-                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 成交量未增加，但方向一致，維持進場資格")
+                if not volume_price_sync:
+                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry" and strength <= 15.0:
@@ -656,23 +578,19 @@ async def check_entries():
             else:
                 strength *= 0.9
         else:
-            _is_relaxed_divergence = profile.get("min_signal_strength", 10.0) <= 10.0
-            if is_divergence_blocking(side, divergence_type, strength, _is_relaxed_divergence):
-                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 背離方向與 {side} 衝突 → 訊號取消")
+            if divergence_type == "bearish" and side == "buy":
+                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 頂背離阻擋做多 → 訊號取消")
                 continue
-            if ((side == "buy" and divergence_type == "bearish") or
-                    (side == "sell" and divergence_type == "bullish")):
-                logger.info(f"⚠️ [Divergence_Override] {sym} relaxed 強訊號 {strength:.1f}，背離僅警告不攔截")
+            if divergence_type == "bullish" and side == "sell":
+                logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 底背離阻擋做空 → 訊號取消")
+                continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
-            _is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
-            # 原本寬鬆模式下門檻只要 17 分就能跳過 1H 趨勢確認，實際發生過 ADA/DOT/AVAX
-            # 強度都在 26~32（遠超過 17）直接跳過趨勢檢查進場，結果進場後價格馬上反向。
-            # 使用者要求拉高門檻，統一成跟非寬鬆模式一樣的 22，減少繞過趨勢確認的情況。
-            _mtf_override_threshold = 22.0
-            if strength >= _mtf_override_threshold or route == "Automatic_Reverse":
-                logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高(>={_mtf_override_threshold})或來自反手，跳過 MTF 趨勢過濾直接允許進場")
+            # 門檻拉高到 18.0（原本 15.0 太容易在邊緣強度就跳過趨勢過濾），
+            # 跟 core/entry_filter.py 的 _mtf_override_threshold 對齊。
+            if strength > 18.0 or route == "Automatic_Reverse":
+                logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
                 if ema50_1h > 0:
@@ -735,13 +653,6 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
-        _is_relaxed_confirmation = profile.get("min_signal_strength", 10.0) <= 10.0
-        if not should_wait_for_entry_confirmation(PAPER_TRADING or USE_TESTNET, _is_relaxed_confirmation, strength):
-            s["entry_reason"] = route
-            candidates.append((sym, side, strength, route))
-            logger.info(f"⚡ [PAPER_DIRECT_ENTRY] {sym} relaxed 強訊號直接加入候選 | side={side} route={route} strength={strength:.2f}")
-            continue
-
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         s["pending_side"] = side
         s["pending_time"] = current_candle_time
@@ -761,22 +672,7 @@ async def check_entries():
     candidates.sort(key=lambda x: -x[2])
     logger.info(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
-    sizing_slots = remaining_slots
-    sizing_symbols = set()
-    total_weight = 0.0
-    for cand_sym, _, cand_strength, _ in candidates:
-        cand_state = ctx.STATES[cand_sym]
-        cand_has_pos = abs(cand_state["qty"]) > 0.000001
-        if cand_has_pos:
-            continue
-        if sizing_slots <= 0:
-            continue
-        sizing_symbols.add(cand_sym)
-        total_weight += cand_strength
-        sizing_slots -= 1
-
-    if total_weight <= 0:
-        total_weight = sum(strength for _, _, strength, _ in candidates)
+    total_weight = sum(strength for _, _, strength, _ in candidates)
 
     for sym, side, strength, route in candidates:
         s = ctx.STATES[sym]
@@ -816,38 +712,3 @@ async def check_entries():
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
         s["pending_confirm_low"] = 0
-
-
-def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0):
-    """Revalidate a delayed entry against the latest direction and risk state."""
-    s = ctx.STATES.get(sym)
-    if not s:
-        return False, "missing state"
-
-    current_price = float(s.get("close_price", 0.0) or 0.0)
-    reference_price = float(signal_price or current_price)
-    if current_price <= 0 or reference_price <= 0:
-        return False, "invalid price"
-
-    atr = float(s.get("current_atr", 0.0) or 0.0)
-    adverse_limit = max(reference_price * 0.0025, atr * 0.5)
-    adverse_move = reference_price - current_price if side == "buy" else current_price - reference_price
-    if adverse_move > adverse_limit:
-        return False, (
-            f"price moved adverse {adverse_move/reference_price*100:.2f}% "
-            f"(limit {adverse_limit/reference_price*100:.2f}%)"
-        )
-
-    divergence = s.get("divergence", "none")
-    if side == "buy" and divergence == "bearish":
-        return False, "bearish divergence"
-    if side == "sell" and divergence == "bullish":
-        return False, "bullish divergence"
-
-    if route != "Automatic_Reverse":
-        refreshed = compute_signal_strength(sym)
-        if not refreshed or refreshed[0] != side:
-            return False, f"latest signal no longer supports {side}"
-
-    return True, "ok"
-
