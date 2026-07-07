@@ -485,7 +485,10 @@ def _is_symbol_locked(sym):
     s = ctx.STATES.get(sym)
     if not s:
         return False
-    return abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s["status"] in ("COOLDOWN", "BANNED") or s.get("pending_side") is not None
+    has_pending_order = any(info.get("symbol") == sym for info in ctx.PENDING_LIMIT_ORDERS.values())
+    return (abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or
+            s["status"] in ("COOLDOWN", "BANNED") or s.get("pending_side") is not None or
+            has_pending_order)
 
 
 def _build_symbol_state(sym):

@@ -234,6 +234,75 @@ def is_entry_pin_safe(sym, side):
         return False  # 下影線過長，支撐強 → 拒絕空單
     return True
 
+class MacroContextFilter:
+    """
+    三段式條件樹過濾引擎
+    負責根據大盤環境與個幣特殊訊號，決定是否允許進場。
+    """
+    @staticmethod
+    def get_btc_trend():
+        """
+        獲取 BTC 趨勢：
+        - 'bearish': 4H 和 1H 皆為 BEAR
+        - 'bullish': 4H 為 BULL
+        - 'neutral': 其他狀況
+        """
+        btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
+        btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
+        if btc_4h == "BEAR" and btc_1h == "BEAR":
+            return "bearish"
+        elif btc_4h == "BULL":
+            return "bullish"
+        return "neutral"
+
+    @classmethod
+    def check_permission(cls, sym, side, coin_rsi, has_divergence):
+        """
+        核心三段式決策樹
+        :param sym: 幣種符號
+        :param side: 'buy' 或 'sell'
+        :param coin_rsi: 個幣當前 RSI
+        :param has_divergence: 布林值，代表是否出現強烈底背離/頂背離
+        :return: (bool, str) -> (是否許可進場, 理由標籤)
+        """
+        btc_trend = cls.get_btc_trend()
+        
+        # --- 第一層：市場環境判斷 (Market Layer) ---
+        # (已由 btc_trend 決定)
+
+        # --- 第二層：個幣特殊優勢判斷 (Target Layer) ---
+        # 判斷是否為「狙擊手機會」：大盤極弱但個幣出現強烈底背離/頂背離且RSI符合極限
+        is_sniper_opportunity = False
+        if side == 'buy' and has_divergence and coin_rsi < 40:
+            is_sniper_opportunity = True
+        elif side == 'sell' and has_divergence and coin_rsi > 70:
+            is_sniper_opportunity = True
+
+        # --- 第三層：條件樹決策邏輯 (Execution Layer) ---
+        if side == 'buy':
+            if btc_trend == 'bullish':
+                return True, "Macro_Pass_Bullish"
+            elif btc_trend == 'neutral':
+                return True, "Macro_Pass_Neutral"
+            elif btc_trend == 'bearish':
+                if is_sniper_opportunity:
+                    return True, "Macro_Exception_Bottom_Divergence"
+                else:
+                    return False, "Macro_Block_Strong_Bear"
+
+        elif side == 'sell':
+            if btc_trend == 'bearish':
+                return True, "Macro_Pass_Bearish"
+            elif btc_trend == 'neutral':
+                return True, "Macro_Pass_Neutral"
+            elif btc_trend == 'bullish':
+                if is_sniper_opportunity:
+                    return True, "Macro_Exception_Top_Rebound"
+                else:
+                    return False, "Macro_Block_Strong_Bull"
+
+        return False, "Macro_Block_Default"
+
 
 def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = ctx.STATES[sym]
@@ -325,86 +394,76 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             logger.info(f"✅ [RESISTANCE_ZONE] {sym} 賣出價在阻力區 [{resistance_zone_lower:.6f} ~ {bb_upper:.6f}]，有阻力，允許進場")
 
 
-    # --- 追價位置防呆：避免空在地板、多在天花板 ---
+    # --- 追價位置防呆：弱訊號嚴格擋，強訊號需確認後放行 ---
     if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and bb_lower > 0 and bb_upper > bb_lower:
         bb_pos = (cp - bb_lower) / (bb_upper - bb_lower)
         current_rsi = s.get("current_rsi", 50.0)
-        # 空單若已在布林區間下半部，代表價格已偏低；即使訊號強，也先等反彈到中上緣再空。
-        if side == "sell" and bb_pos <= 0.35 and current_rsi < 58.0:
-            logger.info(
-                f"🛑 [CHASE_LOW_SHORT] {sym} 空單位置過低：BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}，"
-                f"避免在下緣附近追空，等待反彈後再進場"
-            )
-            return False
-        # 多單若已在布林區間上半部，代表價格已偏高；先等回測再多。
-        if side == "buy" and bb_pos >= 0.65 and current_rsi > 42.0:
-            logger.info(
-                f"🛑 [CHASE_HIGH_LONG] {sym} 多單位置過高：BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}，"
-                f"避免在上緣附近追多，等待回測後再進場"
-            )
-            return False
-
         macd_hist = s.get("macd_hist", 0.0)
         prev_macd_hist = s.get("prev_macd_hist", macd_hist)
-        # 低位多單不是不能做，但必須看到動能正在轉強；否則容易接到還在下跌的刀。
-        if side == "buy" and bb_pos <= 0.35 and current_rsi < 45.0 and macd_hist <= prev_macd_hist:
-            logger.info(
-                f"🛑 [FALLING_KNIFE_LONG] {sym} 低位多單但動能未轉強：BB位置 {bb_pos*100:.1f}%、"
-                f"RSI {current_rsi:.1f}、MACD hist {prev_macd_hist:.6f}->{macd_hist:.6f}，等待止跌確認"
-            )
-            return False
-        # 高位空單同理：價格偏高但動能仍在轉強時，不急著摸頂。
-        if side == "sell" and bb_pos >= 0.65 and current_rsi > 55.0 and macd_hist >= prev_macd_hist:
-            logger.info(
-                f"🛑 [RISING_KNIFE_SHORT] {sym} 高位空單但上漲動能未衰退：BB位置 {bb_pos*100:.1f}%、"
-                f"RSI {current_rsi:.1f}、MACD hist {prev_macd_hist:.6f}->{macd_hist:.6f}，等待轉弱確認"
-            )
+        candles = s.get("ohlcv", [])
+        last_open = float(candles[-1][1]) if candles else cp
+        price_dir_ok = (side == "buy" and cp >= last_open) or (side == "sell" and cp <= last_open)
+        macd_turning_ok = (side == "buy" and macd_hist > prev_macd_hist) or (side == "sell" and macd_hist < prev_macd_hist)
+        strong_signal = strength >= 28.0
+        ultra_signal = strength >= 32.0
+
+        def _allow_guard(tag, detail):
+            if ultra_signal and price_dir_ok:
+                logger.info(f"⚡ [{tag}_ALLOW] {sym} 超強訊號 {strength:.1f} 且價格方向確認，放行試探倉 | {detail}")
+                return True
+            if strong_signal and (price_dir_ok or macd_turning_ok):
+                logger.info(f"⚡ [{tag}_ALLOW] {sym} 強訊號 {strength:.1f} 且有方向/動能確認，放行 | {detail}")
+                return True
             return False
 
+        # 空單若已在布林區間下半部，代表價格已偏低；弱訊號先等反彈到中上緣再空。
+        if side == "sell" and bb_pos <= 0.35 and current_rsi < 58.0:
+            detail = f"BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}、MACD {prev_macd_hist:.6f}->{macd_hist:.6f}"
+            if not _allow_guard("CHASE_LOW_SHORT", detail):
+                logger.info(f"🛑 [CHASE_LOW_SHORT] {sym} 空單位置過低：{detail}，等待反彈或動能確認")
+                return False
+        # 多單若已在布林區間上半部，代表價格已偏高；弱訊號先等回測再多。
+        if side == "buy" and bb_pos >= 0.65 and current_rsi > 42.0:
+            detail = f"BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}、MACD {prev_macd_hist:.6f}->{macd_hist:.6f}"
+            if not _allow_guard("CHASE_HIGH_LONG", detail):
+                logger.info(f"🛑 [CHASE_HIGH_LONG] {sym} 多單位置過高：{detail}，等待回測或動能確認")
+                return False
+
+        # 低位多單不是不能做，但弱訊號必須看到動能正在轉強；否則容易接到還在下跌的刀。
+        if side == "buy" and bb_pos <= 0.35 and current_rsi < 45.0 and macd_hist <= prev_macd_hist:
+            detail = f"BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}、MACD {prev_macd_hist:.6f}->{macd_hist:.6f}"
+            if not _allow_guard("FALLING_KNIFE_LONG", detail):
+                logger.info(f"🛑 [FALLING_KNIFE_LONG] {sym} 低位多單但動能未轉強：{detail}，等待止跌確認")
+                return False
+        # 高位空單同理：價格偏高但動能仍在轉強時，弱訊號不急著摸頂。
+        if side == "sell" and bb_pos >= 0.65 and current_rsi > 55.0 and macd_hist >= prev_macd_hist:
+            detail = f"BB位置 {bb_pos*100:.1f}%、RSI {current_rsi:.1f}、MACD {prev_macd_hist:.6f}->{macd_hist:.6f}"
+            if not _allow_guard("RISING_KNIFE_SHORT", detail):
+                logger.info(f"🛑 [RISING_KNIFE_SHORT] {sym} 高位空單但上漲動能未衰退：{detail}，等待轉弱確認")
+                return False
+
     # =========================================================================
-    # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
-    # BTC 4H + 1H 雙熊 → 封鎖做多；BTC 4H 多頭 → 封鎖做空
+    # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (三段式條件樹過濾)
     # =========================================================================
     profile = get_entry_strictness_profile()
     is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
 
-    btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
-    btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
-    bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR") and USE_BTC_MACRO_FILTER and not is_relaxed
-    if bear_defense_mode and side == 'buy':
-        current_rsi_macro = s.get("current_rsi", 50.0)
-        divergence_confirmed = (s.get("divergence", "none") == "bullish")
-        extreme_oversold    = (current_rsi_macro < 32.0)
-        ultra_strong        = (strength >= 24.0)  # 幣種自身訊號極強，走自己的行情
-        if not extreme_oversold and not divergence_confirmed and not ultra_strong:
-            logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"
-                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < 24)")
-            return False
-        if ultra_strong:
-            reason = f"幣種極強訊號 {strength:.1f} ≥ 24，走自己行情"
-        elif extreme_oversold:
-            reason = "極端超賣"
-        else:
-            reason = "底背離確認"
-        logger.info(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
-    # 熊市防禦模式下，做空方向完全放行（不封鎖）
+    if USE_BTC_MACRO_FILTER and not is_relaxed:
+        coin_rsi = s.get("current_rsi", 50.0)
+        has_divergence = False
+        div_type = s.get("divergence", "none")
+        if side == "buy" and div_type == "bullish":
+            has_divergence = True
+        elif side == "sell" and div_type == "bearish":
+            has_divergence = True
 
-    # =========================================================================
-    # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
-    # BTC 4H 多頭 → 封鎖所有做空訊號（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
-    # 豁免：RSI > 73 極端超買 / Exhaustion 路由且 RSI > 70
-    # =========================================================================
-    bull_defense_mode = (btc_4h == "BULL") and USE_BTC_MACRO_FILTER and not is_relaxed
-    if bull_defense_mode and side == 'sell':
-        current_rsi_macro = s.get("current_rsi", 50.0)
-        is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-        if current_rsi_macro > 73.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
-        elif is_reversal_route and current_rsi_macro > 70.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
-        else:
-            logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
+        passed, reason = MacroContextFilter.check_permission(sym, side, coin_rsi, has_divergence)
+        if not passed:
+            logger.info(f"🛑 [Filter:MacroBlock] {sym} 觸發三段式條件樹攔截 ({reason}) | RSI: {coin_rsi:.1f} | Div: {div_type}")
             return False
+        else:
+            logger.info(f"✅ [Filter:MacroPass] {sym} 通過三段式條件樹篩選 ({reason}) | RSI: {coin_rsi:.1f} | Div: {div_type}")
+
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)

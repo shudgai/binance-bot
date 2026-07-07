@@ -2,6 +2,7 @@ import logging
 import time
 import numpy as np
 from core import ctx
+from core.peak_store import save_peak
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ def update_trade_signal(sym, trade):
 
         if rt_profit > s.get("highest_profit_pct", 0.0):
             s["highest_profit_pct"] = rt_profit
+            save_peak(sym, rt_profit)
 
         # 觸發門檻原本 0.3% 太緊，獲利才剛冒頭一點點就把停損鎖在成本價附近，
         # 稍微一回檔就被打到、幾乎打平出場（勉強打平甚至不夠付手續費），倉位

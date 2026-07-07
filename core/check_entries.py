@@ -273,6 +273,12 @@ async def check_entries():
         if sym in disabled_syms:
             continue
 
+        # 如果該幣種已有進場掛單在等待成交，跳過，防止重複開倉
+        has_pending_order = any(info.get("symbol") == sym for info in ctx.PENDING_LIMIT_ORDERS.values())
+        if has_pending_order:
+            logger.info(f"⏳ [掛單中] {sym} 尚有未完全成交的進場掛單，暫停發起新訂單。")
+            continue
+
         # --- 自動反手快速通道 ---
         pending_rev = s.get("pending_reverse")
         if pending_rev:
@@ -661,7 +667,10 @@ async def check_entries():
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
             _is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
-            _mtf_override_threshold = 12.0 if _is_relaxed else 18.0
+            # 原本寬鬆模式下門檻只要 17 分就能跳過 1H 趨勢確認，實際發生過 ADA/DOT/AVAX
+            # 強度都在 26~32（遠超過 17）直接跳過趨勢檢查進場，結果進場後價格馬上反向。
+            # 使用者要求拉高門檻，統一成跟非寬鬆模式一樣的 22，減少繞過趨勢確認的情況。
+            _mtf_override_threshold = 22.0
             if strength >= _mtf_override_threshold or route == "Automatic_Reverse":
                 logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高(>={_mtf_override_threshold})或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:

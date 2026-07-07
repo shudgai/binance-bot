@@ -12,6 +12,7 @@ from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRE
 from core.indicators import _get_atr, _macd_vals, calculate_ema, calculate_macd
 from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier, is_rescue_dca_disabled
 from core.calc import profit_pct as _profit_pct
+from core.peak_store import save_peak
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,10 @@ def update_trailing_stop(sym, current_price, is_long):
         liq_price = avg_price * (1 + 1.0 / leverage) / (1 + mm_ratio) if leverage > 0 else 0.0
 
     profit_pct = _profit_pct(current_price, avg_price, is_long)
-    s["highest_profit_pct"] = max(s.get("highest_profit_pct", 0.0), profit_pct)
+    _old_peak = s.get("highest_profit_pct", 0.0)
+    s["highest_profit_pct"] = max(_old_peak, profit_pct)
+    if s["highest_profit_pct"] > _old_peak:
+        save_peak(sym, s["highest_profit_pct"])
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
 
@@ -103,6 +107,20 @@ def update_trailing_stop(sym, current_price, is_long):
                 elif _hp_f > 0.03:  trailing_multiplier = 0.45
                 elif _hp_f > 0.02:  trailing_multiplier = 0.6
                 else:               trailing_multiplier = 1.0
+
+            # --- 動態量能調整係數 (Volume-Based Expansion & Tightening) ---
+            curr_vol = s.get("current_vol", 0.0)
+            vol_ma = s.get("vol_ma20", 0.0)
+            vol_adj = 1.0
+            if vol_ma > 0:
+                vol_ratio = curr_vol / vol_ma
+                if vol_ratio > 1.4:
+                    vol_adj = 1.6
+                elif vol_ratio < 0.8:
+                    vol_adj = 0.8
+                logger.info(f"📊 [Dynamic_Trailing_Volume] {sym} | 量能比: {vol_ratio:.2f}x -> 係數調整: {vol_adj:.2f}x (最終乘數: {trailing_multiplier * vol_adj:.2f})")
+            trailing_multiplier *= vol_adj
+
             # 最小距離防護：確保至少 0.25% 緩衝
             _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
             dynamic_sl = s["trailing_highest"] - _min_gap_l
@@ -153,6 +171,20 @@ def update_trailing_stop(sym, current_price, is_long):
                 elif _hp_fs > 0.03: trailing_multiplier = 0.45
                 elif _hp_fs > 0.02: trailing_multiplier = 0.6
                 else:               trailing_multiplier = 1.0
+
+            # --- 動態量能調整係數 (Volume-Based Expansion & Tightening) ---
+            curr_vol = s.get("current_vol", 0.0)
+            vol_ma = s.get("vol_ma20", 0.0)
+            vol_adj = 1.0
+            if vol_ma > 0:
+                vol_ratio = curr_vol / vol_ma
+                if vol_ratio > 1.4:
+                    vol_adj = 1.6
+                elif vol_ratio < 0.8:
+                    vol_adj = 0.8
+                logger.info(f"📊 [Dynamic_Trailing_Volume] {sym} | 量能比: {vol_ratio:.2f}x -> 係數調整: {vol_adj:.2f}x (最終乘數: {trailing_multiplier * vol_adj:.2f})")
+            trailing_multiplier *= vol_adj
+
             # 最小距離防護
             _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
             dynamic_sl = s["trailing_lowest"] + _min_gap_s
@@ -244,6 +276,7 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
+        save_peak(sym, profit_pct)
     current_atr = s.get("current_atr", 0.0)
 
     # ── 急速逆勢提早出場 (Rapid Reversal Early Exit) ──
@@ -310,18 +343,21 @@ async def check_exits(sym):
             else:
                 s["trailing_lowest"] = min(s.get("trailing_lowest", avg), _lc[3])
                 _intra_peak_early = (avg - _lc[3]) / avg
+    _old_peak = s.get("highest_profit_pct", 0.0)
     s["highest_profit_pct"] = max(
-        s.get("highest_profit_pct", 0.0),
+        _old_peak,
         profit_pct,
         max(0.0, _intra_peak_early)
     )
+    if s["highest_profit_pct"] > _old_peak:
+        save_peak(sym, s["highest_profit_pct"])
 
     min_profit_exit_pct = _min_profit_exit_pct(sym)
 
     # ── 動態停滯停利 (Stagnation_Stop_Profit) ──
     # 核心邏輯：利潤一直往上（創新高）就讓它繼續跑；一旦利潤在某個高點卡住「不動了」超過 90 秒，
     # 說明動能已經耗盡，直接平倉鎖利，不等它回吐或反彈。
-    # 1. 啟動門檻：實際利潤達到 0.15% (2x槓桿後約 0.3%+)
+    # 1. 啟動門檻：實際利潤達到 0.30%
     # 2. 停滯判定：當前利潤沒有刷新 highest_profit_pct 且持續時間超過 90 秒
     _cur_time = time.time()
     _highest_p = s.get("highest_profit_pct", 0.0)
@@ -341,7 +377,8 @@ async def check_exits(sym):
 
     # 停滯停利可以較早啟動：若 0.15% 就是這波高點，且 90 秒沒有再創高，就先落袋。
     # 但目前利潤也必須仍在 0.15% 以上，避免高點已回吐成小虧還被當成停利。
-    _stagnation_profit_floor = 0.0015
+    _stagnation_profit_floor = 0.0030
+
     _profit_protect_floor = max(0.0035, min(min_profit_exit_pct, 0.0050))
     if _highest_p >= _stagnation_profit_floor and profit_pct >= _stagnation_profit_floor and _stagnant_sec >= 90.0:
         cs = 'sell' if is_long else 'buy'
@@ -1050,6 +1087,7 @@ async def check_exits(sym):
 
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
+        save_peak(sym, profit_pct)
         s["peak_time"] = time.time()   # 記錄每次創新高的時間
     # 純收盤價峰值（不含盤中尖峰），供三層 ATR 鎖利使用
     # highest_profit_pct 包含 intra-candle HIGH，會被高 ATR 幣的噪音誤觸鎖利

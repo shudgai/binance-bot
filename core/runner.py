@@ -17,6 +17,7 @@ from core.config import (
 )
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state
+from core.peak_store import load_peak, save_peak, clear_peak
 from core.balance import fetch_real_balance
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
     fetch_all_sma200, fetch_all_ema50_1h, fetch_all_ema_15m, load_open_positions)
@@ -177,6 +178,7 @@ async def _record_external_position_close(exchange, sym, state):
         candidates.append(trade)
     if not candidates:
         logger.info(f"⚠️ [ExternalClose] {sym} 找不到對應的手動平倉成交，僅清理本地狀態")
+        clear_peak(sym)
         return False
 
     latest = max(candidates, key=lambda item: int(item.get("timestamp") or item.get("info", {}).get("time") or 0))
@@ -221,6 +223,7 @@ async def _record_external_position_close(exchange, sym, state):
         entry_timestamp_ms=opened_ms if opened_ms else None,
     )
     if recorded:
+        clear_peak(sym)
         logger.info(f"🧾 [ExternalClose] {sym} 已同步手動平倉：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
     return bool(recorded)
 
@@ -282,16 +285,23 @@ async def calibrate_with_exchange(exchange):
 
                         
                         # ── 重啟峰值保護 ──
-                        # 讀取當前交易所的未實現損益，用來預設最高獲利率最高點。
-                        # 避免重啟後最高獲利峰值歸零，導致回吐時無法平倉的漏洞。
+                        # 讀取保存過的峰值與交易所當前未實現損益，避免重啟後把真正高點洗掉。
                         try:
                             _raw_pnl = float(pos.get('unRealizedProfit') or pos.get('info', {}).get('unRealizedProfit', 0.0))
                             _entry_val = abs(real_qty) * ctx.STATES[sym]["entry_price"]
                             if _entry_val > 0:
                                 # 計算當前無槓桿的實際利潤率
                                 _cur_pct = _raw_pnl / _entry_val
-                                ctx.STATES[sym]["highest_profit_pct"] = max(0.0, _cur_pct)
-                                logger.info(f"💾 [重啟峰值保護] {sym} 已根據當前未實現損益還原最高獲利峰值: {max(0.0, _cur_pct)*100:.3f}%")
+                                _stored_peak = load_peak(sym)
+                                _memory_peak = float(ctx.STATES[sym].get("highest_profit_pct", 0.0) or 0.0)
+                                _restored_peak = max(0.0, _cur_pct, _stored_peak, _memory_peak)
+                                ctx.STATES[sym]["highest_profit_pct"] = _restored_peak
+                                if _restored_peak > 0:
+                                    save_peak(sym, _restored_peak)
+                                logger.info(
+                                    f"💾 [重啟峰值保護] {sym} 還原最高獲利峰值: {_restored_peak*100:.3f}% "
+                                    f"(檔案 {_stored_peak*100:.3f}%, 目前 {_cur_pct*100:.3f}%)"
+                                )
                         except Exception as e_pnl:
                             logger.info(f"⚠️ [重啟峰值保護] {sym} 還原盈虧峰值失敗: {e_pnl}")
 

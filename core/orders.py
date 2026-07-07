@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 
 from core import ctx
+from core.peak_store import clear_peak
 
 from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
@@ -677,7 +678,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # +0.31%，追價這 11 秒內價格繼續反著走，最後市價成交時已經變成 -0.16%，
         # 「不再等待」的出場反而等了最久、虧最多。這類理由直接用市價出場搶時效，
         # 不要為了多鎖一點點價差去冒繼續等待的風險。
-        _urgent_exit_reasons = ("Peak_Giveback",)
+        _urgent_exit_reasons = ("Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak")
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:
             if profit_pct > 0 and not is_stop_loss and not _is_urgent_exit:
@@ -754,6 +755,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         await _cancel_exchange_exit_order(sym, "exchange_take_profit_order_id", "停利")
 
         mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=profit_pct)
+        clear_peak(sym)
         reset_coin_state(sym)
     else:
         prec = await get_contract_precision(sym)
@@ -926,6 +928,7 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
         if s["entry_count"] == 1:
             s["is_breakeven_locked"] = False
             s["highest_profit_pct"] = 0.0
+            clear_peak(sym)
             s["first_entry_price"] = fill_price
         _import_update_trailing_stop()(sym, fill_price, side == 'buy')
         # 金字塔加碼（同方向、更好價位）才鎖定在首筆進場價保本；
