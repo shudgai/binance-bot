@@ -318,7 +318,22 @@ async def check_exits(sym):
 
     min_profit_exit_pct = _min_profit_exit_pct(sym)
 
+    # ── 硬性獲利上限 (Hard_Profit_Cap) ──
+    # 當實際利潤達到 0.80% (槓桿後約 1.6% ~ 2.4%+) 時，利潤已足夠豐厚，
+    # 為了防止時間拖太久利潤回吐，直接強制市價平倉鎖利，不繼續等待回吐。
+    _hard_cap_target = 0.0080  # 0.8% 實際價格波動上限
+    if profit_pct >= _hard_cap_target:
+        cs = 'sell' if is_long else 'buy'
+        logger.info(
+            f"🎯 [Hard_Profit_Cap] {sym} 利潤達到硬性上限目標 {profit_pct*100:.2f}% (上限 {_hard_cap_target*100:.2f}%)，強制收網入袋為安！"
+        )
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_Profit_Cap]")
+        if abs(s.get("qty", 0.0)) < 0.000001:
+            s["highest_profit_pct"] = 0.0
+        return
+
     # ── 東態移動停利 (Dynamic_Trailing_Profit) ──
+
     # 核心邏輯：利潤一直往上就繼續抱，平倉線隨最高利潤同步上移。
     # 
     # 即時判定是否為「逆勢單 (Counter-Trend)」：

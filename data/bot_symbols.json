@@ -5,10 +5,10 @@
     "ADAUSDT",
     "XLMUSDT",
     "SUIUSDT",
+    "SOLUSDT",
     "DOGEUSDT",
-    "NEARUSDT",
     "AAVEUSDT",
-    "SOLUSDT"
+    "NEARUSDT"
   ],
   "profiles": {
     "BCHUSDT": {

@@ -641,10 +641,11 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 允許任何型態的止損（is_stop_loss=True）、全域熔斷、或策略主動平倉原因，以避免時間停滯等優化退場機制被攔截
     # Peak_Giveback 是動態鎖利／回撤保護，不能再被一般 0.35% 或高波動幣
     # 1.5% 的固定獲利門檻擋掉，否則會出現「觸發停利卻拒絕平倉」。
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]"]
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
+
 
 
     sanitized_qty = await sanitize_order_qty(sym, qty)
