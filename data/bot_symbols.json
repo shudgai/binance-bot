@@ -7,8 +7,8 @@
     "SUIUSDT",
     "SOLUSDT",
     "DOGEUSDT",
-    "AAVEUSDT",
-    "NEARUSDT"
+    "NEARUSDT",
+    "AAVEUSDT"
   ],
   "profiles": {
     "BCHUSDT": {

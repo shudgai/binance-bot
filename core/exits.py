@@ -318,21 +318,42 @@ async def check_exits(sym):
 
     min_profit_exit_pct = _min_profit_exit_pct(sym)
 
-    # ── 硬性獲利上限 (Hard_Profit_Cap) ──
-    # 當實際利潤達到 0.80% (槓桿後約 1.6% ~ 2.4%+) 時，利潤已足夠豐厚，
-    # 為了防止時間拖太久利潤回吐，直接強制市價平倉鎖利，不繼續等待回吐。
-    _hard_cap_target = 0.0080  # 0.8% 實際價格波動上限
-    if profit_pct >= _hard_cap_target:
+    # ── 動態停滯停利 (Stagnation_Stop_Profit) ──
+    # 核心邏輯：利潤一直往上（創新高）就讓它繼續跑；一旦利潤在某個高點卡住「不動了」超過 90 秒，
+    # 說明動能已經耗盡，直接平倉鎖利，不等它回吐或反彈。
+    # 1. 啟動門檻：實際利潤達到 0.15% (2x槓桿後約 0.3%+)
+    # 2. 停滯判定：當前利潤沒有刷新 highest_profit_pct 且持續時間超過 90 秒
+    _cur_time = time.time()
+    _highest_p = s.get("highest_profit_pct", 0.0)
+
+    # 初始化/更新最高峰值時間戳
+    if "_last_peak_time" not in s:
+        s["_last_peak_time"] = _cur_time
+        s["_last_peak_val"] = _highest_p
+
+    # 如果最高利潤率更新了，刷新時間戳
+    if _highest_p > s.get("_last_peak_val", 0.0):
+        s["_last_peak_val"] = _highest_p
+        s["_last_peak_time"] = _cur_time
+        logger.debug(f"📈 [Stagnation_Track] {sym} 利潤峰值刷新為 {_highest_p*100:.3f}%，刷新計時")
+
+    _stagnant_sec = _cur_time - s["_last_peak_time"]
+
+    # 只要獲利達到 0.15% 且停滯超過 90 秒（1.5 分鐘），立刻獲利了結
+    if _highest_p >= 0.0015 and _stagnant_sec >= 90.0:
         cs = 'sell' if is_long else 'buy'
         logger.info(
-            f"🎯 [Hard_Profit_Cap] {sym} 利潤達到硬性上限目標 {profit_pct*100:.2f}% (上限 {_hard_cap_target*100:.2f}%)，強制收網入袋為安！"
+            f"🎯 [Stagnation_Stop] {sym} 利潤達到 {_highest_p*100:.2f}% 後停滯不前已 {_stagnant_sec:.0f} 秒 (無新高)，立即平倉鎖利！"
         )
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_Profit_Cap]")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Stop]")
         if abs(s.get("qty", 0.0)) < 0.000001:
             s["highest_profit_pct"] = 0.0
+            s.pop("_last_peak_time", None)
+            s.pop("_last_peak_val", None)
         return
 
     # ── 東態移動停利 (Dynamic_Trailing_Profit) ──
+
 
     # 核心邏輯：利潤一直往上就繼續抱，平倉線隨最高利潤同步上移。
     # 
