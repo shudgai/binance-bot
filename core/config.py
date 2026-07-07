@@ -75,6 +75,12 @@ DEFAULT_NEW_COIN_PROFILE = {
     "disable_rescue_dca": False, "hard_sl_pct": 0.015,
 }
 
+# Force all coin leverages to 5x as per user request
+for _coin in COIN_PROFILE_CONFIG:
+    COIN_PROFILE_CONFIG[_coin]["leverage"] = 5
+DEFAULT_NEW_COIN_PROFILE["leverage"] = 5
+
+
 LEVERAGE_TIERS = {
     "custom_leverage": {
         "coins": {},
