@@ -232,18 +232,21 @@ def _entry_direction_guard(sym, side, reference_price=None):
 
 
 def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_dca=False):
-    from core.config import ENTRY_STRICTNESS_MODE
-    if ENTRY_STRICTNESS_MODE == "relaxed":
-        return True, "relaxed_bypass"
-
     if order_price is None or market_price is None or market_price <= 0:
         return True, "market_or_no_ref"
     s = ctx.STATES.get(sym, {})
     atr = float(s.get("current_atr", 0.0) or 0.0)
     atr_pct = atr / market_price if market_price > 0 else 0.0
-    max_adverse_dev = max(0.003, min(0.018, atr_pct * 1.2 if atr_pct > 0 else 0.006))
-    if is_rescue_dca:
-        max_adverse_dev = min(max_adverse_dev, 0.006)
+
+    from core.config import ENTRY_STRICTNESS_MODE
+    is_relaxed = (ENTRY_STRICTNESS_MODE == "relaxed")
+
+    if is_relaxed:
+        max_adverse_dev = 0.010  # 寬鬆模式下放寬至 1.0%
+    else:
+        max_adverse_dev = max(0.003, min(0.018, atr_pct * 1.2 if atr_pct > 0 else 0.006))
+        if is_rescue_dca:
+            max_adverse_dev = min(max_adverse_dev, 0.006)
 
     adverse_dev = (order_price - market_price) / market_price if side == "buy" else (market_price - order_price) / market_price
     if adverse_dev > max_adverse_dev:
@@ -251,7 +254,10 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
 
     if mode in ("market", "chase"):
         total_dev = abs(order_price - market_price) / market_price
-        chase_limit = max(0.003, min(0.010, atr_pct * 0.8 if atr_pct > 0 else 0.004))
+        if is_relaxed:
+            chase_limit = 0.008  # 寬鬆模式下追價極限放寬至 0.8%
+        else:
+            chase_limit = max(0.003, min(0.010, atr_pct * 0.8 if atr_pct > 0 else 0.004))
         if total_dev > chase_limit:
             return False, f"chase price drift {total_dev*100:.2f}% > {chase_limit*100:.2f}%"
 
@@ -261,10 +267,6 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
 def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=True,
                               is_rescue_dca=False):
     """Prevent a fresh position from chasing materially beyond its signal price."""
-    from core.config import ENTRY_STRICTNESS_MODE
-    if ENTRY_STRICTNESS_MODE == "relaxed":
-        return True, "relaxed_bypass"
-
     if not is_first_entry or is_rescue_dca:
         return True, "not_first_entry"
     signal_price = float(signal_price or 0.0)
@@ -277,7 +279,13 @@ def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=Tr
         if side == "buy"
         else (signal_price - order_price) / signal_price
     )
-    max_chase_pct = 0.0015
+
+    from core.config import ENTRY_STRICTNESS_MODE
+    if ENTRY_STRICTNESS_MODE == "relaxed":
+        max_chase_pct = 0.008  # 寬鬆模式下放寬至 0.8%
+    else:
+        max_chase_pct = 0.0015
+
     if adverse_chase > max_chase_pct:
         return False, f"signal chase {adverse_chase*100:.3f}% > {max_chase_pct*100:.2f}%"
     return True, "ok"
