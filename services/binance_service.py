@@ -413,42 +413,84 @@ _total_pnl_cache = (0, 0.0)
 PNL_BASELINE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_baseline.json")
 
 
-def _compute_raw_total_realized_pnl() -> float:
-    """從 data/trade_history.json 加總帳戶累計已實現損益（含手續費），不扣 baseline。
-    原本用 get_trades("ALL")（futures_account_trades）加總，但 get_trades() 內部把結果
-    截斷成最新 30 筆原始成交（all_trades[:30]，是為了給交易列表 UI 用而故意限制筆數），
-    拿同一個函式來算「總計」就會漏算 30 筆之前的所有交易——實測當天已有 106 筆交易時，
-    這裡只會計入最後 30 筆，導致跟「歷史交易筆記本」（讀 data/trade_history.json 全部
-    紀錄算出來的每日總計）對不起來（一個顯示 +0.67，另一個算出來是 -9.07）。改成跟歷史
-    筆記本用同一份、沒有筆數上限的資料來源（trade_history.json），並套用完全相同的
-    多空判斷／損益計算方式（見 services/api.py 的 _get_real_trades），確保兩邊金額一致。"""
-    total = 0.0
+PNL_SYMBOL_REGISTRY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_symbol_registry.json")
+
+
+def _normalize_symbol_for_pnl(raw: str) -> str:
+    return str(raw or "").upper().replace(":", "").replace("/", "")
+
+
+def _load_pnl_symbol_registry() -> set:
     try:
-        from core.config import TRADE_HISTORY_FILE
-        import json as _json
-        with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
-            history = _json.load(f)
-        for t in history:
-            ae = float(t.get("actual_entry") or 0.0)
-            ax = float(t.get("actual_exit") or 0.0)
-            qty = float(t.get("qty") or 0.0)
-            profit_pct = float(t.get("profit_pct") or 0.0)
-            fees = float(t.get("fees") or 0.0)
-            exact_pnl = t.get("realized_pnl_usdt")
-            if exact_pnl is None:
-                is_long = (ax > ae) if profit_pct >= 0 else (ax < ae)
-                exact_pnl = (ax - ae) * qty if is_long else (ae - ax) * qty
-            total += float(exact_pnl) - fees
+        if os.path.exists(PNL_SYMBOL_REGISTRY_PATH):
+            import json as _json
+            with open(PNL_SYMBOL_REGISTRY_PATH, "r", encoding="utf-8") as f:
+                return set(_json.load(f))
     except Exception:
         pass
+    return set()
+
+
+def _save_pnl_symbol_registry(symbols: set) -> None:
+    try:
+        import json as _json
+        with open(PNL_SYMBOL_REGISTRY_PATH, "w", encoding="utf-8") as f:
+            _json.dump(sorted(symbols), f)
+    except Exception:
+        pass
+
+
+def _compute_raw_total_realized_pnl() -> float:
+    total = 0.0
+    try:
+        from services.bot_manager_service import load_symbol_config
+        from services.radar_service import CORE_SYMBOLS
+
+        # 核心防護：將所有 CORE_SYMBOLS 強制加入查詢名單，
+        # 確保任何幣種只要有過手動平倉，就絕對會被算入總已實現損益。
+        query_symbols = {_normalize_symbol_for_pnl(s) for s in CORE_SYMBOLS if s}
+        query_symbols.update(_normalize_symbol_for_pnl(s) for s in load_symbol_config() if s)
+        query_symbols.update(_load_pnl_symbol_registry())
+        try:
+            from core.config import TRADE_HISTORY_FILE
+            import json as _json
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = _json.load(f)
+            query_symbols.update(_normalize_symbol_for_pnl(t.get("symbol", "")) for t in history if t.get("symbol"))
+        except Exception:
+            pass
+        try:
+            for pos in client.futures_position_information():
+                qty = float(pos.get("positionAmt", 0) or 0)
+                if abs(qty) > 0.000001:
+                    query_symbols.add(_normalize_symbol_for_pnl(pos.get("symbol", "")))
+        except Exception:
+            pass
+
+        query_symbols = {s for s in query_symbols if s}
+        _save_pnl_symbol_registry(query_symbols)
+
+
+        # 逐一向幣安查詢所有幣種成交
+        for sym in query_symbols:
+            if _binance_banned():
+                break
+            try:
+                # 幣安 API 呼叫，若限流或出錯直接拋出，不回傳不完整加總
+                trades = client.futures_account_trades(symbol=sym, limit=1000)
+                for t in trades:
+                    total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
+            except Exception as e:
+                _note_binance_ban(e)
+                # 關鍵防護：如果查詢單一小幣失敗，代表數據殘缺，直接拋出異常讓上層使用快取
+                raise RuntimeError(f"查詢 {sym} 成交失敗: {e}")
+    except Exception as e:
+        # 拋回給上層，由 get_total_realized_pnl_usdt() 決定是否使用舊快取
+        raise e
     return total
 
 
 def _get_pnl_baseline() -> float:
-    """使用者要求「總已實現利潤歸零，重新計算」時，用這個 baseline 值扣掉，讓畫面上的
-    總已實現利潤從這個時間點歸零重新累計，但不去動 data/trade_history.json 本身——
-    那份檔案是「歷史交易筆記本」的資料來源，砍掉會連歷史紀錄都一起不見。baseline
-    只影響這支函式回傳的數字，不影響底層歷史資料。"""
     try:
         import json as _json
         if os.path.exists(PNL_BASELINE_PATH):
@@ -461,23 +503,37 @@ def _get_pnl_baseline() -> float:
 
 
 def get_total_realized_pnl_usdt() -> float:
-    """對外回傳的總已實現利潤（已扣掉 baseline，見 reset_total_realized_pnl_baseline）。"""
+    """對外回傳的總已實現利潤（已扣掉 baseline，有防突變快取機制）。"""
     global _total_pnl_cache
     now = time.time()
-    if now - _total_pnl_cache[0] < 15:  # 快取 15 秒，避免頻繁重讀歷史檔案
+    # 延長快取至 30 秒以降低幣安 API 限流機率，且當發生錯誤時，保底使用舊快取
+    if now - _total_pnl_cache[0] < 30 and _total_pnl_cache[1] is not None:
         raw_total = _total_pnl_cache[1]
     else:
-        raw_total = _compute_raw_total_realized_pnl()
-        _total_pnl_cache = (now, raw_total)
+        try:
+            raw_total = _compute_raw_total_realized_pnl()
+            _total_pnl_cache = (now, raw_total)
+        except Exception:
+            # 查詢失敗時，若先前有快取就用快取，沒有才用 0.0，避免利潤數據歸零或亂跳
+            if _total_pnl_cache[1] is not None:
+                raw_total = _total_pnl_cache[1]
+            else:
+                raw_total = 0.0
     return raw_total - _get_pnl_baseline()
 
 
 def reset_total_realized_pnl_baseline() -> float:
-    """把目前算出來的總已實現利潤（原始值，未扣 baseline）存成新的 baseline，
-    讓 get_total_realized_pnl_usdt() 之後回傳的數字從 0 重新累計。"""
+    """重置 baseline 並清空快取變數"""
     global _total_pnl_cache
     import json as _json
-    raw_total = _compute_raw_total_realized_pnl()
+    try:
+        # 強制重新拉取最新完整數據
+        raw_total = _compute_raw_total_realized_pnl()
+    except Exception:
+        # 若當下失敗，使用舊快取，沒有快取就設為 0
+        raw_total = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else 0.0
+        
+    # 重置快取為當前時間與新值
     _total_pnl_cache = (time.time(), raw_total)
     try:
         with open(PNL_BASELINE_PATH, "w", encoding="utf-8") as f:
@@ -485,6 +541,7 @@ def reset_total_realized_pnl_baseline() -> float:
     except Exception:
         pass
     return raw_total
+
 
 
 def get_position(symbol: str, quote_asset: str, base_asset: str):
@@ -630,7 +687,24 @@ def get_trades(symbol: str):
                 continue
         all_trades = _aggregate_fills_by_order(all_trades)
         all_trades.sort(key=lambda t: t.get("time", 0), reverse=True)
-        trades = list(reversed(all_trades[:30]))
+        # 目前仍有真實持倉的幣種，其真實成交（含正確手續費）一定要保留，不能被 30 筆
+        # 上限擠掉——之前發生過某幣種的真實進場成交被更晚、更活躍的其他幣種擠出前 30
+        # 筆，導致後面「補入未列出持倉」那段只能拿部位資訊湊一筆假紀錄，手續費/已實現
+        # 損益全部顯示 0，使用者看到的手續費永遠是 0.0000。改成：目前持倉的幣種永遠
+        # 保留其真實成交，其餘幣種的成交才受 30 筆上限限制。
+        try:
+            open_syms_for_cap = {
+                str(sym or "").replace(":", "").replace("/", "").upper()
+                for sym in get_all_positions().keys()
+            }
+        except Exception:
+            open_syms_for_cap = set()
+        open_pos_trades = [t for t in all_trades if str(t.get("symbol", "")).upper() in open_syms_for_cap]
+        other_trades = [t for t in all_trades if str(t.get("symbol", "")).upper() not in open_syms_for_cap]
+        remaining_slots = max(0, 30 - len(open_pos_trades))
+        capped = open_pos_trades + other_trades[:remaining_slots]
+        capped.sort(key=lambda t: t.get("time", 0), reverse=True)
+        trades = list(reversed(capped))
     else:
         trades = _aggregate_fills_by_order(client.futures_account_trades(symbol=symbol, limit=15))
     formatted_trades = []
@@ -749,7 +823,11 @@ def get_1h_volatility(symbol: str):
 _atr_rankings_cache = {}
 
 def get_atr_ranked_coins(symbols, limit=10):
-    """Rank given symbols by 14-day ATR% (ATR / price). Returns (selected_list, full_ranked_list)."""
+    """Rank symbols by tradable momentum: medium-high daily ATR plus recent 1h movement.
+
+    Daily ATR alone tends to select coins that were violent yesterday but are flat now.
+    Add 1h volatility and 24h change so radar can prefer active-but-not-chaotic markets.
+    """
     if _binance_banned():
         return [], []
     import time as _time
@@ -757,9 +835,15 @@ def get_atr_ranked_coins(symbols, limit=10):
     cache_key = tuple(sorted(symbols))
     if cache_key in _atr_rankings_cache:
         cache_time, cached_val = _atr_rankings_cache[cache_key]
-        if now - cache_time < 600:  # 快取 10 分鐘，因為日線波動改變極慢
+        if now - cache_time < 600:
             selected = [r["symbol"] for r in cached_val[:limit]]
             return selected, cached_val
+
+    ticker_map = {}
+    try:
+        ticker_map = {t.get("symbol"): t for t in market_client.futures_ticker()}
+    except Exception:
+        ticker_map = {}
 
     ranked = []
     for sym in symbols:
@@ -777,10 +861,31 @@ def get_atr_ranked_coins(symbols, limit=10):
             atr = sum(trs[-14:]) / min(len(trs), 14)
             price = float(klines[-1][4])
             atr_pct = round(atr / price * 100, 3) if price > 0 else 0.0
-            ranked.append({"symbol": sym, "atr_pct": atr_pct, "price": price})
+            _, one_h_vol = get_1h_volatility(sym)
+            ticker = ticker_map.get(sym, {})
+            try:
+                change_pct = float(ticker.get("priceChangePercent", 0.0) or 0.0)
+                q_vol = float(ticker.get("quoteVolume", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                change_pct = 0.0
+                q_vol = 0.0
+            # Score favors coins that are moving now, but does not reward runaway 1h spikes.
+            one_h_component = min(max(one_h_vol, 0.0), 2.5) / 2.5
+            atr_component = min(max(atr_pct, 0.0), 6.0) / 6.0
+            volume_component = min(q_vol / 100_000_000, 1.0)
+            score = atr_component * 0.45 + one_h_component * 0.40 + volume_component * 0.15
+            ranked.append({
+                "symbol": sym,
+                "atr_pct": atr_pct,
+                "price": price,
+                "one_h_vol_pct": round(one_h_vol, 3),
+                "change_pct": round(change_pct, 3),
+                "q_vol": q_vol,
+                "momentum_score": round(score, 4),
+            })
         except Exception as e:
             print(f"[ATR Rank] {sym} error: {e}")
-    ranked.sort(key=lambda x: x["atr_pct"], reverse=True)
+    ranked.sort(key=lambda x: x["momentum_score"], reverse=True)
     _atr_rankings_cache[cache_key] = (now, ranked)
     selected = [r["symbol"] for r in ranked[:limit]]
     return selected, ranked
@@ -958,6 +1063,7 @@ def get_all_positions():
             initial_margin = float(pos.get('initialMargin', 0) or 0)
             leverage = round(abs(float(pos.get('notional', 0) or 0)) / initial_margin) if initial_margin > 0 else 0
             key = sym.replace('USDT', ':USDT')
+            update_time_ms = int(pos.get('updateTime', 0) or 0)
             result[key] = {
                 "symbol": key,
                 "positionAmt": qty,
@@ -970,7 +1076,8 @@ def get_all_positions():
                 "unRealizedProfit": unrealized_pnl,
                 "pnl": unrealized_pnl,
                 "pnl_percent": pnl_percent,
-                "realized_pnl": 0
+                "realized_pnl": 0,
+                "open_time_ms": update_time_ms,
             }
     _all_positions_cache = (now, result)
     return result

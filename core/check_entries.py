@@ -116,6 +116,24 @@ def is_pending_confirmation_valid(side, candle):
     return False
 
 
+def is_second_bar_adverse(side, current_price, signal_close, atr=0.0):
+    """Reject pending entries when the confirmation bar already moved against us."""
+    current_price = float(current_price or 0.0)
+    signal_close = float(signal_close or 0.0)
+    atr = float(atr or 0.0)
+    if current_price <= 0 or signal_close <= 0:
+        return False
+
+    # Use a tight floor plus ATR so normal noise can breathe, while a real
+    # second-bar failure is cancelled before order dispatch.
+    adverse_limit = max(signal_close * 0.004, atr * 0.35)
+    if side == "buy":
+        return (signal_close - current_price) > adverse_limit
+    if side == "sell":
+        return (current_price - signal_close) > adverse_limit
+    return False
+
+
 def detect_divergence(sym):
     s = ctx.STATES.get(sym)
     if not s or "rsi_history" not in s or len(s["rsi_history"]) < 3 or len(s.get("ohlcv", [])) < 3:
@@ -271,7 +289,7 @@ async def check_entries():
 
                         async def _rev_task(sym, pending_rev, price):
                             try:
-                                await execute_order(sym, pending_rev, price)
+                                await execute_order(sym, pending_rev, price, entry_route="Automatic_Reverse")
                             finally:
                                 ctx.STATES[sym]["is_ordering"] = False
                                 await load_open_positions()
@@ -321,18 +339,50 @@ async def check_entries():
         # --- [新增] 自動反手訊號緩衝與 K 線收盤確認機制 ---
         if s.get("pending_reverse_trigger"):
             pending_rev_data = s["pending_reverse_trigger"]
+            pending_side = pending_rev_data.get("side")
+            pending_strength = float(pending_rev_data.get("strength", 0.0) or 0.0)
+            avg_price = float(s.get("avg_price", 0.0) or 0.0)
+            current_price = float(s.get("close_price", 0.0) or 0.0)
+            if (
+                has_position and current_direction and pending_side
+                and pending_side != current_direction
+                and avg_price > 0 and current_price > 0
+            ):
+                profit_pct = (
+                    (current_price - avg_price) / avg_price
+                    if current_direction == "buy"
+                    else (avg_price - current_price) / avg_price
+                )
+                if pending_strength >= 22.0 and profit_pct <= -0.006:
+                    close_side = "sell" if current_direction == "buy" else "buy"
+                    logger.info(
+                        f"🛡️ [{sym}] [Opposite_Strong_Close] 強反向訊號 "
+                        f"{pending_side}({pending_strength:.1f}) 且舊倉虧損 "
+                        f"{profit_pct*100:.2f}%，先平倉避險，反手仍等待 K 線確認"
+                    )
+                    await close_position(
+                        sym, close_side, abs(s["qty"]), current_price, avg_price,
+                        reason="[Opposite_Strong_Close]", is_stop_loss=True,
+                    )
+                    continue
+
             if current_candle_time > pending_rev_data.get("time", 0):
                 logger.info(f"⏳ [{sym}] 進入新 K 線，驗證自動反手趨勢持續性...")
                 if await is_reversal_still_valid(sym, pending_rev_data["side"]):
                     src = pending_rev_data.get("source", "Signal")
                     logger.info(f"⚡ [{sym}] [Reversal_Confirmed] {src} 反手確認！平倉並反手建倉 ({pending_rev_data['side']})，強度 {pending_rev_data.get('strength',0):.1f}")
                     # 1. 平倉舊倉位
-                    await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
+                    close_side = "sell" if current_direction == "buy" else "buy"
+                    await close_position(sym, close_side, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
                     await asyncio.sleep(1)
                     reset_coin_state(sym)
                     # 2. 反手建倉，並記錄反手時間（冷卻 30 分鐘防連續反手）
                     s["last_reverse_time"] = time.time()
-                    await execute_order(sym, pending_rev_data["side"], s["close_price"])
+                    await execute_order(
+                        sym, pending_rev_data["side"], s["close_price"],
+                        signal_strength=pending_rev_data.get("strength", 0.0),
+                        entry_route="Automatic_Reverse",
+                    )
                 else:
                     logger.info(f"❌ [{sym}] [Reversal_Cancelled] 觀察期間趨勢失效，取消反手，保留原倉位。")
 
@@ -363,16 +413,12 @@ async def check_entries():
                     trigger_high = prev_candle[2]
                     trigger_low = prev_candle[3]
 
-                    if s["pending_side"] == "buy":
-                        if current_price < prev_close * 0.985:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 低於訊號K收盤 {prev_close:.4f} 的 98.5%，但已放寬為小幅回抽，保留多單。")
-                        elif current_price < prev_close * 0.990:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微回抽，保留多單。")
-                    elif s["pending_side"] == "sell":
-                        if current_price > prev_close * 1.015:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 高於訊號K收盤 {prev_close:.4f} 的 101.5%，但已放寬為小幅反彈，保留空單。")
-                        elif current_price > prev_close * 1.010:
-                            logger.info(f"⚠️ [防二次誘騙] {sym} 第二根 K 線現價 {current_price:.4f} 輕微反彈，保留空單。")
+                    if is_second_bar_adverse(s["pending_side"], current_price, prev_close, s.get("current_atr", 0.0)):
+                        logger.info(
+                            f"[SecondBar_Adverse] {sym} cancel {s['pending_side']}: "
+                            f"current={current_price:.6f}, signal_close={prev_close:.6f}"
+                        )
+                        is_valid = False
 
                     # [新增] 量能續航檢查：放寬為跟進量 >= 訊號量的 10%，避免小量回抽被誤判
                     if is_valid:
@@ -706,7 +752,22 @@ async def check_entries():
     candidates.sort(key=lambda x: -x[2])
     logger.info(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
-    total_weight = sum(strength for _, _, strength, _ in candidates)
+    sizing_slots = remaining_slots
+    sizing_symbols = set()
+    total_weight = 0.0
+    for cand_sym, _, cand_strength, _ in candidates:
+        cand_state = ctx.STATES[cand_sym]
+        cand_has_pos = abs(cand_state["qty"]) > 0.000001
+        if cand_has_pos:
+            continue
+        if sizing_slots <= 0:
+            continue
+        sizing_symbols.add(cand_sym)
+        total_weight += cand_strength
+        sizing_slots -= 1
+
+    if total_weight <= 0:
+        total_weight = sum(strength for _, _, strength, _ in candidates)
 
     for sym, side, strength, route in candidates:
         s = ctx.STATES[sym]

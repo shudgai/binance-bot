@@ -10,7 +10,8 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core import exchange_client
 from core.orders import (
-    _entry_signal_chase_guard, execute_order, should_block_order_flow,
+    _entry_signal_chase_guard, execute_order, is_effective_rescue_dca,
+    should_block_order_flow,
 )
 
 
@@ -38,6 +39,17 @@ class EntryRiskTests(unittest.TestCase):
         self.assertTrue(
             _entry_signal_chase_guard("buy", 100.0, 101.0, is_rescue_dca=True)[0]
         )
+
+    def test_rescue_dca_rejects_price_beyond_stop_line(self):
+        state = {
+            "avg_price": 100.0,
+            "qty": 1.0,
+            "current_atr": 1.0,
+            "hard_stop_loss_pct": 0.03,
+        }
+        ok, reason = is_effective_rescue_dca(state, "buy", 97.05, add_qty=1.0)
+        self.assertFalse(ok)
+        self.assertIn("stop", reason)
 
     def test_order_flow_is_warning_only_in_paper_trading(self):
         self.assertFalse(should_block_order_flow("buy", 60.0, 100.0, 0.8, True))

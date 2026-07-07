@@ -52,6 +52,10 @@ COIN_PROFILE_CONFIG = {
     "ARBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 16.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 17.0, "hard_sl_pct": 0.015},
     "OPUSDT":   {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 17.0, "hard_sl_pct": 0.015},
     "DOGEUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "Speculative_Risk",   "leverage": 3, "rr_threshold": 1.8, "min_signal_strength": 17.0, "hard_sl_pct": 0.015},
+    "UNIUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 20.0, "hard_sl_pct": 0.015},
+    "HBARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 2, "rr_threshold": 2.0, "min_signal_strength": 21.0, "hard_sl_pct": 0.015},
+
+
     # 第四類：新/小幣投機型（高風險，低槓桿保護）—— 這類幣本身正常波動就大，
     # hard_sl_pct 維持較寬的 3%，只當作 Universal SL 失效/跳空時的保底，
     # 避免跟正常的 ATR 動態停損打架、提早在噪音波動就出場。
@@ -92,9 +96,10 @@ ATR_WARMUP_PAUSE_SEC = 0.4
 TIME_STOP_MINUTES = 30
 
 DEFAULT_SYMBOLS = [
-    "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
-    "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
-    "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
+    "XRPUSDT", "ADAUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT",
+    "BCHUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT",
+    "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
+    "SUIUSDT", "INJUSDT", "RENDERUSDT",
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
 

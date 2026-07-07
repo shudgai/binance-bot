@@ -329,17 +329,36 @@ def api_get_trades(symbol: str):
                 qty = float(pos.get("qty", 0.0) or 0.0)
                 if abs(qty) <= 0.000001:
                     continue
+                # 目前持倉的幣種數量最多就 MAX_POSITIONS（通常 <=3），只針對這幾檔
+                # 補查真實成交拿正確的手續費，不會像查全部歷史幣種那樣把權重打爆。
+                # 原本這裡手續費是寫死 0.0，導致交易列表上「還開著」的部位手續費
+                # 永遠顯示 0，即使幣安那邊其實已經扣了手續費。
+                real_price = float(pos.get("entryPrice", 0.0) or 0.0)
+                real_fee = 0.0
+                real_time = int(pos.get("open_time_ms") or now_ms)
+                try:
+                    raw_sym = str(key).replace(":", "").replace("/", "").upper()
+                    fills = client.futures_account_trades(symbol=raw_sym, limit=20)
+                    entry_fills = [f for f in fills if float(f.get("realizedPnl", 0.0) or 0.0) == 0.0]
+                    if entry_fills:
+                        total_qty = sum(float(f["qty"]) for f in entry_fills)
+                        total_notional = sum(float(f["qty"]) * float(f["price"]) for f in entry_fills)
+                        real_price = total_notional / total_qty if total_qty > 0 else real_price
+                        real_fee = sum(float(f.get("commission", 0.0) or 0.0) for f in entry_fills)
+                        real_time = max(f.get("time", real_time) for f in entry_fills)
+                except Exception:
+                    pass
                 trades.append({
                     "id": f"pos_{key}",
                     "order_id": None,
                     "symbol": key,
-                    "price": float(pos.get("entryPrice", 0.0) or 0.0),
+                    "price": real_price,
                     "qty": abs(qty),
-                    "time": now_ms,
+                    "time": real_time,
                     "isBuyer": qty > 0,
                     "is_close": False,
                     "realized_pnl": 0.0,
-                    "fee": 0.0,
+                    "fee": real_fee,
                     "_is_open_position": True,
                 })
             return trades
@@ -601,7 +620,9 @@ def _get_real_trades():
             dt = datetime.datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
             dt = pytz.utc.localize(dt).astimezone(tz)
             exit_time_ms = int(dt.timestamp() * 1000)
-            entry_time_ms = exit_time_ms - 600000  # 預估 10 分鐘前入場
+            entry_time_ms = int(t.get("entry_timestamp_ms") or 0)
+            if entry_time_ms <= 0:
+                entry_time_ms = exit_time_ms - 600000  # 舊紀錄沒有開倉時間時才保留估算
             
             ae = float(t.get("actual_entry") or 0.0)
             ax = float(t.get("actual_exit") or 0.0)

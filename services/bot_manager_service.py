@@ -28,9 +28,10 @@ bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
-    "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
-    "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
-    "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
+    "XRPUSDT", "ADAUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT",
+    "BCHUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT",
+    "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
+    "SUIUSDT", "INJUSDT", "RENDERUSDT",
 ]
 
 
@@ -188,15 +189,14 @@ def get_bot_status():
         except Exception:
             bot_status["total_realized_pnl"] = 0.0
         try:
-            # 使用者要求交易成本固定在 LIVE_CAPITAL_CAP（150），不要再跟著 Demo Trading
-            # 帳戶的實際餘額走。原本是拿 real_balance 跟 150 取較小值再加回已實現損益，
-            # 導致虧損會讓交易金額跟著縮水（例如虧了13.33，交易金額變成136.67）——
-            # 這是刻意的複利式風控設計，但使用者現在要固定成本，不要因為虧損就縮小
-            # 部位、也不要因為獲利就放大，一律用固定的 150 計算倉位大小。
+            # 本金固定在 LIVE_CAPITAL_CAP（150），但帳戶餘額／單次交易金額要加回累計
+            # 已實現利潤：賺錢部位變大、虧錢部位縮小，複利式風控（之前一度改成完全
+            # 固定 150 不管損益，使用者後來要求恢復「本金 + 已實現利潤」這個算法）。
             from core.config import LIVE_CAPITAL_CAP
-            fixed_amount = LIVE_CAPITAL_CAP if LIVE_CAPITAL_CAP else 150.0
-            bot_status["balance_quote"] = fixed_amount
-            bot_status["trade_amount"] = fixed_amount
+            base_amount = LIVE_CAPITAL_CAP if LIVE_CAPITAL_CAP else 150.0
+            compounded_amount = max(base_amount + bot_status.get("total_realized_pnl", 0.0), 10.0)
+            bot_status["balance_quote"] = compounded_amount
+            bot_status["trade_amount"] = compounded_amount
         except Exception:
             pass
 

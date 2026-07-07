@@ -285,6 +285,15 @@ def is_effective_rescue_dca(s, side, order_price, add_qty=None):
     current_side = "buy" if current_qty > 0 else "sell"
     if side != current_side:
         return False, f"opposite side {side} is a reversal, not rescue DCA"
+
+    hard_sl_pct = float(s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT) or HARD_STOP_LOSS_PCT)
+    stop_price = avg_price * (1 - hard_sl_pct) if current_side == "buy" else avg_price * (1 + hard_sl_pct)
+    stop_buffer = 0.001
+    if current_side == "buy" and order_price <= stop_price * (1 + stop_buffer):
+        return False, f"rescue price {order_price:.6f} is too close/below stop {stop_price:.6f}"
+    if current_side == "sell" and order_price >= stop_price * (1 - stop_buffer):
+        return False, f"rescue price {order_price:.6f} is too close/above stop {stop_price:.6f}"
+
     atr = float(s.get("current_atr", 0.0) or 0.0)
     min_gap_pct = max(0.008, (atr / avg_price) * 1.1)
     favorable_gap_pct = ((avg_price - order_price) / avg_price if side == "buy"
@@ -404,7 +413,7 @@ async def _entry_exchange_direction_guard(sym, side):
 def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
                         expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0,
                         fees=0.0, qty=0.0, exchange_close_id=None,
-                        realized_pnl_usdt=None, timestamp_ms=None):
+                        realized_pnl_usdt=None, timestamp_ms=None, entry_timestamp_ms=None):
     """
     將每筆交易的結果記錄到 trade_history.json 中，並生成 AI 友好的經驗摘要。
     """
@@ -437,6 +446,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
             time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(timestamp_ms / 1000.0))
             if timestamp_ms else time.strftime("%Y-%m-%d %H:%M:%S")
         ),
+        "entry_timestamp_ms": int(entry_timestamp_ms) if entry_timestamp_ms else None,
         "symbol": symbol,
         "entry_reason": entry_reason or "UNKNOWN",
         "exit_reason": exit_reason,
@@ -631,10 +641,11 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 允許任何型態的止損（is_stop_loss=True）、全域熔斷、或策略主動平倉原因，以避免時間停滯等優化退場機制被攔截
     # Peak_Giveback 是動態鎖利／回撤保護，不能再被一般 0.35% 或高波動幣
     # 1.5% 的固定獲利門檻擋掉，否則會出現「觸發停利卻拒絕平倉」。
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]"]
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
+
 
     sanitized_qty = await sanitize_order_qty(sym, qty)
     if sanitized_qty <= 0.0:
@@ -658,8 +669,16 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # 之前的做法不管市價單實際成交在哪裡，一律用「理論價格」算獲利/貼標籤，
         # 導致 PeakLock 明明鎖利 1.10%，交易所實際卻用市價成交在 -0.10%，
         # 系統內部紀錄卻還是顯示賺錢——這裡改成用真實成交均價回填後續所有計算。
+        # Peak_Giveback（利潤正在回吐，要求「不再等待，立即鎖利」）這類時間敏感的
+        # 出場理由，不能用限價追價——追價機制掛限價、等 4 秒沒成交才追一次價、再等
+        # 4 秒才轉市價，前後要 8~11 秒。實際發生過 HBARUSDT 觸發回吐停利當下利潤還有
+        # +0.31%，追價這 11 秒內價格繼續反著走，最後市價成交時已經變成 -0.16%，
+        # 「不再等待」的出場反而等了最久、虧最多。這類理由直接用市價出場搶時效，
+        # 不要為了多鎖一點點價差去冒繼續等待的風險。
+        _urgent_exit_reasons = ("Peak_Giveback",)
+        _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:
-            if profit_pct > 0 and not is_stop_loss:
+            if profit_pct > 0 and not is_stop_loss and not _is_urgent_exit:
                 final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
             else:
                 final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
@@ -713,7 +732,8 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         actual_entry=real_avg,
         actual_exit=price,
         fees=0.0,
-        qty=qty
+        qty=qty,
+        entry_timestamp_ms=int(s.get("open_time", 0.0) * 1000) if s.get("open_time", 0.0) else None,
     )
 
     from core.config import DAILY_LOSS_LIMIT_PCT

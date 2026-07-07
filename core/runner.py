@@ -218,6 +218,7 @@ async def _record_external_position_close(exchange, sym, state):
         exchange_close_id=history_id,
         realized_pnl_usdt=realized_pnl,
         timestamp_ms=close_time,
+        entry_timestamp_ms=opened_ms if opened_ms else None,
     )
     if recorded:
         logger.info(f"🧾 [ExternalClose] {sym} 已同步手動平倉：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
@@ -273,18 +274,53 @@ async def calibrate_with_exchange(exchange):
                     if current_qty == 0:
                         ctx.STATES[sym]["entry_price"] = float(pos.get('entryPrice', pos.get('avg_price', 0.0)))
                         ctx.STATES[sym]["avg_price"] = ctx.STATES[sym]["entry_price"]
-                        # open_time 沒補回去的話會維持 0，check_exits() 的
-                        # `hold_sec = time.time() - open_time if open_time > 0 else 0`
-                        # 會永遠算出 hold_sec=0，卡在「剛進場 20~60 秒盲區保護」出不來，
-                        # 停損/停利邏輯永遠不會被執行——這正是重啟後校準回來的舊倉位一路
-                        # 虧損卻沒有停損的原因。entry_count 同理，process 重啟後
-                        # ctx.STATES 是全新字典，會被 build_symbol_state 預設成 0，
-                        # 而攤平救援要求 entry_count == 1 才會評估，補回 1 才能讓救援機制
-                        # 正常運作（重啟前如果已經攤平過，這裡只能保守假設沒攤平過）。
+                        # 恢復 open_time
                         ctx.STATES[sym]["open_time"] = time.time()
                         if ctx.STATES[sym].get("entry_count", 0) == 0:
                             ctx.STATES[sym]["entry_count"] = 1
+
+
+                        
+                        # ── 重啟峰值保護 ──
+                        # 讀取當前交易所的未實現損益，用來預設最高獲利率最高點。
+                        # 避免重啟後最高獲利峰值歸零，導致回吐時無法平倉的漏洞。
+                        try:
+                            _raw_pnl = float(pos.get('unRealizedProfit') or pos.get('info', {}).get('unRealizedProfit', 0.0))
+                            _entry_val = abs(real_qty) * ctx.STATES[sym]["entry_price"]
+                            if _entry_val > 0:
+                                # 計算當前無槓桿的實際利潤率
+                                _cur_pct = _raw_pnl / _entry_val
+                                ctx.STATES[sym]["highest_profit_pct"] = max(0.0, _cur_pct)
+                                logger.info(f"💾 [重啟峰值保護] {sym} 已根據當前未實現損益還原最高獲利峰值: {max(0.0, _cur_pct)*100:.3f}%")
+                        except Exception as e_pnl:
+                            logger.info(f"⚠️ [重啟峰值保護] {sym} 還原盈虧峰值失敗: {e_pnl}")
+
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
+
+
+        # ── 外部平倉同步強化 ──
+        # 重啟時，如果有些幣種之前有持倉（在舊狀態或 data/paper_state.json 中記錄有持倉），
+        # 但目前已經平倉，且不屬於當前 ALL_SYMBOLS 名單，必須臨時加回 STATES 中，
+        # 否則 _record_external_position_close 會直接忽略它，導致手動平倉的明細不會被寫入 trade_history.json。
+        try:
+            # 讀取本地 paper_state.json 以獲取之前的持倉狀態（做為還原根據）
+            state_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json")
+            if os.path.exists(state_path):
+                with open(state_path, "r", encoding="utf-8") as f:
+                    _paper_data = json.load(f)
+                for pk, pos in _paper_data.get("positions", {}).items():
+                    raw_sym = pk.replace(":USDT", "USDT").replace(":", "")
+                    qty = float(pos.get("qty", 0.0))
+                    if abs(qty) > 0.000001 and raw_sym not in ctx.STATES:
+                        # 這是個「重啟前有持倉，但目前未受監控」的幣種，臨時建構它的 STATES 以便做手動平倉同步
+                        ctx.STATES[raw_sym] = build_symbol_state(raw_sym)
+                        ctx.STATES[raw_sym]["qty"] = qty
+                        ctx.STATES[raw_sym]["avg_price"] = float(pos.get("avg_price", 0.0))
+                        ctx.STATES[raw_sym]["entry_price"] = ctx.STATES[raw_sym]["avg_price"]
+                        ctx.STATES[raw_sym]["open_time"] = float(pos.get("entries", [{}])[0].get("time", time.time()*1000)) / 1000.0
+                        logger.info(f"🔄 [手動平倉捕獲] 發現重啟前持倉幣種 {raw_sym} 已不在監控中，臨時恢復其狀態以進行平倉明細捕獲同步。")
+        except Exception as e_restore:
+            logger.info(f"⚠️ [手動平倉捕獲] 還原歷史持倉狀態失敗: {e_restore}")
 
         from core.orders import _ensure_exchange_exit_orders, _cancel_exchange_exit_order_id
         for sym in live_position_symbols:
@@ -294,6 +330,7 @@ async def calibrate_with_exchange(exchange):
                 await _ensure_exchange_exit_orders(sym)
             except Exception as exit_order_error:
                 logger.info(f"🚨 [CALIBRATION] {sym} 交易所退出單修復失敗: {exit_order_error}")
+
 
         for sym, state in list(ctx.STATES.items()):
             if abs(state.get("qty", 0.0)) <= 0.000001 or sym in live_position_symbols:
@@ -542,6 +579,25 @@ async def periodic_htf_update(exchange):
         logger.info("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20 & EMA50")
 
 
+async def periodic_momentum_swap():
+    """
+    每 5 分鐘掃描目前監控幣種的即時動能（ATR% 與 1h 波動度）。
+    若某幣無持倉且動能不足，自動呼叫 replace_dead_coin() 換成池中動能最強的替補。
+    這樣確保幣種池隨時保持活躍，不讓「死水幣」佔住槽位卻毫無進場機會。
+    """
+    # 首次執行稍微延遲，等主迴圈完成初始化
+    await asyncio.sleep(60)
+    while True:
+        try:
+            from services.radar_service import check_momentum_and_swap, FOLLOW_SYMBOLS_FROM
+            # 跟隨模式不自行換幣（換幣權交給來源部署）
+            if not FOLLOW_SYMBOLS_FROM:
+                await asyncio.get_event_loop().run_in_executor(None, check_momentum_and_swap)
+        except Exception as e:
+            logger.info(f"⚠️ [動能自動換幣] 執行失敗: {e}")
+        await asyncio.sleep(300)  # 每 5 分鐘檢查一次
+
+
 def print_multi_status():
     """
     優化後的狀態輸出：將進行中的持倉置頂，並增加視覺分隔。
@@ -663,6 +719,7 @@ async def main():
     asyncio.create_task(periodic_htf_update(exchange_market_data))
     asyncio.create_task(periodic_status_log())
     asyncio.create_task(check_stale_limit_orders())
+    asyncio.create_task(periodic_momentum_swap())  # 每 5 分鐘自動偵測並汰換動能不足幣種
 
     try:
         while True:

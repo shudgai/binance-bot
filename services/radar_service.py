@@ -72,13 +72,13 @@ def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: in
         lev_cap   = min(lev_cap, 2)
         hard_sl   = min(max(base_hard_sl, 0.015), 0.020)
         trail_on  = True
-        vol_tag   = "超高波動"
+        vol_tag   = "中高動能"
     elif atr_pct > 2.5:
         sl_mult   = round(base.get("sl_atr_multiplier", 2.5) + 0.5, 1)
         lev_cap   = min(lev_cap, 3)
         hard_sl   = min(max(base_hard_sl, 0.015), 0.025)
         trail_on  = True
-        vol_tag   = "高波動"
+        vol_tag   = "穩定動能"
     elif atr_pct > 1.5:
         sl_mult   = base.get("sl_atr_multiplier", 2.5)
         hard_sl   = min(max(base_hard_sl, 0.015), 0.025)
@@ -105,17 +105,27 @@ def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: in
         "_radar_rank":       rank,
         "_radar_tag":        f"{price_tag}/{vol_tag}",
         # 雷達動態選中、沒有寫在 COIN_PROFILE_CONFIG 裡的幣種（例如 BCHUSDT）本來
-        # 對這些幣完全不認識，虧損時還是會照樣觸發 Rescue DCA 加碼攤平，等於在還
-        # 沒真正驗證過、風險認知不足的幣種上額外加碼冒險。跟 HOT_MOVER_PROFILE_BASE
-        # 一樣的保守做法，雷達選出的幣預設關閉 Rescue DCA，虧損就照 SL 出場，不加碼。
+        # 對這些幣完全不認識，號損時還是會照樣觸發 Rescue DCA 加碼攞平，等於在還
+        # 沒真正驗證過、風險認知不足的幣種上額外加碼冒険。跟 HOT_MOVER_PROFILE_BASE
+        # 一樣的保守做法，雷達選出的幣預設關閉 Rescue DCA，號損就照 SL 出場，不加碼。
         "disable_rescue_dca": True,
+        # 保留 min_signal_strength：雷達動態 profile 如果沒有寫入此欄位，
+        # apply_symbol_profile 在合併時會用預設値 10.0 （is_relaxed=True），
+        # 導致 MTF 放行門溻降至 12.0，對逆大趨勢空單放行。
+        # 保留原從 COIN_PROFILE_CONFIG 諦得的設定，找不到就用 17.0 作保守預設。
     }
+    _base_min_sig = base.get("min_signal_strength")
+    if _base_min_sig is not None:
+        profile["min_signal_strength"] = _base_min_sig
+    else:
+        profile["min_signal_strength"] = 17.0  # 保守預設，避免 is_relaxed 誤判
     if hard_sl > 0:
         profile["hard_sl_pct"] = hard_sl
     if trail_on:
         profile["trailing_activation_atr"] = base.get("trailing_activation_atr", 1.2)
         profile["trailing_distance_atr"]   = base.get("trailing_distance_atr",   0.7)
     return profile
+
 
 
 def _save_radar_profiles(profiles: dict):
@@ -132,20 +142,29 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 ATR_ELIGIBLE_SYMBOLS = [
-    "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
-    "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
-    "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
+    # 中大型、流動性較好的動能池；排除超低價與容易事件暴衝的幣。
+    # DOGEUSDT/SOLUSDT 加入候選：兩者均有完整策略設定且流動性充足。
+    "XRPUSDT", "ADAUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT",
+    "BCHUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT",
+    "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
+    "SUIUSDT", "INJUSDT", "RENDERUSDT",
+    "DOGEUSDT", "SOLUSDT",
 ]
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
-RADAR_SELECT_COUNT = len(ATR_ELIGIBLE_SYMBOLS)
-HOT_MOVERS_COUNT   = 0    # 不再額外加入熱門動能幣，避免急升急跌標的進入監控池
-CORE_SELECT_COUNT  = RADAR_SELECT_COUNT
+# 選幣數從 8 縮至 5：只挑當下動能最強的精銳幣種，避免持有太多半死不活的幣。
+# 3 個倉位槽 + 2 個備用，確保每檔都有足夠資金和信號密度。
+RADAR_SELECT_COUNT = 5
+HOT_MOVERS_COUNT   = 0    # 不追熱門暴衝榜，避免急升急跌標的進入監控池
+CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
-# 排除波動度過高的幣種（ATR% > 此值）——這些幣種容易發生日內秒殺，不適合策略
-# 原本 3.5%，但「跟隨自己」的 bug 修好、雷達真正開始套用這道濾網後才發現，現在
-# 市場普遍波動偏高，3.5% 幾乎把所有候選幣都濾光，監控池被砍到只剩 1-2 檔。
-# 核准主流幣放寬到 8%，讓幣池能維持接近 10 檔的規模，同時仍排除真正極端(20%+)的幣。
-MAX_ATR_PCT_FOR_ENTRY = 10.0
+# 動能篩選門檻（收緊）：
+#   ATR 2.5%~6.3%：有真實波動但不過度劇烈（舊 2.0%~6.5% 太寬，NEARUSDT/ADAUSDT 的 6.9%/6.6% 會被納入）
+#   1h 波動 0.60%~2.8%：最近一小時要有明確方向（舊 0.35% 太低，XRPUSDT 的 0.48% 也能過）
+MIN_ATR_PCT_FOR_ENTRY = 2.5
+MAX_ATR_PCT_FOR_ENTRY = 6.3
+MIN_1H_VOL_PCT_FOR_ENTRY = 0.60
+MAX_1H_VOL_PCT_FOR_ENTRY = 2.8
+MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY = 14.0
 
 # 熱門幣保守 profile（只走有強訊號的機會）
 HOT_MOVER_PROFILE_BASE = {
@@ -162,25 +181,18 @@ HOT_MOVER_PROFILE_BASE = {
     "rr_threshold":            2.0,
     "breakeven_trigger":       0.5,
     "volume_threshold_factor": 1.2,
+
 }
 
-# 雷達掃描冷卻：把背景掃描拉慢，避免把 Binance 權重打滿
 last_radar_scan = 0
 RADAR_SCAN_COOLDOWN = 45.0
 radar_lock = threading.Lock()
 last_api_call = 0
 API_RATE_LIMIT = 3.0
 
-# 換倉重啟冷卻：5 分鐘內不重複重啟（避免雷達頻繁觸發）
 last_bot_restart = 0.0
-BOT_RESTART_COOLDOWN = 300.0  # 5 minutes
+BOT_RESTART_COOLDOWN = 300.0  
 
-# 熔斷黑名單 {symbol: expire_timestamp}
-# WLDUSDT: 使用者要求永久排除，不用 blacklist_coin() 的一般熔斷（24小時後會過期），
-# 用 float('inf') 讓它永遠不會被 clean_blacklist() 的 `v > now` 過濾掉，且直接寫在
-# 初始值裡，即使服務重啟（BLACKLIST 是模組層級的執行期狀態，重啟就歸零）也會回到
-# 這個永久排除的起始狀態，不用另外存檔案。
-# OGNUSDT: 用戶報告經常驟跌，不適合策略，永久排除
 BLACKLIST = {"WLDUSDT": float('inf'), "OGNUSDT": float('inf')}
 
 def clean_blacklist():
@@ -238,9 +250,6 @@ def _get_recently_traded_symbols(hours=24):
 def _get_open_position_symbols():
     from core.config import PAPER_TRADING
     if not PAPER_TRADING:
-        # 實盤：查交易所真實持倉，不是紙上交易那份 paper_state.json（實盤模式下
-        # 這個檔案不會反映真實倉位，之前一直回傳空陣列，導致實盤模式下「持倉保護」
-        # 形同虛設，是造成 XRPUSDT 明明有真實倉位卻在監控清單/介面上消失的原因）。
         try:
             from services.binance_service import get_all_positions
             positions = get_all_positions()
@@ -265,7 +274,6 @@ def _get_open_position_symbols():
         return []
 
 def _follow_source_radar_switch(force_start=False):
-    """跟隨 FOLLOW_SYMBOLS_FROM 指向的來源部署幣種清單，不自己跑 ATR 掃描。"""
     global last_bot_restart
     try:
         with open(FOLLOW_SYMBOLS_FROM, "r", encoding="utf-8") as f:
@@ -280,10 +288,6 @@ def _follow_source_radar_switch(force_start=False):
         add_system_log("⚠️ [跟隨幣池] 來源清單為空，維持原狀", "warning")
         return get_bot_status().get("active_symbols", [])
 
-    # 持倉保護：跟隨來源清單時，本地（8006）自己真實持有部位的幣種，就算來源
-    # 清單沒有也要保留，不然來源換池時會把本地還有真錢倉位的幣種從清單/介面上
-    # 整個刪掉（本地部位還在、還在被 check_exits 監控，只是介面看不到、容易讓人
-    # 誤以為沒被追蹤——XRPUSDT 就是實際發生過的案例）。
     open_syms = _get_open_position_symbols()
     missing_open = [s for s in open_syms if s not in final_symbols]
     if missing_open:
@@ -327,7 +331,7 @@ def auto_radar_switch(force_start=False):
             add_system_log(f"🔗 [跟隨幣池] FOLLOW_SYMBOLS_FROM={FOLLOW_SYMBOLS_FROM}，本部署將跟隨來源幣種清單", "info")
             return _follow_source_radar_switch(force_start=force_start)
 
-        add_system_log(f"📡 [雷達掃描] 核心 {RADAR_SELECT_COUNT} 幣固定 + 熱門動能最多 {HOT_MOVERS_COUNT} 幣加碼...", "warning")
+        add_system_log(f"📡 [雷達掃描] 中高動能 {RADAR_SELECT_COUNT} 幣 + 排除急升急跌...", "warning")
 
         elapsed = time.time() - last_api_call
         if elapsed < API_RATE_LIMIT:
@@ -338,7 +342,6 @@ def auto_radar_switch(force_start=False):
         current_syms = bot_status.get("active_symbols", [])
 
         clean_blacklist()
-        # ATR 僅在核准的成熟、高流動性幣種內排名，避免事件幣或新幣自動混入。
         scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
         _, full_ranking = get_atr_ranked_coins(scan_pool, limit=CORE_SELECT_COUNT)
 
@@ -346,18 +349,12 @@ def auto_radar_switch(force_start=False):
             add_system_log("⚠️ [雷達掃描] 無法計算 ATR 排名，維持原狀", "warning")
             return current_syms
 
-        # 記錄排名供 UI 顯示
-        ranking_str = " | ".join([f"{r['symbol'].replace('USDT','')} {r['atr_pct']:.2f}%" for r in full_ranking[:10]])
+        ranking_str = " | ".join([f"{r['symbol'].replace('USDT','')} ATR{r['atr_pct']:.2f}% 1h{r.get('one_h_vol_pct', 0):.2f}%" for r in full_ranking[:10]])
         add_system_log(f"📊 [ATR排名] {ranking_str}", "info")
 
-        # 保留仍有持倉的幣種，避免被換掉
         open_syms = _get_open_position_symbols()
 
-        # ── 波動度過高過濾：從完整排名（不只前8名）由高到低依序檢查，濾網沒過就
-        # 往下一個候選找，直到湊滿 CORE_SELECT_COUNT 檔為止。原本是先取「ATR%最高
-        # 前8名」再濾掉太誇張的，若前8名剛好多數超標（例如都是SIREN/AWE這類超冷門
-        # 高波動新幣），幣池會遠低於設定值且沒有補位機制，實際發生過砍到只剩1-2檔。
-        rank_map_raw = {r["symbol"]: (i + 1, r["atr_pct"], r["price"]) for i, r in enumerate(full_ranking)}
+        rank_map_raw = {r["symbol"]: (i + 1, r["atr_pct"], r["price"], r.get("one_h_vol_pct", 0.0)) for i, r in enumerate(full_ranking)}
         filtered_top = []
         filtered_out = []
         for r in full_ranking:
@@ -365,13 +362,23 @@ def auto_radar_switch(force_start=False):
                 break
             sym = r["symbol"]
             atr_pct = r["atr_pct"]
-            if atr_pct > MAX_ATR_PCT_FOR_ENTRY:
-                filtered_out.append(f"{sym}(ATR{atr_pct:.2f}%)")
+            one_h_vol = float(r.get("one_h_vol_pct", 0.0) or 0.0)
+            change_pct = abs(float(r.get("change_pct", 0.0) or 0.0))
+            if atr_pct < MIN_ATR_PCT_FOR_ENTRY:
+                filtered_out.append(f"{sym}(ATR{atr_pct:.2f}%太低)")
+            elif atr_pct > MAX_ATR_PCT_FOR_ENTRY:
+                filtered_out.append(f"{sym}(ATR{atr_pct:.2f}%太高)")
+            elif one_h_vol < MIN_1H_VOL_PCT_FOR_ENTRY:
+                filtered_out.append(f"{sym}(1h{one_h_vol:.2f}%太靜)")
+            elif one_h_vol > MAX_1H_VOL_PCT_FOR_ENTRY:
+                filtered_out.append(f"{sym}(1h{one_h_vol:.2f}%太急)")
+            elif change_pct > MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY:
+                filtered_out.append(f"{sym}(24h±{change_pct:.1f}%過熱)")
             else:
                 filtered_top.append(sym)
 
         if filtered_out:
-            add_system_log(f"⚠️ [波動度過高] 已排除高波動幣種: {', '.join(filtered_out)}", "warning")
+            add_system_log(f"⚠️ [動能濾網] 已排除不合適幣種: {', '.join(filtered_out)}", "warning")
 
         top_symbols = filtered_top
         all_preserved = [s for s in open_syms if s not in top_symbols]
@@ -383,12 +390,12 @@ def auto_radar_switch(force_start=False):
         dynamic_profiles = {}
         analysis_lines = []
         for i, sym in enumerate(top_symbols):
-            rank, atr_pct, price = rank_map.get(sym, (i + 1, 0.0, 0.0))
+            rank, atr_pct, price, one_h_vol = rank_map.get(sym, (i + 1, 0.0, 0.0, 0.0))
             prof = _compute_dynamic_profile(sym, atr_pct, price, rank, len(full_ranking))
             dynamic_profiles[sym] = prof
             tag = prof.get("_radar_tag", "")
             analysis_lines.append(
-                f"{sym.replace('USDT','')} ATR{atr_pct:.2f}% → "
+                f"{sym.replace('USDT','')} ATR{atr_pct:.2f}% 1h{one_h_vol:.2f}% → "
                 f"lev{prof['leverage']}x SL{prof['sl_atr_multiplier']}x TP{prof['tp_atr_multiplier']}x [{tag}]"
             )
 
@@ -503,3 +510,92 @@ def replace_dead_coin(symbol: str):
             add_system_log(f"⚠️ [自動補位] 找不到合適的候補小幣", "danger")
     except Exception as e:
         add_system_log(f"🚨 [自動補位] 發生錯誤: {e}", "danger")
+
+
+# 動能不足自動換幣冷卻：同一幣種兩次換幣間至少間隔 10 分鐘，避免頻繁重啟
+_momentum_swap_cooldown: dict[str, float] = {}
+MOMENTUM_SWAP_COOLDOWN_SEC = 600  # 10 分鐘
+
+
+def check_momentum_and_swap():
+    """
+    自動動能監控換幣。
+    每次呼叫時掃描目前監控幣種的 ATR% 與 1h 波動度；
+    若某幣無持倉且動能持續不足（低於篩選門檻），就將其汰換為池中動能最高的替補。
+
+    設計原則：
+    - 有持倉的幣種絕對不換（避免倉位被強制移除）
+    - 同一幣種 10 分鐘內只換一次（避免連續重啟震盪）
+    - 只有在找得到更好替補幣時才換，找不到就維持原狀
+    """
+    global _momentum_swap_cooldown
+    try:
+        from services.binance_service import get_atr_ranked_coins
+        bot_status = get_bot_status()
+        current_syms = list(bot_status.get("active_symbols", []))
+        if not current_syms:
+            return
+
+        # 取得目前這些幣的即時 ATR / 1h 波動
+        _, ranks = get_atr_ranked_coins(current_syms, limit=len(current_syms) + 5)
+        rank_map = {r["symbol"]: r for r in ranks}
+
+        # 取得目前有持倉的幣（這些不可換）
+        open_syms = set(_get_open_position_symbols())
+
+        swapped = []
+        for sym in list(current_syms):
+            if sym in open_syms:
+                continue  # 有倉位不動
+
+            # 冷卻中也跳過
+            cooldown_until = _momentum_swap_cooldown.get(sym, 0)
+            if time.time() < cooldown_until:
+                continue
+
+            r = rank_map.get(sym)
+            if not r:
+                continue
+
+            atr_pct  = float(r.get("atr_pct", 0) or 0)
+            one_h    = float(r.get("one_h_vol_pct", 0) or 0)
+            change24 = abs(float(r.get("change_pct", 0) or 0))
+
+            # 判斷動能是否不足
+            too_low_atr  = atr_pct < MIN_ATR_PCT_FOR_ENTRY
+            too_high_atr = atr_pct > MAX_ATR_PCT_FOR_ENTRY
+            too_quiet_1h = one_h < MIN_1H_VOL_PCT_FOR_ENTRY
+            too_hot_1h   = one_h > MAX_1H_VOL_PCT_FOR_ENTRY
+            too_hot_24h  = change24 > MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
+            momentum_dead = too_low_atr or too_high_atr or too_quiet_1h or too_hot_1h or too_hot_24h
+
+            if not momentum_dead:
+                continue
+
+            # 找出動能不足原因（供 log 使用）
+            reason_parts = []
+            if too_low_atr:  reason_parts.append(f"ATR={atr_pct:.2f}%<{MIN_ATR_PCT_FOR_ENTRY}%")
+            if too_high_atr: reason_parts.append(f"ATR={atr_pct:.2f}%>{MAX_ATR_PCT_FOR_ENTRY}%")
+            if too_quiet_1h: reason_parts.append(f"1h={one_h:.2f}%<{MIN_1H_VOL_PCT_FOR_ENTRY}%")
+            if too_hot_1h:   reason_parts.append(f"1h={one_h:.2f}%>{MAX_1H_VOL_PCT_FOR_ENTRY}%")
+            if too_hot_24h:  reason_parts.append(f"24h={change24:.1f}%過熱")
+            reason_str = "、".join(reason_parts)
+
+            add_system_log(
+                f"📉 [動能不足] {sym} 動能衰退（{reason_str}），尋找替補幣種...",
+                "warning"
+            )
+
+            # 執行換幣
+            _momentum_swap_cooldown[sym] = time.time() + MOMENTUM_SWAP_COOLDOWN_SEC
+            replace_dead_coin(sym)
+            swapped.append(sym)
+            # 一次只換一檔，避免連鎖重啟
+            break
+
+        if not swapped:
+            # 所有幣動能正常，靜默通過（不輸出 log 以免刷版）
+            pass
+
+    except Exception as e:
+        add_system_log(f"⚠️ [動能監控] 掃描失敗: {e}", "warning")

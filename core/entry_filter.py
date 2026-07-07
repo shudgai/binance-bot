@@ -583,10 +583,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        # 需要強訊號才能繞過 1H EMA50 趨勢過濾。這裡曾被改成 14.0（低於原本的 16.0），
-        # 從實際虧損案例（BASUSDT 強度僅 15.39 就被放行逆勢進場後虧損）發現門檻太低，
-        # 拉高到 18.0，比原始的 16.0 更保守，減少邊緣強度訊號被誤放行進場。
-        _mtf_override_threshold = 12.0 if is_relaxed else 18.0
+        # MTF 1H & 15m 趨勢過濾：需要強訊號才能繞過 1H EMA50 趨勢過濾。
+        # Relaxed 門檻從 16.0 提高到 17.0，普通模式從 18.0 提高到 22.0。
+        # 這樣能避免在強勁多頭趨勢中因一般強度的逆勢訊號盲目做空。
+        _mtf_override_threshold = 17.0 if is_relaxed else 22.0
 
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h:

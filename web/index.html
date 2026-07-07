@@ -1745,22 +1745,20 @@ createApp({
             return 0;
         };
 
+        // getTradeUnrealizedPnl：直接取 /api/positions 回傳的 pos.pnl（即幣安
+        // unRealizedProfit，用 mark price 計算，且已正確處理整個倉位的數量，含分批成交）。
+        // 不再用 trade.price/qty 重算——後者只代表單筆成交紀錄，若同一次進場被幣安拆成
+        // 多筆小額成交（_aggregate_fills_by_order 已合併，但仍可能不等於完整持倉量），
+        // 重算出的損益會跟交易所實際持倉損益對不上。
         const getTradeUnrealizedPnl = (trade) => {
             if (trade.is_close) return 0;
             const pos = getPositionInfo(trade.symbol);
             if (!pos || Math.abs(pos.qty) < 0.001) return 0;
-            const currentPrice = getTradeCurrentPrice(trade);
-            if (currentPrice <= 0) return 0;
-            const isBuyer = trade.isBuyer !== undefined ? trade.isBuyer : trade.is_buyer;
-            if (isBuyer) return (currentPrice - trade.price) * trade.qty;
-            return (trade.price - currentPrice) * trade.qty;
+            // 直接用交易所算好的權威未實現損益，不在前端重算
+            return pos.pnl || pos.unRealizedProfit || 0;
         };
 
-        // 全倉即時未實現損益 — 原本從 trades.value 逐筆用「進場價 vs 最新成交價」重算，
-        // 但這樣的計算跟交易所直接回報的 unRealizedProfit（用 mark price、且正確處理
-        // 槓桿/保證金）是兩套獨立邏輯，兩邊基準價不同會有落差，遇到一筆倉位由多次
-        // 分批成交組成時（同一次進場被拆成好幾筆 trade 記錄）更只會算到最後一筆的
-        // 數量，其餘分批成交的數量整個漏算。allPositions 就是 /api/positions 回傳、
+        // 全倉即時未實現損益 — allPositions 是 /api/positions 回傳、
         // 交易所自己算好的權威數據，直接加總最準確，不需要在前端重算一次。
         const totalUnrealizedPnl = computed(() => {
             let total = 0;
@@ -1778,15 +1776,27 @@ createApp({
 
         const getTradeUnrealizedPnlPercent = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
-            if (pnl === 0 || trade.price * trade.qty === 0) return 0;
-            const lev = getPositionInfo(trade.symbol)?.leverage || bot.value.leverage || 5;
-            return pnl / (trade.price * trade.qty) * 100 * lev;
+            if (pnl === 0) return 0;
+            const pos = getPositionInfo(trade.symbol);
+            // 分母用持倉的 entryPrice * 實際持倉量（非單筆成交的 qty）
+            const posQty = pos ? Math.abs(pos.qty) : 0;
+            const entryPrice = pos ? (pos.entryPrice || pos.avg_price || trade.price) : trade.price;
+            const base = posQty * entryPrice;
+            if (base <= 0) return 0;
+            const lev = pos?.leverage || bot.value?.leverage || 5;
+            return pnl / base * 100 * lev;
         };
 
         const getTradeUnrealizedPnlPercentActual = (trade) => {
             const pnl = getTradeUnrealizedPnl(trade);
-            if (pnl === 0 || trade.price * trade.qty === 0) return 0;
-            return pnl / (trade.price * trade.qty) * 100;
+            if (pnl === 0) return 0;
+            const pos = getPositionInfo(trade.symbol);
+            // 分母用持倉的 entryPrice * 實際持倉量（非單筆成交的 qty）
+            const posQty = pos ? Math.abs(pos.qty) : 0;
+            const entryPrice = pos ? (pos.entryPrice || pos.avg_price || trade.price) : trade.price;
+            const base = posQty * entryPrice;
+            if (base <= 0) return 0;
+            return pnl / base * 100;
         };
 
         const isOpenTrade = (trade) => {

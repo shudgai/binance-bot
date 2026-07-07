@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.check_entries import (
     is_divergence_blocking,
+    is_second_bar_adverse,
     is_entry_price_direction_aligned,
     is_pending_confirmation_valid,
     should_wait_for_entry_confirmation,
@@ -41,6 +42,14 @@ class PendingConfirmationTests(unittest.TestCase):
     def test_allows_bullish_candle_with_wider_upper_shadow(self):
         candle = [0, 100, 107, 95, 103, 1000]
         self.assertTrue(is_pending_confirmation_valid("buy", candle))
+
+    def test_second_bar_adverse_rejects_failed_buy_confirmation(self):
+        self.assertTrue(is_second_bar_adverse("buy", 99.4, 100.0, atr=0.2))
+        self.assertFalse(is_second_bar_adverse("buy", 99.8, 100.0, atr=0.2))
+
+    def test_second_bar_adverse_rejects_failed_sell_confirmation(self):
+        self.assertTrue(is_second_bar_adverse("sell", 100.6, 100.0, atr=0.2))
+        self.assertFalse(is_second_bar_adverse("sell", 100.2, 100.0, atr=0.2))
 
 
 if __name__ == "__main__":

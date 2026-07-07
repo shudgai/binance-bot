@@ -379,6 +379,78 @@ class TakeProfitTests(unittest.TestCase):
 
         self.assertEqual(s["qty"], 0.0)
 
+    def test_trailtp_locks_after_leveraged_one_percent_peak(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["close_price"] = 100.33
+        s["open_time"] = time.time() - 600
+        s["leverage"] = 3
+        s["current_atr"] = 0.1
+        s["entry_atr"] = 0.1
+        s["atr_ma20"] = 0.1
+        s["current_rsi"] = 50.0
+        s["prev_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["macd_hist"] = 0.0
+        s["ohlcv"] = [[0, 100.0, 100.4, 100.2, 100.33, 1000]]
+        s["prev_close"] = 100.35
+        s["highest_profit_pct"] = 0.004
+        s["trailing_highest"] = 100.4
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs.get("reason"), "[TrailTP_Peak]")
+                self.assertGreater(mock_close.await_args.args[3], s["close_price"])
+
+        asyncio.run(run_check())
+
+    def test_peak_giveback_does_not_close_after_profit_turns_negative(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["close_price"] = 99.9
+        s["open_time"] = time.time() - 600
+        s["current_atr"] = 5.0
+        s["entry_atr"] = 5.0
+        s["current_rsi"] = 50.0
+        s["prev_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100.0, 100.0, 99.9, 99.9, 1000]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.003
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_not_called()
+
+        asyncio.run(run_check())
+
     def test_time_stagnation_below_min_profit_does_not_take_profit(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
@@ -410,6 +482,82 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_not_called()
+
+        asyncio.run(run_check())
+
+    def test_universal_stop_loss_is_not_blocked_by_profit_first(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "TESTSLUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["close_price"] = 98.8
+        s["open_time"] = time.time() - 1200
+        s["current_atr"] = 0.4
+        s["entry_atr"] = 0.4
+        s["hard_stop_loss_pct"] = 0.03
+        s["entry_count"] = 0
+        s["current_rsi"] = 50.0
+        s["prev_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ema20"] = 100.0
+        s["ohlcv"] = [[0, 100.0, 100.0, 98.8, 98.8, 1000]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Universal_SL]")
+                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
+
+        asyncio.run(run_check())
+
+    def test_slot_release_stop_closes_persistent_wrong_direction_loss(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "HBARUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["first_entry_price"] = 100.0
+        s["close_price"] = 99.4
+        s["open_time"] = time.time() - 700
+        s["current_atr"] = 0.5
+        s["entry_atr"] = 0.5
+        s["hard_stop_loss_pct"] = 0.03
+        s["entry_count"] = 1
+        s["current_rsi"] = 45.0
+        s["prev_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = -0.2
+        s["macd_signal"] = 0.0
+        s["ema20"] = 100.0
+        s["ohlcv"] = [[0, 100.0, 100.0, 99.4, 99.4, 1000]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Slot_Release_Stop]")
+                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
 
         asyncio.run(run_check())
 

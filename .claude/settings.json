@@ -58,7 +58,9 @@
       "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot/core/check_entries.py /home/shudgai999/project/binance-bot/core/runner.py)",
       "Bash(python3 -m py_compile /home/shudgai999/project/binance-bot-live/core/check_entries.py /home/shudgai999/project/binance-bot-live/core/runner.py)",
       "Bash(curl -s http://localhost:8005/api/logs)",
-      "Bash(curl -s -X POST http://localhost:8005/api/bot-status/reset-realized-pnl)"
+      "Bash(curl -s -X POST http://localhost:8005/api/bot-status/reset-realized-pnl)",
+      "Bash(python3 -m py_compile services/bot_manager_service.py services/binance_service.py)",
+      "Bash(netstat -tlnp)"
     ]
   }
 }
