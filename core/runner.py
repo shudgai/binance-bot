@@ -324,6 +324,8 @@ async def calibrate_with_exchange(exchange):
                 continue
             await _record_external_position_close(exchange, sym, state)
             logger.info(f"🔄 [CALIBRATION] {sym} 本地仍有持倉 {state.get('qty', 0.0):.4f}，但交易所已無倉位；清理本地狀態與交易所退出單追蹤")
+            from core.state_manager import mark_exit
+            mark_exit(sym, is_stop_loss=False, reason="[External_Manual_Close]")
             for key, label in (("exchange_stop_order_id", "止損"), ("exchange_take_profit_order_id", "停利")):
                 order_id = state.get(key)
                 if not order_id:
