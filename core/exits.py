@@ -891,6 +891,29 @@ async def check_exits(sym):
                 s["has_partial_closed"] = True
                 return
 
+    # ── 新增：緊湊移動停利 (Tight Trailing Stop for Range Trading) ──
+    from core.config import TIGHT_TP_CALLBACK_RATE, TIGHT_TP_ACTIVATION_PCT
+    if is_long:
+        if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
+            _peak_ref = max(s.get("trailing_highest", avg), avg * (1 + s.get("highest_profit_pct", 0.0)))
+            stop_loss_trigger = _peak_ref * (1.0 - TIGHT_TP_CALLBACK_RATE)
+            if p <= stop_loss_trigger:
+                cs = 'sell'
+                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最高點 {_peak_ref:.6f} 回撤 {TIGHT_TP_CALLBACK_RATE*100:.2f}% (當前價: {p:.6f} <= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tight_Trailing_Stop]")
+                s["highest_profit_pct"] = 0.0
+                return
+    else:
+        if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
+            _trough_ref = min(s.get("trailing_lowest", avg), avg * (1 - s.get("highest_profit_pct", 0.0)))
+            stop_loss_trigger = _trough_ref * (1.0 + TIGHT_TP_CALLBACK_RATE)
+            if p >= stop_loss_trigger:
+                cs = 'buy'
+                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最低點 {_trough_ref:.6f} 回彈 {TIGHT_TP_CALLBACK_RATE*100:.2f}% (當前價: {p:.6f} >= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tight_Trailing_Stop]")
+                s["highest_profit_pct"] = 0.0
+                return
+
     # ── Trailing TP：槓桿自適應高點停利 ──
     # 兩套條件：先判斷是否啟動高點鎖利，然後以固定回撤下限決定實際出場。
     atr_pct = atr_val / avg if avg > 0 else 0.005
