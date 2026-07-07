@@ -401,10 +401,59 @@ def api_market_sell(symbol: str):
             return {"status": "success", "detail": msg}
         else:
             base_asset, _ = parse_symbol(symbol_upper)
+            
+            # 手動平倉前，先獲取當前持倉詳情以用於計算已實現盈虧明細
+            from services.binance_service import client, get_total_realized_pnl_usdt, _total_pnl_cache
+            from core.orders import record_trade_result
+            import time
+            
+            positions = client.futures_position_information(symbol=symbol_upper)
+            entry_price = 0.0
+            qty = 0.0
+            if positions:
+                qty = float(positions[0].get("positionAmt", 0.0) or 0.0)
+                entry_price = float(positions[0].get("entryPrice", 0.0) or 0.0)
+                
+            # 執行交易所平倉
             order = market_sell(symbol_upper, base_asset)
+            
+            # 異步/立即清除已實現盈虧的快取，讓下次狀態輪詢立刻看到最新損益金額
+            import services.binance_service as bs
+            bs._total_pnl_cache = (0, None)
+            
+            # 如果成功抓到舊有持倉，在此刻手動補登明細
+            if abs(qty) > 0.000001 and entry_price > 0:
+                is_long = qty > 0
+                # 抓取成交單價格（如果拿到）
+                avg_fill = float(order.get("average") or order.get("price") or 0.0)
+                if avg_fill <= 0:
+                    # 補救：如果下單回傳中沒有，就讀取當前標記價
+                    avg_fill = float(positions[0].get("markPrice", entry_price) if positions else entry_price)
+                
+                profit_pct = (avg_fill - entry_price) / entry_price if is_long else (entry_price - avg_fill) / entry_price
+                realized_pnl = float(order.get("cumQty", 0.0)) * profit_pct * entry_price # 估計值
+                
+                record_trade_result(
+                    symbol=symbol_upper,
+                    entry_reason="MANUAL",
+                    exit_reason="[手動平倉] [落袋為安]",
+                    profit_pct=profit_pct,
+                    current_atr=0.0,
+                    max_profit_reached=max(0.0, profit_pct),
+                    expected_entry=entry_price,
+                    expected_exit=avg_fill,
+                    actual_entry=entry_price,
+                    actual_exit=avg_fill,
+                    fees=0.0,
+                    qty=abs(qty),
+                    exchange_close_id=order.get("orderId"),
+                    realized_pnl_usdt=realized_pnl
+                )
+                
             return {"status": "success", "order": order}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"平倉失敗: {str(e)}")
+
 
 @app.post("/api/order/close-all")
 def api_close_all_orders():

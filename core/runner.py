@@ -298,30 +298,6 @@ async def calibrate_with_exchange(exchange):
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 
 
-        # ── 外部平倉同步強化 ──
-        # 重啟時，如果有些幣種之前有持倉（在舊狀態或 data/paper_state.json 中記錄有持倉），
-        # 但目前已經平倉，且不屬於當前 ALL_SYMBOLS 名單，必須臨時加回 STATES 中，
-        # 否則 _record_external_position_close 會直接忽略它，導致手動平倉的明細不會被寫入 trade_history.json。
-        try:
-            # 讀取本地 paper_state.json 以獲取之前的持倉狀態（做為還原根據）
-            state_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json")
-            if os.path.exists(state_path):
-                with open(state_path, "r", encoding="utf-8") as f:
-                    _paper_data = json.load(f)
-                for pk, pos in _paper_data.get("positions", {}).items():
-                    raw_sym = pk.replace(":USDT", "USDT").replace(":", "")
-                    qty = float(pos.get("qty", 0.0))
-                    if abs(qty) > 0.000001 and raw_sym not in ctx.STATES:
-                        # 這是個「重啟前有持倉，但目前未受監控」的幣種，臨時建構它的 STATES 以便做手動平倉同步
-                        ctx.STATES[raw_sym] = build_symbol_state(raw_sym)
-                        ctx.STATES[raw_sym]["qty"] = qty
-                        ctx.STATES[raw_sym]["avg_price"] = float(pos.get("avg_price", 0.0))
-                        ctx.STATES[raw_sym]["entry_price"] = ctx.STATES[raw_sym]["avg_price"]
-                        ctx.STATES[raw_sym]["open_time"] = float(pos.get("entries", [{}])[0].get("time", time.time()*1000)) / 1000.0
-                        logger.info(f"🔄 [手動平倉捕獲] 發現重啟前持倉幣種 {raw_sym} 已不在監控中，臨時恢復其狀態以進行平倉明細捕獲同步。")
-        except Exception as e_restore:
-            logger.info(f"⚠️ [手動平倉捕獲] 還原歷史持倉狀態失敗: {e_restore}")
-
         from core.orders import _ensure_exchange_exit_orders, _cancel_exchange_exit_order_id
         for sym in live_position_symbols:
             if sym not in ctx.STATES:
@@ -330,6 +306,7 @@ async def calibrate_with_exchange(exchange):
                 await _ensure_exchange_exit_orders(sym)
             except Exception as exit_order_error:
                 logger.info(f"🚨 [CALIBRATION] {sym} 交易所退出單修復失敗: {exit_order_error}")
+
 
 
         for sym, state in list(ctx.STATES.items()):
