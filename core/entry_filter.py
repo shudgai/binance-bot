@@ -397,7 +397,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
 
 
     # --- 追價位置防呆：弱訊號嚴格擋，強訊號需確認後放行 ---
-    if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and bb_lower > 0 and bb_upper > bb_lower:
+    if not is_relaxed and route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and bb_lower > 0 and bb_upper > bb_lower:
         bb_pos = (cp - bb_lower) / (bb_upper - bb_lower)
         current_rsi = s.get("current_rsi", 50.0)
         macd_hist = s.get("macd_hist", 0.0)

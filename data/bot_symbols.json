@@ -2,15 +2,15 @@
   "symbols": [
     "DOTUSDT",
     "NEARUSDT",
-    "APTUSDT",
     "ADAUSDT",
     "XLMUSDT",
-    "SOLUSDT",
-    "SUIUSDT",
     "LINKUSDT",
     "AVAXUSDT",
     "DOGEUSDT",
-    "UNIUSDT",
+    "BCHUSDT",
+    "SOLUSDT",
+    "SUIUSDT",
+    "XRPUSDT",
     "AAVEUSDT"
   ],
   "profiles": {

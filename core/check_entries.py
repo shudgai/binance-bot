@@ -558,7 +558,7 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 is_position_reversal = has_position and side != current_direction
-                if not price_direction_ok and not is_position_reversal:
+                if not price_direction_ok and not is_position_reversal and profile.get("min_signal_strength", 10.0) > 10.0:
                     logger.info(f"🛑 [DIRECTION_MISMATCH] {sym} 被攔截：價格方向與 {side} 訊號相反 (價格變動: {price_change:.6f})")
                     set_entry_diagnosis(f"{sym}: 價格方向與訊號相反，放棄進場")
                     continue
