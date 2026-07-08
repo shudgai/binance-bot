@@ -284,6 +284,7 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
 def reset_coin_state(sym):
     from core import ctx
     from core.peak_store import clear_peak
+    from core.entry_time_store import clear_entry_time
     s = ctx.STATES[sym]
     s["qty"] = 0.0
     s["avg_price"] = 0.0
@@ -293,6 +294,7 @@ def reset_coin_state(sym):
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
     clear_peak(sym)
+    clear_entry_time(sym)
     s["highest_close_pct"] = 0.0
     s["peak_time"] = 0.0
     s["has_partial_closed"] = False

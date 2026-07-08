@@ -213,10 +213,6 @@ async def check_entries():
     from core.market_data import load_open_positions
 
     disabled_syms = _load_disabled_symbols()
-    for sym in ctx.ALL_SYMBOLS:
-        s = ctx.STATES.get(sym)
-        if s and s.get("status") == "COOLDOWN":
-            continue
     # [每日熔斷] 先確認是否已觸發當日封鎖
     if is_daily_loss_halted():
         logger.info(f"[每日熔斷] 今日累計虧損已超上限 ({abs(_bal._DAILY_REALIZED_LOSS)*100:.2f}% >= {DAILY_LOSS_LIMIT_PCT*100:.1f}%)，跳過所有新進場！")
@@ -238,7 +234,14 @@ async def check_entries():
         # --- 自動反手快速通道 ---
         pending_rev = s.get("pending_reverse")
         if pending_rev:
-            if time.time() - s.get("pending_reverse_time", 0) < 300:  # 5 分鐘內有效
+            if s.get("status") == "COOLDOWN":
+                # 冷卻中不允許反手快速通道繞過，避免剛平倉幾秒內又被打回同一個幣種，
+                # 追出一個新倉位又立刻卡進出場失敗重試迴圈（曾發生 LINKUSDT 平倉 14 秒後
+                # 又反手進場，出場單被交易所以 ReduceOnly 拒絕，卡住重試 17 分鐘拖累其他倉位）。
+                s["pending_reverse"] = None
+                s["pending_reverse_after_rescue"] = False
+                logger.info(f"⏳ [反手取消] {sym} 冷卻中，放棄本次反手快速通道，等冷卻結束後由一般訊號重新評估")
+            elif time.time() - s.get("pending_reverse_time", 0) < 300:  # 5 分鐘內有效
                 if not s.get("is_ordering"):
                     # 反手前先確認方向仍然成立（大盤方向、價格位置、MACD 動能擴張），
                     # 不能單純因為原本方向停損了就假設反方向一定對，要看當下盤勢是否真的支持。
@@ -612,10 +615,13 @@ async def check_entries():
                         continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
+        # 使用者先前要求增加開倉次數，門檻從 1.5/1.2/1.3 下修到 1.3/1.0/1.1；後來發現
+        # 邊緣訊號進場後常常原地打轉、最高獲利很小就打平/小虧出場，要求拉回一點，
+        # 犧牲一些開倉次數換單筆品質，改成 1.4/1.1/1.2（介於原始與寬鬆之間）。
         atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-        base_rr_thresh = s.get("min_rr", 1.5)
+        base_rr_thresh = s.get("min_rr", 1.4)
 
-        rr_thresh = 1.2 if strength > 20.0 else (1.3 if strength > 15.0 else base_rr_thresh)
+        rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
         if base_rr_thresh >= 2.0:
             rr_thresh = base_rr_thresh
 
@@ -706,11 +712,24 @@ async def check_entries():
             s["is_ordering"] = True
 
             # --- 動態權重分配 (Dynamic Position Sizing) ---
+            # 使用者指出：原本的算法只看「這個訊號佔本輪候選訊號強度總和的比例」，如果
+            # 這輪只有它一個候選（很常見），比例永遠是 100%、直接封頂 85%——導致一個強度
+            # 只有 12（偏弱）的訊號跟強度 30+ 的頂級訊號拿到一樣多的資金，跟訊號本身的
+            # 品質完全脫鉤。改成同時看「訊號自身的絕對強度」：強度越高，允許動用的資金
+            # 上限越高；弱訊號即使是本輪唯一候選，也不會自動封頂到 85%。
+            # 門檻取自實測 984 筆進場訊號的強度分布：min≈10（最弱仍通過篩選）、
+            # p90≈32（前10%頂級訊號）。
             raw_ratio = strength / total_weight if total_weight > 0 else 1.0
-            allocation_pct = min(raw_ratio, 0.85)  # 最高封頂 85%
+            _strength_floor = 10.0
+            _strength_ceiling = 32.0
+            _min_alloc_pct = 0.30
+            _max_alloc_pct = 0.85
+            _strength_scaled = max(0.0, min(1.0, (strength - _strength_floor) / (_strength_ceiling - _strength_floor)))
+            absolute_alloc_pct = _min_alloc_pct + _strength_scaled * (_max_alloc_pct - _min_alloc_pct)
+            allocation_pct = min(raw_ratio, absolute_alloc_pct, _max_alloc_pct)
 
             weight_label = f"{allocation_pct*100:.1f}%"
-            logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%)，實際分配資金封頂為: {weight_label}")
+            logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%, 絕對強度換算上限 {absolute_alloc_pct*100:.1f}%)，實際分配資金為: {weight_label}")
             if not has_pos:
                 logger.info(f"🛒 [ENTRY_DISPATCH] {sym} 將進入 execute_order | side={side} route={route} strength={strength:.2f} allocation={allocation_pct:.3f}")
 

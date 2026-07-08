@@ -694,15 +694,42 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # +0.31%，追價這 11 秒內價格繼續反著走，最後市價成交時已經變成 -0.16%，
         # 「不再等待」的出場反而等了最久、虧最多。這類理由直接用市價出場搶時效，
         # 不要為了多鎖一點點價差去冒繼續等待的風險。
-        _urgent_exit_reasons = ("Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak")
+        _urgent_exit_reasons = ("Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak", "Tight_Trailing_Stop")
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:
             if profit_pct > 0 and not is_stop_loss and not _is_urgent_exit:
                 final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
             else:
                 final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
+            s["_close_fail_count"] = 0
         except Exception as e:
             logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
+            s["_close_fail_count"] = s.get("_close_fail_count", 0) + 1
+            # ReduceOnly 被拒絕通常代表交易所那邊這筆倉位數量已經對不上（或已經不存在），
+            # 繼續拿同一組舊資料重試只會無限失敗，卡住主迴圈不去管其他倉位——曾經發生
+            # LINKUSDT 平倉後 14 秒內又被反手重新進場，出場單卡在 ReduceOnly 被拒絕，
+            # 連續重試 17 分鐘，害同一時段的 BCHUSDT 整整 10 分鐘沒被檢查、虧損擴大。
+            # 遇到這類「明確代表倉位對不上」的錯誤，或連續失敗達上限，直接跟交易所核對
+            # 真實倉位並修正本地狀態，而不是無條件一直重試。
+            _reduce_only_rejected = "-2022" in str(e) or "ReduceOnly" in str(e)
+            if not PAPER_TRADING and (_reduce_only_rejected or s["_close_fail_count"] >= 3):
+                try:
+                    positions = await exchange_futures.fetch_positions([sym])
+                    _, real_qty = _find_exchange_position(positions, sym)
+                except Exception as sync_err:
+                    logger.info(f"⚠️ [平倉失敗後對帳失敗] {sym}: {sync_err}")
+                    return
+                if abs(real_qty) < 0.000001:
+                    logger.info(f"🔄 [平倉失敗後對帳] {sym} 交易所實際已無倉位，視為已平倉並清理本地狀態")
+                    await _cancel_exchange_exit_order(sym, "exchange_stop_order_id", "止損")
+                    await _cancel_exchange_exit_order(sym, "exchange_take_profit_order_id", "停利")
+                    mark_exit(sym, is_stop_loss=is_stop_loss, reason=reason, loss_pct=profit_pct)
+                    clear_peak(sym)
+                    reset_coin_state(sym)
+                else:
+                    logger.info(f"🔄 [平倉失敗後對帳] {sym} 交易所實際倉位為 {real_qty}，同步本地數量後待下次重新評估")
+                    s["qty"] = real_qty
+                    s["_close_fail_count"] = 0
             return
 
     # 用真實成交價（實盤）或模擬價（紙上）重新計算最終獲利，取代呼叫端傳入的理論價格
@@ -936,6 +963,8 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
             s["entries"] = []
         s["entries"].append({"price": fill_price, "qty": base_amt, "time": now, "side": side})
         s["open_time"] = now
+        from core.entry_time_store import save_entry_time
+        save_entry_time(sym, now)
         s["last_buy_time"] = now
         s["last_entry_time"] = now
         s["last_entry_price"] = fill_price
@@ -1634,6 +1663,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             s["entries"].append({"price": fill_price, "qty": base_amt, "time": now, "side": side})
 
             s["open_time"] = now
+            from core.entry_time_store import save_entry_time
+            save_entry_time(sym, now)
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["last_entry_price"] = fill_price

@@ -424,10 +424,24 @@ def kill_bot():
     for s in symbols:
         _kill_single_bot(s)
     
-    # 確保所有遺留的 bot 行程都被清除（包含 manage_bot.sh 直接啟動的進程）
+    # 確保所有遺留的 bot 行程都被清除（包含 manage_bot.sh 直接啟動的進程）。
+    # 原本用 pkill -f 'main.py' 整批殺，沒有排除呼叫者自己的 PID——core/runner.py 的
+    # periodic_momentum_swap()（換動能不足的幣）是在 main.py 這個 bot 子行程「自己內部」
+    # 呼叫 replace_dead_coin() -> start_bot() -> kill_bot()，等於 main.py 呼叫這行時會把
+    # 「正在執行這段程式碼的自己」也一起殺掉（exit -15），造成系統守護誤判成「意外停止」
+    # 反覆重啟——實際發生過同一天內好幾次換幣就自己重啟一次。改成排除自己的 PID，
+    # 只清掉其他遺留的 main.py 行程。
     try:
-        os.system("pkill -f 'main\\.py'")
-    except:
+        my_pid = os.getpid()
+        pgrep_out = os.popen("pgrep -f 'main\\.py'").read().split()
+        for pid_str in pgrep_out:
+            try:
+                pid = int(pid_str)
+                if pid != my_pid:
+                    os.kill(pid, 15)
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+    except Exception:
         pass
 
     # 移除單例鎖定檔，避免已終止程序遺留鎖定導致新進程啟動失敗

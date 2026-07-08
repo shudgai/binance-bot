@@ -43,7 +43,16 @@ def update_trailing_stop(sym, current_price, is_long):
         liq_price = avg_price * (1 + 1.0 / leverage) / (1 + mm_ratio) if leverage > 0 else 0.0
 
     profit_pct = _profit_pct(current_price, avg_price, is_long)
-    s["highest_profit_pct"] = max(s.get("highest_profit_pct", 0.0), profit_pct)
+    _prev_peak = s.get("highest_profit_pct", 0.0)
+    s["highest_profit_pct"] = max(_prev_peak, profit_pct)
+    if s["highest_profit_pct"] > _prev_peak:
+        # 即時把新高點存檔，而不是只在重啟時存一次快照。原本只有重啟校準那一刻會呼叫
+        # save_peak，兩次重啟之間爬到的真正高點從未落地，若中途又重啟（例如部署修改），
+        # 峰值記憶會被打回重啟當下的價位，讓所有靠 highest_profit_pct 判斷的鎖利機制
+        # 都以為從沒漲那麼高過。曾實測 SUIUSDT 真實高點 1.25%，因為中途重啟兩次，
+        # 最後系統只記得 0.25%，鎖利鎖在遠低於真正高點的地方。
+        from core.peak_store import save_peak
+        save_peak(sym, s["highest_profit_pct"])
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
 
@@ -270,11 +279,20 @@ async def check_exits(sym):
     if _ohlcv_early and avg > 0:
         _lc = _ohlcv_early[-1]
         _intra_peak_early = (_lc[2] - avg) / avg if is_long else (avg - _lc[3]) / avg
+    _prev_peak_early = s.get("highest_profit_pct", 0.0)
     s["highest_profit_pct"] = max(
-        s.get("highest_profit_pct", 0.0),
+        _prev_peak_early,
         profit_pct,
         max(0.0, _intra_peak_early)
     )
+    if s["highest_profit_pct"] > _prev_peak_early:
+        # 即時把新高點存檔，不要只在重啟校準那一刻存一次。這是每個 tick 最先跑到的峰值
+        # 更新點，兩次重啟之間真正的最高點都要落地，否則中途再重啟（例如部署別的修改），
+        # 峰值記憶會被打回重啟當下的價位，讓所有靠 highest_profit_pct 判斷的鎖利機制都
+        # 以為從沒漲那麼高過（實測 SUIUSDT 真實高點 1.25%，因為中途重啟兩次，最後系統
+        # 只記得 0.25%，鎖利鎖在遠低於真正高點的地方）。
+        from core.peak_store import save_peak
+        save_peak(sym, s["highest_profit_pct"])
 
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     _sl_mult   = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
@@ -283,6 +301,29 @@ async def check_exits(sym):
     _atr_sl_pct = (_sl_mult * _entry_atr / avg) if avg > 0 else 0.006
     expected_loss_pct = max(_hard_sl, _atr_sl_pct, 0.005)
     min_tp_pct = expected_loss_pct * _rr_thresh
+
+    # ── 停滯超時 (Stagnation Timeout) ──
+    # 使用者要求：虧損/持平的單子如果盤整很久沒動靜，不要無限期等下去；但如果動能仍在
+    # 往有利方向擴張（代表趨勢還在發展中，只是還沒轉正），就繼續給機會，不要單純因為
+    # 「時間到」就把一個可能正在醞釀的單子砍掉——只砍真正停滯、方向不明的單子。
+    # 必須放在 Rescue DCA 判斷之前：虧損不夠攤平價差門檻的停滯倉位，DCA 那段每個 tick
+    # 都會嘗試攤平又被自己的價差保護擋下（RescueDCAIneffective），但那個分支呼叫完
+    # execute_order 後一律 return，導致這裡永遠排不到、卡在無效重試裡出不來。
+    _st_macd_hist_now = s.get("macd_hist", 0.0)
+    _st_is_strong = (
+        (is_long and s.get("current_rsi", 50.0) > 55 and _st_macd_hist_now > 0) or
+        (not is_long and s.get("current_rsi", 50.0) < 45 and _st_macd_hist_now < 0)
+    )
+    _st_entry_layers = len(s.get("entries", []))
+    _st_time_decay_limit = (5400 if _st_entry_layers <= 1 else 7200) if _st_is_strong else (2400 if _st_entry_layers <= 1 else 5400)
+    if hold_sec > _st_time_decay_limit and profit_pct < 0:
+        _sd_macd_h, _sd_prev_macd_h = _macd_vals(s)
+        _sd_trending_favorably = (_sd_macd_h > _sd_prev_macd_h) if is_long else (_sd_macd_h < _sd_prev_macd_h)
+        if not _sd_trending_favorably:
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"⏳ [停滯超時] {sym} 持倉超過 {_st_time_decay_limit/60:.0f} 分鐘仍處虧損/持平 ({profit_pct*100:.2f}%) 且動能未往有利方向擴張，平倉了結不再等待")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Timeout]", is_stop_loss=True)
+            return
 
     bb_upper = s.get('bb_up', 0)
     bb_lower = s.get('bb_low', 0)
@@ -407,10 +448,12 @@ async def check_exits(sym):
         _wrong_dir = False
         _reason = ""
 
+        # 使用者要求全面放寬約一倍，這套機制原本的門檻比正常 ATR 停損敏感很多，
+        # 容易把「短期正常回檔、方向其實沒錯」的單子也提早砍掉。
         _profile_type = s.get("profile_type", COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", ""))
         is_volatile_coin = _profile_type in ["Speculative_Risk", "High_Beta_Momentum"]
-        _strong_rev_limit = -0.010 if is_volatile_coin else -0.005
-        _vol_reversal_limit = -0.0050 if is_volatile_coin else -0.0025
+        _strong_rev_limit = -0.020 if is_volatile_coin else -0.010
+        _vol_reversal_limit = -0.010 if is_volatile_coin else -0.005
 
         if _obs_time < 180 and profit_pct < _strong_rev_limit:
             _wrong_dir = True
@@ -436,11 +479,11 @@ async def check_exits(sym):
         if (not _wrong_dir and
                 _obs_time < 600 and
                 _min_peak_t2 <= _peak_now < _min_peak_t2 * 2.5 and
-                profit_pct < -0.002):
+                profit_pct < -0.004):
             _wrong_dir = True
             _reason = f"峰值反轉 (峰: {_peak_now*100:.2f}%≥{_min_peak_t2*100:.1f}%ATR門 → 現: {profit_pct*100:.2f}%)"
 
-        if not _wrong_dir and 300 < _obs_time < 900 and profit_pct < -0.005:
+        if not _wrong_dir and 300 < _obs_time < 900 and profit_pct < -0.010:
             _macd_obs = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
             _prev_macd_obs = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
             _ema20_obs = s.get("ema20", 0.0)
@@ -892,24 +935,42 @@ async def check_exits(sym):
                 return
 
     # ── 新增：緊湊移動停利 (Tight Trailing Stop for Range Trading) ──
-    from core.config import TIGHT_TP_CALLBACK_RATE, TIGHT_TP_ACTIVATION_PCT
+    # 回撤容忍度改用 ATR 動態計算（比照下方 TrailTP_Peak 的做法），原本固定 0.1%
+    # 在主迴圈實際檢查間隔（約 25-30 秒一輪，遠高於設計時假設的 10 秒）下，快市
+    # 一次波動就跳過去了，等於形同虛設；改成跟著當下 ATR 走，波動大的幣自動給
+    # 較寬緩衝、波動小的幣維持較緊緩衝，兩者都能在合理範圍內真正被抓到。
+    from core.config import TIGHT_TP_ACTIVATION_PCT, ROUND_TRIP_FEE_PCT
+    _tight_atr_pct = (atr_val / avg) if avg > 0 else 0.003
+    _tight_callback_pct = max(_tight_atr_pct * 0.35, 0.0018)
+    # 回撤容忍度另外要封頂在「峰值獲利的一半」以內，不能只看當下 ATR。ATR 常常是
+    # 反轉開始加速時才跟著放大，這時如果還用當下（已經變大）的 ATR 去算容忍度，
+    # 容忍度反而會跟著變寬，讓已經不多的峰值獲利被吃光甚至倒虧（實測 AAVEUSDT
+    # 峰值 0.64% 最後卻在 -0.03% 才出場，回吐了超過峰值本身）。封頂後，峰值越小，
+    # 容忍度跟著越緊，確保小峰值也能被有效鎖住，不會整個錯過。
+    _tight_callback_pct = min(_tight_callback_pct, s.get("highest_profit_pct", 0.0) * 0.5)
+    # 使用者要求：只要曾經有利潤，就不能讓它跑到停損——不能只看「回吐多少比例」，
+    # 出場價本身也要保證至少覆蓋來回手續費（ROUND_TRIP_FEE_PCT，目前約 0.1%），
+    # 否則就算「保住了峰值的一半」，實際扣完手續費還是可能倒虧。
+    _tight_min_lock_pct = ROUND_TRIP_FEE_PCT * 1.2
     if is_long:
         if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
             _peak_ref = max(s.get("trailing_highest", avg), avg * (1 + s.get("highest_profit_pct", 0.0)))
-            stop_loss_trigger = _peak_ref * (1.0 - TIGHT_TP_CALLBACK_RATE)
+            stop_loss_trigger = _peak_ref * (1.0 - _tight_callback_pct)
+            stop_loss_trigger = max(stop_loss_trigger, avg * (1.0 + _tight_min_lock_pct))
             if p <= stop_loss_trigger:
                 cs = 'sell'
-                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最高點 {_peak_ref:.6f} 回撤 {TIGHT_TP_CALLBACK_RATE*100:.2f}% (當前價: {p:.6f} <= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
+                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最高點 {_peak_ref:.6f} 回撤 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} <= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tight_Trailing_Stop]")
                 s["highest_profit_pct"] = 0.0
                 return
     else:
         if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
             _trough_ref = min(s.get("trailing_lowest", avg), avg * (1 - s.get("highest_profit_pct", 0.0)))
-            stop_loss_trigger = _trough_ref * (1.0 + TIGHT_TP_CALLBACK_RATE)
+            stop_loss_trigger = _trough_ref * (1.0 + _tight_callback_pct)
+            stop_loss_trigger = min(stop_loss_trigger, avg * (1.0 - _tight_min_lock_pct))
             if p >= stop_loss_trigger:
                 cs = 'buy'
-                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最低點 {_trough_ref:.6f} 回彈 {TIGHT_TP_CALLBACK_RATE*100:.2f}% (當前價: {p:.6f} >= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
+                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最低點 {_trough_ref:.6f} 回彈 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} >= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tight_Trailing_Stop]")
                 s["highest_profit_pct"] = 0.0
                 return
@@ -998,7 +1059,8 @@ async def check_exits(sym):
 
     if profit_pct > min_tp_pct and s["highest_profit_pct"] > min_tp_pct:
         drawdown = (s["highest_profit_pct"] - profit_pct) / s["highest_profit_pct"]
-        if drawdown >= 0.25:
+        # 使用者要求讓賺錢的單子跑更遠，回撤容忍度從 25% 放寬到 35%，減少提早了結。
+        if drawdown >= 0.35:
             macd_hist_expanding = False
             try:
                 closes = np.array([x[4] for x in s["ohlcv"]])
@@ -1096,10 +1158,11 @@ async def check_exits(sym):
         if s["highest_profit_pct"] >= tier1_target:
             atr_val = s.get("current_atr", 0)
             atr_ma20 = s.get("atr_ma20", 0)
+            # 使用者要求讓賺錢的單子跑更遠，觸發點全面下修 0.10，容忍更多回吐才鎖利。
             if is_strong:
-                trail_trigger = 0.65 if atr_val > atr_ma20 else 0.70
+                trail_trigger = 0.55 if atr_val > atr_ma20 else 0.60
             else:
-                trail_trigger = 0.80 if atr_val > atr_ma20 else 0.85
+                trail_trigger = 0.70 if atr_val > atr_ma20 else 0.75
 
             if len(s.get("entries", [])) > 1:
                 trail_trigger -= 0.05
@@ -1122,15 +1185,16 @@ async def check_exits(sym):
             s["stop_loss"] = avg
             logger.info(f"⏳ [時間衰減保本] {sym} 超時但利潤 {profit_pct*100:.2f}% 未達目標 {min_tp_pct*100:.2f}%，鎖定保本繼續等")
 
+        # 使用者要求讓賺錢的單子跑更遠，弱勢快速停利門檻全面調高，晚一點落袋。
         profile_type = COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", "")
         if s.get("personality") == "calm":
-            weak_tp = 0.035
+            weak_tp = 0.05
         elif profile_type == "High_Beta_Momentum":
-            weak_tp = 0.045
+            weak_tp = 0.065
         elif profile_type == "Speculative_Risk":
-            weak_tp = 0.040
+            weak_tp = 0.055
         else:
-            weak_tp = 0.030
+            weak_tp = 0.045
         if s["highest_profit_pct"] >= weak_tp:
             # 引入「 MACD 擴張」檢查，避免趨勢中途領界萬金出場
             _wtp_macd_h, _wtp_prev_macd_h = _macd_vals(s)

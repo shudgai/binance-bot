@@ -277,8 +277,17 @@ async def calibrate_with_exchange(exchange):
                     if current_qty == 0:
                         ctx.STATES[sym]["entry_price"] = float(pos.get('entryPrice', pos.get('avg_price', 0.0)))
                         ctx.STATES[sym]["avg_price"] = ctx.STATES[sym]["entry_price"]
-                        # 恢復 open_time
-                        ctx.STATES[sym]["open_time"] = time.time()
+                        # 恢復 open_time：優先用存檔的真實進場時間，而不是無條件蓋成
+                        # 重啟當下的時間。原本每次重啟都會把持倉時間打回 0，導致靠
+                        # 「持倉多久」判斷的機制（例如停滯超時）永遠算不到真正的持倉
+                        # 時長，一直重啟就一直重算，實際上從未真正超時過。
+                        from core.entry_time_store import load_entry_time, save_entry_time
+                        _stored_open_time = load_entry_time(sym)
+                        if _stored_open_time > 0:
+                            ctx.STATES[sym]["open_time"] = _stored_open_time
+                        else:
+                            ctx.STATES[sym]["open_time"] = time.time()
+                            save_entry_time(sym, ctx.STATES[sym]["open_time"])
                         if ctx.STATES[sym].get("entry_count", 0) == 0:
                             ctx.STATES[sym]["entry_count"] = 1
 
