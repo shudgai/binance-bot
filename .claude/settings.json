@@ -60,7 +60,14 @@
       "Bash(curl -s http://localhost:8005/api/logs)",
       "Bash(curl -s -X POST http://localhost:8005/api/bot-status/reset-realized-pnl)",
       "Bash(python3 -m py_compile services/bot_manager_service.py services/binance_service.py)",
-      "Bash(netstat -tlnp)"
+      "Bash(netstat -tlnp)",
+      "Bash(awk '{print $1, $2}')",
+      "Bash(awk '/^async def main_loop/,/^async def [a-z_]+\\\\\\(/{print NR\": \"$0}' /home/shudgai999/project/binance-bot/core/runner.py)",
+      "Bash(grep -n \"while True\\\\|^async def \\\\|return$\\\\|return \\\\|break$\" /home/shudgai999/project/binance-bot/core/runner.py)",
+      "Bash(awk -F: '$1>=354 && $1<=571')",
+      "Bash(ps -eLo pid,ppid,lstart,cmd)",
+      "Bash(awk '/^2026-07-08 02:3[7-9]/' /home/shudgai999/project/binance-bot/logs/bot.log)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/bot_manager_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/orders.py'\\).read\\(\\)\\)\")"
     ]
   }
 }

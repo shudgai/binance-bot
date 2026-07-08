@@ -273,6 +273,11 @@ async def check_entries():
         has_position = abs(s["qty"]) > 0.000001
         current_direction = "buy" if s["qty"] > 0 else "sell" if s["qty"] < 0 else None
 
+        # 開倉錯誤冷卻（例如幣安 -1007 送出狀態未知）：確認交易所端真的沒有新倉位後，
+        # 短暫暫停這個幣種，避免立刻用同樣的條件反覆撞在同一個逾時問題上。
+        if not has_position and time.time() < s.get("order_fail_cooldown_until", 0):
+            continue
+
         # 開倉數限制 (針對新開倉)
         if not has_position and open_count >= MAX_POSITIONS:
             continue
@@ -641,11 +646,12 @@ async def check_entries():
             logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
             continue
 
-        # --- Flip Buffer: 防止快速反手 ---
-        last_entry_time = s.get("last_entry_time", 0.0)
-        if route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
-            logger.info(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
-            continue
+         # --- Flip Buffer: 防止快速反手 ---
+         last_entry_time = s.get("last_entry_time", 0.0)
+         exempt_symbols = ["UNIUSDT"]
+         if sym not in exempt_symbols and route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
+             logger.info(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
+             continue
 
         # --- 錯誤方向禁止再進 (Wrong Direction Ban) ---
         _wd_time = s.get("wrong_dir_time", 0.0)

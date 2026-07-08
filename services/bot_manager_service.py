@@ -303,9 +303,16 @@ def read_bot_output(proc, sym):
         # 觸發全自動雷達換倉機制 (保留)
         from services.radar_service import auto_radar_switch
         threading.Thread(target=auto_radar_switch, daemon=True).start()
+    elif proc.returncode == 99:
+        # main.py 的單例鎖偵測到「已有核心在盯盤」，本行程只是多餘的重複啟動，正常讓路
+        # 退出，不代表真正在跑的核心有任何異常，不需要重啟——重啟只會 spawn 出下一個
+        # 一樣撞上同一個核心、一樣 exit 99 的行程，變成每 5 秒一次的無限迴圈，持續消耗
+        # 資源卻永遠沒有真的多開出一個核心（實測發生過連續空轉超過 20 分鐘）。
+        if os.getenv("BOT_DEBUG_LOGS") == "1":
+            add_system_log(f"ℹ️ [防禦分流] {sym} 偵測到重複啟動，正常讓路退出，不重啟", "info")
     elif bot_status["is_running"] and sym in bot_processes and bot_processes[sym] == proc:
         # 無論退出碼為何，只要 bot_status["is_running"] 為 True，就必須重啟
-        # (退出碼 0 可能是因為防禦分流、或不可預期的 CancelledError 導致)
+        # (退出碼 0 可能是不可預期的 CancelledError 導致)
         if proc.returncode == 0:
             # 只在調試模式下記錄，避免頁面被重複重啟訊息刷爆。
             if os.getenv("BOT_DEBUG_LOGS") == "1":
@@ -395,6 +402,24 @@ def start_bot(symbols=None, trade_amt: float = None):
 
     # 啟動單一多幣行程
     _start_multi_coin_bot(trade_amt)
+
+    # 若這段程式碼是在 main.py 這個 bot 子行程「自己內部」被呼叫（例如死水汰換偵測到
+    # 動能不足要換幣，走 replace_dead_coin() -> start_bot() 這條自我重啟路徑），代表舊
+    # 行程即將被剛剛啟動的新行程取代。kill_bot() 已經修成不會殺掉呼叫者自己，所以舊行程
+    # 這裡並不會結束，會跟新行程同時活著、各自獨立管理同一批倉位——這非常危險，實測發生
+    # 過兩個 main.py 同時在跑、重複校準、互相干擾彼此的持倉時間與峰值記憶。這裡讓舊行程
+    # 給新行程幾秒鐘完成初始化、拿到單例鎖檔後，自己再退出，避免兩邊同時搶單。
+    try:
+        import __main__ as _main_mod
+        _entry_file = os.path.basename(getattr(_main_mod, "__file__", "") or "")
+        if _entry_file == "main.py":
+            def _self_exit_after_handoff():
+                time.sleep(8)
+                add_system_log("♻️ [自我重啟交接] 新行程已啟動接手，本行程即將退出", "warning")
+                os._exit(0)
+            threading.Thread(target=_self_exit_after_handoff, daemon=True).start()
+    except Exception:
+        pass
 
 def _kill_single_bot(symbol: str):
     global bot_processes

@@ -88,7 +88,12 @@ def ensure_single_instance():
         if stale_pid and stale_pid != os.getpid():
             if _process_exists(stale_pid):
                 logger.info(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。")
-                sys.exit(0)
+                # 用專屬 exit code 99（不是 0），讓 bot_manager_service.py 的看門狗邏輯能
+                # 分辨「偵測到重複、正常讓路退出」跟「真的意外崩潰」。之前兩者都是 exit 0，
+                # 看門狗看到 exit 0 又以為機器人意外停止，5 秒後又重啟一次，新行程又立刻
+                # 撞上同一個還活著的核心、又用 exit 0 退出，變成每 5 秒重複一次的無限迴圈——
+                # 真正在跑的核心行程沒被打斷，但不斷 spawn/import 新行程持續消耗資源。
+                sys.exit(99)
             else:
                 logger.info(f"⚠️ 偵測到鎖定進程 PID={stale_pid} 已不存在，清理過期鎖檔並重新接管...")
                 try:

@@ -472,6 +472,7 @@ def _compute_raw_total_realized_pnl() -> float:
 
 
         # 逐一向幣安查詢所有幣種成交
+        _invalid_syms = []
         for sym in query_symbols:
             if _binance_banned():
                 break
@@ -482,8 +483,21 @@ def _compute_raw_total_realized_pnl() -> float:
                     total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
             except Exception as e:
                 _note_binance_ban(e)
-                # 關鍵防護：如果查詢單一小幣失敗，代表數據殘缺，直接拋出異常讓上層使用快取
+                # -1121 代表這個代號在幣安根本不存在（例如登記進 registry 時打錯字、或殘留
+                # 非法代號），這種錯誤永遠不會自己好——之前整個函式遇到任何錯誤都直接拋出
+                # 讓上層改用舊快取，結果 registry 裡一旦混進一個永遠查不到的爛代號（實測
+                # NATGASUSDT、OPGUSDT 兩個根本不是幣安合約），總已實現利潤就永遠卡在拋錯
+                # 那一刻的舊快取，不會再更新，也就是「一直跑掉」的真正原因。
+                # 這種明確的無效代號直接跳過並記錄，其餘可能是限流/網路的錯誤才維持原本
+                # 「直接拋出讓上層用快取」的保守作法，避免把不完整的加總誤當成正確結果。
+                if "-1121" in str(e) or "Invalid symbol" in str(e):
+                    _invalid_syms.append(sym)
+                    continue
                 raise RuntimeError(f"查詢 {sym} 成交失敗: {e}")
+
+        if _invalid_syms:
+            query_symbols -= set(_invalid_syms)
+            _save_pnl_symbol_registry(query_symbols)
     except Exception as e:
         # 拋回給上層，由 get_total_realized_pnl_usdt() 決定是否使用舊快取
         raise e

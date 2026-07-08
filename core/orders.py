@@ -658,7 +658,10 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 允許任何型態的止損（is_stop_loss=True）、全域熔斷、或策略主動平倉原因，以避免時間停滯等優化退場機制被攔截
     # Peak_Giveback 是動態鎖利／回撤保護，不能再被一般 0.35% 或高波動幣
     # 1.5% 的固定獲利門檻擋掉，否則會出現「觸發停利卻拒絕平倉」。
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]"]
+    # Tight_Trailing_Stop 自己已經在 exits.py 裡保證出場價至少覆蓋來回手續費的 1.2 倍，
+    # 不能再被這裡的 0.35%／1.5% 固定門檻二次攔截——實測 LINK/XLM/ADA/DOT 好幾筆都是
+    # 機制正確判斷要出場，卻在這裡被攔下來，利潤才一路縮水甚至倒虧。
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Tight_Trailing_Stop]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1210,10 +1213,15 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             bal = await exchange_futures.fetch_balance()
             total_usdt = float(bal.get("USDT", {}).get("total", balance))
             free_usdt = float(bal.get("USDT", {}).get("free", 0.0))
+            # 注意：required_margin 不是從這裡的 total_usdt 算出來的，它來自呼叫端更早
+            # 就用內部風控餘額（本金上限＋累計已實現損益）算好的 margin，跟這裡即時查詢
+            # 的交易所真實總權益 total_usdt 是兩個獨立數字。之前這行 log 把兩者印在一起、
+            # 又寫成「(= total/2)」，看起來像同一組計算，容易誤導成「total 被除錯了」，
+            # 這裡拆開講清楚，避免下次又被誤判成計算 bug。
             logger.info(
                 f"🔥 [重裝雙發進場] {sym} 倉位計算中...\n"
-                f"   ➔ 當前錢包總權益 (total): {total_usdt:.4f} USDT\n"
-                f"   ➔ 單筆核配保證金 (= total/2): {required_margin:.4f} USDT\n"
+                f"   ➔ 交易所真實總權益 (僅供參考，不用於本次倉位計算): {total_usdt:.4f} USDT\n"
+                f"   ➔ 單筆核配保證金 (依內部風控餘額計算): {required_margin:.4f} USDT\n"
                 f"   ➔ {DUAL_SHOT_LEVERAGE}倍槓桿發射價值: {base_notional:.2f} USDT (名義合約大小)\n"
                 f"   ➔ 當前可用餘額 (free): {free_usdt:.4f} USDT"
             )
@@ -1694,7 +1702,26 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 logger.info(f"🚨 [交易所退出單挂單失敗] {sym}: {se}")
 
         except Exception as e:
+            err_str = str(e)
             logger.info(f"🚨 [開倉錯誤] {sym}: {e}")
+            # -1007 代表「送出狀態未知」，連交易所自己都不確定訂單有沒有成交。直接放著
+            # 讓下一輪重試，等於在不知道上一筆有沒有成交的情況下又送一筆新單，萬一上一筆
+            # 其實悄悄成交了，會意外多開一倍倉位；就算沒成交，也會一直反覆撞在同一個卡住
+            # 的幣種上。這裡先跟交易所核對真實持倉：真的有意外成交就明確示警（不靜默吞掉），
+            # 確認沒有才進入短暫冷卻，不要立刻對同一個幣種重試。
+            if not PAPER_TRADING and ("-1007" in err_str or "Timeout waiting for response" in err_str):
+                try:
+                    positions = await exchange_futures.fetch_positions([sym])
+                    _, real_qty = _find_exchange_position(positions, sym)
+                except Exception as sync_err:
+                    real_qty = 0.0
+                    logger.info(f"⚠️ [開倉錯誤後核對失敗] {sym}: {sync_err}")
+                _prior_qty_ref = entry_prior_qty if 'entry_prior_qty' in locals() else float(s.get("qty", 0.0) or 0.0)
+                if abs(real_qty) > 0.000001 and abs(real_qty - _prior_qty_ref) > 0.000001:
+                    logger.info(f"🚨🚨 [開倉錯誤後核對] {sym} 逾時錯誤但交易所實際已有新倉位 {real_qty}（先前 {_prior_qty_ref}），並非真的沒送出！請人工確認，本地狀態尚未同步這筆。")
+                else:
+                    s["order_fail_cooldown_until"] = time.time() + 60
+                    logger.info(f"⏳ [開倉錯誤冷卻] {sym} 確認交易所端真的沒有新倉位，暫停 60 秒後才會再考慮進場，避免重複撞同一個逾時問題")
 
 
 async def check_stale_limit_orders():
