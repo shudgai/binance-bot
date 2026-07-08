@@ -4,14 +4,14 @@
     "SUIUSDT",
     "XRPUSDT",
     "DOGEUSDT",
-    "LDOUSDT",
     "AVAXUSDT",
     "DOTUSDT",
     "BCHUSDT",
     "LINKUSDT",
     "ADAUSDT",
     "LTCUSDT",
-    "SOLUSDT"
+    "SOLUSDT",
+    "APTUSDT"
   ],
   "profiles": {
     "UNIUSDT": {

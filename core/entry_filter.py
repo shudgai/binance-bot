@@ -337,13 +337,17 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         current_rsi_macro = s.get("current_rsi", 50.0)
         divergence_confirmed = (s.get("divergence", "none") == "bullish")
         extreme_oversold    = (current_rsi_macro < 32.0)
-        ultra_strong        = (strength >= 24.0)  # 幣種自身訊號極強，走自己的行情
+        # 使用者要求放寬：熊市防禦太嚴格時，實測強度 12~18 的訊號幾乎全被擋、完全無法
+        # 開多，門檻從 24 降到 18，讓中段偏強的訊號也能走自己的行情，但仍濾掉真正偏弱
+        # （<18）的訊號，不是整個熔斷機制失效。
+        _MACRO_OVERRIDE_STRENGTH = 18.0
+        ultra_strong        = (strength >= _MACRO_OVERRIDE_STRENGTH)  # 幣種自身訊號夠強，走自己的行情
         if not extreme_oversold and not divergence_confirmed and not ultra_strong:
             logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"
-                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < 24)")
+                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < {_MACRO_OVERRIDE_STRENGTH:.0f})")
             return False
         if ultra_strong:
-            reason = f"幣種極強訊號 {strength:.1f} ≥ 24，走自己行情"
+            reason = f"幣種強訊號 {strength:.1f} ≥ {_MACRO_OVERRIDE_STRENGTH:.0f}，走自己行情"
         elif extreme_oversold:
             reason = "極端超賣"
         else:
@@ -432,22 +436,27 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     current_rsi_mtf = s.get("current_rsi", 50.0)
     # 逆勢需訊號夠強才允許突破 15m 趨勢封鎖
     _mtf_strong_override = strength >= 20.0
+    # 使用者要求放寬：超買/超賣豁免門檻從 60/40 收窄到 55/45，讓 RSI 已經明顯偏向
+    # 反轉方向（但還沒到傳統超買/超賣 60/40）的訊號也能突破 15m 趨勢封鎖，仍保留
+    # 中性 RSI（45~55）時不逆勢的保護，不是整道過濾器失效。
+    _mtf_sell_rsi_override = 55.0
+    _mtf_buy_rsi_override = 45.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
             if _mtf_strong_override:
                 logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
-            elif current_rsi_mtf >= 60.0:
-                logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達超買，允許")
+            elif current_rsi_mtf >= _mtf_sell_rsi_override:
+                logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達 {_mtf_sell_rsi_override:.0f} 偏多門檻，允許")
             else:
-                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < 60（未超買），拒絕")
+                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < {_mtf_sell_rsi_override:.0f}，拒絕")
                 return False
         elif side == 'buy' and ema20_15m < ema50_15m:
             if _mtf_strong_override:
                 logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
-            elif current_rsi_mtf <= 40.0:
-                logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達超賣，允許")
+            elif current_rsi_mtf <= _mtf_buy_rsi_override:
+                logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達 {_mtf_buy_rsi_override:.0f} 偏空門檻，允許")
             else:
-                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > 40（未超賣），拒絕")
+                logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > {_mtf_buy_rsi_override:.0f}，拒絕")
                 return False
 
     # 4. Pre-Entry Quality Filter：實體 + 量能同步爆發（過濾弱訊號假突破）
