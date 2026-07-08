@@ -177,7 +177,6 @@ MOMENTUM_EXIT_ATR_THRESHOLD = float(os.getenv('MOMENTUM_EXIT_ATR_THRESHOLD', 10.
 MOMENTUM_EXIT_MIN_PROFIT_PCT = float(os.getenv('MOMENTUM_EXIT_MIN_PROFIT_PCT', 0.01))
 TREND_PERSISTENCE_WINDOW  = 300
 PRICE_MOVEMENT_THRESHOLD  = 0.0015
-TIGHT_TP_CALLBACK_RATE = float(os.getenv("TIGHT_TP_CALLBACK_RATE", 0.001))
 
 # Radar Selection Thresholds
 MIN_ATR_PCT_FOR_ENTRY = float(os.getenv("MIN_ATR_PCT_FOR_ENTRY", 2.5))
@@ -185,13 +184,6 @@ MAX_ATR_PCT_FOR_ENTRY = float(os.getenv("MAX_ATR_PCT_FOR_ENTRY", 7.2))
 MIN_1H_VOL_PCT_FOR_ENTRY = float(os.getenv("MIN_1H_VOL_PCT_FOR_ENTRY", 0.42))
 MAX_1H_VOL_PCT_FOR_ENTRY = float(os.getenv("MAX_1H_VOL_PCT_FOR_ENTRY", 2.8))
 MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY = float(os.getenv("MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY", 14.0))
-
-# 使用者要求「有利潤就要停利，不要讓他跑到停損」：門檻從 0.25% 下修到 0.15%，
-# 讓保護機制更早介入；搭配 core/exits.py 裡新增的手續費下限保護（出場價至少
-# 覆蓋來回手續費 ROUND_TRIP_FEE_PCT 的 1.2 倍），確保一旦觸發鎖利，實際到手
-# 一定是淨獲利，不會被回撤吃光甚至倒虧。
-TIGHT_TP_ACTIVATION_PCT = float(os.getenv("TIGHT_TP_ACTIVATION_PCT", 0.0015))
-
 
 TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2

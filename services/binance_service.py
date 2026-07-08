@@ -440,8 +440,10 @@ def _save_pnl_symbol_registry(symbols: set) -> None:
         pass
 
 
-def _compute_raw_total_realized_pnl() -> float:
-    total = 0.0
+def _compute_raw_realized_pnl_by_symbol() -> dict:
+    """回傳 {symbol: 該幣種歷史全部已實現損益}。逐幣種算而不是直接加總成單一數字，
+    是為了讓 baseline 也能逐幣種記錄——見下方 get_total_realized_pnl_usdt() 的說明。"""
+    result = {}
     try:
         from services.bot_manager_service import load_symbol_config
         from services.radar_service import CORE_SYMBOLS
@@ -479,8 +481,10 @@ def _compute_raw_total_realized_pnl() -> float:
             try:
                 # 幣安 API 呼叫，若限流或出錯直接拋出，不回傳不完整加總
                 trades = client.futures_account_trades(symbol=sym, limit=1000)
+                sym_total = 0.0
                 for t in trades:
-                    total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
+                    sym_total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
+                result[sym] = sym_total
             except Exception as e:
                 _note_binance_ban(e)
                 # -1121 代表這個代號在幣安根本不存在（例如登記進 registry 時打錯字、或殘留
@@ -501,60 +505,90 @@ def _compute_raw_total_realized_pnl() -> float:
     except Exception as e:
         # 拋回給上層，由 get_total_realized_pnl_usdt() 決定是否使用舊快取
         raise e
-    return total
+    return result
 
 
-def _get_pnl_baseline() -> float:
+def _load_pnl_baseline_by_symbol() -> dict:
     try:
         import json as _json
         if os.path.exists(PNL_BASELINE_PATH):
             with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
                 data = _json.load(f)
-            return float(data.get("baseline_total_realized_pnl", 0.0) or 0.0)
+            by_symbol = data.get("baseline_by_symbol")
+            if isinstance(by_symbol, dict):
+                return {k: float(v) for k, v in by_symbol.items()}
     except Exception:
         pass
-    return 0.0
+    return {}
+
+
+def _save_pnl_baseline_by_symbol(baseline_by_symbol: dict) -> None:
+    try:
+        import json as _json
+        with open(PNL_BASELINE_PATH, "w", encoding="utf-8") as f:
+            _json.dump({"baseline_by_symbol": baseline_by_symbol, "set_at": time.time()}, f)
+    except Exception:
+        pass
 
 
 def get_total_realized_pnl_usdt() -> float:
-    """對外回傳的總已實現利潤（已扣掉 baseline，有防突變快取機制）。"""
+    """對外回傳的總已實現利潤（已扣掉 baseline，有防突變快取機制）。
+
+    baseline 逐幣種記錄，不是單一數字：查詢用的幣種清單（pnl_symbol_registry.json）
+    會隨著雷達換幣、冷卻補位持續變大，如果 baseline 只存一個總數，重置之後任何
+    「registry 裡新出現的幣種」（哪怕它是很久以前交易過、跟這次重置完全無關的舊幣）
+    整段歷史損益都會被算成「重置後的新損益」，因為 baseline 那個總數從來沒扣過它。
+    實測重置後 3 筆新單只虧約 -0.33 USDT，介面卻顯示 -6.07——就是被某個新加入
+    registry 的舊幣歷史損益污染。改成逐幣種比較：每個幣種只計算「現在」與「這個
+    幣種自己 baseline」的差；一個幣種如果 baseline 裡還沒有紀錄（代表它是重置後才
+    第一次被查詢到的新面孔），就把它當下的原始損益直接設為它自己的 baseline，
+    這一輪先貢獻 0，之後才真的按「這個幣種在這之後賺賠多少」計算，不會把它整段
+    舊歷史一次算進來。
+    """
     global _total_pnl_cache
     now = time.time()
     # 延長快取至 30 秒以降低幣安 API 限流機率，且當發生錯誤時，保底使用舊快取
     if now - _total_pnl_cache[0] < 30 and _total_pnl_cache[1] is not None:
-        raw_total = _total_pnl_cache[1]
+        raw_by_symbol = _total_pnl_cache[1]
     else:
         try:
-            raw_total = _compute_raw_total_realized_pnl()
-            _total_pnl_cache = (now, raw_total)
+            raw_by_symbol = _compute_raw_realized_pnl_by_symbol()
+            _total_pnl_cache = (now, raw_by_symbol)
         except Exception:
-            # 查詢失敗時，若先前有快取就用快取，沒有才用 0.0，避免利潤數據歸零或亂跳
-            if _total_pnl_cache[1] is not None:
-                raw_total = _total_pnl_cache[1]
-            else:
-                raw_total = 0.0
-    return raw_total - _get_pnl_baseline()
+            # 查詢失敗時，若先前有快取就用快取，沒有才用空字典，避免利潤數據歸零或亂跳
+            raw_by_symbol = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else {}
+
+    baseline_by_symbol = _load_pnl_baseline_by_symbol()
+    total_delta = 0.0
+    baseline_changed = False
+    for sym, raw in raw_by_symbol.items():
+        if sym not in baseline_by_symbol:
+            baseline_by_symbol[sym] = raw
+            baseline_changed = True
+            continue
+        total_delta += raw - baseline_by_symbol[sym]
+
+    if baseline_changed:
+        _save_pnl_baseline_by_symbol(baseline_by_symbol)
+
+    return total_delta
 
 
 def reset_total_realized_pnl_baseline() -> float:
-    """重置 baseline 並清空快取變數"""
+    """重置 baseline 並清空快取變數：把「現在每個幣種各自的原始損益」存成新的
+    逐幣種 baseline，之後 get_total_realized_pnl_usdt() 只會計算這之後的變化量。"""
     global _total_pnl_cache
-    import json as _json
     try:
         # 強制重新拉取最新完整數據
-        raw_total = _compute_raw_total_realized_pnl()
+        raw_by_symbol = _compute_raw_realized_pnl_by_symbol()
     except Exception:
-        # 若當下失敗，使用舊快取，沒有快取就設為 0
-        raw_total = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else 0.0
-        
+        # 若當下失敗，使用舊快取，沒有快取就設為空字典
+        raw_by_symbol = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else {}
+
     # 重置快取為當前時間與新值
-    _total_pnl_cache = (time.time(), raw_total)
-    try:
-        with open(PNL_BASELINE_PATH, "w", encoding="utf-8") as f:
-            _json.dump({"baseline_total_realized_pnl": raw_total, "set_at": time.time()}, f)
-    except Exception:
-        pass
-    return raw_total
+    _total_pnl_cache = (time.time(), raw_by_symbol)
+    _save_pnl_baseline_by_symbol(dict(raw_by_symbol))
+    return sum(raw_by_symbol.values())
 
 
 

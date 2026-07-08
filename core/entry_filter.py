@@ -439,7 +439,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 使用者要求放寬：超買/超賣豁免門檻從 60/40 收窄到 55/45，讓 RSI 已經明顯偏向
     # 反轉方向（但還沒到傳統超買/超賣 60/40）的訊號也能突破 15m 趨勢封鎖，仍保留
     # 中性 RSI（45~55）時不逆勢的保護，不是整道過濾器失效。
-    _mtf_sell_rsi_override = 55.0
+    # 使用者進一步指示：只放寬空單這邊（跟 BTC 4H+1H 熊市大方向一致，風險比多單
+    # 逆勢低），賣出門檻再收到 50（中性線）；多單維持 45 不動，因為多單本來就是在
+    # 逆著目前 BTC 熊市大方向，不應該一起放寬。
+    _mtf_sell_rsi_override = 50.0
     _mtf_buy_rsi_override = 45.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:

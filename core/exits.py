@@ -946,72 +946,12 @@ async def check_exits(sym):
                 s["has_partial_closed"] = True
                 return
 
-    # ── 新增：緊湊移動停利 (Tight Trailing Stop for Range Trading) ──
-    # 回撤容忍度改用 ATR 動態計算（比照下方 TrailTP_Peak 的做法），原本固定 0.1%
-    # 在主迴圈實際檢查間隔（約 25-30 秒一輪，遠高於設計時假設的 10 秒）下，快市
-    # 一次波動就跳過去了，等於形同虛設；改成跟著當下 ATR 走，波動大的幣自動給
-    # 較寬緩衝、波動小的幣維持較緊緩衝，兩者都能在合理範圍內真正被抓到。
-    from core.config import TIGHT_TP_ACTIVATION_PCT, ROUND_TRIP_FEE_PCT
-    _tight_atr_pct = (atr_val / avg) if avg > 0 else 0.003
-    _tight_callback_pct = max(_tight_atr_pct * 0.35, 0.0018)
-    # 回撤容忍度另外要封頂在「峰值獲利的一半」以內，不能只看當下 ATR。ATR 常常是
-    # 反轉開始加速時才跟著放大，這時如果還用當下（已經變大）的 ATR 去算容忍度，
-    # 容忍度反而會跟著變寬，讓已經不多的峰值獲利被吃光甚至倒虧（實測 AAVEUSDT
-    # 峰值 0.64% 最後卻在 -0.03% 才出場，回吐了超過峰值本身）。封頂後，峰值越小，
-    # 容忍度跟著越緊，確保小峰值也能被有效鎖住，不會整個錯過。
-    _tight_callback_pct = min(_tight_callback_pct, s.get("highest_profit_pct", 0.0) * 0.5)
-    # 使用者要求：只要曾經有利潤，就不能讓它跑到停損——不能只看「回吐多少比例」，
-    # 出場價本身也要保證至少覆蓋來回手續費（ROUND_TRIP_FEE_PCT，目前約 0.1%），
-    # 否則就算「保住了峰值的一半」，實際扣完手續費還是可能倒虧。
-    #
-    # 這個門檻只覆蓋手續費，沒有算到真實滑價：這個部署是實盤下單（PAPER_TRADING=
-    # False），Tight_Trailing_Stop 屬於時效敏感出場，一律直接送市價單搶時效
-    # （core/orders.py:700-706），不是紙上模擬價直接結算。從偵測到觸發到市價單
-    # 真正成交，中間有主迴圈輪詢間隔＋下單延遲，快market一晃眼就能滑過去。實測
-    # ADAUSDT/TRUMPUSDT/DOTUSDT/AVAXUSDT/SUIUSDT 同一小時內 6 筆全部觸發時偵測到
-    # 理論鎖利 0.08%~0.18%，實際成交卻是 -0.08%~-0.63%，6 戰 6 敗，只覆蓋手續費的
-    # 緩衝完全不夠撐過真實滑價。改成同時保留一個較高的基礎緩衝（0.35%），並依當下
-    # ATR 動態放大（波動越大的幣，實測滑價也越大，緩衝要跟著加大）。
-    _tight_min_lock_pct = max(ROUND_TRIP_FEE_PCT * 1.2, 0.0035, _tight_atr_pct * 0.4)
-    # 使用者反映 UNIUSDT 峰值只有 0.46%、幾乎沒怎麼回撤就被踢出場：查出來是因為
-    # 「是否該出場」跟「出場價不能低於多少」原本共用同一個 stop_loss_trigger 變數，
-    # 用 max()/min() 混在一起算——保底線（_tight_min_lock_pct，為了扛滑價才拉高到
-    # 0.35%）一旦比真正的峰值回撤觸發點更嚴格，就會鵲巢鳩佔變成實際判斷用的觸發點，
-    # 導致價格一碰到保底線、只要有一點點回落就出場，根本沒回撤到 _tight_callback_pct
-    # 該給的呼吸空間。改成分開算：先用純粹的峰值回撤決定「要不要出場」，保底線只在
-    # 真的觸發出場那一刻才介入，用來保證成交價不會太差（防滑價功能不變）。
-    if is_long:
-        if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
-            _peak_ref = max(s.get("trailing_highest", avg), avg * (1 + s.get("highest_profit_pct", 0.0)))
-            _callback_trigger = _peak_ref * (1.0 - _tight_callback_pct)
-            if p <= _callback_trigger:
-                cs = 'sell'
-                stop_loss_trigger = max(_callback_trigger, avg * (1.0 + _tight_min_lock_pct))
-                # 出場價鎖定在觸發點，不要用當下價格 p：主迴圈每輪間隔約 10~30 秒，
-                # 波動大的幣（實測 TRUMPUSDT）可能一根跳動就滑過觸發點甚至滑破入場價，
-                # 若直接用 p 成交，本來設計成「保證鎖利」的機制會變成用滑價後的更差
-                # 價格結算，把預期的小賺算成真虧損（實測 TRUMPUSDT 觸發時 p 已經滑到
-                # 入場價之上，結算從應有的 +0.13% 變成 -0.63%）。跟 Universal SL 的
-                # exit_price 鎖定寫法（core/exits.py:1289）用同一套邏輯。
-                _exit_p = max(p, stop_loss_trigger)
-                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最高點 {_peak_ref:.6f} 回撤 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} <= 觸發點: {_callback_trigger:.6f})，獲利出場 @ {_exit_p:.6f}")
-                await close_position(sym, cs, abs(s["qty"]), _exit_p, avg, reason="[Tight_Trailing_Stop]")
-                s["highest_profit_pct"] = 0.0
-                return
-    else:
-        if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
-            _trough_ref = min(s.get("trailing_lowest", avg), avg * (1 - s.get("highest_profit_pct", 0.0)))
-            _callback_trigger = _trough_ref * (1.0 + _tight_callback_pct)
-            if p >= _callback_trigger:
-                cs = 'buy'
-                stop_loss_trigger = min(_callback_trigger, avg * (1.0 - _tight_min_lock_pct))
-                # 出場價鎖定在觸發點，理由同上（多單分支）：空單這裡若用滑價後的 p
-                # 成交，等於用比觸發點更差（更高）的價格回補，把應有的鎖利結算成虧損。
-                _exit_p = min(p, stop_loss_trigger)
-                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最低點 {_trough_ref:.6f} 回彈 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} >= 觸發點: {_callback_trigger:.6f})，獲利出場 @ {_exit_p:.6f}")
-                await close_position(sym, cs, abs(s["qty"]), _exit_p, avg, reason="[Tight_Trailing_Stop]")
-                s["highest_profit_pct"] = 0.0
-                return
+    # 使用者要求移除 Tight_Trailing_Stop（緊湊移動停利）：這個機制原本是為了「有
+    # 利潤就先鎖住，不要讓它跑回停損」而加的，但小峰值的單子一啟動保護就幾乎零
+    # 容忍，屢次出現剛開倉不到 1 分鐘就被雜訊洗出場的情況（UNIUSDT/LDOUSDT 等）。
+    # 使用者決定改成單純依賴下方較寬的 TrailTP_Peak／停利單／停損單，中途不再
+    # 提早鎖利，換取單子有更多空間跑，代價是像最一開始 AVAXUSDT 峰值 0.235% 那種
+    # 小峰值不會再被保護、可能整個回吐。
 
     # ── Trailing TP：槓桿自適應高點停利 ──
     # 兩套條件：先判斷是否啟動高點鎖利，然後以固定回撤下限決定實際出場。
@@ -1097,8 +1037,9 @@ async def check_exits(sym):
 
     if profit_pct > min_tp_pct and s["highest_profit_pct"] > min_tp_pct:
         drawdown = (s["highest_profit_pct"] - profit_pct) / s["highest_profit_pct"]
-        # 使用者要求讓賺錢的單子跑更遠，回撤容忍度從 25% 放寬到 35%，減少提早了結。
-        if drawdown >= 0.35:
+        # 回撤容忍度改回 7dceb33 的 25%（曾被放寬到 35% 讓單子跑更遠，但跟今天一整天
+        # 在修的「利潤別回吐太多」方向相反，改回較緊的門檻）。
+        if drawdown >= 0.25:
             macd_hist_expanding = False
             try:
                 closes = np.array([x[4] for x in s["ohlcv"]])
@@ -1196,11 +1137,11 @@ async def check_exits(sym):
         if s["highest_profit_pct"] >= tier1_target:
             atr_val = s.get("current_atr", 0)
             atr_ma20 = s.get("atr_ma20", 0)
-            # 使用者要求讓賺錢的單子跑更遠，觸發點全面下修 0.10，容忍更多回吐才鎖利。
+            # 觸發點改回 7dceb33 的設定（曾全面下修 0.10 讓單子跑更遠，改回較緊）。
             if is_strong:
-                trail_trigger = 0.55 if atr_val > atr_ma20 else 0.60
+                trail_trigger = 0.65 if atr_val > atr_ma20 else 0.70
             else:
-                trail_trigger = 0.70 if atr_val > atr_ma20 else 0.75
+                trail_trigger = 0.80 if atr_val > atr_ma20 else 0.85
 
             if len(s.get("entries", [])) > 1:
                 trail_trigger -= 0.05
@@ -1223,16 +1164,16 @@ async def check_exits(sym):
             s["stop_loss"] = avg
             logger.info(f"⏳ [時間衰減保本] {sym} 超時但利潤 {profit_pct*100:.2f}% 未達目標 {min_tp_pct*100:.2f}%，鎖定保本繼續等")
 
-        # 使用者要求讓賺錢的單子跑更遠，弱勢快速停利門檻全面調高，晚一點落袋。
+        # 弱勢快速停利門檻改回 7dceb33 的設定（曾全面調高晚一點落袋，改回較早鎖利）。
         profile_type = COIN_PROFILE_CONFIG.get(sym, {}).get("profile_type", "")
         if s.get("personality") == "calm":
-            weak_tp = 0.05
+            weak_tp = 0.035
         elif profile_type == "High_Beta_Momentum":
-            weak_tp = 0.065
-        elif profile_type == "Speculative_Risk":
-            weak_tp = 0.055
-        else:
             weak_tp = 0.045
+        elif profile_type == "Speculative_Risk":
+            weak_tp = 0.040
+        else:
+            weak_tp = 0.030
         if s["highest_profit_pct"] >= weak_tp:
             # 引入「 MACD 擴張」檢查，避免趨勢中途領界萬金出場
             _wtp_macd_h, _wtp_prev_macd_h = _macd_vals(s)
