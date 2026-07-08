@@ -992,6 +992,7 @@ def market_buy(symbol: str, amount: float):
             type=Client.ORDER_TYPE_MARKET,
             quantity=qty_str
         )
+    # 返回完整訂單資訊，以便後續更新真實成交價與數量
     return order
 
 def market_short(symbol: str, amount: float):
@@ -1037,6 +1038,7 @@ def market_sell(symbol: str, base_asset: str):
             type=Client.ORDER_TYPE_MARKET,
             quantity=abs(qty)
         )
+    # 返回完整訂單資訊，以便後續更新真實成交價與數量
     return order
 
 _all_positions_cache = (0, {})

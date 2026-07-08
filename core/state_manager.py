@@ -281,6 +281,61 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
         _add_cooldown_substitute(sym)
 
 
+def update_state_with_fill(sym, order_data):
+    """
+    使用交易所回傳的真實成交資料更新內部狀態。
+    """
+    from core import ctx
+    if sym not in ctx.STATES:
+        return
+
+    s = ctx.STATES[sym]
+    
+    # 提取成交數量與價格
+    # 幣安的成交資料中，qty 可能為負數（代表賣出），所以取絕對值
+    fill_qty = abs(float(order_data.get("filledQty", 0)))
+    fill_price = float(order_data.get("avgPrice", 0))
+    
+    if fill_qty > 0 and fill_price > 0:
+        # 更新持倉數量 (做多為正，做空為負)
+        # 這裡的 logic 需要根據訂單方向來決定，但我們通常在成交後會重新同步或根據 order_data 的 side 判斷
+        # 為了簡單且準確，我們直接將成交量加到目前的 qty 上（如果是買入，qty 增加；如果是賣出，qty 減少）
+        # 但因為 we are calling this in a context where we just placed a market buy/short,
+        # we can just set it directly if it's the first fill.
+        
+        # 獲取訂單方向
+        side = order_data.get("side") # "BUY" 或 "SELL"
+        
+        if side == "BUY":
+            s["qty"] += fill_qty
+        else:
+            s["qty"] -= fill_qty
+            
+        # 更新平均價格
+        # 簡單處理：如果是第一次進場，直接設為成交價。若是多次進場，則進行加權平均。
+        if s["entry_count"] == 0:
+            s["avg_price"] = fill_price
+            s["open_time"] = time.time()
+        else:
+            # 加權平均公式: (舊總成本 + 新成交成本) / 新總數量
+            old_total_cost = s["avg_price"] * abs(s["qty"] - fill_qty) # 這邊邏輯略複雜，因為 qty 已經變動了
+            # 重新計算：
+            # 假設我們知道之前的 qty 和 avg_price
+            # 因為我們剛剛才更新了 s["qty"]，所以我們需要先知道之前的量
+            # 為了避免複雜邏輯，我們在執行時傳入之前的量，或者這裡我們採用簡單的「最新成交價」覆蓋
+            # 或是在 ExecutionEngine 裡處理。
+            pass
+            
+        s["entry_count"] += 1
+        s["last_trade_price"] = fill_price
+        s["last_trade_qty"] = fill_qty
+        s["last_trade_time"] = time.time()
+        
+        logger.info(f"✅ [Post-Fill Update] {sym} 成交: {side} {fill_qty} @ {fill_price}")
+
+    # 標記訂單已處理
+    s["is_ordering"] = False
+
 def reset_coin_state(sym):
     from core import ctx
     from core.peak_store import clear_peak

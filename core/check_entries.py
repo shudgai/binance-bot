@@ -646,12 +646,12 @@ async def check_entries():
             logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
             continue
 
-         # --- Flip Buffer: 防止快速反手 ---
-         last_entry_time = s.get("last_entry_time", 0.0)
-         exempt_symbols = ["UNIUSDT"]
-         if sym not in exempt_symbols and route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
-             logger.info(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
-             continue
+        # --- Flip Buffer: 防止快速反手 ---
+        last_entry_time = s.get("last_entry_time", 0.0)
+        exempt_symbols = ["UNIUSDT"]
+        if sym not in exempt_symbols and route != "Automatic_Reverse" and last_entry_time > 0 and (time.time() - last_entry_time) < 300:
+            logger.info(f"⏳ [Flip Buffer] {sym} 訊號 {side} 被攔截 (距離上次開倉僅 {time.time() - last_entry_time:.0f}s)")
+            continue
 
         # --- 錯誤方向禁止再進 (Wrong Direction Ban) ---
         _wd_time = s.get("wrong_dir_time", 0.0)
@@ -741,9 +741,18 @@ async def check_entries():
 
             async def _entry_task(sym, side, price, alloc_pct, signal_strength, entry_route):
                 try:
-                    await execute_order(sym, side, price, alloc_pct,
-                                         signal_strength=signal_strength,
-                                         entry_route=entry_route)
+                    order_data = await execute_order(sym, side, price, alloc_pct,
+                                                      signal_strength=signal_strength,
+                                                      entry_route=entry_route)
+                    if order_data and order_data.get("avgPrice") and order_data.get("filledQty"):
+                        from core.state_manager import update_state_with_fill
+                        update_state_with_fill(sym, order_data)
+                        # Ensure last_entry metadata is updated with actual filled data
+                        s = ctx.STATES[sym]
+                        s["last_entry_price"] = float(order_data.get("avgPrice"))
+                        s["last_entry_direction"] = side if side == "buy" else "sell"
+                except Exception as e:
+                    logger.error(f"🚨 [EntryTask_Error] {sym}: {e}")
                 finally:
                     ctx.STATES[sym]["is_ordering"] = False
 
