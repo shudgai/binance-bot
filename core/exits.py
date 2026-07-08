@@ -958,7 +958,16 @@ async def check_exits(sym):
     # 使用者要求：只要曾經有利潤，就不能讓它跑到停損——不能只看「回吐多少比例」，
     # 出場價本身也要保證至少覆蓋來回手續費（ROUND_TRIP_FEE_PCT，目前約 0.1%），
     # 否則就算「保住了峰值的一半」，實際扣完手續費還是可能倒虧。
-    _tight_min_lock_pct = ROUND_TRIP_FEE_PCT * 1.2
+    #
+    # 這個門檻只覆蓋手續費，沒有算到真實滑價：這個部署是實盤下單（PAPER_TRADING=
+    # False），Tight_Trailing_Stop 屬於時效敏感出場，一律直接送市價單搶時效
+    # （core/orders.py:700-706），不是紙上模擬價直接結算。從偵測到觸發到市價單
+    # 真正成交，中間有主迴圈輪詢間隔＋下單延遲，快market一晃眼就能滑過去。實測
+    # ADAUSDT/TRUMPUSDT/DOTUSDT/AVAXUSDT/SUIUSDT 同一小時內 6 筆全部觸發時偵測到
+    # 理論鎖利 0.08%~0.18%，實際成交卻是 -0.08%~-0.63%，6 戰 6 敗，只覆蓋手續費的
+    # 緩衝完全不夠撐過真實滑價。改成同時保留一個較高的基礎緩衝（0.35%），並依當下
+    # ATR 動態放大（波動越大的幣，實測滑價也越大，緩衝要跟著加大）。
+    _tight_min_lock_pct = max(ROUND_TRIP_FEE_PCT * 1.2, 0.0035, _tight_atr_pct * 0.4)
     if is_long:
         if s.get("highest_profit_pct", 0.0) >= TIGHT_TP_ACTIVATION_PCT:
             _peak_ref = max(s.get("trailing_highest", avg), avg * (1 + s.get("highest_profit_pct", 0.0)))
@@ -966,8 +975,15 @@ async def check_exits(sym):
             stop_loss_trigger = max(stop_loss_trigger, avg * (1.0 + _tight_min_lock_pct))
             if p <= stop_loss_trigger:
                 cs = 'sell'
-                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最高點 {_peak_ref:.6f} 回撤 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} <= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tight_Trailing_Stop]")
+                # 出場價鎖定在觸發點，不要用當下價格 p：主迴圈每輪間隔約 10~30 秒，
+                # 波動大的幣（實測 TRUMPUSDT）可能一根跳動就滑過觸發點甚至滑破入場價，
+                # 若直接用 p 成交，本來設計成「保證鎖利」的機制會變成用滑價後的更差
+                # 價格結算，把預期的小賺算成真虧損（實測 TRUMPUSDT 觸發時 p 已經滑到
+                # 入場價之上，結算從應有的 +0.13% 變成 -0.63%）。跟 Universal SL 的
+                # exit_price 鎖定寫法（core/exits.py:1289）用同一套邏輯。
+                _exit_p = max(p, stop_loss_trigger)
+                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最高點 {_peak_ref:.6f} 回撤 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} <= 觸發點: {stop_loss_trigger:.6f})，獲利出場 @ {_exit_p:.6f}")
+                await close_position(sym, cs, abs(s["qty"]), _exit_p, avg, reason="[Tight_Trailing_Stop]")
                 s["highest_profit_pct"] = 0.0
                 return
     else:
@@ -977,8 +993,11 @@ async def check_exits(sym):
             stop_loss_trigger = min(stop_loss_trigger, avg * (1.0 - _tight_min_lock_pct))
             if p >= stop_loss_trigger:
                 cs = 'buy'
-                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最低點 {_trough_ref:.6f} 回彈 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} >= 觸發點: {stop_loss_trigger:.6f})，獲利出場")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Tight_Trailing_Stop]")
+                # 出場價鎖定在觸發點，理由同上（多單分支）：空單這裡若用滑價後的 p
+                # 成交，等於用比觸發點更差（更高）的價格回補，把應有的鎖利結算成虧損。
+                _exit_p = min(p, stop_loss_trigger)
+                logger.info(f"🚨 [緊湊移動停利] {sym} 價格從最低點 {_trough_ref:.6f} 回彈 {_tight_callback_pct*100:.2f}% (當前價: {p:.6f} >= 觸發點: {stop_loss_trigger:.6f})，獲利出場 @ {_exit_p:.6f}")
+                await close_position(sym, cs, abs(s["qty"]), _exit_p, avg, reason="[Tight_Trailing_Stop]")
                 s["highest_profit_pct"] = 0.0
                 return
 
