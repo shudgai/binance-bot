@@ -890,7 +890,12 @@ async def check_exits(sym):
 
     # ── 量能衰竭偵測 (Vol_Decay_Exit) ──
     # 爆量後量縮 + 停止創新高 → 動能耗盡主動落袋
-    if profit_pct >= 0.015 and len(s.get("ohlcv", [])) >= 3:
+    # 啟動門檻原本 1.5%，比 Tight_Trailing_Stop 的 0.15% 高十倍，導致 LDOUSDT(峰值
+    # 0.67%)/UNIUSDT(峰值0.46%) 這種小峰值的單子從頭到尾都吃不到這層量能背離保護，
+    # 全部只能靠價格回撤觸發。降到跟 Tight_Trailing_Stop 一致的 0.15%，讓小峰值也能
+    # 在「量縮+停止創新高」時提早出場，不用等到價格真的回撤才觸發；「停止創新高」
+    # 這個條件本身沒有動，維持保守判斷，不是量一縮就馬上出場。
+    if profit_pct >= 0.0015 and len(s.get("ohlcv", [])) >= 3:
         _vd_vols = [x[5] for x in s["ohlcv"][-3:]]
         _vd_vol_ma = s.get("vol_ma20", 1)
         _vd_was_high = _vd_vols[-2] > _vd_vol_ma * 1.5          # 前根量偏高（1.5x均量）

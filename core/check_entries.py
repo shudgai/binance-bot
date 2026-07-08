@@ -14,7 +14,7 @@ from core.balance import is_daily_loss_halted
 import core.balance as _bal
 from core.state_manager import get_open_position_count, reset_coin_state
 from core.signal_engine import (compute_signal_strength, is_reversal_still_valid,
-    is_eligible_for_reverse, check_pyramiding_eligibility, _load_disabled_symbols)
+    is_eligible_for_reverse, _load_disabled_symbols)
 from core.entry_filter import is_entry_allowed
 from services.bot_manager_service import set_entry_diagnosis
 
@@ -544,13 +544,17 @@ async def check_entries():
                 else:
                     continue
             else:
-                # ✅ 啟用金字塔加倉：虧損倉位可進行救援 DCA
-                if s.get("entry_count", 0) < s.get("max_additional_entries", 3):
-                    logger.info(f"🟢 [加倉允許] {sym} 欲順勢加倉 {side}，檢查冷卻時間...")
-                    # 加倉冷卻檢查在下方 execute_order 時進行
-                else:
-                    logger.info(f"🛑 [加倉上限] {sym} 已達最大加倉次數 ({s.get('entry_count', 0)}/{s.get('max_additional_entries', 3)})，忽略此訊號。")
-                    continue
+                # 金字塔順勢加碼已在 execute_order() 無條件停用（core/orders.py:1253
+                # `if s["entry_count"] > 0 and not is_rescue_dca: return`，跟持倉是
+                # 賺是賠無關，一律拒絕）。這裡以前還是會放行到候選清單、跑完整套
+                # CONFLUENCE_PASS/ENTRY_GATE/Allocation_Ratio/execute_order 流程，
+                # 才在最後一步被拒絕——實測 UNIUSDT 持續有效的強訊號每輪都重新跑一次
+                # 這整套白工，擠壓掉主迴圈時間，導致「持倉時每 5 秒快速刷新價格」的
+                # 空檔幾乎沒有，讓 Tight_Trailing_Stop 偵測到峰值回撤時價格已經比真正
+                # 該觸發的時間點多跌了快 1%。這裡直接跳過，不再產生加碼候選訊號。
+                # 真正的救援攤平（虧損逼近停損時的最後一次性攤平）走的是 exits.py 的
+                # _attempt_forced_rescue（is_rescue_dca=True），不受這裡影響。
+                continue
 
         if not is_entry_allowed(sym, side, route, strength):
             continue
@@ -752,8 +756,9 @@ async def check_entries():
             remaining_slots -= 1
             logger.info(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
             set_entry_diagnosis(f"{sym}: 準備立即開倉 ({route})")
-        else:
-            logger.info(f"⚡ [順勢加倉] {sym} 觸發加倉訊號 ({route} 路線)，準備執行加碼！")
+        # 金字塔順勢加碼（has_pos 且同方向）已在上方「方向鎖定」區塊直接 continue 掉，
+        # 不會有 has_pos=True 的候選走到這裡；execute_order() 那邊的無條件停用
+        # （core/orders.py:1253）留著當防禦性保底，避免未來其他路徑意外繞過這裡。
 
         if not s.get("is_ordering"):
             s["is_ordering"] = True

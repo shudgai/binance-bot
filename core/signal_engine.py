@@ -443,49 +443,6 @@ async def is_eligible_for_reverse(sym, current_strength):
     return True
 
 
-def get_dynamic_cooldown(current_atr, avg_atr, adx_value, base_cooldown=15):
-    volatility_ratio = current_atr / avg_atr if avg_atr > 0 else 1.0
-    vol_factor = 1.0 + (max(0, volatility_ratio - 1.0) * 0.5)
-
-    if adx_value > 30:
-        trend_factor = 0.8
-    elif adx_value < 20:
-        trend_factor = 1.5
-    else:
-        trend_factor = 1.0
-
-    dynamic_cooldown = base_cooldown * vol_factor * trend_factor
-    return max(5, min(60, round(dynamic_cooldown)))
-
-
-def check_pyramiding_eligibility(s):
-    if not s.get('entries'):
-        return False, 0
-
-    last_entry = s['entries'][-1]
-    last_entry_time = last_entry['time']
-
-    current_atr = s.get('current_atr', 0.0)
-    avg_atr = s.get('atr_ma20', current_atr)
-    adx_value = s.get('adx', 25.0)
-
-    dynamic_cooldown_mins = get_dynamic_cooldown(current_atr, avg_atr, adx_value)
-
-    current_time = time.time()
-    seconds_passed = current_time - last_entry_time
-    minutes_passed = seconds_passed / 60
-
-    is_cooldown_over = minutes_passed >= dynamic_cooldown_mins
-    is_under_max_layers = len(s['entries']) < 3
-
-    if is_cooldown_over and is_under_max_layers:
-        price_gap = abs(s['close_price'] - s.get('avg_price', s['close_price'])) / s.get('avg_price', s['close_price'])
-        if price_gap < 0.05:
-            return True, dynamic_cooldown_mins
-
-    return False, dynamic_cooldown_mins
-
-
 def _load_disabled_symbols():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:

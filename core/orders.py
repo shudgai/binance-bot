@@ -613,9 +613,13 @@ async def _urgent_limit_close_with_cap(sym, close_side, qty, fallback_price):
     market_price = float(s.get("close_price", 0.0) or fallback_price)
     atr_val = float(s.get("current_atr", 0.0) or 0.0)
     atr_pct = (atr_val / market_price) if market_price > 0 else 0.003
-    # 跟 core/exits.py 的 Tight_Trailing_Stop 保證鎖利緩衝用同一套公式，讓「最差可接受
-    # 滑價」跟「當初設計要保留的鎖利margin」互相對齊，不會滑價上限比保護margin本身更寬。
-    max_slippage_pct = max(0.0035, atr_pct * 0.4)
+    # 原本跟 core/exits.py 的 _tight_min_lock_pct（保證鎖利緩衝）共用同一套公式
+    # （0.35% 底線），但兩者目的不同：_tight_min_lock_pct 是「要不要保留鎖利margin」，
+    # 這裡是「執行滑價的可接受上限」。實測（LDOUSDT）真實成交滑價通常只有 0.1~0.15%，
+    # 遠小於 0.35% 的上限，代表這個上限訂得比實際需要寬鬆很多。收緊到底線 0.2%、
+    # ATR 係數 0.3，讓上限更貼近真實滑價，同時仍保留隨波動度縮放，避免真的碰上
+    # 高波動幣種時上限太緊導致 IOC 完全吃不到、整批轉市價出清反而變回無上限滑價。
+    max_slippage_pct = max(0.002, atr_pct * 0.3)
 
     prec = await get_contract_precision(sym)
     cap_price = market_price * (1 + max_slippage_pct) if close_side == 'buy' else market_price * (1 - max_slippage_pct)

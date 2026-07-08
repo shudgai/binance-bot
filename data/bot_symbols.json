@@ -9,10 +9,12 @@
     "SUIUSDT",
     "BCHUSDT",
     "ADAUSDT",
+    "LDOUSDT",
+    "TRUMPUSDT",
+    "DOTUSDT",
+    "NEARUSDT",
     "UNIUSDT",
-    "AAVEUSDT",
-    "INJUSDT",
-    "NEARUSDT"
+    "AAVEUSDT"
   ],
   "profiles": {
     "ADAUSDT": {
