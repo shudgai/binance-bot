@@ -601,6 +601,54 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
     return (filled_notional / filled_qty) if filled_qty > 0 else limit_price
 
 
+async def _urgent_limit_close_with_cap(sym, close_side, qty, fallback_price):
+    """時效敏感出場專用（目前只給 Tight_Trailing_Stop 用）：純市價單滑價無上限，
+    被動限價+等待+追價（_exit_lock_profit_with_chase）又太慢——實測 HBARUSDT 案例
+    等 8~11 秒追價期間行情繼續反著走，比直接市價還差（core/orders.py 上面舊註解）。
+    這裡取兩者中間：限價掛在「當下市價 ± 滑價上限」，用 IOC（立即成交、未成交部分
+    直接取消，不掛在委託簿等）送出，只有一次 API 往返、時效跟市價單接近，但把最差
+    滑價鎖在上限內，不會無限制往下（或往上）滑。IOC 沒吃滿的殘量直接轉市價出清，
+    確保倉位一定平掉，不會因為捨不得滑價而卡著不出場。"""
+    s = ctx.STATES[sym]
+    market_price = float(s.get("close_price", 0.0) or fallback_price)
+    atr_val = float(s.get("current_atr", 0.0) or 0.0)
+    atr_pct = (atr_val / market_price) if market_price > 0 else 0.003
+    # 跟 core/exits.py 的 Tight_Trailing_Stop 保證鎖利緩衝用同一套公式，讓「最差可接受
+    # 滑價」跟「當初設計要保留的鎖利margin」互相對齊，不會滑價上限比保護margin本身更寬。
+    max_slippage_pct = max(0.0035, atr_pct * 0.4)
+
+    prec = await get_contract_precision(sym)
+    cap_price = market_price * (1 + max_slippage_pct) if close_side == 'buy' else market_price * (1 - max_slippage_pct)
+    cap_price = round_step(cap_price, prec['tick_size'])
+
+    filled_qty = 0.0
+    filled_notional = 0.0
+    try:
+        order = await exchange_futures.create_order(
+            sym, type='limit', side=close_side, amount=qty,
+            price=cap_price, params={'reduceOnly': True, 'timeInForce': 'IOC'}
+        )
+        await asyncio.sleep(0.3)
+        fetched = await exchange_futures.fetch_order(order['id'], sym)
+        filled_qty = float(fetched.get('filled', 0) or 0)
+        fill_avg = float(fetched.get('average') or fetched.get('price') or cap_price)
+        filled_notional = filled_qty * fill_avg
+    except Exception as e:
+        logger.info(f"⚠️ [限價滑價上限單失敗] {sym}: {e}，全額轉市價")
+
+    remaining_qty = round_step(qty - filled_qty, prec['step_size']) if filled_qty < qty else 0.0
+    if remaining_qty <= 0.000001:
+        avg_fill = filled_notional / filled_qty if filled_qty > 0 else cap_price
+        logger.info(f"✅ [限價滑價上限-全數成交] {sym} @ {avg_fill:.6f} (滑價上限 {max_slippage_pct*100:.2f}% → 掛單價 {cap_price:.6f})")
+        return avg_fill
+
+    logger.info(f"⚠️ [限價滑價上限-部分/未成交] {sym} 已成交 {filled_qty:.6f}/{qty:.6f}，剩餘 {remaining_qty:.6f} 轉市價出清")
+    market_fill = await _market_close_and_get_fill(sym, close_side, remaining_qty, fallback_price)
+    total_qty = filled_qty + remaining_qty
+    total_notional = filled_notional + remaining_qty * market_fill
+    return (total_notional / total_qty) if total_qty > 0 else market_fill
+
+
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = ctx.STATES[sym]
     await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
@@ -699,9 +747,15 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # 不要為了多鎖一點點價差去冒繼續等待的風險。
         _urgent_exit_reasons = ("Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak", "Tight_Trailing_Stop")
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
+        # Tight_Trailing_Stop 實測滑價問題最明顯（ADA/TRUMP/DOT/AVAX/SUI 同小時 6 戰 6 敗，
+        # 見上方緩衝調整的相同分析），改用「限價滑價上限 + IOC」；其餘時效敏感理由
+        # 暫時維持純市價，避免一次改動範圍過大、缺乏實測依據。
+        _is_tight_trailing_stop = "Tight_Trailing_Stop" in reason
         try:
             if profit_pct > 0 and not is_stop_loss and not _is_urgent_exit:
                 final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
+            elif _is_tight_trailing_stop:
+                final_price = await _urgent_limit_close_with_cap(sym, close_side, qty, price)
             else:
                 final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
             s["_close_fail_count"] = 0
