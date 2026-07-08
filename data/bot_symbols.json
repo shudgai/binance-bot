@@ -6,12 +6,13 @@
     "AVAXUSDT",
     "LINKUSDT",
     "SOLUSDT",
-    "TRUMPUSDT",
     "SUIUSDT",
-    "DOTUSDT",
+    "BCHUSDT",
     "ADAUSDT",
-    "NEARUSDT",
-    "UNIUSDT"
+    "UNIUSDT",
+    "AAVEUSDT",
+    "INJUSDT",
+    "NEARUSDT"
   ],
   "profiles": {
     "ADAUSDT": {

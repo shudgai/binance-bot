@@ -509,8 +509,32 @@ def replace_dead_coin(symbol: str):
             bot_status["active_symbols"] = current_syms
             bot_status["watch_symbols"] = current_syms
             save_symbol_config(current_syms)
-            add_system_log(f"✨ [自動補位] 成功選入候補幣種: {new_coin}", "success")
-            start_bot(current_syms, bot_status.get("trade_amount", 10.0))
+
+            # 這個函式有兩種呼叫情境：(1) 正在運行的 main.py 自己的背景工作
+            # （core/runner.py periodic_momentum_swap，同一個 process、同一份 ctx
+            # 記憶體），(2) API 行程監看舊架構 exit code 分支（目前無實際觸發路徑，
+            # 屬於舊架構殘留，ctx 在那邊是空的）。原本不分情境一律呼叫 start_bot()
+            # 整個重啟，但單純換一檔幣完全不需要砍掉重練——實測換一次要花快 1 分鐘
+            # 重抓 SMA200/EMA50(1H)/EMA15m + ATR 暖機，市場安靜、動能不足幣種一多，
+            # 幾乎每 60~70 秒就換一次，程序 9 成時間都在初始化，真正在跑進場掃描的
+            # 時間少得可憐（實測一小時內重啟 17 次，完全開不了倉）。改成偵測到自己
+            # 就是活著的 bot process（symbol 在目前 ctx.STATES 裡）時，直接在記憶體
+            # 內更新監控池，不重啟；不是同一個 process 才退回原本整個重啟。
+            from core import ctx
+            if symbol in ctx.STATES and ctx.ALL_SYMBOLS:
+                from core.state_manager import build_symbol_state
+                from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES, save_symbol_pool
+                if symbol in ctx.ALL_SYMBOLS:
+                    ctx.ALL_SYMBOLS.remove(symbol)
+                if new_coin not in ctx.ALL_SYMBOLS:
+                    ctx.ALL_SYMBOLS.append(new_coin)
+                    ctx.STATES[new_coin] = build_symbol_state(new_coin)
+                    apply_symbol_profile(new_coin, SYMBOL_PROFILES.get(new_coin, {}))
+                save_symbol_pool(ctx.ALL_SYMBOLS)
+                add_system_log(f"✨ [自動補位-免重啟] 成功選入候補幣種: {new_coin}（原地換幣，不重啟程序）", "success")
+            else:
+                add_system_log(f"✨ [自動補位] 成功選入候補幣種: {new_coin}", "success")
+                start_bot(current_syms, bot_status.get("trade_amount", 10.0))
         else:
             add_system_log(f"⚠️ [自動補位] 找不到合適的候補小幣", "danger")
     except Exception as e:
