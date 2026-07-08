@@ -312,7 +312,12 @@ def is_effective_rescue_dca(s, side, order_price, add_qty=None):
         return False, f"rescue price {order_price:.6f} is too close/above stop {stop_price:.6f}"
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
-    min_gap_pct = max(0.008, (atr / avg_price) * 1.1)
+    # 門檻從 0.8% 降到 0.4%：實測 ENAUSDT 即將停損時價差只有 0.72%，差一點點就不到
+    # 0.8%，救援攤平被判定無效、直接照計畫停損（-0.55%）。使用者要求讓救援更容易
+    # 成功，降低門檻讓這類「已經有一定價差、只是差臨門一腳」的情況也能真的攤到平，
+    # 換取更多機會等利潤回來；代價是攤平會在更小的逆勢幅度就出手，均價改善的
+    # 幅度也會變小。
+    min_gap_pct = max(0.004, (atr / avg_price) * 1.1)
     favorable_gap_pct = ((avg_price - order_price) / avg_price if side == "buy"
                           else (order_price - avg_price) / avg_price)
     if favorable_gap_pct < min_gap_pct:

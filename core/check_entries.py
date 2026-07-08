@@ -609,8 +609,8 @@ async def check_entries():
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
         if s.get("mtf_filter", True):
-            # 門檻拉高到 18.0（原本 15.0 太容易在邊緣強度就跳過趨勢過濾），
-            # 跟 core/entry_filter.py 的 _mtf_override_threshold 對齊。
+            # 門檻整合 7dceb33 與今天的修正成綜合版，統一訂在 20（跟 entry_filter.py
+            # 的 _MACRO_OVERRIDE_STRENGTH、方向集中度豁免門檻對齊），不要太難開倉。
             #
             # Route B（EMA20 回測彈跳，core/signal_engine.py route_b_long/short）本身
             # 只看 5m 的 EMA20/50 關係，完全不含任何 1H/15m 大週期的判斷——這道 1H 過濾
@@ -621,7 +621,7 @@ async def check_entries():
             # 完全不算超買) 在同一小時內全部用這個 Override 跳過 1H 趨勢確認去追空，結果
             # 6 戰 6 敗。改成 Route B 一律不給強度豁免、必須真的通過 1H 趨勢確認；Route A
             # 本身條件更完整（含 5m RSI 方向/EMA50 gate 等更多重確認），繼續保留強度豁免。
-            if route != "b" and (strength > 18.0 or route == "Automatic_Reverse"):
+            if route != "b" and (strength > 20.0 or route == "Automatic_Reverse"):
                 logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
@@ -733,9 +733,9 @@ async def check_entries():
             # 所以這裡改成有條件放行：BTC 4H+1H 雙重確認同向時（跟 MACRO_BLOCK
             # 用的是同一組 ctx.MARKET_WIND 資料），視為真趨勢單邊行情，不設上限；
             # 沒有大盤同向確認時，才視為缺乏依據的巧合式堆疊，套用集中度上限，
-            # 除非訊號強度極高（對齊本檔其他地方的「極強訊號豁免」門檻 24.0）。
+            # 除非訊號強度極高（統一對齊 20，跟本檔其他強訊號豁免門檻一致）。
             _MAX_SAME_DIRECTION = max(1, MAX_POSITIONS - 2)
-            _DIRECTION_OVERRIDE_STRENGTH = 24.0
+            _DIRECTION_OVERRIDE_STRENGTH = 20.0
             _same_dir_count = sum(
                 1 for _s in ctx.STATES.values()
                 if abs(_s.get("qty", 0.0)) > 0.000001 and (_s["qty"] > 0) == (side == 'buy')

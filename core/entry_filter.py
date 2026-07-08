@@ -337,10 +337,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         current_rsi_macro = s.get("current_rsi", 50.0)
         divergence_confirmed = (s.get("divergence", "none") == "bullish")
         extreme_oversold    = (current_rsi_macro < 32.0)
-        # 使用者要求放寬：熊市防禦太嚴格時，實測強度 12~18 的訊號幾乎全被擋、完全無法
-        # 開多，門檻從 24 降到 18，讓中段偏強的訊號也能走自己的行情，但仍濾掉真正偏弱
-        # （<18）的訊號，不是整個熔斷機制失效。
-        _MACRO_OVERRIDE_STRENGTH = 18.0
+        # 使用者要求整合 7dceb33（門檻 24）與今天的放寬（門檻 18）成綜合版，統一訂在
+        # 20，跟本檔/check_entries.py 其他「強訊號豁免」門檻（20）對齊，不要太難開倉
+        # 也不要完全沒有品質把關。
+        _MACRO_OVERRIDE_STRENGTH = 20.0
         ultra_strong        = (strength >= _MACRO_OVERRIDE_STRENGTH)  # 幣種自身訊號夠強，走自己的行情
         if not extreme_oversold and not divergence_confirmed and not ultra_strong:
             logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"

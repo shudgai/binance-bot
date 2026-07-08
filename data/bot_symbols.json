@@ -1,17 +1,25 @@
 {
   "symbols": [
-    "ADAUSDT",
-    "BCHUSDT",
-    "UNIUSDT",
     "SUIUSDT",
-    "APTUSDT",
     "XLMUSDT",
-    "AVAXUSDT",
-    "SOLUSDT",
-    "DOGEUSDT",
     "DOTUSDT",
+    "DOGEUSDT",
+    "SOLUSDT",
+    "AVAXUSDT",
+    "TRUMPUSDT",
+    "APTUSDT",
+    "ONDOUSDT",
+    "BCHUSDT",
+    "ADAUSDT",
+    "UNIUSDT",
+    "XRPUSDT",
+    "ASTERUSDT",
+    "LDOUSDT",
+    "AAVEUSDT",
+    "FETUSDT",
+    "LTCUSDT",
     "LINKUSDT",
-    "XRPUSDT"
+    "OPUSDT"
   ],
   "profiles": {
     "ADAUSDT": {
