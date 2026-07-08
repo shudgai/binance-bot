@@ -734,7 +734,11 @@ async def check_entries():
             # 用的是同一組 ctx.MARKET_WIND 資料），視為真趨勢單邊行情，不設上限；
             # 沒有大盤同向確認時，才視為缺乏依據的巧合式堆疊，套用集中度上限，
             # 除非訊號強度極高（統一對齊 20，跟本檔其他強訊號豁免門檻一致）。
-            _MAX_SAME_DIRECTION = max(1, MAX_POSITIONS - 2)
+            # 原本用「總槽位數 - 2」這個固定差值算，在槽位數=5 時等於 60%（3/5）；
+            # 但槽位數改成 3 之後，同一個公式算出來變成只剩 1，比例上收得比原本嚴
+            # 很多。改成統一用比例（60%）反推，槽位數=5 時還是算出 3（跟原本一致），
+            # 槽位數=3 時算出 2，比例維持一致，不會因為總槽位變少而被不成比例地收緊。
+            _MAX_SAME_DIRECTION = max(1, round(MAX_POSITIONS * 0.6))
             _DIRECTION_OVERRIDE_STRENGTH = 20.0
             _same_dir_count = sum(
                 1 for _s in ctx.STATES.values()

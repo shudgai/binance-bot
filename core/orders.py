@@ -1053,18 +1053,14 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
     actual_entry_mode = _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
     
-    # ─── 新增：分批入場策略 (Staged Entry) ───
-    # 初次進場用 60% 分配，後續加倉用 100%
     is_first_entry = (s.get("entry_count", 0) == 0)
-    if is_first_entry and not is_rescue_dca:
-        # 初次試探倉：只用 60% 的分配額度
-        staged_allocation = allocation_pct * 0.6
-        logger.info(f"📊 [分批進場] {sym} 初次進場用試探倉 {staged_allocation:.2%} (正常 {allocation_pct:.2%} × 60%)")
-        allocation_pct = staged_allocation
-    elif s.get("entry_count", 0) >= 1 and not is_rescue_dca:
-        # 加倉確認：使用全額分配
-        logger.info(f"📊 [分批進場] {sym} 加倉確認用全額 {allocation_pct:.2%}")
-    
+
+    # 「分批入場」（先 60% 試探倉、訊號確認後再補到 100%）已經失效：金字塔加碼規則
+    # 在後面的 `if s["entry_count"] > 0 and not is_rescue_dca: return` 對任何加碼
+    # 一律無條件擋下（見本函式後段），導致「加倉確認」那一步每次都送出去、每次都
+    # 被自己擋掉，從來沒有真的補到 100% 過——所有倉位實際上永遠卡在 60% 大小。
+    # 既然補倉這條路已經走不通，直接第一筆（也是唯一一筆）就用完整計算金額進場，
+    # 不再假裝之後會有第二筆補上。
     logger.info(f"🛒 [ORDER_ATTEMPT] {sym} 開始執行 {side} 進場 | price={price:.6f} allocation={allocation_pct:.2f}")
 
     # 進場方向與當前持倉衝突防護

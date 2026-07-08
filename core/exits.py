@@ -315,7 +315,17 @@ async def check_exits(sym):
         (not is_long and s.get("current_rsi", 50.0) < 45 and _st_macd_hist_now < 0)
     )
     _st_entry_layers = len(s.get("entries", []))
-    _st_time_decay_limit = (5400 if _st_entry_layers <= 1 else 7200) if _st_is_strong else (2400 if _st_entry_layers <= 1 else 5400)
+    _st_base_limit = (5400 if _st_entry_layers <= 1 else 7200) if _st_is_strong else (2400 if _st_entry_layers <= 1 else 5400)
+    # 使用者反映 LTCUSDT/LINKUSDT 兩筆都曾經有過 +0.3% 左右的峰值，中間一直在小賺小賠
+    # 之間原地震盪，停滯超時觸發那一刻剛好卡在小賠，整段持倉的峰值就這樣浪費掉。
+    # 兩個調整：(1) 基礎等待時間全面拉長 1.5 倍，給單子更多時間發展；(2) 曾經有過
+    # 像樣峰值（>0.2%，扣掉來回手續費後還有剩）的單子，再多給 1.5 倍時間，讓它有
+    # 更多機會回到峰值附近再了結，而不是一到時間到、剛好卡在小賠的當下就被迫出場。
+    # 市價單無法指定成交在「峰值附近的價位」（成交價由當下真實市場決定），所以用
+    # 「多給時間、提高回到峰值附近的機率」取代直接指定出場價，避免走上今天稍早
+    # 已經證實會出問題的限價追價路線（HBARUSDT 案例：等待追價反而讓虧損擴大）。
+    _st_had_peak = s.get("highest_profit_pct", 0.0) > 0.002
+    _st_time_decay_limit = int(_st_base_limit * 1.5 * (1.5 if _st_had_peak else 1.0))
     # 使用者要求擴大範圍：不只虧損/持平的單子要超時了結，「有獲利但一直沒有再創新高、
     # 時間拖很久」的單子也一樣——與其耗著等一個已經不再發展的小獲利，不如先落袋，把
     # 倉位空出來讓新訊號進場。虧損那邊維持停損標記；獲利那邊改標記一般平倉，不算停損。
@@ -969,6 +979,11 @@ async def check_exits(sym):
     else:
         ts_retracement_pct = atr_pct * 0.75   # < 0.8%：仍允許最小回撤空間
     ts_retracement_pct = max(ts_retracement_pct, 0.0010)      # 絕對下限 0.10%
+    # 使用者反映：SOLUSDT 峰值只有 0.40%，但這個回撤容忍度（ATR 算出來 0.56%）比峰值
+    # 本身還大，等於「鎖利機制」允許把賺到的利潤整個吐光甚至倒虧（實測最終 -0.17%）。
+    # 回撤容忍度封頂在峰值的 20%，確保觸發時至少保住八成峰值利潤；大峰值單子如果
+    # ATR 算出來的容忍度本來就小於峰值 20%，這個封頂不會有作用，維持原本寬鬆待遇。
+    ts_retracement_pct = min(ts_retracement_pct, max(_hp * 0.20, 0.0010))
     if s["highest_profit_pct"] >= ts_activation_pct:
         if is_long:
             peak_price = max(s.get("trailing_highest", avg), avg * (1 + _hp))
@@ -977,7 +992,14 @@ async def check_exits(sym):
             trail_sl_price = peak_price * (1 - ts_retracement_pct)
             if trail_sl_price > s.get("stop_loss", 0):
                 s["stop_loss"] = trail_sl_price
-            if p <= trail_sl_price:
+            # 使用者要求：停利完至少要保留 0.2% 淨利潤，不能只看「有沒有從峰值回撤到
+            # 門檻」——SOLUSDT 那筆就是回撤有觸發，但觸發當下的真實獲利已經跌破 0，
+            # 等於用「鎖利」的名義去結算一筆其實已經是虧損的單子。這裡多加一道「當下
+            # 真實獲利至少還有 0.2%」的門檻，沒有的話就不用 TrailTP_Peak 出場，改讓它
+            # 落到後面的 Universal SL 處理（stop_loss 已經設到 trail_sl_price，不會
+            # 沒有保護，只是不會頂著「鎖利」的名義去結算一筆虧損單）。
+            _min_lock_profit_pct = 0.002
+            if p <= trail_sl_price and profit_pct >= _min_lock_profit_pct:
                 cs = 'sell'
                 lock_pnl = (peak_price - avg) / avg * 100
                 _exit_p = max(p, trail_sl_price)
@@ -992,7 +1014,9 @@ async def check_exits(sym):
             trail_sl_price = trough_price * (1 + ts_retracement_pct)
             if s.get("stop_loss", float('inf')) > trail_sl_price:
                 s["stop_loss"] = trail_sl_price
-            if p >= trail_sl_price:
+            # 理由同上（多單分支）：確保「鎖利」出場時，當下真實獲利至少還有 0.2%。
+            _min_lock_profit_pct = 0.002
+            if p >= trail_sl_price and profit_pct >= _min_lock_profit_pct:
                 cs = 'buy'
                 lock_pnl = (avg - trough_price) / avg * 100
                 _exit_p = min(p, trail_sl_price)
