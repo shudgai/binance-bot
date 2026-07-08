@@ -2,16 +2,16 @@
   "symbols": [
     "UNIUSDT",
     "ADAUSDT",
-    "XLMUSDT",
     "AVAXUSDT",
-    "SUIUSDT",
     "BCHUSDT",
-    "SOLUSDT",
     "DOGEUSDT",
     "DOTUSDT",
-    "XRPUSDT",
+    "LINKUSDT",
     "LTCUSDT",
-    "LINKUSDT"
+    "SOLUSDT",
+    "SUIUSDT",
+    "XLMUSDT",
+    "XRPUSDT"
   ],
   "profiles": {
     "UNIUSDT": {
