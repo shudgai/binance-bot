@@ -190,7 +190,7 @@ MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY = float(os.getenv("MAX_24H_ABS_CHANGE_PCT_FOR_E
 # 讓保護機制更早介入；搭配 core/exits.py 裡新增的手續費下限保護（出場價至少
 # 覆蓋來回手續費 ROUND_TRIP_FEE_PCT 的 1.2 倍），確保一旦觸發鎖利，實際到手
 # 一定是淨獲利，不會被回撤吃光甚至倒虧。
-TIGHT_TP_ACTIVATION_PCT = float(os.getenv("TIGHT_TP_ACTIVATION_PCT", 0.003))
+TIGHT_TP_ACTIVATION_PCT = float(os.getenv("TIGHT_TP_ACTIVATION_PCT", 0.0015))
 
 
 TAKER_FEE_RATE = 0.0005

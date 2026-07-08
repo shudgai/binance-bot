@@ -708,6 +708,37 @@ async def check_entries():
         if not has_pos:
             if remaining_slots <= 0:
                 continue
+
+            # --- 同方向集中度風控 (Direction Concentration Guard) ---
+            # 使用者反映：好幾次同一時段內，雷達選出的幣種訊號一面倒向同一個方向
+            # （實測案例 AVAXUSDT/DOTUSDT/BCHUSDT/LINKUSDT/ADAUSDT 5 筆同時做空），
+            # 導致整個帳戶對大盤同一個方向的逆風完全沒有分散——30 分鐘內 BTC 只是
+            # 緩漲 0.46%，5 筆就同時虧損收場。但使用者指出：如果大盤當下真的是
+            # 確認趨勢，同方向本來就該多開，不該被當成「押注」硬擋——问题只在於
+            # 「沒有大盤趨勢依據、單純幾個幣種訊號剛好同時同向」這種巧合式集中。
+            # 所以這裡改成有條件放行：BTC 4H+1H 雙重確認同向時（跟 MACRO_BLOCK
+            # 用的是同一組 ctx.MARKET_WIND 資料），視為真趨勢單邊行情，不設上限；
+            # 沒有大盤同向確認時，才視為缺乏依據的巧合式堆疊，套用集中度上限，
+            # 除非訊號強度極高（對齊本檔其他地方的「極強訊號豁免」門檻 24.0）。
+            _MAX_SAME_DIRECTION = max(1, MAX_POSITIONS - 2)
+            _DIRECTION_OVERRIDE_STRENGTH = 24.0
+            _same_dir_count = sum(
+                1 for _s in ctx.STATES.values()
+                if abs(_s.get("qty", 0.0)) > 0.000001 and (_s["qty"] > 0) == (side == 'buy')
+            )
+            if _same_dir_count >= _MAX_SAME_DIRECTION:
+                _btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
+                _btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
+                _macro_confirms_direction = (
+                    (side == 'sell' and _btc_4h == "BEAR" and _btc_1h == "BEAR") or
+                    (side == 'buy' and _btc_4h == "BULL" and _btc_1h == "BULL")
+                )
+                if _macro_confirms_direction:
+                    logger.info(f"🧭 [方向集中度-趨勢放行] {sym} 同方向倉位已達 {_same_dir_count}，但 BTC 4H+1H 趨勢確認同向 ({_btc_4h}/{_btc_1h})，判定為真趨勢單邊行情，允許加開")
+                elif strength < _DIRECTION_OVERRIDE_STRENGTH:
+                    logger.info(f"🧭 [方向集中度風控] {sym} 目前已有 {_same_dir_count} 筆同方向({side})倉位 >= 上限 {_MAX_SAME_DIRECTION}，大盤無同向趨勢確認 (4H:{_btc_4h}/1H:{_btc_1h})，且強度 {strength:.1f} < {_DIRECTION_OVERRIDE_STRENGTH}，放棄本次訊號以分散風險")
+                    continue
+
             remaining_slots -= 1
             logger.info(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
             set_entry_diagnosis(f"{sym}: 準備立即開倉 ({route})")

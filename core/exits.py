@@ -1334,23 +1334,35 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
     cs = "buy" if is_long else "sell"
     logger.info(f"🆘 [強制補救] {sym} 即將觸發停損，尚未攤平過且動能已趨緩，最後嘗試一次救援加碼再觀察！")
     s["is_ordering"] = True
+    _entry_count_before = s.get("entry_count", 0)
     try:
         # 縮小補救倉位（0.33→0.20）：這是最後一次性的救援加碼，一旦失敗會直接停損出場，
         # 縮小額度可以降低每次救援失敗時放大的虧損金額。
         await execute_order(sym, cs, p, allocation_pct=0.20, is_rescue_dca=True)
-        # 記錄攤平時間，讓 Universal SL 給這次攤平一段短暫觀察期（見下方 rescue_grace
-        # 判斷），兌現這裡日誌講的「再觀察」——不然攤平成交後下一個 tick 立刻用新均價
-        # 重新檢查停損線，等於完全沒有觀察期，攤平沒有實質意義。
-        s["last_rescue_time"] = time.time()
-        # 保本線是單向棘輪鎖定（只會往上鎖，不會下修），攤平前如果已經鎖過一次
-        # 保本價，攤平後新均價通常比舊均價低，但那條舊鎖定值不會跟著往下修正，
-        # 導致新均價一算出來就已經低於舊停損線——攤平完成當下部位就已經在停損
-        # 線之下，只是靠 60 秒觀察期暫時擋著，觀察期一過立刻打停損，攤平完全沒
-        # 發揮該有的緩衝空間。這裡重置，讓停損線用新均價重新計算。
-        s["is_breakeven_locked"] = False
-        s["highest_profit_pct"] = 0.0
     finally:
         s["is_ordering"] = False
+
+    # execute_order 內部有多道守門（EntryDirectionGuard/RescueDCAIneffective 等）可能
+    # 悄悄擋下這次攤平而不拋例外，entry_count 不會增加。過去這裡不管有沒有真的成交都
+    # 回傳 True，導致呼叫端誤以為「已處理」而跳過這次停損，讓一個根本沒攤到平的部位
+    # 卡在停損線附近每輪重試、卻永遠不會真正停損，實測 BCHUSDT 因此白白多虧了 5 分半
+    # 鐘（-0.24% 一路惡化到 -0.57%）才被無關的停滯超時機制撿到。現在攤平沒有真的成交
+    # 就回傳 False，讓呼叫端照原計畫立即停損，不再無限期空等一個不可能成功的救援。
+    if s.get("entry_count", 0) <= _entry_count_before:
+        logger.info(f"ℹ️ [補救未成交] {sym} 救援加碼被下單守門攔截，未實際攤平，照計畫停損出場")
+        return False
+
+    # 記錄攤平時間，讓 Universal SL 給這次攤平一段短暫觀察期（見下方 rescue_grace
+    # 判斷），兌現這裡日誌講的「再觀察」——不然攤平成交後下一個 tick 立刻用新均價
+    # 重新檢查停損線，等於完全沒有觀察期，攤平沒有實質意義。
+    s["last_rescue_time"] = time.time()
+    # 保本線是單向棘輪鎖定（只會往上鎖，不會下修），攤平前如果已經鎖過一次
+    # 保本價，攤平後新均價通常比舊均價低，但那條舊鎖定值不會跟著往下修正，
+    # 導致新均價一算出來就已經低於舊停損線——攤平完成當下部位就已經在停損
+    # 線之下，只是靠 60 秒觀察期暫時擋著，觀察期一過立刻打停損，攤平完全沒
+    # 發揮該有的緩衝空間。這裡重置，讓停損線用新均價重新計算。
+    s["is_breakeven_locked"] = False
+    s["highest_profit_pct"] = 0.0
     return True
 
 
