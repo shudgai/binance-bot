@@ -47,7 +47,7 @@ def update_trailing_stop(sym, current_price, is_long):
     _prev_peak = s.get("highest_profit_pct", 0.0)
     s["highest_profit_pct"] = max(_prev_peak, profit_pct)
     if s["highest_profit_pct"] > _prev_peak:
-        # 即時把新高點存檔，而不是只在重啟時存一次快照。原本只有重啟校準那一刻會呼叫
+        # 即時把新高點存檔，而不是只在重啟時存一次快照。原本只有重啟校準那一刻呼叫
         # save_peak，兩次重啟之間爬到的真正高點從未落地，若中途又重啟（例如部署修改），
         # 峰值記憶會被打回重啟當下的價位，讓所有靠 highest_profit_pct 判斷的鎖利機制
         # 都以為從沒漲那麼高過。曾實測 SUIUSDT 真實高點 1.25%，因為中途重啟兩次，
@@ -76,15 +76,15 @@ def update_trailing_stop(sym, current_price, is_long):
             personality = s.get("personality", "balanced")
             profile_type = s.get("profile_type", "")
             if personality == "aggressive" or "High_Beta" in profile_type:
-                if _hp_f > 0.05:    trailing_multiplier = 0.7
-                elif _hp_f > 0.03:  trailing_multiplier = 0.9
-                elif _hp_f > 0.02:  trailing_multiplier = 1.2
+                if _hp_f > 0.10:    trailing_multiplier = 0.8
+                elif _hp_f > 0.07:  trailing_multiplier = 0.9
+                elif _hp_f > 0.04:  trailing_multiplier = 1.2
                 else:               trailing_multiplier = 1.6
             else:
-                if _hp_f > 0.05:    trailing_multiplier = 0.6
-                elif _hp_f > 0.03:  trailing_multiplier = 0.8
-                elif _hp_f > 0.02:  trailing_multiplier = 1.0
-                else:               trailing_multiplier = 1.3
+                if _hp_f > 0.10:    trailing_multiplier = 0.8
+                elif _hp_f > 0.07:  trailing_multiplier = 0.9
+                elif _hp_f > 0.04:  trailing_multiplier = 1.2
+                else:               trailing_multiplier = 1.5
             # 最小距離防護：確保至少 0.25% 緩衝
             _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
             dynamic_sl = s["trailing_highest"] - _min_gap_l
@@ -124,15 +124,15 @@ def update_trailing_stop(sym, current_price, is_long):
             personality = s.get("personality", "balanced")
             profile_type = s.get("profile_type", "")
             if personality == "aggressive" or "High_Beta" in profile_type:
-                if _hp_fs > 0.05:   trailing_multiplier = 0.4
-                elif _hp_fs > 0.03: trailing_multiplier = 0.6
-                elif _hp_fs > 0.02: trailing_multiplier = 0.8
+                if _hp_fs > 0.10:   trailing_multiplier = 0.6
+                elif _hp_fs > 0.07: trailing_multiplier = 0.7
+                elif _hp_fs > 0.04: trailing_multiplier = 0.9
                 else:               trailing_multiplier = 1.3
             else:
-                if _hp_fs > 0.05:   trailing_multiplier = 0.3
-                elif _hp_fs > 0.03: trailing_multiplier = 0.45
-                elif _hp_fs > 0.02: trailing_multiplier = 0.6
-                else:               trailing_multiplier = 1.0
+                if _hp_fs > 0.10:   trailing_multiplier = 0.6
+                elif _hp_fs > 0.07: trailing_multiplier = 0.7
+                elif _hp_fs > 0.04: trailing_multiplier = 0.9
+                else:               trailing_multiplier = 1.1
             # 最小距離防護
             _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
             dynamic_sl = s["trailing_lowest"] + _min_gap_s
@@ -277,6 +277,7 @@ async def check_exits(sym):
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
     # ⚠️ 舊版本此更新在 update_trailing_stop(line~642) 才跑，保本/PeakLock 全讀舊值
+    # 為了讓保本/PeakLock 捕捉到正確的高點，我們必須在 check_exits 的最前面更新
     _ohlcv_early = s.get("ohlcv", [])
     _intra_peak_early = 0.0
     if _ohlcv_early and avg > 0:
@@ -326,7 +327,7 @@ async def check_exits(sym):
     # 更多機會回到峰值附近再了結，而不是一到時間到、剛好卡在小賠的當下就被迫出場。
     # 市價單無法指定成交在「峰值附近的價位」（成交價由當下真實市場決定），所以用
     # 「多給時間、提高回到峰值附近的機率」取代直接指定出場價，避免走上今天稍早
-    # 已經證實會出問題的限價追價路線（HBARUSDT 案例：等待追價反而讓虧損擴大）。
+    # 已經證實會出問題的路線（HBARUSDT 案例：等待追價反而讓虧損擴大）。
     _st_had_peak = s.get("highest_profit_pct", 0.0) > 0.002
     _st_time_decay_limit = int(_st_base_limit * 1.5 * (1.5 if _st_had_peak else 1.0))
     # 使用者要求擴大範圍：不只虧損/持平的單子要超時了結，「有獲利但一直沒有再創新高、
@@ -335,15 +336,33 @@ async def check_exits(sym):
     if hold_sec > _st_time_decay_limit:
         _sd_macd_h, _sd_prev_macd_h = _macd_vals(s)
         _sd_trending_favorably = (_sd_macd_h > _sd_prev_macd_h) if is_long else (_sd_macd_h < _sd_prev_macd_h)
+        
+        # 檢查是否在「獲利區間」且「沒創新高」
+        # 這裡加入針對獲利單的 Peak Stagnation 檢查：
+        # 如果獲利 > 0.15% 且 已經持倉超過 300 秒，且 價格在過去 300 秒內沒有創新高，
+        # 且 目前動能未往有利方向擴張，則執行「獲利了結」。
+        is_profitable = profit_pct > 0.0015
+        is_stagnant_peak = hold_sec > 300 and s.get("highest_profit_pct", 0.0) <= (p * (1 + (0.0015 if is_long else -0.0015)))
+        
         if not _sd_trending_favorably:
-            cs = 'sell' if is_long else 'buy'
-            if profit_pct < 0:
+            # 情況 A：虧損或持平的單子，動能沒轉好 -> 停滯超時強制平倉
+            if profit_pct <= 0:
+                cs = 'sell' if is_long else 'buy'
                 logger.info(f"⏳ [停滯超時] {sym} 持倉超過 {_st_time_decay_limit/60:.0f} 分鐘仍處虧損/持平 ({profit_pct*100:.2f}%) 且動能未往有利方向擴張，平倉了結不再等待")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Timeout]", is_stop_loss=True)
-            else:
+                return
+            
+            # 情況 B：獲利中的單子，動能沒轉好
+            # 若滿足「獲利且停滯」的條件，則落袋為安
+            if is_profitable and is_stagnant_peak:
+                cs = 'sell' if is_long else 'buy'
                 logger.info(f"⏳ [停滯超時-獲利了結] {sym} 持倉超過 {_st_time_decay_limit/60:.0f} 分鐘獲利 {profit_pct*100:.2f}% 未再創新高且動能未擴張，先落袋讓新倉進場")
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Stagnation_Timeout]", is_stop_loss=False)
-            return
+                return
+            
+            # 情況 C：獲利中的單子，動能沒轉好，但還在發展中（還沒達到停滯峰值）
+            # 則不執行任何操作，讓它繼續跑
+            logger.info(f"ℹ️ [停滯過濾] {sym} 獲利 {profit_pct*100:.2f}% 中，動能未擴張但仍處於發展期，繼續持倉")
 
     bb_upper = s.get('bb_up', 0)
     bb_lower = s.get('bb_low', 0)
@@ -407,7 +426,7 @@ async def check_exits(sym):
             return
 
     # 未個別配置 hard_sl_pct 的幣種（例如 MUSDT）過去 fallback 是 0.0，等於整段 Hard_SL
-    # 直接被跳過、完全沒有固定百分比的硬停損防線，只能靠 ATR 動態停損（Universal SL）——
+    # 直接被跳過，完全沒有固定百分比的硬停損防線，只能靠 ATR 動態停損（Universal SL）——
     # 但 ATR 停損距離沒有上限，暴漲暴跌時 get_dynamic_atr_multiplier 還會把倍數放寬到 1.2x，
     # 兩者疊加曾讓單筆虧損跑到 -14%（MUSDT 實際案例）。改用全域 HARD_STOP_LOSS_PCT 當預設值，
     # 讓每個幣種至少都有一道固定百分比的最後防線。

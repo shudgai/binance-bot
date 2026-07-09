@@ -740,18 +740,18 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
-		# 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
-		if is_relaxed:
-			logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
-			candidates.append((sym, side, strength, route))
-			continue
+        # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
+        if is_relaxed:
+            logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
+            candidates.append((sym, side, strength, route))
+            continue
 
-		# [新增] 記錄訊號產生時的價格，用於後續防範「開倉背離」
-		s["pending_trigger_price"] = s["close_price"]
-		s["pending_side"] = side
-		s["pending_time"] = current_candle_time
-		s["pending_strength"] = strength
-		s["pending_route"] = route
+        # [新增] 記錄訊號產生時的價格，用於後續防範「開倉背離」
+        s["pending_trigger_price"] = s["close_price"]
+        s["pending_side"] = side
+        s["pending_time"] = current_candle_time
+        s["pending_strength"] = strength
+        s["pending_route"] = route
         s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
 
         logger.info(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")

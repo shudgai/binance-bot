@@ -100,22 +100,22 @@ def build_symbol_state(sym):
         "rsi_extreme_high": conf.get("rsi_extreme_high", 75),
         "rsi_recovery_hook": conf.get("rsi_recovery_hook", 30),
         "volatility_cap": conf.get("volatility_cap", 3.0),
+        "last_peak_time": 0.0,
     }
-
 
 def _remove_cooldown_substitute(sym):
     """冷卻/封禁結束時，將原幣種復位到監控池，並移除候補幣種（若未開倉）。"""
     from core import ctx
     from core.symbol_profile import save_symbol_pool
-    
+
     sub = ctx.COOLDOWN_SUBSTITUTES.pop(sym, None)
-    
+
     # 🔄 [恢復冷卻幣種] 將原幣種加回到 ALL_SYMBOLS
     if sym not in ctx.ALL_SYMBOLS:
         ctx.ALL_SYMBOLS.append(sym)
         logger.info(f"🔄 [冷卻恢復] {sym} 冷卻期結束，已重新加入監控池")
         save_symbol_pool(ctx.ALL_SYMBOLS)
-    
+
     if not sub:
         return
 
@@ -134,7 +134,6 @@ def _remove_cooldown_substitute(sym):
         # RADAR_SELECT_COUNT，不影響任何現有持倉或正在進行中的其他冷卻。
         logger.info(f"✅ [冷卻補位] {sym} 已恢復，候補幣種 {sub} 已有部位或進場，轉為正式監控幣種")
         _enforce_symbol_pool_cap()
-
 
 def _enforce_symbol_pool_cap():
     """監控池超過 RADAR_SELECT_COUNT 時，移除沒有持倉、沒有進場紀錄、也不是其他
@@ -165,11 +164,10 @@ def _enforce_symbol_pool_cap():
         save_symbol_pool(ctx.ALL_SYMBOLS)
 
 
-
 def update_states():
     from core import ctx
     now = time.time()
-    
+
     # 處理 ALL_SYMBOLS 中的幣種狀態轉移
     for sym in ctx.ALL_SYMBOLS:
         s = ctx.STATES[sym]
@@ -185,7 +183,7 @@ def update_states():
             s["first_stop_time"] = 0
             logger.info(f"🔄 [狀態] {sym} 封禁解除 → ACTIVE")
             _remove_cooldown_substitute(sym)
-    
+
     # 處理被移出後仍在冷卻的幣種（可能被暫時汰換，但冷卻結束後應恢復）
     for sym in list(ctx.STATES.keys()):
         if sym not in ctx.ALL_SYMBOLS:
@@ -202,7 +200,6 @@ def update_states():
                 elif sym not in ctx.ALL_SYMBOLS:
                     # 被汰換的幣種在冷卻結束後，若沒有候補紀錄，先不主動恢復（保留現有汰換決定）
                     logger.info(f"ℹ️  [離線恢復] {sym} 冷卻結束但不在監控池，保持待命狀態")
-
 
 def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
     from core import ctx
@@ -239,19 +236,19 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
             try:
                 from core.config import DEFAULT_SYMBOLS
                 from core.symbol_profile import save_symbol_pool, apply_symbol_profile, SYMBOL_PROFILES
-                
+
                 # 尋找不在目前監聽列表中的候選幣種
                 candidate_pool = list(DEFAULT_SYMBOLS)
                 for c in COIN_PROFILE_CONFIG.keys():
                     if c not in candidate_pool:
                         candidate_pool.append(c)
-                
+
                 new_sym = None
                 for c in candidate_pool:
                     if c not in ctx.ALL_SYMBOLS:
                         new_sym = c
                         break
-                
+
                 if new_sym:
                     # 執行汰換
                     if sym in ctx.ALL_SYMBOLS:
@@ -259,11 +256,11 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
                         ctx.ALL_SYMBOLS[idx] = new_sym
                     else:
                         ctx.ALL_SYMBOLS.append(new_sym)
-                        
+
                     # 初始化新幣種狀態
                     ctx.STATES[new_sym] = build_symbol_state(new_sym)
                     apply_symbol_profile(new_sym, SYMBOL_PROFILES.get(new_sym, {}))
-                    
+
                     # 存檔持久化
                     save_symbol_pool(ctx.ALL_SYMBOLS)
                     logger.info(f"✨ [連續虧損汰換成功] {sym} 被移出監控池，由新幣種 {new_sym} 替補監控！")
@@ -280,7 +277,6 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
     # EIGENUSDT 等）。固定名單模式下改成：冷卻期間監控池單純少一個可交易幣種，
     # 冷卻結束該幣種自動恢復 ACTIVE，不再補位。
 
-
 def update_state_with_fill(sym, order_data):
     """
     使用交易所回傳的真實成交資料更新內部狀態。
@@ -290,48 +286,55 @@ def update_state_with_fill(sym, order_data):
         return
 
     s = ctx.STATES[sym]
-    
+
     # 提取成交數量與價格
     # 幣安的成交資料中，qty 可能為負數（代表賣出），所以取絕對值
     fill_qty = abs(float(order_data.get("filledQty", 0)))
     fill_price = float(order_data.get("avgPrice", 0))
-    
+
     if fill_qty > 0 and fill_price > 0:
         # 更新持倉數量 (做多為正，做空為負)
         # 這裡的 logic 需要根據訂單方向來決定，但我們通常在成交後會重新同步或根據 order_data 的 side 判斷
         # 為了簡單且準確，我們直接將成交量加到目前的 qty 上（如果是買入，qty 增加；如果是賣出，qty 減少）
         # 但因為 we are calling this in a context where we just placed a market buy/short,
         # we can just set it directly if it's the first fill.
-        
+
         # 獲取訂單方向
         side = order_data.get("side") # "BUY" 或 "SELL"
-        
-        if side == "BUY":
-            s["qty"] += fill_qty
+
+        # 為了確保方向一致性，我們根據成交量與目前持倉狀態更新 qty
+        # 如果目前是空倉或新開倉，我們直接根據 side 設定正負號
+        if s["qty"] == 0.0:
+            if side == "BUY":
+                s["qty"] = fill_qty
+            else:
+                s["qty"] = -fill_qty
         else:
-            s["qty"] -= fill_qty
-            
+            # 如果已有持倉，則根據方向累加/減去
+            if side == "BUY":
+                s["qty"] += fill_qty
+            else:
+                s["qty"] -= fill_qty
+
         # 更新平均價格
-        # 簡單處理：如果是第一次進場，直接設為成交價。若是多次進場，則進行加權平均。
         if s["entry_count"] == 0:
             s["avg_price"] = fill_price
             s["open_time"] = time.time()
         else:
-            # 加權平均公式: (舊總成本 + 新成交成本) / 新總數量
-            old_total_cost = s["avg_price"] * abs(s["qty"] - fill_qty) # 這邊邏輯略複雜，因為 qty 已經變動了
-            # 重新計算：
-            # 假設我們知道之前的 qty 和 avg_price
-            # 因為我們剛剛才更新了 s["qty"]，所以我們需要先知道之前的量
-            # 為了避免複雜邏輯，我們在執行時傳入之前的量，或者這裡我們採用簡單的「最新成交價」覆蓋
-            # 或是在 ExecutionEngine 裡處理。
-            pass
-            
+            # 重新計算平均價格 (加權平均)
+            # 為了精確，我們需要知道更新前的 qty
+            # 這裡我們簡單處理：若同向加碼，則更新平均價
+            # 由於我們在上方已經更新了 s["qty"]，我們透過 fill_qty 反推之前的量
+            prev_qty = abs(s["qty"] - (fill_qty if side == "BUY" else -fill_qty))
+            if prev_qty > 0:
+                s["avg_price"] = ((s["avg_price"] * prev_qty) + (fill_price * (fill_qty if side == "BUY" else -fill_qty))) / abs(s["qty"])
+
         s["entry_count"] += 1
         s["last_trade_price"] = fill_price
         s["last_trade_qty"] = fill_qty
         s["last_trade_time"] = time.time()
-        
-        logger.info(f"✅ [Post-Fill Update] {sym} 成交: {side} {fill_qty} @ {fill_price}")
+
+        logger.info(f"✅ [Post-Fill Update] {sym} 成交: {side} {fill_qty} @ {fill_price} (New Qty: {s['qty']:.4f})")
 
     # 標記訂單已處理
     s["is_ordering"] = False
@@ -393,11 +396,9 @@ def reset_coin_state(sym):
     s.pop("last_price_check_time", None)
     s.pop("_hard_tp_reached_logged", None)
 
-
 def get_active_count():
     from core import ctx
     return sum(1 for s in ctx.STATES.values() if s["status"] == "ACTIVE")
-
 
 def get_open_position_count():
     """算目前佔用倉位額度的幣種數（給 MAX_POSITIONS 開倉上限判斷用）。
@@ -414,11 +415,9 @@ def get_open_position_count():
         if abs(s["qty"]) > 0.000001 or s.get("is_ordering")
     )
 
-
 def get_open_symbols():
     from core import ctx
     return [sym for sym in ctx.ALL_SYMBOLS if sym in ctx.STATES and abs(ctx.STATES[sym]["qty"]) > 0.000001]
-
 
 def is_symbol_locked(sym):
     from core import ctx

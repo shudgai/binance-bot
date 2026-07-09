@@ -27,14 +27,14 @@ COIN_PROFILE_CONFIG = {
     "ETHUSDT":  {"sl_atr_multiplier": 2.8, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.6, "min_signal_strength": 19.0, "disable_rescue_dca": False},
     "SOLUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "BNBUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.8, "min_signal_strength": 20.0, "disable_rescue_dca": False},
-    "XRPUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
+    "XRPUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold_1.6, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "ADAUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 7.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "AVAXUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "DOTUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "NEARUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
     "LTCUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
-
+    
     # 第二類：高彈性動能型 (High_Beta_Momentum) - 高報酬彈性
     # sl_atr 從 2.0 放寬到 2.8~3.0，避免高波動幣種被小幅回調就停損
     # tp_atr_multiplier 依使用者要求改回 7dceb33 的寬停利目標，配合今天放寬過的
@@ -43,14 +43,14 @@ COIN_PROFILE_CONFIG = {
     "SUIUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 19.0, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
     "INJUSDT":  {"sl_atr_multiplier": 2.8, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 19.0, "hard_sl_pct": 0.030, "disable_rescue_dca": False, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
     "APTUSDT":  {"sl_atr_multiplier": 2.8, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
-
+    
     # 第三類：投機風險型 (Speculative_Risk) - 高波動/高收益點綴
     # UNI/HBAR/DOGE 在 7dceb33 沒有完全對應設定（DOGE 有、UNI/HBAR 沒有），
     # DOGE 直接採用 7dceb33 的值；UNI/HBAR 維持今天已決定的設定不動。
     "UNIUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 20.0, "hard_sl_pct": 0.030},
     "HBARUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 6.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 21.0, "hard_sl_pct": 0.030},
     "DOGEUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.030},
-}
+    }
 
 # 新幣（雷達選入但不在上方設定檔）自動套用此保守設定
 # tp_atr_multiplier 依使用者要求改回 7dceb33 的 12x（原本降到 7x）
@@ -84,7 +84,7 @@ ATR_WARMUP_SYMBOL_COUNT = 19
 ATR_WARMUP_LIMIT = 1000
 ATR_WARMUP_PAUSE_SEC = 0.4
 TIME_STOP_MINUTES = 30
-
+ 
 # 使用者要求把小幣加回來：實測今天大幣（BTC/ETH/BNB等15檔）平均每筆淨損益 -0.47U，
 # 波動太悶、峰值平均只有0.13%；小幣（AAVE/HBAR/INJ/UNI/XLM等）平均每筆淨損益 -0.35U，
 # 峰值平均0.32%（2.5倍），明顯波動度更夠、行情比較走得動。維持原本 15 檔大幣當主力
@@ -96,7 +96,7 @@ DEFAULT_SYMBOLS = [
     "LTCUSDT", "BCHUSDT",
     "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT", "HBARUSDT",
     "XLMUSDT", "INJUSDT", "RENDERUSDT",
-]
+    ]
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
 
 PERSONALITY_TEMPLATES = {
@@ -198,6 +198,7 @@ MOMENTUM_EXIT_ATR_THRESHOLD = float(os.getenv('MOMENTUM_EXIT_ATR_THRESHOLD', 10.
 MOMENTUM_EXIT_MIN_PROFIT_PCT = float(os.getenv('MOMENTUM_EXIT_MIN_PROFIT_PCT', 0.01))
 HIGH_POINT_STAGNATION_MIN_PROFIT = float(os.getenv('HIGH_POINT_STAGNATION_MIN_PROFIT', 0.0030))
 HIGH_POINT_STAGNATION_TIME = int(os.getenv('HIGH_POINT_STAGNATION_TIME', 300))
+MIN_STAGNATION_TIME = int(os.getenv('MIN_STAGNATION_TIME', 60))
 TREND_PERSISTENCE_WINDOW  = 300
 PRICE_MOVEMENT_THRESHOLD  = 0.0015
 
@@ -258,7 +259,6 @@ ENTRY_STRICTNESS_PROFILES = {
         "min_entry_strength": 12.0,
     },
 }
-
 
 def get_entry_strictness_profile(mode=None):
     mode_name = (mode or ENTRY_STRICTNESS_MODE).lower()
