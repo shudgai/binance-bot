@@ -23,19 +23,19 @@ DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
 COIN_PROFILE_CONFIG = {
     # 第一類：核心趨勢型 (Core_Trend) - 穩健獲利為主
     "ETHUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.6, "min_signal_strength": 17.0, "disable_rescue_dca": False},
-    "SOLUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.8, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.025},
+    "SOLUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 9.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.8, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.01},
     "BNBUSDT":  {"sl_atr_multiplier": 1.8, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 1.8, "min_signal_strength": 18.0, "disable_rescue_dca": False},
-    "XRPUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.025},
-    "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.025},
+    "XRPUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.01},
+    "LINKUSDT": {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 15.0, "disable_rescue_dca": False, "hard_sl_pct": 0.01},
     
     # 第二類：高彈性動能型 (High_Beta_Momentum) - 高報酬彈性
     "SUIUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 19.0, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
-    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 19.0, "hard_sl_pct": 0.030, "disable_rescue_dca": False, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
+    "INJUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 19.0, "hard_sl_pct": 0.01, "disable_rescue_dca": False, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
     "APTUSDT":  {"sl_atr_multiplier": 2.0, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
     
     # 第三類：投機風險型 (Speculative_Risk) - 高波動/高收益點綴
-    "UNIUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 20.0, "hard_sl_pct": 0.015},
-    "HBARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 21.0, "hard_sl_pct": 0.015},
+    "UNIUSDT":  {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 20.0, "hard_sl_pct": 0.01},
+    "HBARUSDT": {"sl_atr_multiplier": 2.5, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Speculative_Risk",   "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 21.0, "hard_sl_pct": 0.01},
 }
 
 # 新幣（雷達選入但不在上方設定檔）自動套用此保守設定
@@ -46,7 +46,7 @@ DEFAULT_NEW_COIN_PROFILE = {
     "profile_type": "Speculative_Risk",
     "leverage": 5, "rr_threshold": 2.0,
     "min_signal_strength": 15.0,
-    "disable_rescue_dca": False, "hard_sl_pct": 0.015,
+    "disable_rescue_dca": False, "hard_sl_pct": 0.01,
 }
 
 LEVERAGE_TIERS = {
@@ -168,13 +168,15 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 3
 SL_ATR_MULTIPLIER = 1.8
 TP_ATR_MULTIPLIER = 3.0
-HARD_STOP_LOSS_PCT = 0.03
+HARD_STOP_LOSS_PCT = 0.01
 EXIT_RR_MULTIPLIER = 1.5
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.004
 PROTECTED_PROFIT_FLOOR   = 0.0025
 MOMENTUM_EXIT_ATR_THRESHOLD = float(os.getenv('MOMENTUM_EXIT_ATR_THRESHOLD', 10.0))
 MOMENTUM_EXIT_MIN_PROFIT_PCT = float(os.getenv('MOMENTUM_EXIT_MIN_PROFIT_PCT', 0.01))
+HIGH_POINT_STAGNATION_MIN_PROFIT = float(os.getenv('HIGH_POINT_STAGNATION_MIN_PROFIT', 0.0030))
+HIGH_POINT_STAGNATION_TIME = int(os.getenv('HIGH_POINT_STAGNATION_TIME', 300))
 TREND_PERSISTENCE_WINDOW  = 300
 PRICE_MOVEMENT_THRESHOLD  = 0.0015
 
@@ -190,12 +192,12 @@ ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 
 # 全域調整：進場方式改為自動模式，根據訊號強度選擇 pullback/chase/market
 ENTRY_ORDER_MODE = os.getenv("ENTRY_ORDER_MODE", "auto").lower()
-ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.16))
-ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0005))
-ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 18.0))
-ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 30.0))
+ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.22))
+ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0003))
+ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 22.0))
+ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 35.0))
 
-ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "balanced").lower()
+ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "strict").lower()
 ENTRY_STRICTNESS_PROFILES = {
     "relaxed": {
         "volume_ratio": 0.35,

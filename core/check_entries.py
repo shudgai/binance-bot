@@ -208,6 +208,49 @@ def compute_indicators(sym):
             s["divergence"] = "bearish"
 
 
+def _find_rotation_candidate(new_strength):
+    """機會成本輪替：槽位滿了(remaining_slots<=0)時，找一個「已經停滯夠久、獲利
+    卻不再往上走」的舊倉位，讓給明顯更強的新訊號。使用者要求「用你的方式實作」，
+    對應說明時提出的兩道防線：
+      (a) 舊倉位要真的停滯夠久（20 分鐘沒創新高），不是單一 tick 沒漲就算；
+      (b) 新訊號強度要「明顯」贏過舊倉位進場當時的強度（差距 >= 10 分），
+          避免只是略強就頻繁換手、白付手續費/滑價。
+    另外要求舊倉位目前確實有獲利（>=0.3%）且至少已經持有 15 分鐘，虧損中或剛
+    開倉的部位一律不列入輪替候選，交給既有的停損/停利機制處理。"""
+    _STALL_SEC = 1200
+    _MIN_HOLD_SEC = 900
+    _MIN_PROFIT_PCT = 0.003
+    _STRENGTH_MARGIN = 10.0
+
+    now = time.time()
+    best_sym = None
+    best_stall = 0.0
+    for sym2, s2 in ctx.STATES.items():
+        qty2 = s2.get("qty", 0.0)
+        if abs(qty2) < 0.000001:
+            continue
+        avg2 = s2.get("avg_price", 0.0)
+        px2 = s2.get("close_price", 0.0)
+        if avg2 <= 0 or px2 <= 0:
+            continue
+        is_long2 = qty2 > 0
+        profit2 = (px2 - avg2) / avg2 if is_long2 else (avg2 - px2) / avg2
+        if profit2 < _MIN_PROFIT_PCT:
+            continue
+        if now - s2.get("open_time", now) < _MIN_HOLD_SEC:
+            continue
+        stall_sec2 = now - s2.get("peak_time", s2.get("open_time", now))
+        if stall_sec2 < _STALL_SEC:
+            continue
+        entry_strength2 = s2.get("entry_strength", 0.0)
+        if new_strength < entry_strength2 + _STRENGTH_MARGIN:
+            continue
+        if stall_sec2 > best_stall:
+            best_stall = stall_sec2
+            best_sym = sym2
+    return best_sym
+
+
 async def check_entries():
     from core.orders import execute_order, close_position
     from core.market_data import load_open_positions
@@ -713,7 +756,15 @@ async def check_entries():
     candidates.sort(key=lambda x: -x[2])
     logger.info(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
-    total_weight = sum(strength for _, _, strength, _ in candidates)
+    # 資金分配比例（raw_ratio）原本用「本輪全部候選訊號」的強度總和當分母，但槽位數
+    # 有限（remaining_slots），本輪候選常常遠多於實際會被派發的數量——實測同一輪出現
+    # 13 個賣出候選、槽位只剩 3 個，ADA/DOT/AVAX 強度都到 31~32（很強），分到的比例
+    # 卻被其餘 10 個「根本不會真的開倉」的候選一起拉低到只剩 11%，資金被稀釋到跟強度
+    # 完全不成比例。改成只用「實際會被派發的前 remaining_slots 名」（candidates 已經
+    # 依強度排序）當分母，讓分配比例真正反映這批「會開倉的訊號」之間的相對強弱，不被
+    # 陪榜、根本拿不到槽位的候選稀釋。
+    _weight_pool = candidates[:remaining_slots] if remaining_slots > 0 else candidates
+    total_weight = sum(strength for _, _, strength, _ in _weight_pool)
 
     for sym, side, strength, route in candidates:
         s = ctx.STATES[sym]
@@ -721,7 +772,17 @@ async def check_entries():
 
         if not has_pos:
             if remaining_slots <= 0:
-                continue
+                _rot_sym = _find_rotation_candidate(strength)
+                if not _rot_sym:
+                    continue
+                _rs = ctx.STATES[_rot_sym]
+                _rot_is_long = _rs["qty"] > 0
+                _rot_avg = _rs.get("avg_price", 0.0)
+                _rot_px = _rs.get("close_price", 0.0)
+                _rot_profit = (_rot_px - _rot_avg) / _rot_avg if _rot_is_long else (_rot_avg - _rot_px) / _rot_avg
+                logger.info(f"🔄 [機會成本輪替] {_rot_sym} 停滯已久且獲利 {_rot_profit*100:.2f}%，讓位給更強訊號 {sym} (強度 {strength:.1f} vs 原進場強度 {_rs.get('entry_strength', 0.0):.1f})")
+                await close_position(_rot_sym, "sell" if _rot_is_long else "buy", abs(_rs["qty"]), _rot_px, _rot_avg, reason="[Opportunity_Rotation]")
+                remaining_slots += 1
 
             # --- 同方向集中度風控 (Direction Concentration Guard) ---
             # 使用者反映：好幾次同一時段內，雷達選出的幣種訊號一面倒向同一個方向
@@ -740,6 +801,14 @@ async def check_entries():
             # 槽位數=3 時算出 2，比例維持一致，不會因為總槽位變少而被不成比例地收緊。
             _MAX_SAME_DIRECTION = max(1, round(MAX_POSITIONS * 0.6))
             _DIRECTION_OVERRIDE_STRENGTH = 20.0
+            # 趨勢放行也要有強度下限（15.0，低於一般豁免門檻 20，因為已經有大盤
+            # 4H+1H 雙重確認撐腰，不用比純強訊號豁免更嚴）。實測 2026/7/8 熊市盤整
+            # 一整天，BTC 4H+1H 幾乎全程雙熊，導致這道「趨勢放行」形同常態解除
+            # 集中度上限，連強度只有 11~14 的弱訊號都能佔滿第三個槽位，讓帳戶在
+            # 同一波短線反彈中三個倉位一起同方向受創（XLM/SUI/BCH/TRUMP 等案例）。
+            # 加上這道下限，讓真正弱訊號即使大盤趨勢確認也不能無條件擠佔集中度
+            # 上限外的名額，只有訊號本身也有一定強度時才放行。
+            _TREND_OVERRIDE_MIN_STRENGTH = 15.0
             _same_dir_count = sum(
                 1 for _s in ctx.STATES.values()
                 if abs(_s.get("qty", 0.0)) > 0.000001 and (_s["qty"] > 0) == (side == 'buy')
@@ -751,10 +820,11 @@ async def check_entries():
                     (side == 'sell' and _btc_4h == "BEAR" and _btc_1h == "BEAR") or
                     (side == 'buy' and _btc_4h == "BULL" and _btc_1h == "BULL")
                 )
-                if _macro_confirms_direction:
-                    logger.info(f"🧭 [方向集中度-趨勢放行] {sym} 同方向倉位已達 {_same_dir_count}，但 BTC 4H+1H 趨勢確認同向 ({_btc_4h}/{_btc_1h})，判定為真趨勢單邊行情，允許加開")
+                if _macro_confirms_direction and strength >= _TREND_OVERRIDE_MIN_STRENGTH:
+                    logger.info(f"🧭 [方向集中度-趨勢放行] {sym} 同方向倉位已達 {_same_dir_count}，但 BTC 4H+1H 趨勢確認同向 ({_btc_4h}/{_btc_1h}) 且強度 {strength:.1f} >= {_TREND_OVERRIDE_MIN_STRENGTH}，判定為真趨勢單邊行情，允許加開")
                 elif strength < _DIRECTION_OVERRIDE_STRENGTH:
-                    logger.info(f"🧭 [方向集中度風控] {sym} 目前已有 {_same_dir_count} 筆同方向({side})倉位 >= 上限 {_MAX_SAME_DIRECTION}，大盤無同向趨勢確認 (4H:{_btc_4h}/1H:{_btc_1h})，且強度 {strength:.1f} < {_DIRECTION_OVERRIDE_STRENGTH}，放棄本次訊號以分散風險")
+                    _reason = f"大盤無同向趨勢確認 (4H:{_btc_4h}/1H:{_btc_1h})" if not _macro_confirms_direction else f"雖有趨勢確認但強度 {strength:.1f} < {_TREND_OVERRIDE_MIN_STRENGTH} 放行下限"
+                    logger.info(f"🧭 [方向集中度風控] {sym} 目前已有 {_same_dir_count} 筆同方向({side})倉位 >= 上限 {_MAX_SAME_DIRECTION}，{_reason}，且強度 {strength:.1f} < {_DIRECTION_OVERRIDE_STRENGTH}，放棄本次訊號以分散風險")
                     continue
 
             remaining_slots -= 1

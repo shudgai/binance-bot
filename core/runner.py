@@ -372,11 +372,15 @@ async def main_loop(exchange):
     save_symbol_pool(ctx.ALL_SYMBOLS)
 
     logger.info(f"📋 監控幣種: {', '.join(ctx.ALL_SYMBOLS)}")
-    try:
-        await asyncio.wait_for(initialize_atr_history(exchange_market_data), timeout=60)
-    except (asyncio.TimeoutError, Exception) as e:
-        logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
 
+    # 使用者反映：重啟時若剛好卡在「進場單已成交、保護單（止損/停利）還沒掛上」的
+    # 瞬間，新程序原本要等 ATR 歷史暖機（最多 60 秒逾時）跑完，才會走到
+    # calibrate_with_exchange() 去補掛缺少的保護單（實測 AVAXUSDT 案例：程序重啟時
+    # 校準當下就已經是 -1.033%，這段空窗期倉位完全沒有交易所端保護）。校準本身
+    # 不依賴 ATR 歷史（止損用固定的 hard_stop_loss_pct 算，不看 ATR；停利距離的
+    # _calc_sl_tp 在 ATR 還是 0 時也有預設回退值），所以把校準提到 ATR 暖機之前，
+    # 讓「偵測並補掛缺少的止損/停利單」盡量在程序剛起來的第一時間就發生，縮短
+    # 倉位沒有交易所端保護的空窗期。
     try:
         from core.check_entries import load_pending_signals
         load_pending_signals()
@@ -387,6 +391,12 @@ async def main_loop(exchange):
     await calibrate_with_exchange(exchange)
     await fetch_real_balance()
     await load_open_positions()
+
+    try:
+        await asyncio.wait_for(initialize_atr_history(exchange_market_data), timeout=60)
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
+
     await fetch_all_sma200(exchange_market_data)
     await fetch_all_ema50_1h(exchange_market_data)
     await fetch_all_ema_15m(exchange_market_data)

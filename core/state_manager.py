@@ -118,7 +118,7 @@ def _remove_cooldown_substitute(sym):
     
     if not sub:
         return
-    
+
     # ♻️ [候補幣種清理] 若候補幣種未開倉，則移除
     sub_state = ctx.STATES.get(sub)
     if sub_state and abs(sub_state.get("qty", 0.0)) < 0.000001 and sub_state.get("entry_count", 0) == 0:
@@ -127,8 +127,42 @@ def _remove_cooldown_substitute(sym):
             save_symbol_pool(ctx.ALL_SYMBOLS)
         logger.info(f"♻️ [冷卻補位] {sym} 已恢復，移除暫時候補幣種 {sub}")
     else:
-        # 候補幣種已有持倉或進場，保留為正式監控幣種
+        # 候補幣種已有持倉或進場，保留為正式監控幣種——但這樣監控池會比冷卻開始前
+        # 多一個（原幣種歸隊 + 候補轉正），一天下來好幾輪冷卻循環，池子會不斷往上
+        # 長、從來不會縮回去（實測從 12 一路長到 21）。這裡順便檢查一次上限，超過
+        # 就從池子裡挑一個「沒有持倉、沒有任何進場紀錄」的幣種移除，把池子縮回
+        # RADAR_SELECT_COUNT，不影響任何現有持倉或正在進行中的其他冷卻。
         logger.info(f"✅ [冷卻補位] {sym} 已恢復，候補幣種 {sub} 已有部位或進場，轉為正式監控幣種")
+        _enforce_symbol_pool_cap()
+
+
+def _enforce_symbol_pool_cap():
+    """監控池超過 RADAR_SELECT_COUNT 時，移除沒有持倉、沒有進場紀錄、也不是其他
+    冷卻幣種正在使用中的候補，把池子縮回上限。"""
+    from core import ctx
+    from core.symbol_profile import save_symbol_pool
+    try:
+        from services.radar_service import RADAR_SELECT_COUNT
+    except Exception:
+        return
+    if len(ctx.ALL_SYMBOLS) <= RADAR_SELECT_COUNT:
+        return
+    active_substitutes = set(ctx.COOLDOWN_SUBSTITUTES.values())
+    changed = False
+    for candidate in list(ctx.ALL_SYMBOLS):
+        if len(ctx.ALL_SYMBOLS) <= RADAR_SELECT_COUNT:
+            break
+        if candidate in active_substitutes:
+            continue
+        st = ctx.STATES.get(candidate)
+        if not st:
+            continue
+        if abs(st.get("qty", 0.0)) < 0.000001 and st.get("entry_count", 0) == 0:
+            ctx.ALL_SYMBOLS.remove(candidate)
+            changed = True
+            logger.info(f"✂️ [監控池瘦身] {candidate} 無持倉無進場，移除以維持監控池上限 {RADAR_SELECT_COUNT}（現有 {len(ctx.ALL_SYMBOLS)}）")
+    if changed:
+        save_symbol_pool(ctx.ALL_SYMBOLS)
 
 
 def _add_cooldown_substitute(sym):
@@ -391,6 +425,7 @@ def reset_coin_state(sym):
     s.pop("last_debug_pressure_time", None)
     s.pop("last_price_check", None)
     s.pop("last_price_check_time", None)
+    s.pop("_hard_tp_reached_logged", None)
 
 
 def get_active_count():

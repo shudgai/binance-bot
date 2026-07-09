@@ -555,15 +555,20 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
 
     for attempt in (1, 2):
         try:
+            # 原本用 GTC + 4 秒等待，兩輪加市價備援最長要等 9 秒左右——實測 SYNUSDT
+            # 峰值 0.66% 理論鎖利 0.2%+，就是在這 4~9 秒的等待期間價格繼續走遠，
+            # 最後不管哪一輪成交都已經比理論價差很多，倒虧收場。改用 IOC：能立刻
+            # 成交的部分馬上成交，不能成交的部分立刻取消，不再讓部位在關鍵幾秒內
+            # 曝險等一個不確定會不會成交的掛單。
             order = await exchange_futures.create_order(
                 sym, type='limit', side=close_side, amount=remaining_qty,
-                price=limit_price, params={'reduceOnly': True, 'timeInForce': 'GTC'}
+                price=limit_price, params={'reduceOnly': True, 'timeInForce': 'IOC'}
             )
         except Exception as e:
             logger.info(f"🚨 [鎖利限價下單失敗] {sym} (第{attempt}次): {e}")
             break
 
-        await asyncio.sleep(4)
+        await asyncio.sleep(0.3)
         step_filled = 0.0
         try:
             fetched = await exchange_futures.fetch_order(order['id'], sym)
@@ -593,7 +598,7 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
                 best_ask = float(asks[0][0]) if asks else limit_price
                 reprice = best_bid if close_side == 'sell' else best_ask
                 limit_price = round_step(reprice, prec['tick_size'])
-                logger.info(f"🔁 [鎖利限價追價] {sym} 4秒未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），改掛貼近市場價 {limit_price:.6f} 再試")
+                logger.info(f"🔁 [鎖利限價追價] {sym} IOC未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），改掛貼近市場價 {limit_price:.6f} 再試")
             except Exception as re_e:
                 logger.info(f"⚠️ [追價報價失敗] {sym}: {re_e}，維持原價再試一次")
 
@@ -663,7 +668,14 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 允許任何型態的止損（is_stop_loss=True）、全域熔斷、或策略主動平倉原因，以避免時間停滯等優化退場機制被攔截
     # Peak_Giveback 是動態鎖利／回撤保護，不能再被一般 0.35% 或高波動幣
     # 1.5% 的固定獲利門檻擋掉，否則會出現「觸發停利卻拒絕平倉」。
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]"]
+    # [Trend_Follow]/[Breakeven_Stop] 加入白名單：Universal SL 在 sl 仍位於獲利側時
+    # （PeakLock 鎖利被回吐、但還沒真正虧損）會改用 is_stop_loss=False 走鎖利追價流程，
+    # 此時理論利潤可能低於一般 0.35%/1.5% 門檻，若被這裡攔下會讓部位卡在保護線之下
+    # 卻遲遲不出場，比直接放行更危險。
+    # [Opportunity_Rotation]（機會成本輪替）也要放行：check_entries.py 那邊已經先確認
+    # 過該倉位獲利 >= 0.3% 才會觸發輪替，如果這裡又用 fee_buffer（0.35%~1.5%，高波動幣
+    # 更高）擋下，會讓輪替判斷「已經讓位」但倉位實際上沒真的平掉，造成槽位數對不上。
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[Opportunity_Rotation]", "[High_Point_Stagnation]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -771,6 +783,22 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     s["last_exit_time"] = time.time()
     s["last_exit_reason"] = full_reason
 
+    # 交易紀錄的手續費原本無條件寫死 0.0，導致交易列表「已平倉」的單子手續費永遠
+    # 顯示 0，即使交易所其實已經扣款（開放中的持倉另外有查真實手續費的邏輯，見
+    # services/api.py 的 /api/trades/ALL，但那段涵蓋不到已經平倉、只存在
+    # trade_history.json 裡的紀錄）。這裡在寫入紀錄前，用這筆倉位的開倉時間當
+    # 起點，查一次這段期間交易所真實成交的手續費加總（含進場、攤平、出場所有筆），
+    # 查不到就退回 0（不讓查詢失敗擋住正常記錄）。
+    _real_fees = 0.0
+    if not PAPER_TRADING:
+        try:
+            _since_ms = int(s.get("open_time", 0.0) * 1000) or None
+            _fee_trades = await exchange_futures.fetch_my_trades(sym, since=_since_ms, limit=50)
+            _real_fees = sum(float((t.get("fee") or {}).get("cost", 0.0) or 0.0) for t in _fee_trades)
+        except Exception as _fee_e:
+            logger.info(f"⚠️ [手續費查詢失敗] {sym}: {_fee_e}")
+            _real_fees = 0.0
+
     record_trade_result(
         symbol=sym,
         entry_reason=s.get("entry_reason", "UNKNOWN"),
@@ -782,7 +810,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         expected_exit=price,
         actual_entry=real_avg,
         actual_exit=price,
-        fees=0.0,
+        fees=_real_fees,
         qty=qty,
         entry_timestamp_ms=int(s.get("open_time", 0.0) * 1000) if s.get("open_time", 0.0) else None,
     )
@@ -980,6 +1008,7 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
             s["highest_profit_pct"] = 0.0
             clear_peak(sym)
             s["first_entry_price"] = fill_price
+            s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
         _import_update_trailing_stop()(sym, fill_price, side == 'buy')
         # 金字塔加碼（同方向、更好價位）才鎖定在首筆進場價保本；
         # 救援攤平 (Rescue DCA) 是在更差價位補倉攤低成本，鎖在首筆價格等於讓新均價毫無喘息空間，
@@ -1304,20 +1333,23 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
                 
                 if side == 'buy':
-                    limit_price = current_market_price - atr * _pb_mult
-                    # 參考近期K線低點，確保買在相對低點
+                    target_pb = current_market_price - atr * _pb_mult
                     if len(s.get("ohlcv", [])) >= 2:
                         recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
-                        # 不要低得太誇張，最多抓到 atr 3倍的回踩深度
-                        limit_price = max(recent_low, current_market_price - atr * (_pb_mult * 3))
-                        limit_price = min(limit_price, current_market_price - atr * _pb_mult)
+                        # 買在更划算價位：取回踩價與近期K線低點中較低者，且不超過 3x ATR 最大回踩深度
+                        limit_price = min(target_pb, recent_low)
+                        limit_price = max(limit_price, current_market_price - atr * (_pb_mult * 3))
+                    else:
+                        limit_price = target_pb
                 else:
-                    limit_price = current_market_price + atr * _pb_mult
-                    # 參考近期K線高點，確保賣在相對高點
+                    target_pb = current_market_price + atr * _pb_mult
                     if len(s.get("ohlcv", [])) >= 2:
                         recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
-                        limit_price = min(recent_high, current_market_price + atr * (_pb_mult * 3))
-                        limit_price = max(limit_price, current_market_price + atr * _pb_mult)
+                        # 賣在更划算價位：取回踩價與近期K線高點中較高者，且不超過 3x ATR 最大回踩深度
+                        limit_price = max(target_pb, recent_high)
+                        limit_price = min(limit_price, current_market_price + atr * (_pb_mult * 3))
+                    else:
+                        limit_price = target_pb
                 chase_ok, chase_reason = _entry_signal_chase_guard(
                     side, price, limit_price, is_first_entry, is_rescue_dca,
                 )
@@ -1399,17 +1431,23 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
                     
                     if side == 'buy':
-                        limit_price = price - atr * _pb_mult
+                        target_pb = price - atr * _pb_mult
                         if len(s.get("ohlcv", [])) >= 2:
                             recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
-                            limit_price = max(recent_low, price - atr * (_pb_mult * 3))
-                            limit_price = min(limit_price, price - atr * _pb_mult)
+                            # 買在更划算價位：取回踩價與近期K線低點中較低者，且不超過 3x ATR 最大回踩深度
+                            limit_price = min(target_pb, recent_low)
+                            limit_price = max(limit_price, price - atr * (_pb_mult * 3))
+                        else:
+                            limit_price = target_pb
                     else:
-                        limit_price = price + atr * _pb_mult
+                        target_pb = price + atr * _pb_mult
                         if len(s.get("ohlcv", [])) >= 2:
                             recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
-                            limit_price = min(recent_high, price + atr * (_pb_mult * 3))
-                            limit_price = max(limit_price, price + atr * _pb_mult)
+                            # 賣在更划算價位：取回踩價與近期K線高點中較高者，且不超過 3x ATR 最大回踩深度
+                            limit_price = max(target_pb, recent_high)
+                            limit_price = min(limit_price, price + atr * (_pb_mult * 3))
+                        else:
+                            limit_price = target_pb
                     limit_price = round_step(limit_price, tick_size)
                     logger.info(f"📌 [回踩掛單] {sym} 掛單價 {limit_price:.6f} (信號價: {price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
                 else:
@@ -1681,6 +1719,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["is_breakeven_locked"] = False
                 s["highest_profit_pct"] = 0.0
                 s["first_entry_price"] = fill_price
+                s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
 
             _import_update_trailing_stop()(sym, fill_price, side == 'buy')
 

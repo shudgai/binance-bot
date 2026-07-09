@@ -8,7 +8,8 @@ from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRE
     PROTECTED_PROFIT_FLOOR, MOMENTUM_EXIT_ATR_THRESHOLD, MOMENTUM_EXIT_MIN_PROFIT_PCT,
     TREND_PERSISTENCE_WINDOW, PRICE_MOVEMENT_THRESHOLD,
     COIN_PROFILE_CONFIG, DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
-    SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER)
+    SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER,
+    HIGH_POINT_STAGNATION_MIN_PROFIT, HIGH_POINT_STAGNATION_TIME)
 from core.indicators import _get_atr, _macd_vals, calculate_ema, calculate_macd
 from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier
 from core.calc import profit_pct as _profit_pct
@@ -670,7 +671,7 @@ async def check_exits(sym):
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
 
-    breakeven_threshold = 0.005  # 0.5% 正利潤才啟動保本鎖定，避免噪音期過早改寫 SL
+    breakeven_threshold = 0.003  # 0.3% 正利潤才啟動保本鎖定，避免噪音期過早改寫 SL
 
     fee_buffer = 0.001  # 0.1% 獲利以覆蓋雙向手續費與微幅點差
 
@@ -1025,6 +1026,20 @@ async def check_exits(sym):
                 s["highest_profit_pct"] = 0.0
                 return
 
+    # ── High-Point Stagnation Exit (高點停滯停利) ──
+    time_since_peak = time.time() - s.get("peak_time", s.get("open_time", time.time()))
+    if (profit_pct >= HIGH_POINT_STAGNATION_MIN_PROFIT and
+            hold_sec >= HIGH_POINT_STAGNATION_TIME and
+            time_since_peak >= HIGH_POINT_STAGNATION_TIME):
+        _stg_macd_h, _stg_prev_macd_h = _macd_vals(s)
+        _stg_macd_expanding = (_stg_macd_h > _stg_prev_macd_h) if is_long else (_stg_macd_h < _stg_prev_macd_h)
+        if not _stg_macd_expanding:
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"⏳ [高點停滯停利] {sym} 獲利 {profit_pct*100:.2f}% (峰值: {s.get('highest_profit_pct', 0.0)*100:.2f}%) 已持續 {time_since_peak/60:.1f} 分鐘未創新高且動能未擴張，直接平倉落袋")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[High_Point_Stagnation]")
+            s["highest_profit_pct"] = 0.0
+            return
+
     regime_decision, regime_reason = detect_market_regime(sym, p, avg, is_long)
     if regime_decision == "BREAKOUT_REVERSAL" and profit_pct > 0:
         # 依使用者要求：除了真正的停損線（Hard_SL/Universal SL）跟急速逆勢（真正的
@@ -1247,19 +1262,11 @@ async def check_exits(sym):
                 return
 
     # ── 強制停利 (Hard TP) ──
-    # 若 MACD 仍在擴張（動能持續），跳過強制停利，讓追蹤止損跑
+    # 依使用者要求改為純移動停利：達到目標價後不立即出場，而是讓追蹤止損繼續追高，以獲取更大波段利潤。
     if (is_long and p >= tp) or (not is_long and p <= tp):
-        _tp_macd_h, _tp_prev_macd_h = _macd_vals(s)
-        _tp_macd_expanding = (_tp_macd_h > _tp_prev_macd_h) if is_long else (_tp_macd_h < _tp_prev_macd_h)
-        if _tp_macd_expanding:
-            logger.info(f"⚡ [停利暫緩] {sym} 已達目標價但 MACD 仍在擴張，讓子彈飛，由追蹤止損守高點")
-        else:
-            cs = 'sell' if is_long else 'buy'
-            tp_pct = abs(tp - avg) / avg * 100
-            logger.info(f"🎯 [停利達成] {sym} 達到目標價 {tp:.6f} ({tp_pct:.1f}%)，獲利出場")
-            await close_position(sym, cs, abs(s["qty"]), tp, avg, reason="[Take_Profit]")
-            s["highest_profit_pct"] = 0.0
-            return
+        if not s.get("_hard_tp_reached_logged"):
+            s["_hard_tp_reached_logged"] = True
+            logger.info(f"🎯 [目標價達成] {sym} 達到原定目標價 {tp:.6f}，已轉為移動停利繼續追蹤高點...")
 
     # ── 停損檢查 (Universal SL) ──
     if (is_long and p <= sl) or (not is_long and p >= sl):
@@ -1283,7 +1290,15 @@ async def check_exits(sym):
         # 出場價鎖定在 SL 觸發價：紙上交易的 tick 可能已經跳過 sl 好幾檔，
         # 若直接用當下價格 p 成交，會比原本設定的 SL 價位還差（甚至把鎖利誤結算成虧損）。
         exit_price = max(p, sl) if is_long else min(p, sl)
-        await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason=reason_str, is_stop_loss=True)
+        # sl 若仍在獲利側（PeakLock 階梯鎖利過、利潤被回吐但還沒真正虧損），這其實是
+        # 「鎖利被回吐」而不是真正的停損，不該無條件用 is_stop_loss=True 逼 close_position
+        # 直接市價出清——那樣會完全忽略上面才算好的 exit_price，改用當下已經跑遠的
+        # 即時價成交，把理論上還鎖著的獲利真的結算成虧損（實測 INJUSDT 峰值 1.01%、
+        # 理論鎖利 0.90%，因為這裡強制市價單，真實成交卻是 -0.22%）。sl 在獲利側時
+        # 改走跟一般鎖利出場相同的限價追價流程（is_stop_loss=False），盡量貼近理論價位；
+        # sl 已經在虧損側才是真正的停損，維持市價單搶時效出場。
+        _sl_is_profit_side = (is_long and sl > avg) or (not is_long and sl < avg)
+        await close_position(sym, cs, abs(s["qty"]), exit_price, avg, reason=reason_str, is_stop_loss=not _sl_is_profit_side)
         if abs(profit_pct) > 0.015 and reason_str != "[Breakeven_Stop]" and _check_reversal_allowed(sym, s):
             if s.get("consecutive_losses", 0) >= 2:
                 s["reversal_ban_until"] = time.time() + 14400

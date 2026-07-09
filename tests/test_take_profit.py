@@ -193,6 +193,39 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
+    def test_breakeven_lock_triggers_on_low_profit_0_35_percent(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 100.35  # 0.35% profit
+        s["open_time"] = time.time() - 120
+        s["current_atr"] = 0.5
+        s["current_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100, 100, 99, 100, 1000]]
+        s["prev_close"] = 100.0
+        s["highest_profit_pct"] = 0.0035  # 0.35% peak profit
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1.0
+        s["current_vol"] = 1.0
+
+        import asyncio
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                self.assertTrue(s.get("is_breakeven_locked", False))
+                self.assertGreater(s.get("stop_loss", 0.0), s["avg_price"])
+                mock_close.assert_not_called()
+
+        asyncio.run(run_check())
+
     def test_hard_stop_loss_still_triggers_during_initial_cooldown(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
@@ -245,6 +278,39 @@ class TakeProfitTests(unittest.TestCase):
         # The position should still have qty because the close was blocked
         self.assertEqual(s["qty"], 1.0)
         self.assertFalse(mock_exchange.create_order.called)
+
+
+    def test_high_point_stagnation_exit(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 100.35  # 0.35% profit
+        s["open_time"] = time.time() - 350  # held for 350s (> 300s limit)
+        s["peak_time"] = time.time() - 320  # no new high for 320s (> 300s limit)
+        s["current_atr"] = 0.5
+        s["current_rsi"] = 50.0
+        s["prev_macd_line"] = 0.0
+        s["prev_macd_signal"] = 0.0
+        s["macd_line"] = 0.0  # MACD not expanding
+        s["macd_signal"] = 0.0
+        s["ohlcv"] = [[0, 100.0, 100.35, 99.0, 100.35, 1000]]
+        s["prev_close"] = 100.35
+        s["highest_profit_pct"] = 0.0035
+        s["pnl_history"] = []
+        s["vol_ma20"] = 1000.0
+        s["current_vol"] = 100.0
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[High_Point_Stagnation]")
+
+        asyncio.run(run_check())
 
 
 if __name__ == "__main__":
