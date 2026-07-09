@@ -165,43 +165,6 @@ def _enforce_symbol_pool_cap():
         save_symbol_pool(ctx.ALL_SYMBOLS)
 
 
-def _add_cooldown_substitute(sym):
-    """幣種進入冷卻/封禁時，暫時從幣安永續合約市場找一個候補幣種補入，
-    避免監控池在這段期間少一個可交易幣種。實際抓取放在背景執行緒，避免卡住主循環。"""
-    import threading
-
-    def _worker():
-        from core import ctx
-        from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES, save_symbol_pool
-        try:
-            from services.binance_service import get_top_volume_altcoins
-            from services.radar_service import clean_blacklist, BLACKLIST
-
-            clean_blacklist()
-            ignore_list = list(BLACKLIST.keys()) + list(ctx.ALL_SYMBOLS) + list(ctx.COOLDOWN_SUBSTITUTES.values())
-            candidates = get_top_volume_altcoins(15, ignore_list=ignore_list)
-
-            new_sym = None
-            for c in candidates:
-                if c not in ctx.ALL_SYMBOLS and c not in ctx.COOLDOWN_SUBSTITUTES.values():
-                    new_sym = c
-                    break
-
-            if not new_sym:
-                logger.info(f"⚠️ [冷卻補位] {sym} 冷卻中，幣安永續合約市場找不到合適的候補幣種")
-                return
-
-            ctx.ALL_SYMBOLS.append(new_sym)
-            ctx.STATES[new_sym] = build_symbol_state(new_sym)
-            apply_symbol_profile(new_sym, SYMBOL_PROFILES.get(new_sym, {}))
-            ctx.COOLDOWN_SUBSTITUTES[sym] = new_sym
-            save_symbol_pool(ctx.ALL_SYMBOLS)
-            logger.info(f"✨ [冷卻補位] {sym} 進入冷卻，從幣安永續合約市場補入候補幣種 {new_sym} 維持監控池數量")
-        except Exception as e:
-            logger.info(f"🚨 [冷卻補位異常] {sym}: {e}")
-
-    threading.Thread(target=_worker, daemon=True).start()
-
 
 def update_states():
     from core import ctx
@@ -310,9 +273,12 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
                 logger.info(f"🚨 [連續虧損汰換異常] {sym}: {replacement_err}")
             return  # 已被永久汰換，不需再補位
 
-    # 冷卻/封禁期間補位：讓監控池在這段期間維持原本可交易的幣種數量
-    if sym in ctx.ALL_SYMBOLS and sym not in ctx.COOLDOWN_SUBSTITUTES:
-        _add_cooldown_substitute(sym)
+    # 冷卻補位已依使用者要求停用：現在監控池是固定 15 個精選幣種（高流動性/
+    # 高波動），原本這裡會在任何幣種進冷卻時，從幣安全市場隨機抓一個成交量高
+    # 的幣種頂進來維持監控池數量——但那個候補幣種不在精選名單內，等於每次
+    # 停損冷卻都會把名單稀釋成隨機雜訊幣（實測補進過 NATGASUSDT/ASTERUSDT/
+    # EIGENUSDT 等）。固定名單模式下改成：冷卻期間監控池單純少一個可交易幣種，
+    # 冷卻結束該幣種自動恢復 ACTIVE，不再補位。
 
 
 def update_state_with_fill(sym, order_data):

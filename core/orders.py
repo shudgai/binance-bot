@@ -1186,11 +1186,32 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         return
 
     s["last_entry_signal_price"] = price
+
+    # 連續被 EntryDirectionGuard 擋下太多次後直接放棄這波訊號、進入短暫冷卻。
+    # 原本每次被擋只是這一輪不成交，下一輪訊號重新評估又會再試一次，實測 AVAXUSDT
+    # 連續擋了 5 次（07:33~07:38）才在第 6 次通過，但那時候價格已經跑掉，追價進場
+    # 反而滑價 0.44%（比正常 <0.1% 大了近 10 倍），變成用比較差的價格硬擠進場。
+    # 與其一直試到終於通過、卻是在價格已經跑掉之後才通過，不如連續失敗夠多次就
+    # 承認這波訊號已經追不上，暫停一段時間等下一個獨立訊號，不要為了「終於通過」
+    # 而追在相對高點/低點。
+    _dg_cooldown_until = s.get("_direction_guard_cooldown_until", 0)
+    if time.time() < _dg_cooldown_until:
+        logger.info(f"⏳ [EntryDirectionGuard_冷卻] {sym} 先前連續方向守門失敗已放棄本波訊號，剩餘 {_dg_cooldown_until - time.time():.0f} 秒冷卻中，暫不進場")
+        return
+
     direction_ok, direction_reason = _entry_direction_guard(sym, side, reference_price=price)
     if not direction_ok:
-        logger.info(f"🛑 [EntryDirectionGuard] {sym} {side} 訊號到執行期間方向變差：{direction_reason}，取消開倉")
+        _dg_reject_count = s.get("_direction_guard_reject_count", 0) + 1
+        s["_direction_guard_reject_count"] = _dg_reject_count
+        logger.info(f"🛑 [EntryDirectionGuard] {sym} {side} 訊號到執行期間方向變差：{direction_reason}，取消開倉 (連續第 {_dg_reject_count} 次)")
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被方向守門攔截，未進入下單")
+        _DG_MAX_REJECTS = 3
+        if _dg_reject_count >= _DG_MAX_REJECTS:
+            s["_direction_guard_cooldown_until"] = time.time() + 300
+            s["_direction_guard_reject_count"] = 0
+            logger.info(f"🚫 [EntryDirectionGuard_放棄] {sym} 連續 {_DG_MAX_REJECTS} 次方向守門失敗，放棄這波訊號，暫停 5 分鐘避免追價進場")
         return
+    s["_direction_guard_reject_count"] = 0
 
     pending_ok, pending_reason = _entry_pending_adverse_guard(sym, side, price, market_price, is_rescue_dca=is_rescue_dca)
     if not pending_ok:

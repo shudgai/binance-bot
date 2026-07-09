@@ -67,7 +67,9 @@
       "Bash(awk -F: '$1>=354 && $1<=571')",
       "Bash(ps -eLo pid,ppid,lstart,cmd)",
       "Bash(awk '/^2026-07-08 02:3[7-9]/' /home/shudgai999/project/binance-bot/logs/bot.log)",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/bot_manager_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/orders.py'\\).read\\(\\)\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/bot_manager_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/orders.py'\\).read\\(\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)['is_running']\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('core/market_data.py'\\).read\\(\\)\\)\")"
     ]
   }
 }

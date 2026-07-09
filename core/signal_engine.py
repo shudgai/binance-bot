@@ -201,10 +201,11 @@ def compute_signal_strength(sym):
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
+    # 嚴格模式下移除單根K線豁免：必須連續 2 根方向一致，避免雜訊進場導致停損頻繁
     route_a_long = (
         sma200_hard_gate_long and
         macd_ok_long and
-        (last_two_candles_long or last_candle_long or is_relaxed) and
+        (last_two_candles_long or is_relaxed) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -214,7 +215,7 @@ def compute_signal_strength(sym):
     route_a_short = (
         sma200_hard_gate_short and
         macd_ok_short and
-        (last_two_candles_short or last_candle_short or is_relaxed) and
+        (last_two_candles_short or is_relaxed) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -234,7 +235,8 @@ def compute_signal_strength(sym):
         macd_ok_long and
         rsi_direction_long and
         rsi_ok_long and
-        (last_two_candles_long or last_candle_long or is_relaxed)
+        # Route B 也需要連續2根確認：回測彈跳訊號本身容易被假突破欺騙
+        (last_two_candles_long or is_relaxed)
     )
 
     route_b_short = (
@@ -245,7 +247,7 @@ def compute_signal_strength(sym):
         macd_ok_short and
         rsi_direction_short and
         rsi_ok_short and
-        (last_two_candles_short or last_candle_short or is_relaxed)
+        (last_two_candles_short or is_relaxed)
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -261,14 +263,14 @@ def compute_signal_strength(sym):
         if long_base_ok:
             long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
             if long_macd_cross:    long_str += 5.0
-            if route_tag == "b":   long_str += 2.0
+            if route_tag == "b":   long_str += 1.0   # 從 2.0 降到 1.0：回測進場需要更高原生強度
             if last_two_candles_long:  long_str += 2.0   # 連2根確認加分
             long_str += long_trend_score + sma200_bonus_long
 
         if short_base_ok:
             short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
             if short_macd_cross:       short_str += 5.0
-            if route_tag == "b":       short_str += 2.0
+            if route_tag == "b":       short_str += 1.0  # 從 2.0 降到 1.0
             if last_two_candles_short: short_str += 2.0  # 連2根確認加分
             short_str += short_trend_score + sma200_bonus_short
 

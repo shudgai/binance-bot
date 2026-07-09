@@ -366,19 +366,21 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # =========================================================================
     bull_defense_mode = (btc_4h == "BULL")
     if bull_defense_mode and side == 'sell':
-        from core.config import ENTRY_STRICTNESS_MODE
-        if ENTRY_STRICTNESS_MODE == "relaxed":
-            logger.info(f"⚡ [BULL_DEFENSE_BYPASS] {sym} 寬鬆模式下繞過大盤牛市防禦，允許做空")
+        # relaxed 模式原本會整個跳過這道防護（完全不檢查 RSI），但上面的註解本身就
+        # 記載了回測證據：BTC 確認 4H 多頭時，逆勢空單勝率只有 62.5%（多單 78.4%），
+        # 平均還是淨虧損——relaxed 模式的「寬鬆」應該是指訊號強度/量能這類門檻放寬，
+        # 不該連這種已經有回測證據支持的方向性防禦都一起跳過。實測 2026/7/9 09:08~
+        # 09:42 BCH/BNB/ADA/DOGE 四筆逆勢空單都是靠這個 bypass 進場，全部小虧收場。
+        # 改成 relaxed 跟 strict 用同一套 RSI 極端超買/反轉路線判斷，不再無條件放行。
+        current_rsi_macro = s.get("current_rsi", 50.0)
+        is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
+        if current_rsi_macro > 73.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
+        elif is_reversal_route and current_rsi_macro > 70.0:
+            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
         else:
-            current_rsi_macro = s.get("current_rsi", 50.0)
-            is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-            if current_rsi_macro > 73.0:
-                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
-            elif is_reversal_route and current_rsi_macro > 70.0:
-                logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
-            else:
-                logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
-                return False
+            logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
+            return False
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
@@ -649,12 +651,20 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 進場後常常原地打轉，要求拉回一點，改成 2.3x/2.5x（介於原始與寬鬆之間）。
     _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
     _atr_spike_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 0.0
-    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.5)
+    # RSI 偏熱時不給強訊號豁免：ATR 瞬間放大時如果 RSI 又已經在追價方向的極端
+    # （做多時 RSI>=70、做空時 RSI<=30），代表這筆是在「已經漲/跌過頭+瞬間又暴衝」
+    # 雙重疊加的最壞組合下進場，即使訊號強度夠高也容易一進場就被巴（實測 ETHUSDT
+    # 強度30.55、RSI71.9、ATR 2.37x 放行進場，13分鐘後停損出場）。強訊號的豁免只
+    # 保留給 RSI 還在正常範圍、單純是波動放大的情況。
+    _rsi_now = s.get("current_rsi", 50.0)
+    _rsi_hot = (side == 'buy' and _rsi_now >= 70.0) or (side == 'sell' and _rsi_now <= 30.0)
+    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.5) and not _rsi_hot
     if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.3:
         if _allow_mild_atr_spike:
-            logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x) ，放寬進場")
+            logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x)，RSI 未過熱 ({_rsi_now:.1f})，放寬進場")
         else:
-            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2.3x ({atr_24h_avg*2.3:.5f})，市場閃崩/閃漲中，拒絕進場防止滑點掃損")
+            _hot_note = f"，且 RSI 已過熱 ({_rsi_now:.1f})" if _rsi_hot else ""
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2.3x ({atr_24h_avg*2.3:.5f})，市場閃崩/閃漲中{_hot_note}，拒絕進場防止滑點掃損")
             return False
     if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and not is_entry_pin_safe(sym, side):
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")

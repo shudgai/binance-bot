@@ -46,7 +46,7 @@ def normalize_symbol(sym):
     return sym
 
 
-def normalize_symbol_list(symbols, max_count=20):
+def normalize_symbol_list(symbols, max_count=23):
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:

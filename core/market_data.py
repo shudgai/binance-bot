@@ -25,13 +25,28 @@ async def update_market_wind(exchange):
         global_market_wind["allow_long"] = True
         global_market_wind["allow_short"] = True
 
+        # 使用者要求：趨勢翻轉要有動能，不能只是價格在 EMA 附近雜訊震盪就瞬間翻轉。
+        # 原本 BULL/BEAR 是二元判斷（現價 > EMA 就多頭、< EMA 就空頭），沒有緩衝區，
+        # 導致 BTC 現價在 EMA 線附近正常波動時就會頻繁瞬間翻轉。實測案例：BULL_DEFENSE
+        # 卡住的 5 筆空單訊號（DOGE/NEAR/ETH/LTC/SOL），因為 4H 趨勢在 EMA 附近雜訊翻轉
+        # 成非多頭，同時全部解禁一起成交，但翻轉本身沒有真動能撐著，這幾筆全部原地打平
+        # 出場，白白浪費手續費。加上緩衝區：現價要偏離 EMA 超過 0.15% 才算真正翻轉，
+        # 中間地帶視為 NEUTRAL（不觸發多頭/空頭防禦，回歸個別幣種自己的訊號判斷）。
+        _TREND_BUFFER_PCT = 0.0015
+
         if len(btc_ohlcv_1h) >= 20:
             btc_closes_1h = [x[4] for x in btc_ohlcv_1h]
             alpha = 2 / 21
             ema = btc_closes_1h[0]
             for val in btc_closes_1h[1:]: ema = alpha * val + (1 - alpha) * ema
             btc_price_1h = btc_closes_1h[-1]
-            global_market_wind["btc_trend_1h"] = "BULL" if btc_price_1h > ema else "BEAR"
+            _dev_1h = (btc_price_1h - ema) / ema if ema > 0 else 0.0
+            if _dev_1h > _TREND_BUFFER_PCT:
+                global_market_wind["btc_trend_1h"] = "BULL"
+            elif _dev_1h < -_TREND_BUFFER_PCT:
+                global_market_wind["btc_trend_1h"] = "BEAR"
+            else:
+                global_market_wind["btc_trend_1h"] = "NEUTRAL"
         else:
             global_market_wind["btc_trend_1h"] = "NEUTRAL"
 
@@ -41,7 +56,13 @@ async def update_market_wind(exchange):
             ema_4h = btc_closes_4h[0]
             for val in btc_closes_4h[1:]: ema_4h = alpha_4h * val + (1 - alpha_4h) * ema_4h
             btc_price_4h = btc_closes_4h[-1]
-            global_market_wind["btc_trend_4h"] = "BULL" if btc_price_4h > ema_4h else "BEAR"
+            _dev_4h = (btc_price_4h - ema_4h) / ema_4h if ema_4h > 0 else 0.0
+            if _dev_4h > _TREND_BUFFER_PCT:
+                global_market_wind["btc_trend_4h"] = "BULL"
+            elif _dev_4h < -_TREND_BUFFER_PCT:
+                global_market_wind["btc_trend_4h"] = "BEAR"
+            else:
+                global_market_wind["btc_trend_4h"] = "NEUTRAL"
         else:
             global_market_wind["btc_trend_4h"] = "NEUTRAL"
 

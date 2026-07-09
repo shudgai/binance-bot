@@ -29,7 +29,7 @@ def normalize_symbol(sym):
     return sym
 
 
-def normalize_symbol_list(symbols, max_count=20):
+def normalize_symbol_list(symbols, max_count=23):
     if isinstance(symbols, str):
         symbols = [symbols]
     if not symbols:
@@ -450,7 +450,7 @@ def apply_symbol_pool_change(requested_symbols):
 
     new_symbols = []
     used = set()
-    target_count = min(20, max(len(desired), len(ctx.ALL_SYMBOLS)))
+    target_count = min(23, max(len(desired), len(ctx.ALL_SYMBOLS)))
 
     for sym in locked_symbols:
         if sym not in used:

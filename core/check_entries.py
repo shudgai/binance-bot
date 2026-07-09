@@ -71,7 +71,7 @@ def load_pending_signals():
         logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
 
 
-def is_pending_confirmation_valid(side, candle):
+def is_pending_confirmation_valid(side, candle, trigger_price=None, max_divergence=0.005):
     """Return whether the prior signal candle is still valid after the next bar closes."""
     if not candle or len(candle) < 5:
         return False
@@ -80,6 +80,13 @@ def is_pending_confirmation_valid(side, candle):
     close_price = candle[4]
     high_price = candle[2]
     low_price = candle[3]
+
+    # [新增] 價格背離檢查：防止訊號產生到確認期間，價格大幅反向變動
+    if trigger_price is not None:
+        price_diff = abs(close_price - trigger_price) / trigger_price
+        if price_diff > max_divergence:
+            logger.info(f"⚠️ [防背離] 價格變動 {price_diff*100:.2f}% 超過門檻 {max_divergence*100:.2f}%，取消訊號")
+            return False
 
     if side == "buy":
         body = close_price - open_price
@@ -392,7 +399,8 @@ async def check_entries():
                 prev_open = prev_candle[1]
                 prev_close = prev_candle[4]
 
-                is_valid = is_pending_confirmation_valid(s["pending_side"], prev_candle)
+                # 使用新增的 trigger_price 進行背離檢查
+                is_valid = is_pending_confirmation_valid(s["pending_side"], prev_candle, s.get("pending_trigger_price"))
 
                 if is_valid:
                     # Second-Bar Confirmation：對比訊號K收盤價（非最高/低點）
@@ -732,16 +740,18 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
-        # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
-        if is_relaxed:
-            logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
-            candidates.append((sym, side, strength, route))
-            continue
+		# 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
+		if is_relaxed:
+			logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
+			candidates.append((sym, side, strength, route))
+			continue
 
-        s["pending_side"] = side
-        s["pending_time"] = current_candle_time
-        s["pending_strength"] = strength
-        s["pending_route"] = route
+		# [新增] 記錄訊號產生時的價格，用於後續防範「開倉背離」
+		s["pending_trigger_price"] = s["close_price"]
+		s["pending_side"] = side
+		s["pending_time"] = current_candle_time
+		s["pending_strength"] = strength
+		s["pending_route"] = route
         s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
 
         logger.info(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")

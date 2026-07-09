@@ -509,13 +509,27 @@ async def main_loop(exchange):
             _mini_iv = 5.0
             _remaining = sleep_time
             from core.strategy.factory import StrategyFactory
-            while _remaining > _mini_iv:
+            _open_syms_now = [s for s in ctx.ALL_SYMBOLS
+                               if abs(ctx.STATES[s].get("qty", 0)) > 0.000001]
+            # 主迴圈本體（尤其 check_entries 掃描全部監控幣種）實測常常本身就要跑
+            # 30~37 秒，遠超過 MAIN_LOOP_INTERVAL_SEC(10s)，導致這裡的 sleep_time
+            # 被壓到只剩下限 1.5 秒——完全不夠 while _remaining > _mini_iv(5) 的
+            # 門檻，讓這段本來要「持倉期間每 5 秒抓一次最新價」的快速出場檢查形同
+            # 虛設、整輪一次都不會執行（UNIUSDT 實測案例：峰值 0.74% 在同一個 35
+            # 秒的檢查空窗內衝高又回落，TrailTP_Peak 偵測到的時候價格早就跌破鎖利
+            # 線，理論鎖利價位變成追不到的空談）。這裡改成：只要有持倉，至少保底
+            # 跑 2 輪快速檢查，不受主迴圈拖慢預算的影響，讓持倉的反應窗口穩定在
+            # 5~10 秒內，不會被吃掉整輪。
+            _min_fast_passes = 2 if _open_syms_now else 0
+            _fast_pass_count = 0
+            while _remaining > _mini_iv or _fast_pass_count < _min_fast_passes:
                 if ctx.api_cooldown_until > time.time():
                     await wait_for_api_cooldown()
                     _remaining = 0
                     break
                 await asyncio.sleep(_mini_iv)
                 _remaining -= _mini_iv
+                _fast_pass_count += 1
                 _open_syms = [s for s in ctx.ALL_SYMBOLS
                               if abs(ctx.STATES[s].get("qty", 0)) > 0.000001]
                 if not _open_syms:
