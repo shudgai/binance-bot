@@ -353,6 +353,17 @@ async def is_reversal_still_valid(sym, pending_side):
     prev_candle = s["ohlcv"][-2]
     prev_close = prev_candle[4]
 
+    # 0. SMA 200 硬性守衛：反手單也必須遵守大趨勢方向，不可繞過
+    sma200 = s.get("sma200_15m", 0)
+    current_price = s["close_price"]
+    if sma200 > 0:
+        if pending_side == "buy" and current_price < sma200:
+            logger.info(f"🚫 [Reversal_SMA200_Block] {sym} 反手做多被拒：價格({current_price:.4f}) 在 SMA200({sma200:.4f}) 之下，大趨勢空頭，禁止反手做多。")
+            return False
+        if pending_side == "sell" and current_price > sma200:
+            logger.info(f"🚫 [Reversal_SMA200_Block] {sym} 反手做空被拒：價格({current_price:.4f}) 在 SMA200({sma200:.4f}) 之上，大趨勢多頭，禁止反手做空。")
+            return False
+
     # 1. 大盤方向過濾：BTC 雙熊不允許做多反手；BTC 4H 多頭不允許做空反手
     btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
     btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
