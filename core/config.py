@@ -191,7 +191,7 @@ TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 
 # 全域調整：進場方式改為自動模式，根據訊號強度選擇 pullback/chase/market
-ENTRY_ORDER_MODE = os.getenv("ENTRY_ORDER_MODE", "auto").lower()
+ENTRY_ORDER_MODE = os.getenv("ENTRY_ORDER_MODE", "pullback").lower()
 ENTRY_PULLBACK_ATR_MULT = float(os.getenv("ENTRY_PULLBACK_ATR_MULT", 0.22))
 ENTRY_CHASE_OFFSET_PCT = float(os.getenv("ENTRY_CHASE_OFFSET_PCT", 0.0003))
 ENTRY_ORDER_MODE_AUTO_STRONG = float(os.getenv("ENTRY_ORDER_MODE_AUTO_STRONG", 22.0))
