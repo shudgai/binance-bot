@@ -519,14 +519,14 @@ async def check_exits(sym):
             s["wrong_dir_time"] = time.time()
             s["wrong_dir_side"] = s.get("last_entry_direction", cs)
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Post_Entry_Early_Exit]", is_stop_loss=True)
-            if not _stagnation and _check_reversal_allowed(sym, s):
-                rev_side = "buy" if not is_long else "sell"
-                logger.info(f"🔄 [Early_Exit_Reverse] {sym} 方向錯誤確認，順勢反手 {rev_side}")
-                if s.get("consecutive_losses", 0) >= 2:
-                    s["reversal_ban_until"] = time.time() + 14400
-                s["pending_reverse"] = rev_side
-                s["pending_reverse_time"] = time.time()
-                s["last_reverse_time"] = time.time()
+            # 斷捨離換場：Early Exit 後不再反手糾結，直接進入 60 分鐘冷卻
+            # 讓機器人釋放資金，轉向 Radar 中下一個高勝率的新幣種。
+            try:
+                from services.radar_service import blacklist_coin
+                blacklist_coin(sym, duration_sec=3600)
+                logger.info(f"🧘 [斷捨離] {sym} Early Exit 後進入 60 分鐘冷卻，機器人換場尋找新機會。")
+            except Exception as _bl_err:
+                logger.warning(f"⚠️ [斷捨離] {sym} 加入冷卻名單失敗: {_bl_err}")
             return
     base_loss_limit = get_effective_exit_setting(sym, "risk_threshold_pct", 0.0025, is_long)
     atr_val = s.get("entry_atr", s.get("current_atr", p * 0.01))
