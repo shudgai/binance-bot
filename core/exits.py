@@ -671,27 +671,45 @@ async def check_exits(sym):
     sl_dist = max(sl_mult * atr_val, avg * _sl_floor_pct)
     tp_dist = max(tp_base * atr_val, avg * 0.012)
 
-    breakeven_threshold = 0.003  # 0.3% 正利潤才啟動保本鎖定，避免噪音期過早改寫 SL
+    # 階梯式動態保本機制 (Tiered Stop Loss)
+    # (觸發門檻 pct, 鎖定利潤 pct)
+    sl_tiers = [
+        (0.004, 0.001),   # 獲利達 0.4% -> 鎖定 0.1% (覆蓋手續費)
+        (0.008, 0.004),   # 獲利達 0.8% -> 鎖定 0.4%
+        (0.012, 0.007),   # 獲利達 1.2% -> 鎖定 0.7%
+        (0.015, 0.010),   # 獲利達 1.5% -> 鎖定 1.0%
+        (0.020, 0.015)    # 獲利達 2.0% -> 鎖定 1.5%
+    ]
 
-    fee_buffer = 0.001  # 0.1% 獲利以覆蓋雙向手續費與微幅點差
+    highest_profit = s.get("highest_profit_pct", 0.0)
+    current_tier_idx = s.get("current_sl_tier", -1)
+    
+    new_tier_idx = current_tier_idx
+    for i, (trigger, lock) in enumerate(sl_tiers):
+        if highest_profit >= trigger:
+            new_tier_idx = i
 
     breakeven_price = None
-    if s.get("highest_profit_pct", 0.0) >= breakeven_threshold:
+    if new_tier_idx >= 0:
+        trigger, lock = sl_tiers[new_tier_idx]
+        
         if is_long:
-            breakeven_price = avg * (1 + fee_buffer)
+            breakeven_price = avg * (1 + lock)
             if breakeven_price > s.get('stop_loss', 0):
                 s['stop_loss'] = breakeven_price
-                if not s.get('is_breakeven_locked'):
-                    s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 獲利達標 {breakeven_threshold*100:.1f}% ，保本線已鎖定在：{breakeven_price:.4f}")
+                s['is_breakeven_locked'] = True
+                if new_tier_idx > current_tier_idx:
+                    s["current_sl_tier"] = new_tier_idx
+                    logger.info(f"🚀 [階梯保本] {sym} 獲利達標 {trigger*100:.1f}%，停損線上移鎖定 {lock*100:.1f}% 利潤 ({breakeven_price:.4f})")
         else:
             # 空倉：保本線應在入場價下方（Universal SL 用 p >= sl，price 回升超過此點才退場）
-            breakeven_price = avg * (1 - fee_buffer)
+            breakeven_price = avg * (1 - lock)
             if s.get('stop_loss', float('inf')) > breakeven_price:
                 s['stop_loss'] = breakeven_price
-                if not s.get('is_breakeven_locked'):
-                    s['is_breakeven_locked'] = True
-                    logger.info(f"🛡️ [{sym}] 獲利達標 {breakeven_threshold*100:.1f}% ，保本線已鎖定在：{breakeven_price:.4f}")
+                s['is_breakeven_locked'] = True
+                if new_tier_idx > current_tier_idx:
+                    s["current_sl_tier"] = new_tier_idx
+                    logger.info(f"🚀 [階梯保本] {sym} 獲利達標 {trigger*100:.1f}%，停損線下移鎖定 {lock*100:.1f}% 利潤 ({breakeven_price:.4f})")
 
     from core.config import EXIT_RR_MULTIPLIER
     min_tp_dist = sl_dist * EXIT_RR_MULTIPLIER

@@ -180,6 +180,10 @@ def compute_signal_strength(sym):
     profile = get_entry_strictness_profile()
     is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
 
+    # Gate 0: SMA200 硬性守衛 (Hard Gate)，絕對不可豁免
+    sma200_hard_gate_long  = sma200 <= 0 or close > sma200
+    sma200_hard_gate_short = sma200 <= 0 or close < sma200
+
     # Gate 1: EMA50 方向 (寬鬆模式下僅供參考，不強制硬攔截)
     ema50_gate_long  = ema50 <= 0 or close > ema50 or is_relaxed
     ema50_gate_short = ema50 <= 0 or close < ema50 or is_relaxed
@@ -198,6 +202,7 @@ def compute_signal_strength(sym):
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
+        sma200_hard_gate_long and
         macd_ok_long and
         (last_two_candles_long or last_candle_long or is_relaxed) and
         rsi_ok_long and
@@ -207,6 +212,7 @@ def compute_signal_strength(sym):
     )
 
     route_a_short = (
+        sma200_hard_gate_short and
         macd_ok_short and
         (last_two_candles_short or last_candle_short or is_relaxed) and
         rsi_ok_short and
@@ -221,6 +227,7 @@ def compute_signal_strength(sym):
     ema20_below_ema50   = ema20 > 0 and ema50 > 0 and ema20 < ema50
 
     route_b_long = (
+        sma200_hard_gate_long and
         ema50_gate_long and
         ema20_above_ema50 and
         near_ema20_pullback and
@@ -231,6 +238,7 @@ def compute_signal_strength(sym):
     )
 
     route_b_short = (
+        sma200_hard_gate_short and
         ema50_gate_short and
         ema20_below_ema50 and
         near_ema20_pullback and
