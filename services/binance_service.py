@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import numpy as np
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
@@ -14,10 +15,8 @@ load_dotenv()
 # API 呼叫、回傳空結果，不要再打過去。
 _binance_ban_until = 0.0
 
-
 def _binance_banned() -> bool:
     return time.time() < _binance_ban_until
-
 
 def _note_binance_ban(exc) -> None:
     global _binance_ban_until
@@ -49,9 +48,9 @@ else:
 # 純市場資訊查詢（成交量、委託簿深度/價差、K線掃描）改用真實幣安市場，不透過
 # Demo Trading 環境。Demo Trading 的 24hr 成交量/漲跌幅統計看起來與真實市場接近，
 # 但即時委託簿是模擬撮合、深度極薄——實測 ADA/LINK/AVAX/ZEC 這種真實世界流動性
-# 極好的主流幣，在 Demo 環境委託簿價差高達 12~20%、深度只有幾百美元，導致 ATR
-# 雷達的流動性過濾把幾乎所有主流幣都踢除，只剩下少數剛好在 Demo 環境委託簿較深
-# 的冷門幣。這些查詢都是公開行情、不需要帳號驗證，也不會下單，改用真實市場的
+# 極好的主流幣，在 Demo 環境委託簿是模擬撮合、深度極薄，導致 ATR
+# 雷達的流動性過濾把幾乎所有主流幣都踢除，只剩下少數剛好在 Demo 環境委託簿較深的
+# 冷門幣。這些查詢都是公開行情、不需要帳號驗證，也不會下單，改用真實市場的
 # 客戶端才能反映真正的流動性。實際交易下單仍然全部走上面的 Demo Trading client。
 market_client = Client(ping=False)
 
@@ -108,7 +107,6 @@ def get_price(symbol: str):
             return cached[1]
         raise
 
-
 def _get_entry_price(symbol: str, side: str):
     """選擇一個更貼近牌價的入場價格，優先使用 mark price，再回退到 order book 中位數，最後是最新成交價。"""
     try:
@@ -147,7 +145,6 @@ _last_prices_time = 0
 _valid_futures_symbols: set = set()
 _valid_futures_cache_time: float = 0.0
 
-
 def _get_valid_futures_symbols() -> set:
     """取得所有 USDT 永續合約幣種，快取 1 小時。"""
     global _valid_futures_symbols, _valid_futures_cache_time
@@ -168,23 +165,48 @@ def _get_valid_futures_symbols() -> set:
         print(f"[FuturesInfo] 取得合約清單失敗: {e}")
     return _valid_futures_symbols
 
+_tradable_futures_symbols: set = set()
+_tradable_futures_cache_time: float = 0.0
+
+def _get_tradable_futures_symbols() -> set:
+    """取得實際下單帳戶（Demo Trading／正式帳戶）支援交易的合約幣種，快取 1 小時。
+    市場資料改用 market_client（真實市場）掃描候選幣種後，仍須用實際下單的 client
+    查一次交易所資訊做交集過濾——Demo Trading 的可交易合約清單比真實市場小，選到
+    只存在真實市場、Demo 沒有的幣種（例如 EDGEUSDT）會在下單時吃到 binance -1121
+    Invalid symbol 錯誤。"""
+    global _tradable_futures_symbols, _tradable_futures_cache_time
+    if time.time() - _tradable_futures_cache_time < 3600:
+        return _tradable_futures_symbols
+    try:
+        info = client.futures_exchange_info()
+        syms = {
+            s["symbol"]
+            for s in info.get("symbols", [])
+            if s.get("contractType") == "PERPETUAL"
+            and s.get("quoteAsset") == "USDT"
+            and s.get("status") == "TRADING"
+        }
+        _tradable_futures_symbols = syms
+        _tradable_futures_cache_time = time.time()
+    except Exception as e:
+        print(f"[TradableFuturesInfo] 取得下單帳戶合約清單失敗: {e}")
+    return _tradable_futures_symbols
 
 _atr_scan_universe_cache = {}
 
 def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
-                         max_candidates: int = 48,
-                         ignore_list=None,
-                         max_change_pct: float = 50.0,
-                         min_price: float = 0.01,
-                         min_orderbook_depth_usdt: float = 100.0,
-                         max_spread_pct: float = 0.003) -> list:
+                           max_candidates: int = 48,
+                           ignore_list=None,
+                           max_change_pct: float = 50.0,
+                           min_price: float = 0.01,
+                           min_orderbook_depth_usdt: float = 100.0,
+                           max_spread_pct: float = 0.003) -> list:
     """從幣安永續合約市場即時抓取候選幣種清單（依24h成交量篩選/排序），供 ATR 雷達排名使用。
     取代寫死的固定清單，讓 ATR 雷達能發現真正在市場上活躍、但尚未寫進設定檔的永續合約。
     成交量/委託簿查詢都改用 market_client（真實市場），不是 Demo Trading——實測發現
-    Demo Trading 的即時委託簿是模擬撮合、深度極薄，連 ADA/LINK/AVAX/ZEC 這種真實世界
-    流動性極好的主流幣都會被判定價差過大/深度不足而被踢除，導致候選池只剩下少數
-    幾檔剛好在 Demo 環境委託簿較深的冷門幣。這裡只是查詢公開行情，不涉及帳號或下單，
-    改用真實市場才能反映真正的流動性。"""
+    Demo Trading 的即時委託簿是模擬撮合、深度極薄，導致 ATR
+    雷達的流動性過濾把幾乎所有主流幣都踢除，只剩下少數剛好在 Demo 環境委託簿較深的
+    冷門幣。這裡只是查詢公開行情，不涉及帳號或下單，改用真實市場才能反映真正的流動性。"""
     if _binance_banned():
         return []
     import time as _time
@@ -228,7 +250,7 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
         # orderbook 深度檢查放在成交量排序、截斷到 max_candidates 之後才做，
         # 只對真正可能被選中的候選查委託簿，不是每個通過前面篩選的幣種都查——
         # 之前對全部候選都查，一次掃描要打幾十次委託簿 API，把幣安權重推到超標
-        # （2400 上限一度打到 2449），連帶讓查真實餘額之類的其他請求間歇性失敗。
+        # （2400 上限一度打到 2449），連帶讓其他請求間歇性失敗。
         candidates.sort(key=lambda x: x[1], reverse=True)
         top_candidates = candidates[:max_candidates]
 
@@ -264,7 +286,6 @@ def get_atr_scan_universe(min_vol_usdt: float = 5_000_000,
     except Exception as e:
         print(f"[ATR掃描範圍] 抓取永續合約清單失敗: {e}")
         return []
-
 
 def get_hot_movers(
     min_vol_usdt: float = 10_000_000,
@@ -317,7 +338,8 @@ def get_hot_movers(
 
         # orderbook 深度檢查放在排序、截斷之後才做（只查真正可能被選中的候選），
         # 理由跟 get_atr_scan_universe 一樣：避免對每個通過前面篩選的幣種都打一次
-        # 委託簿 API，一次掃描累積起來會把幣安權重推到超標。
+        # 委託簿 API，一次掃描累積起來會把幣安權重推到超標
+        # （2400 上限一度打到 2449），連帶讓其他請求間歇性失敗。
         candidates.sort(key=lambda x: x["change_pct"], reverse=True)
         top_candidates = candidates[:max(limit * 5, 15)]
 
@@ -347,6 +369,187 @@ def get_hot_movers(
         return filtered[:limit]
     except Exception as e:
         print(f"[HotMovers] 掃描失敗: {e}")
+        return []
+
+def get_top_volume_altcoins(limit=12, ignore_list=None):
+    if _binance_banned():
+        return []
+    try:
+        tickers = market_client.futures_ticker()
+        exclude_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT"]
+        if ignore_list:
+            exclude_list.extend(ignore_list)
+        candidates = []
+        for t in tickers:
+            sym = t['symbol']
+            if not sym.endswith('USDT'):
+                continue
+            if sym in exclude_list:
+                continue
+            try:
+                price = float(t.get('lastPrice', 0))
+                q_vol = float(t.get('quoteVolume', 0))
+            except (ValueError, TypeError):
+                continue
+
+            # Filter for "small coins": price under $5.0
+            if price > 5.0 or price == 0:
+                continue
+
+            if q_vol > 0:
+                candidates.append((sym, q_vol))
+
+        # Sort by quoteVolume descending and compute volatility-based score for the top candidates
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        top_candidates = candidates[: max(limit * 4, 20)]
+        scored = []
+        for sym, q_vol in top_candidates:
+            try:
+                price = float([t for t in tickers if t['symbol'] == sym][0].get('lastPrice', 0))
+            except Exception:
+                price = 0
+            # skip extremely low price
+            if price == 0 or price < 0.01:
+                continue
+            # simple orderbook depth check
+            try:
+                ob = market_client.futures_order_book(symbol=sym, limit=5)
+                bids = ob.get('bids', [])
+                asks = ob.get('asks', [])
+                if not bids or not asks:
+                    continue
+                bid_depth_usdt = float(bids[0][0]) * float(bids[0][1])
+                ask_depth_usdt = float(asks[0][0]) * float(asks[0][1])
+                if bid_depth_usdt < 1000 or ask_depth_usdt < 1000:
+                    continue
+            except Exception:
+                pass
+
+            _, volatility = get_1h_volatility(sym)
+            # Combine volume and short-term volatility into a single ranking score
+            vol_factor = 1.0 + min(max(volatility, 0.0), 50.0) / 20.0
+            score = q_vol * vol_factor
+            scored.append((sym, score, q_vol, volatility))
+
+        return scored
+    except Exception as e:
+        print(f"[TopVolumeAltcoins] Error: {e}")
+        return []
+
+_DYNAMIC_SELECTION_MAX_CHANGE_PCT = 15.0
+_DYNAMIC_SELECTION_MIN_DEPTH_USDT = 1000.0
+
+def get_dynamic_top_15_coins():
+    """
+    動態選幣：
+    1. 抓所有 ticker，篩 USDT 交易對，且僅保留下單帳戶（Demo Trading／正式帳戶）也
+       支援交易的幣種（避免選到 -1121 Invalid symbol）。
+    2. 排除 24h 漲跌幅過大（>15%）的幣種——已經暴衝暴殺過的幣接下來容易劇烈回吐，
+       追進去容易變成套在阻力/支撐區的最後一隻老鼠（實測 US/THE/POWER/EDGE 這類
+       靠 DEFAULT_NEW_COIN_PROFILE 進場的新幣，一進場就被巴的案例多半屬於這類）。
+    3. 依成交量取前 50 名，再做委託簿深度檢查，過濾掉深度太薄、容易滑價/雜訊震盪
+       的幣種（仿照 get_top_volume_altcoins 的做法）。
+    4. 對通過深度檢查的候選抓 K 線，計算 ATR% 與 ADX（趨勢明確度）。
+    5. 用 ATR%（波動度）與 ADX（趨勢明確度）的綜合分數排序，不再只挑 ATR% 最高的——
+       高 ATR% 不代表有方向，常常只是雜訊大、容易上沖下洗，加入 ADX 才能篩掉「波動大
+       但沒有方向感」的幣種，取分數最高的前 15 檔。
+    """
+    if _binance_banned():
+        return []
+
+    try:
+        from core.indicators import calculate_adx
+
+        tickers = market_client.futures_ticker()
+
+        tradable = _get_tradable_futures_symbols()
+        candidates = []
+        for t in tickers:
+            sym = t['symbol']
+            if not sym.endswith('USDT') or (tradable and sym not in tradable):
+                continue
+            try:
+                change_pct = float(t.get('priceChangePercent', 0) or 0)
+            except (TypeError, ValueError):
+                change_pct = 0.0
+            if abs(change_pct) > _DYNAMIC_SELECTION_MAX_CHANGE_PCT:
+                continue
+            candidates.append({
+                'symbol': sym,
+                'quoteVolume': float(t.get('quoteVolume', 0)),
+                'lastPrice': float(t.get('lastPrice', 0))
+            })
+
+        # 依成交量排序取前 50 名
+        candidates.sort(key=lambda x: x['quoteVolume'], reverse=True)
+        top_50 = candidates[:50]
+
+        # 委託簿深度檢查：只放行深度足夠、不容易滑價的候選
+        depth_checked = []
+        for item in top_50:
+            sym = item['symbol']
+            try:
+                ob = market_client.futures_order_book(symbol=sym, limit=5)
+                bids = ob.get('bids', [])
+                asks = ob.get('asks', [])
+                if not bids or not asks:
+                    continue
+                bid_depth_usdt = float(bids[0][0]) * float(bids[0][1])
+                ask_depth_usdt = float(asks[0][0]) * float(asks[0][1])
+                if bid_depth_usdt < _DYNAMIC_SELECTION_MIN_DEPTH_USDT or ask_depth_usdt < _DYNAMIC_SELECTION_MIN_DEPTH_USDT:
+                    continue
+            except Exception:
+                continue
+            depth_checked.append(item)
+
+        # 抓 K 線計算 ATR% 與 ADX（趨勢明確度）
+        results = []
+        for item in depth_checked:
+            sym = item['symbol']
+            try:
+                klines = market_client.futures_klines(symbol=sym, interval='1d', limit=30)
+                if not klines or len(klines) < 15:
+                    continue
+
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                closes = [float(k[4]) for k in klines]
+
+                trs = []
+                for i in range(1, len(klines)):
+                    tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+                    trs.append(tr)
+
+                atr = sum(trs[-14:]) / min(len(trs), 14)
+                price = closes[-1]
+                atr_pct = round(atr / price * 100, 3) if price > 0 else 0.0
+                adx = float(calculate_adx(np.array(highs), np.array(lows), np.array(closes), 14))
+
+                # 波動度與趨勢明確度並重：純波動大但 ADX 低（沒有方向感、容易雙巴）的
+                # 幣種分數會被壓低，不會再單純因為 ATR% 最高就雀屏中選。
+                atr_component = min(atr_pct, 15.0) / 15.0
+                adx_component = min(adx, 50.0) / 50.0
+                score = atr_component * 0.5 + adx_component * 0.5
+
+                results.append({
+                    'symbol': sym,
+                    'quoteVolume': item['quoteVolume'],
+                    'atr_pct': atr_pct,
+                    'adx': round(adx, 2),
+                    'score': round(score, 4),
+                    'lastPrice': item['lastPrice']
+                })
+            except Exception as e:
+                print(f"Error fetching data for {sym} during dynamic selection: {e}")
+                continue
+
+        results.sort(key=lambda x: x['score'], reverse=True)
+        final_selection = results[:15]
+
+        return [r['symbol'] for r in final_selection]
+
+    except Exception as e:
+        print(f"Error in get_dynamic_top_15_coins: {e}")
         return []
 
 def get_all_prices():
@@ -382,9 +585,6 @@ def get_all_prices():
             return _last_prices
         raise e
 
-
-_account_balance_cache = (0, None)
-
 def get_account_balance_usdt() -> float | None:
     """即時查詢合約帳戶 USDT 餘額，給 API 進程自己直接查，不依賴 main.py 進程內快取的 REAL_BALANCE
     （main.py 和 API 是兩個獨立進程，各自的模組全域變數互不相通）。"""
@@ -407,11 +607,9 @@ def get_account_balance_usdt() -> float | None:
         print(f"[BalanceFetch] 讀取合約餘額失敗: {e}")
     return None
 
-
-_total_pnl_cache = (0, 0.0)
+_total_pnl_cache = (0, None)
 
 PNL_BASELINE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_baseline.json")
-
 
 PNL_SYMBOL_REGISTRY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_symbol_registry.json")
 
@@ -438,7 +636,6 @@ def _save_pnl_symbol_registry(symbols: set) -> None:
             _json.dump(sorted(symbols), f)
     except Exception:
         pass
-
 
 def _compute_raw_realized_pnl_by_symbol() -> dict:
     """回傳 {symbol: 該幣種歷史全部已實現損益}。逐幣種算而不是直接加總成單一數字，
@@ -472,7 +669,6 @@ def _compute_raw_realized_pnl_by_symbol() -> dict:
         query_symbols = {s for s in query_symbols if s}
         _save_pnl_symbol_registry(query_symbols)
 
-
         # 逐一向幣安查詢所有幣種成交
         _invalid_syms = []
         for sym in query_symbols:
@@ -489,9 +685,9 @@ def _compute_raw_realized_pnl_by_symbol() -> dict:
                 _note_binance_ban(e)
                 # -1121 代表這個代號在幣安根本不存在（例如登記進 registry 時打錯字、或殘留
                 # 非法代號），這種錯誤永遠不會自己好——之前整個函式遇到任何錯誤都直接拋出
-                # 讓上層改用舊快取，結果 registry 裡一旦混進一個永遠查不到的爛代號（實測
+                # 讓上層用舊快取，結果 registry 裡一旦混進一個永遠查不到的爛代號（實測
                 # NATGASUSDT、OPGUSDT 兩個根本不是幣安合約），總已實現利潤就永遠卡在拋錯
-                # 那一刻的舊快取，不會再更新，也就是「一直跑掉」的真正原因。
+                # 那一刻的舊快取，也就是「一直跑掉」的真正原因。
                 # 這種明確的無效代號直接跳過並記錄，其餘可能是限流/網路的錯誤才維持原本
                 # 「直接拋出讓上層用快取」的保守作法，避免把不完整的加總誤當成正確結果。
                 if "-1121" in str(e) or "Invalid symbol" in str(e):
@@ -502,11 +698,11 @@ def _compute_raw_realized_pnl_by_symbol() -> dict:
         if _invalid_syms:
             query_symbols -= set(_invalid_syms)
             _save_pnl_symbol_registry(query_symbols)
+
     except Exception as e:
         # 拋回給上層，由 get_total_realized_pnl_usdt() 決定是否使用舊快取
         raise e
     return result
-
 
 def _load_pnl_baseline_by_symbol() -> dict:
     try:
@@ -521,7 +717,6 @@ def _load_pnl_baseline_by_symbol() -> dict:
         pass
     return {}
 
-
 def _save_pnl_baseline_by_symbol(baseline_by_symbol: dict) -> None:
     try:
         import json as _json
@@ -530,16 +725,15 @@ def _save_pnl_baseline_by_symbol(baseline_by_symbol: dict) -> None:
     except Exception:
         pass
 
-
 def get_total_realized_pnl_usdt() -> float:
     """對外回傳的總已實現利潤（已扣掉 baseline，有防突變快取機制）。
-
+    
     baseline 逐幣種記錄，不是單一數字：查詢用的幣種清單（pnl_symbol_registry.json）
     會隨著雷達換幣、冷卻補位持續變大，如果 baseline 只存一個總數，重置之後任何
-    「registry 裡新出現的幣種」（哪怕它是很久以前交易過、跟這次重置完全無關的舊幣）
+    「registry 裡新出現的幣種」（哪怕它是很久以前交易過、跟這次重置完全無關的幣）
     整段歷史損益都會被算成「重置後的新損益」，因為 baseline 那個總數從來沒扣過它。
     實測重置後 3 筆新單只虧約 -0.33 USDT，介面卻顯示 -6.07——就是被某個新加入
-    registry 的舊幣歷史損益污染。改成逐幣種比較：每個幣種只計算「現在」與「這個
+    registry 的舊歷史損益污染。改成逐幣種比較：每個幣種只計算「現在」與「這個
     幣種自己 baseline」的差；一個幣種如果 baseline 裡還沒有紀錄（代表它是重置後才
     第一次被查詢到的新面孔），就把它當下的原始損益直接設為它自己的 baseline，
     這一輪先貢獻 0，之後才真的按「這個幣種在這之後賺賠多少」計算，不會把它整段
@@ -573,7 +767,6 @@ def get_total_realized_pnl_usdt() -> float:
 
     return total_delta
 
-
 def reset_total_realized_pnl_baseline() -> float:
     """重置 baseline 並清空快取變數：把「現在每個幣種各自的原始損益」存成新的
     逐幣種 baseline，之後 get_total_realized_pnl_usdt() 只會計算這之後的變化量。"""
@@ -589,8 +782,6 @@ def reset_total_realized_pnl_baseline() -> float:
     _total_pnl_cache = (time.time(), raw_by_symbol)
     _save_pnl_baseline_by_symbol(dict(raw_by_symbol))
     return sum(raw_by_symbol.values())
-
-
 
 def get_position(symbol: str, quote_asset: str, base_asset: str):
     positions = client.futures_position_information(symbol=symbol)
@@ -633,12 +824,139 @@ def get_position(symbol: str, quote_asset: str, base_asset: str):
         "realized_pnl": 0.0
     }
 
-_trades_cache = {}
+_all_positions_cache = (0, {})
 
+def get_all_positions():
+    # 前端 allPositions 是用「symbol -> 持倉」的物件（跟紙上交易 get_paper_positions() 一樣），
+    # 用 `for (let sym in data)` 取 key 直接當幣種名稱。這裡原本回傳陣列，前端迴圈會拿到
+    # 「0」「1」這種索引當 key，導致 getPositionInfo() 永遠對不到持倉，交易列表判斷不出
+    # 現價、未實現損益。改成回傳用冒號格式符號（跟 get_trades() 一致）當 key 的字典。
+    global _all_positions_cache
+    now = time.time()
+    if now - _all_positions_cache[0] < DASHBOARD_POSITION_CACHE_SEC:
+        return _all_positions_cache[1]
+
+    if _binance_banned():
+        return _all_positions_cache[1]
+    try:
+        positions = client.futures_position_information()
+    except Exception as e:
+        _note_binance_ban(e)
+        if _all_positions_cache[1]:
+            return _all_positions_cache[1]
+        raise
+    result = {}
+    for pos in positions:
+        qty = float(pos['positionAmt'])
+        if abs(qty) > 0.000001:
+            sym = pos['symbol']
+            entry_price = float(pos['entryPrice'])
+            unrealized_pnl = float(pos['unRealizedProfit'])
+            mark_price = float(pos['markPrice'])
+            total_cost = abs(qty) * entry_price
+            pnl_percent = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0.0
+            # 原始持倉資料沒有直接的 leverage 欄位，但可以用 notional/initialMargin 反推
+            # 出真實槓桿（名目倉位大小 ÷ 實際佔用保證金）。前端算「槓桿後損益%」原本沒有
+            # 真實槓桿可用時會 fallback 到寫死的 20 倍，跟這個幣種實際設定 2~5 倍差很多，
+            # 導致百分比顯示被放大成不合理的數字（例如 -4.89% 顯示成 -97.78%）。
+            initial_margin = float(pos.get('initialMargin', 0) or 0)
+            leverage = round(abs(float(pos.get('notional', 0) or 0)) / initial_margin) if initial_margin > 0 else 0
+            key = sym.replace('USDT', ':USDT')
+            update_time_ms = int(pos.get('updateTime', 0) or 0)
+            result[key] = {
+                "symbol": key,
+                "positionAmt": qty,
+                "qty": qty,
+                "entryPrice": entry_price,
+                "avg_price": entry_price,
+                "markPrice": mark_price,
+                "current_price": mark_price,
+                "leverage": leverage,
+                "unRealizedProfit": unrealized_pnl,
+                "pnl": unrealized_pnl,
+                "pnl_percent": pnl_percent,
+                "realized_pnl": 0,
+                "open_time_ms": update_time_ms,
+            }
+    _all_positions_cache = (now, result)
+    return result
+
+def market_buy(symbol: str, amount: float):
+    price = _get_entry_price(symbol, "BUY")
+    qty = amount / price
+    step = get_contract_step(symbol)
+    qty_str = str(round_step(qty, step))
+
+    if symbol == 'USDCUSDT':
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=Client.SIDE_BUY,
+            type=Client.ORDER_TYPE_LIMIT,
+            timeInForce='GTC',
+            price='0.9999',
+            quantity=qty_str
+        )
+    else:
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=Client.SIDE_BUY,
+            type=Client.ORDER_TYPE_MARKET,
+            quantity=qty_str
+        )
+    # 返回完整訂單資訊，以便後續更新真實成交價與數量
+    return order
+
+def market_short(symbol: str, amount: float):
+    price = _get_entry_price(symbol, "SELL")
+    qty = amount / price
+    step = get_contract_step(symbol)
+    qty_str = str(round_step(qty, step))
+
+    order = client.futures_create_order(
+        symbol=symbol,
+        side=Client.SIDE_SELL,
+        type=Client.ORDER_TYPE_MARKET,
+        quantity=qty_str
+    )
+    return order
+
+def market_sell(symbol: str, base_asset: str):
+    positions = client.futures_position_information(symbol=symbol)
+    if not positions:
+        raise Exception("找不到合約倉位資訊")
+
+    qty = float(positions[0]['positionAmt'])
+    if qty == 0:
+        raise Exception("當前無合約倉位可平倉")
+
+    side = Client.SIDE_SELL if qty > 0 else Client.SIDE_BUY
+    step = get_contract_step(symbol)
+    qty_str = str(round_step(abs(qty), step))
+
+    if symbol == 'USDCUSDT':
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type=Client.ORDER_TYPE_LIMIT,
+            timeInForce='GTC',
+            price='1.0000',
+            quantity=qty_str
+        )
+    else:
+        order = client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type=Client.ORDER_TYPE_MARKET,
+            quantity=abs(qty)
+        )
+    # 返回完整訂單資訊，以便後續更新真實成交價與數量
+    return order
+
+_trades_cache = {}
 
 def _aggregate_fills_by_order(raw_trades: list) -> list:
     """把同一張委託單（同一個 orderId）底下的多筆分批成交合併成一筆。
-    幣安的市價/限價單常常不是跟單一對手方一次成交完，而是依序吃掉委託簿上好幾個
+    幣安的市價/帳戶單常常不是跟單一對手方一次成交完，而是依序吃掉委託簿上好幾個
     價位，一張委託單因此會產生好幾筆各自獨立的原始成交紀錄——這在交易列表上會讓
     使用者以為同一次進出場「分好幾批下單」，也讓 get_trades("ALL") 那個「全部幣種
     合計最新 30 筆」的裁切機制被灌爆：一次補倉/進場動輒拆成 10~20 筆小額成交，
@@ -677,7 +995,6 @@ def _aggregate_fills_by_order(raw_trades: list) -> list:
         })
     return merged
 
-
 def get_trades(symbol: str):
     if _binance_banned():
         return []
@@ -692,7 +1009,7 @@ def get_trades(symbol: str):
     if symbol == "ALL":
         # 幣安沒有「查所有幣種成交」的單一端點，逐一查目前監控的幣種再合併排序。
         # 只查目前監控池會漏掉已經輪替出池子的幣種（例如雷達換幣後），導致之前明明
-        # 有成交的幣種從清單消失，所以額外併入本機 trade_history.json 記錄過的幣種，
+        # 有成交的幣種從交易列表看不到，所以額外併入本機 trade_history.json 記錄過的幣種，
         # 確保歷史成交不會因為幣種被換出監控池就從畫面上憑空消失。
         from services.bot_manager_service import load_symbol_config
         import json as _json
@@ -736,8 +1053,7 @@ def get_trades(symbol: str):
         all_trades = _aggregate_fills_by_order(all_trades)
         all_trades.sort(key=lambda t: t.get("time", 0), reverse=True)
         # 目前仍有真實持倉的幣種，其真實成交（含正確手續費）一定要保留，不能被 30 筆
-        # 上限擠掉——之前發生過某幣種的真實進場成交被更晚、更活躍的其他幣種擠出前 30
-        # 筆，導致後面「補入未列出持倉」那段只能拿部位資訊湊一筆假紀錄，手續費/已實現
+        # 上限擠掉——之前發生過某幣種的入場成交超過 30 筆之外的幣種，導致後面「補入未列出持倉」那段只能拿部位資訊湊一筆假紀錄，手續費/已實現
         # 損益全部顯示 0，使用者看到的手續費永遠是 0.0000。改成：目前持倉的幣種永遠
         # 保留其真實成交，其餘幣種的成交才受 30 筆上限限制。
         try:
@@ -856,7 +1172,7 @@ def get_1h_volatility(symbol: str):
         highs = [float(k[2]) for k in klines]
         lows = [float(k[3]) for k in klines]
         vols = [float(k[7]) for k in klines] 
-        
+
         h = max(highs)
         l = min(lows)
         q_vol = sum(vols)
@@ -872,7 +1188,7 @@ _atr_rankings_cache = {}
 
 def get_atr_ranked_coins(symbols, limit=10):
     """Rank symbols by tradable momentum: medium-high daily ATR plus recent 1h movement.
-
+    
     Daily ATR alone tends to select coins that were violent yesterday but are flat now.
     Add 1h volatility and 24h change so radar can prefer active-but-not-chaotic markets.
     """
@@ -882,8 +1198,6 @@ def get_atr_ranked_coins(symbols, limit=10):
     now = _time.time()
     cache_key = tuple(sorted(symbols))
     if cache_key in _atr_rankings_cache:
-        cache_time, cached_val = _atr_rankings_cache[cache_key]
-        if now - cache_time < 600:
             selected = [r["symbol"] for r in cached_val[:limit]]
             return selected, cached_val
 
@@ -937,197 +1251,3 @@ def get_atr_ranked_coins(symbols, limit=10):
     _atr_rankings_cache[cache_key] = (now, ranked)
     selected = [r["symbol"] for r in ranked[:limit]]
     return selected, ranked
-
-def get_top_volume_altcoins(limit=12, ignore_list=None):
-    if _binance_banned():
-        return []
-    try:
-        tickers = market_client.futures_ticker()
-        exclude_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "USDCUSDT"]
-        if ignore_list:
-            exclude_list.extend(ignore_list)
-        candidates = []
-        for t in tickers:
-            sym = t['symbol']
-            if not sym.endswith('USDT'):
-                continue
-            if sym in exclude_list:
-                continue
-            try:
-                price = float(t.get('lastPrice', 0))
-                q_vol = float(t.get('quoteVolume', 0))
-            except (ValueError, TypeError):
-                continue
-
-            # Filter for "small coins": price under $5.0
-            if price > 5.0 or price == 0:
-                continue
-
-            if q_vol > 0:
-                candidates.append((sym, q_vol))
-
-        # Sort by quoteVolume descending and compute volatility-based score for the top candidates
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        top_candidates = candidates[: max(limit * 4, 20)]
-        scored = []
-        for sym, q_vol in top_candidates:
-            try:
-                price = float([t for t in tickers if t['symbol'] == sym][0].get('lastPrice', 0))
-            except Exception:
-                price = 0
-            # skip extremely low price
-            if price == 0 or price < 0.01:
-                continue
-            # simple orderbook depth check
-            try:
-                ob = market_client.futures_order_book(symbol=sym, limit=5)
-                bids = ob.get('bids', [])
-                asks = ob.get('asks', [])
-                if not bids or not asks:
-                    continue
-                bid_depth_usdt = float(bids[0][0]) * float(bids[0][1])
-                ask_depth_usdt = float(asks[0][0]) * float(asks[0][1])
-                if bid_depth_usdt < 1000 or ask_depth_usdt < 1000:
-                    continue
-            except Exception:
-                pass
-
-            _, volatility = get_1h_volatility(sym)
-            # Combine volume and short-term volatility into a single ranking score
-            vol_factor = 1.0 + min(max(volatility, 0.0), 50.0) / 20.0
-            score = q_vol * vol_factor
-            scored.append((sym, score, q_vol, volatility))
-
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [sym for sym, *_ in scored[:limit]]
-    except Exception as e:
-        print(f"Error fetching top volume altcoins: {e}")
-        return []
-
-def market_buy(symbol: str, amount: float):
-    price = _get_entry_price(symbol, "BUY")
-    qty = amount / price
-    step = get_contract_step(symbol)
-    qty_str = str(round_step(qty, step))
-
-    if symbol == 'USDCUSDT':
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=Client.SIDE_BUY,
-            type=Client.ORDER_TYPE_LIMIT,
-            timeInForce='GTC',
-            price='0.9999',
-            quantity=qty_str
-        )
-    else:
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=Client.SIDE_BUY,
-            type=Client.ORDER_TYPE_MARKET,
-            quantity=qty_str
-        )
-    # 返回完整訂單資訊，以便後續更新真實成交價與數量
-    return order
-
-def market_short(symbol: str, amount: float):
-    price = _get_entry_price(symbol, "SELL")
-    qty = amount / price
-    step = get_contract_step(symbol)
-    qty_str = str(round_step(qty, step))
-
-    order = client.futures_create_order(
-        symbol=symbol,
-        side=Client.SIDE_SELL,
-        type=Client.ORDER_TYPE_MARKET,
-        quantity=qty_str
-    )
-    return order
-
-def market_sell(symbol: str, base_asset: str):
-    positions = client.futures_position_information(symbol=symbol)
-    if not positions:
-        raise Exception("找不到合約倉位資訊")
-        
-    qty = float(positions[0]['positionAmt'])
-    if qty == 0:
-        raise Exception("當前無合約倉位可平倉")
-
-    side = Client.SIDE_SELL if qty > 0 else Client.SIDE_BUY
-    step = get_contract_step(symbol)
-    qty_str = str(round_step(abs(qty), step))
-    
-    if symbol == 'USDCUSDT':
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type=Client.ORDER_TYPE_LIMIT,
-            timeInForce='GTC',
-            price='1.0000',
-            quantity=qty_str
-        )
-    else:
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type=Client.ORDER_TYPE_MARKET,
-            quantity=abs(qty)
-        )
-    # 返回完整訂單資訊，以便後續更新真實成交價與數量
-    return order
-
-_all_positions_cache = (0, {})
-
-def get_all_positions():
-    # 前端 allPositions 是用「symbol -> 持倉」的物件（跟紙上交易 get_paper_positions() 一樣），
-    # 用 `for (let sym in data)` 取 key 直接當幣種名稱。這裡原本回傳陣列，前端迴圈會拿到
-    # 「0」「1」這種索引當 key，導致 getPositionInfo() 永遠對不到持倉，交易列表判斷不出
-    # 現價、未實現損益。改成回傳用冒號格式符號（跟 get_trades() 一致）當 key 的字典。
-    global _all_positions_cache
-    now = time.time()
-    if now - _all_positions_cache[0] < DASHBOARD_POSITION_CACHE_SEC:
-        return _all_positions_cache[1]
-
-    if _binance_banned():
-        return _all_positions_cache[1]
-    try:
-        positions = client.futures_position_information()
-    except Exception as e:
-        _note_binance_ban(e)
-        if _all_positions_cache[1]:
-            return _all_positions_cache[1]
-        raise
-    result = {}
-    for pos in positions:
-        qty = float(pos['positionAmt'])
-        if abs(qty) > 0.000001:
-            sym = pos['symbol']
-            entry_price = float(pos['entryPrice'])
-            unrealized_pnl = float(pos['unRealizedProfit'])
-            mark_price = float(pos['markPrice'])
-            total_cost = abs(qty) * entry_price
-            pnl_percent = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0.0
-            # 原始持倉資料沒有直接的 leverage 欄位，但可以用 notional/initialMargin 反推
-            # 出真實槓桿（名目倉位大小 ÷ 實際佔用保證金）。前端算「槓桿後損益%」原本沒有
-            # 真實槓桿可用時會 fallback 到寫死的 20 倍，跟這個幣種實際設定 of 2~5 倍差很多，
-            # 導致百分比顯示被放大成不合理的數字（例如 -4.89% 顯示成 -97.78%）。
-            initial_margin = float(pos.get('initialMargin', 0) or 0)
-            leverage = round(abs(float(pos.get('notional', 0) or 0)) / initial_margin) if initial_margin > 0 else 0
-            key = sym.replace('USDT', ':USDT')
-            update_time_ms = int(pos.get('updateTime', 0) or 0)
-            result[key] = {
-                "symbol": key,
-                "positionAmt": qty,
-                "qty": qty,
-                "entryPrice": entry_price,
-                "avg_price": entry_price,
-                "markPrice": mark_price,
-                "current_price": mark_price,
-                "leverage": leverage,
-                "unRealizedProfit": unrealized_pnl,
-                "pnl": unrealized_pnl,
-                "pnl_percent": pnl_percent,
-                "realized_pnl": 0,
-                "open_time_ms": update_time_ms,
-            }
-    _all_positions_cache = (now, result)
-    return result

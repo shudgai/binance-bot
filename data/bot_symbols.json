@@ -1,27 +1,20 @@
 {
   "symbols": [
-    "BTCUSDT",
+    "ADAUSDT",
     "ETHUSDT",
-    "BNBUSDT",
+    "LTCUSDT",
     "SOLUSDT",
     "XRPUSDT",
-    "DOGEUSDT",
-    "ADAUSDT",
-    "AVAXUSDT",
-    "LINKUSDT",
-    "SUIUSDT",
     "DOTUSDT",
+    "LINKUSDT",
+    "AVAXUSDT",
+    "FETUSDT",
     "NEARUSDT",
-    "APTUSDT",
-    "LTCUSDT",
-    "BCHUSDT",
-    "UNIUSDT",
-    "ETCUSDT",
-    "AAVEUSDT",
-    "ATOMUSDT",
-    "HBARUSDT",
-    "XLMUSDT",
-    "INJUSDT",
-    "RENDERUSDT"
+    "1000SHIBUSDT",
+    "ONDOUSDT",
+    "ENAUSDT",
+    "TRXUSDT",
+    "DOGEUSDT",
+    "HYPEUSDT"
   ]
 }

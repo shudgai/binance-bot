@@ -323,20 +323,29 @@ def _follow_source_radar_switch(force_start=False):
     return final_symbols
 
 
+from services.binance_service import get_dynamic_top_15_coins
+
 def auto_radar_switch(force_start=False):
-    # 固定監控幣種，不再跑動態 ATR 雷達掃描/換幣。
-    # 15 個大幣（BTC/ETH/BNB 撐流動性 + 其餘波動度較高的大型幣）+ 8 個中小型幣
-    # （實測峰值平均 0.32%，是大幣 0.13% 的 2.5 倍，波動度明顯更夠，加回來補足
-    # 大幣過悶、單子跑不動的問題），中小型幣沿用原 ATR_ELIGIBLE_SYMBOLS 篩過的
-    # 名單（已排除過低價/易暴衝幣）。
-    return [
-        "BTCUSDT", "ETHUSDT", "BNBUSDT",
-        "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT",
-        "LINKUSDT", "SUIUSDT", "DOTUSDT", "NEARUSDT", "APTUSDT",
-        "LTCUSDT", "BCHUSDT",
-        "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT", "HBARUSDT",
-        "XLMUSDT", "INJUSDT", "RENDERUSDT",
-    ]
+    """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。"""
+    # 1. 獲取動態選出的前 15 個幣種
+    best_symbols = get_dynamic_top_15_coins()
+    
+    if not best_symbols:
+        add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
+        return get_bot_status().get("active_symbols", [])
+
+    # 2. 將選出的 15 個幣種寫入 bot_symbols.json
+    # 使用 save_symbol_config 確保配置被正確持久化
+    save_symbol_config(best_symbols)
+    
+    add_system_log(f"🎯 [動態選幣] 已更新監控池為前 15 名動能幣種: {', '.join(best_symbols)}", "success")
+    
+    # 3. 如果是強制啟動或正在運行，則啟動新幣池
+    if force_start or get_bot_status().get("is_running"):
+        # 注意：start_bot 會處理重新啟動邏輯
+        start_bot(best_symbols, get_bot_status().get("trade_amount", 150.0))
+    
+    return best_symbols
 
 
 def _find_atr_replacement(current_syms):

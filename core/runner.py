@@ -351,6 +351,26 @@ async def calibrate_with_exchange(exchange):
         logger.info(f"⚠️ [CALIBRATION_FAIL] 無法連線交易所校準: {e}")
 
 
+async def periodic_position_reconciliation(exchange):
+    """定期（不只在程序啟動時）與交易所校準持倉。
+    calibrate_with_exchange() 原本只在 main_loop 進入主循環前跑一次——實盤模式下
+    本地 ctx.STATES[sym]["qty"] 只有 bot 自己主動呼叫 close_position() 才會歸零，
+    但這個 bot 同時會在交易所掛真正的止損/停利單（見 _ensure_exchange_exit_orders），
+    這種單如果自己成交（不是 bot 主動決定平倉），本地完全不會發現，這筆交易在下次
+    重啟觸發校準之前永遠不會被 record_trade_result() 記錄。實測 24 小時內超過 100
+    筆平倉成交因此從沒進過 trade_history.json，前端「交易記錄」自然看不到。
+    calibrate_with_exchange() 本身是冪等的（沒有變化時只是重新確認一次），每 60 秒
+    重跑一次，讓外部（交易所端）平倉能在一分鐘內被偵測並正確記錄，不必等到重啟。"""
+    if PAPER_TRADING:
+        return
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await calibrate_with_exchange(exchange)
+        except Exception as e:
+            logger.info(f"⚠️ [定期持倉校準失敗]: {e}")
+
+
 async def main_loop(exchange):
     from core.orders import check_stale_limit_orders, check_total_equity_protection, execute_panic_sell_all_positions
     from core.orders import check_paper_pending_order
@@ -744,6 +764,7 @@ async def main():
     asyncio.create_task(periodic_status_log())
     asyncio.create_task(check_stale_limit_orders())
     asyncio.create_task(periodic_momentum_swap())  # 每 5 分鐘自動偵測並汰換動能不足幣種
+    asyncio.create_task(periodic_position_reconciliation(exchange_futures))  # 每 60 秒偵測交易所端止損/停利單獨立成交，避免交易記錄遺失
 
     try:
         from core.runner import MAIN_LOOP_INTERVAL_SEC

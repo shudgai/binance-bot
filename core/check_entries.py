@@ -71,7 +71,7 @@ def load_pending_signals():
         logger.info(f"⚠️ [Pending快取] 讀取失敗: {e}")
 
 
-def is_pending_confirmation_valid(side, candle, trigger_price=None, max_divergence=0.005):
+def is_pending_confirmation_valid(side, candle, trigger_price=None, max_divergence=0.003):
     """Return whether the prior signal candle is still valid after the next bar closes."""
     if not candle or len(candle) < 5:
         return False
@@ -599,7 +599,7 @@ async def check_entries():
                 # `if s["entry_count"] > 0 and not is_rescue_dca: return`，跟持倉是
                 # 賺是賠無關，一律拒絕）。這裡以前還是會放行到候選清單、跑完整套
                 # CONFLUENCE_PASS/ENTRY_GATE/Allocation_Ratio/execute_order 流程，
-                # 才在最後一步被拒絕——實測 UNIUSDT 持續有效的強訊號每輪都重新跑一次
+                # 才在最後一步被拒絕——實測 UNIUST持續有效的強訊號每輪都重新跑一次
                 # 這整套白工，擠壓掉主迴圈時間，導致「持倉時每 5 秒快速刷新價格」的
                 # 空檔幾乎沒有，讓 Tight_Trailing_Stop 偵測到峰值回撤時價格已經比真正
                 # 該觸發的時間點多跌了快 1%。這裡直接跳過，不再產生加碼候選訊號。
@@ -925,4 +925,3 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
             return False, f"latest signal no longer supports {side}"
 
     return True, "ok"
-

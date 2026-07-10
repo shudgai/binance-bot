@@ -17,6 +17,102 @@ from core.calc import profit_pct as _profit_pct
 logger = logging.getLogger(__name__)
 
 
+class DynamicExitManager:
+    """
+    動態退出管理器：結合 ATR 趨勢追蹤與非線性耐心衰減模型。
+    解決點：防止在利潤區間因市場微小震盪而導致計時器重置，導致無法入帳。
+    """
+    def __init__(self, entry_price):
+        self.entry_price = entry_price
+        self.max_price = entry_price
+        
+        # 配置參數
+        self.profit_threshold = 0.15        # 啟動門檻 (0.15%)
+        self.stagnation_range = 0.0005       # 盤整區間 (0.05%)
+        self.no_high_time_limit = 60         # 盤整判定時間 (60秒內沒創新高)
+        
+        # 狀態變數
+        self.is_active = False               # 是否進入利潤保護狀態
+        self.wait_start_time = None          # 進入狀態的時間點
+        self.wait_time_limit = 300           # 動態計算出的耐心秒數
+        self.last_high_time = None           # 上次創下最高點的時間
+        self.current_max_price = entry_price
+
+    def update(self, current_price):
+        """
+        每秒執行一次的檢查函式
+        :param current_price: 當前市場價格
+        :return: "HOLD" (繼續持有) 或 "SELL" (立即賣出)
+        """
+        # 計算當前利潤百分比
+        current_profit = ((current_price - self.entry_price) / self.entry_price) * 100
+        
+        # --- 第一階段：啟動門檻檢查 ---
+        if not self.is_active and current_profit >= self.profit_threshold:
+            self.is_active = True
+            self.wait_start_time = time.time()
+            self.current_max_price = current_price
+            self.last_high_time = time.time()
+            # 計算初始耐心時間
+            self.wait_time_limit = self._calculate_wait_time(current_profit)
+            print(f"🚀 [啟動] 利潤達 {current_profit:.2f}%，啟動動態退出機制。耐心限時: {self.wait_time_limit:.1f}秒")
+
+        if not self.is_active:
+            return "HOLD"
+
+        # --- 第二階段：更新最高點與重置計時器 ---
+        # 只有當價格突破現有最高點超過 0.05% (stagnation_range) 時，才視為「創新高」並重置計時器
+        # 這樣可以防止微小的市場雜訊導致計時器不斷重置
+        if current_price > (self.current_max_price * (1 + self.stagnation_range)):
+            self.current_max_price = current_price
+            self.last_high_time = time.time()
+            self.wait_start_time = time.time()
+            self.wait_time_limit = self._calculate_wait_time(current_profit)
+            print(f"📈 [顯著創新高] 價格: {current_price}，重置計時器。新耐心限時: {self.wait_time_limit:.1f}秒")
+
+        # --- 第三階段：多重退出判定 (OR 關係) ---
+        elapsed_time = time.time() - self.wait_start_time
+        time_since_high = time.time() - self.last_high_time
+        
+        # 1. 回撤比例 (Retracement) - 快速反應防線
+        if current_price < (self.current_max_price * 0.999):
+            print(f"💰 [觸發：回撤比例] 價格從最高點回落超過 0.1%，快速落袋為安。")
+            return "SELL"
+
+        # 2. 動態耐心極限 (Time-out) - 強制入帳防線
+        if elapsed_time >= self.wait_time_limit:
+            print(f"💰 [觸發：耐心極限] 已等待 {elapsed_time:.1f}秒 (限時 {self.wait_time_limit:.1f}秒)，強制落袋為安。")
+            return "SELL"
+
+        # 3. 盤整最高點 (Stagnation) - 動能耗盡防線
+        is_stagnant = abs(current_price - self.current_max_price) <= (self.current_max_price * self.stagnation_range)
+        if time_since_high > self.no_high_time_limit and is_stagnant:
+            print(f"🛑 [觸發：盤整最高點] 價格在 {self.current_max_price} 附近停滯過久，動能耗盡，執行停利。")
+            return "SELL"
+
+        return "HOLD"
+
+    def _calculate_wait_time(self, profit):
+        """
+        非線性衰減公式: WaitTime = max(60, 300 - (sqrt(P - 0.15) * 76))
+        這確保了利潤越高，耐心越短，但不會在小利潤時就過快賣出。
+        """
+        base_time = 300
+        threshold = 0.15
+        min_time = 60
+        decay_factor = 76
+        
+        if profit <= threshold:
+            return base_time
+        
+        # 核心非線性計算
+        wait_time = base_time - (math.sqrt(profit - threshold) * decay_factor)
+        return max(min_time, wait_time)
+from core.calc import profit_pct as _profit_pct
+
+logger = logging.getLogger(__name__)
+
+
 def update_trailing_stop(sym, current_price, is_long):
     """
     實作非對稱移動停損 (Asymmetric Trailing Stop)
@@ -32,7 +128,8 @@ def update_trailing_stop(sym, current_price, is_long):
     safe_atr = min(atr_val, atr_avg * 3) if atr_avg > 0 else atr_val
 
     trailing_activation_atr = s.get("trailing_activation_atr", 0.0)
-    trailing_distance_atr = s.get("trailing_distance_atr", s.get("trailing_stop_multiplier", 2.0))
+    # Increase trailing distance slightly to give more "room to breathe"
+    trailing_distance_atr = s.get("trailing_distance_atr", s.get("trailing_stop_multiplier", 2.5))
     profit_lock_atr = s.get("profit_lock_atr", 0.0)
 
     avg_price = s["avg_price"]
@@ -47,13 +144,28 @@ def update_trailing_stop(sym, current_price, is_long):
     _prev_peak = s.get("highest_profit_pct", 0.0)
     s["highest_profit_pct"] = max(_prev_peak, profit_pct)
     if s["highest_profit_pct"] > _prev_peak:
-        # 即時把新高點存檔，而不是只在重啟時存一次快照。原本只有重啟校準那一刻呼叫
+        # 即時把新高點存檔，而不是只在重啟時呼叫
         # save_peak，兩次重啟之間爬到的真正高點從未落地，若中途又重啟（例如部署修改），
         # 峰值記憶會被打回重啟當下的價位，讓所有靠 highest_profit_pct 判斷的鎖利機制
-        # 都以為從沒漲那麼高過。曾實測 SUIUSDT 真實高點 1.25%，因為中途重啟兩次，
-        # 最後系統只記得 0.25%，鎖利鎖在遠低於真正高點的地方。
+        # 都以為從沒漲那麼高過（實測 SUIUSDT 真實高點 1.25%，因為中途重啟兩次，
+        # 最後只記得 0.25%，鎖利鎖在遠低於真正高點的地方）。
         from core.peak_store import save_peak
         save_peak(sym, s["highest_profit_pct"])
+
+    # --- [Updated] Break-Even Mechanism ---
+    # Once profit exceeds 0.2% (0.002), the stop-loss is automatically moved to the entry price (plus a tiny buffer)
+    # to ensure that once a trade is in profit, it doesn't revert to a loss.
+    breakeven_threshold = 0.002
+    if profit_pct > breakeven_threshold:
+        # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
+        # For long: new_sl >= entry; For short: new_sl <= entry
+        if is_long:
+            new_be_sl = avg_price * 1.0001
+            s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), new_be_sl)
+        else:
+            new_be_sl = avg_price * 0.9999
+            s["trailing_stop_price"] = min(s.get("trailing_stop_price", float('inf')), new_be_sl)
+        logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
 
@@ -85,8 +197,8 @@ def update_trailing_stop(sym, current_price, is_long):
                 elif _hp_f > 0.07:  trailing_multiplier = 0.9
                 elif _hp_f > 0.04:  trailing_multiplier = 1.2
                 else:               trailing_multiplier = 1.5
-            # 最小距離防護：確保至少 0.25% 緩衝
-            _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.0025)
+            # 最小距離防護：確保至少 0.5% 緩衝 (根據分析結果，避免在 0.4%-0.5% 回撤時被掃出場)
+            _min_gap_l = max(atr_val * trailing_multiplier, s["trailing_highest"] * 0.005)
             dynamic_sl = s["trailing_highest"] - _min_gap_l
 
             trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
@@ -133,8 +245,8 @@ def update_trailing_stop(sym, current_price, is_long):
                 elif _hp_fs > 0.07: trailing_multiplier = 0.7
                 elif _hp_fs > 0.04: trailing_multiplier = 0.9
                 else:               trailing_multiplier = 1.1
-            # 最小距離防護
-            _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.0025)
+            # 最小距離防護：確保至少 0.5% 緩衝 (根據分析結果，避免在 0.4%-0.5% 回撤時被掃出場)
+            _min_gap_s = max(atr_val * trailing_multiplier, s["trailing_lowest"] * 0.005)
             dynamic_sl = s["trailing_lowest"] + _min_gap_s
 
             trigger_mult = s.get("breakeven_trigger", s.get("sl_atr_multiplier", 1.5))
@@ -226,6 +338,18 @@ async def check_exits(sym):
         s["highest_profit_pct"] = profit_pct
     current_atr = s.get("current_atr", 0.0)
 
+    # --- [新增] 動態退出管理器 (Dynamic Exit Manager) ---
+    if "dynamic_exit_manager" not in s:
+        s["dynamic_exit_manager"] = DynamicExitManager(avg)
+    
+    manager = s["dynamic_exit_manager"]
+    exit_signal = manager.update(p)
+    if exit_signal == "SELL":
+        cs = 'sell' if is_long else 'buy'
+        logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
+        return
+
     # ── 急速逆勢提早出場 (Rapid Reversal Early Exit) ──
     # 用「距離上一次進場/攤平的時間」而不是「距離最初開倉的時間」，這樣攤平救援後
     # 才發生的急速逆勢也抓得到（例如：攤平加碼後不到 1 分鐘價格又急速創新高/新低，
@@ -262,17 +386,19 @@ async def check_exits(sym):
     # 進場後觀察期拉長：給倉位更多時間脫離雜訊區，高波動 45s，正常 90s
     # 原本 20s/60s 太短，5m K 線一根就 300s，進場後瞬間的影線震盪容易直接觸發停損
     cooldown_limit = 45.0 if (current_atr > atr_24h_avg and atr_24h_avg > 0) else 90.0
-    if hold_sec < cooldown_limit:
+    # ── 盲區保護 (Entry Blind Zone Protection) ──
+    # 在進場最初 60 秒內，除非發生極高成交量 (Vol Ratio > 3.0) 的崩盤，否則不觸發一般停損。
+    # 這可以防止開倉瞬間的影線（Wicks）直接洗出場。
+    if hold_sec < 60:
         current_vol = s.get("current_vol", 0.0)
         vol_ma20 = s.get("vol_ma20", 1.0)
         vol_ratio = current_vol / vol_ma20 if vol_ma20 > 0 else 1.0
+        
+        if vol_ratio <= 3.0:
+            # 在盲區內且成交量不足以證明是「真崩盤」，跳過後續所有停損檢查
+            return
 
-        if vol_ratio > 2.5:
-            logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
-        else:
-            # 進場初期仍要保護真實停損，不能因為「新倉盲區」而直接跳過 Hard_SL / Universal SL。
-            # 這裡不再直接 return，讓後續的停損檢查仍能執行。
-            pass
+        logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
@@ -298,8 +424,16 @@ async def check_exits(sym):
         from core.peak_store import save_peak
         save_peak(sym, s["highest_profit_pct"])
 
+    # --- [新增] 執行動態移動停損更新 ---
+    # 這會根據當前價格更新 s["trailing_stop_price"]
+    update_trailing_stop(sym, p, is_long)
+
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
-    _sl_mult   = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), is_long)
+    # Specifically handle BCH and XLM with higher ATR multipliers to account for their higher volatility
+    base_sl_mult = s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER)
+    if sym in ["BCH", "XLM"]:
+        base_sl_mult *= 1.2  # Increase by 20% for high-volatility assets
+    _sl_mult   = get_effective_exit_setting(sym, "sl_atr_multiplier", base_sl_mult, is_long)
     _rr_thresh = get_effective_exit_setting(sym, "rr_threshold", 1.3, is_long)
     _hard_sl   = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
     _atr_sl_pct = (_sl_mult * _entry_atr / avg) if avg > 0 else 0.006
@@ -319,7 +453,12 @@ async def check_exits(sym):
         (not is_long and s.get("current_rsi", 50.0) < 45 and _st_macd_hist_now < 0)
     )
     _st_entry_layers = len(s.get("entries", []))
-    _st_base_limit = (5400 if _st_entry_layers <= 1 else 7200) if _st_is_strong else (2400 if _st_entry_layers <= 1 else 5400)
+    # 優先使用配置文件中的 stagnation_base_limit，若無則依據進入層數與動能強度計算預設值
+    custom_limit = COIN_PROFILE_CONFIG.get(sym, {}).get("stagnation_base_limit")
+    if custom_limit:
+        _st_base_limit = custom_limit
+    else:
+        _st_base_limit = (5400 if _st_entry_layers <= 1 else 7200) if _st_is_strong else (2400 if _st_entry_layers <= 1 else 5400)
     # 使用者反映 LTCUSDT/LINKUSDT 兩筆都曾經有過 +0.3% 左右的峰值，中間一直在小賺小賠
     # 之間原地震盪，停滯超時觸發那一刻剛好卡在小賠，整段持倉的峰值就這樣浪費掉。
     # 兩個調整：(1) 基礎等待時間全面拉長 1.5 倍，給單子更多時間發展；(2) 曾經有過
@@ -339,10 +478,35 @@ async def check_exits(sym):
         
         # 檢查是否在「獲利區間」且「沒創新高」
         # 這裡加入針對獲利單的 Peak Stagnation 檢查：
-        # 如果獲利 > 0.15% 且 已經持倉超過 300 秒，且 價格在過去 300 秒內沒有創新高，
+        # 如果獲利 > HIGH_POINT_STAGNATION_MIN_PROFIT 且 已經持倉超過動態計算的等待時間，且 價格在該時間內沒有創新高，
         # 且 目前動能未往有利方向擴張，則執行「獲利了結」。
-        is_profitable = profit_pct > 0.0015
-        is_stagnant_peak = hold_sec > 300 and s.get("highest_profit_pct", 0.0) <= (p * (1 + (0.0015 if is_long else -0.0015)))
+        is_profitable = profit_pct > HIGH_POINT_STAGNATION_MIN_PROFIT
+        if is_profitable:
+            # 獲利越高，要求的「沒創新高」時間越短，以便更快落袋為安
+            # 從 HIGH_POINT_STAGNATION_TIME (300s) 到最低 120s 之間線性縮減 (以 5% 超過門檻為基準)
+            dynamic_stagnation_time = max(120, int(HIGH_POINT_STAGNATION_TIME * (1 - (profit_pct - HIGH_POINT_STAGNATION_MIN_PROFIT) / 0.05)))
+            is_near_peak = s.get("highest_profit_pct", 0.0) <= (p * (1 + (HIGH_POINT_STAGNATION_MIN_PROFIT if is_long else -HIGH_POINT_STAGNATION_MIN_PROFIT)))
+            
+            # ── [新增] 盤整行情處理 ──
+            # 即使價格一直在變動（不到 300 秒就變動），但若處於盤整區間且價格在峰值附近，則判定為停滯
+            recent_candles = s.get("ohlcv", [])
+            is_ranging = False
+            if len(recent_candles) >= 20:
+                highs = np.array([x[2] for x in recent_candles])
+                lows = np.array([x[3] for x in recent_candles])
+                recent_high = float(np.max(highs))
+                recent_low = float(np.min(lows))
+                range_width_pct = (recent_high - recent_low) / recent_low if recent_low > 0 else 0
+                atr_val_curr = _get_atr(s, p)
+                atr_pct = atr_val_curr / p if p > 0 else 0
+                is_ranging = range_width_pct < 0.025 and atr_pct < 0.015
+            
+            if is_ranging and is_near_peak:
+                is_stagnant_peak = True
+            else:
+                is_stagnant_peak = hold_sec > dynamic_stagnation_time and is_near_peak
+        else:
+            is_stagnant_peak = False
         
         if not _sd_trending_favorably:
             # 情況 A：虧損或持平的單子，動能沒轉好 -> 停滯超時強制平倉
@@ -374,7 +538,7 @@ async def check_exits(sym):
 
     if time.time() - s["debug_start_time"] < 600:
         if time.time() - s.get('last_debug_pressure_time', 0) > 60:
-            logger.info(f"🔍 [DEBUG_PRESSURE] {sym}: Upper={bb_upper:.4f}, Lower={bb_lower:.4f}, Vol_MA={vol_ma20:.2f}")
+            logger.info(f" [DEBUG_PRESSURE] {sym}: Upper={bb_upper:.4f}, Lower={bb_lower:.4f}, Vol_MA={vol_ma20:.2f}")
             s['last_debug_pressure_time'] = time.time()
 
     is_breakout_up = (not is_long and bb_upper > 0 and p > bb_upper and current_vol > (vol_ma20 * 1.5))
@@ -447,3 +611,12 @@ async def check_exits(sym):
         if is_long:
             _hard_sl_price = max(avg * (1 - _hard_sl), first_ep * (1 - _hard_sl))
             _hard_sl_hit = p <= _hard_sl_price
+        else:
+            _hard_sl_price = min(avg * (1 + _hard_sl), first_ep * (1 + _hard_sl))
+            _hard_sl_hit = p >= _hard_sl_price
+
+        if _hard_sl_hit:
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"🛑 [Hard_Stop_Loss] {sym} 觸發硬停損線 {(_hard_sl_price if is_long else _hard_sl_price):.4f}，執行平倉")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_Stop_Loss]", is_stop_loss=True)
+            return

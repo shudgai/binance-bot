@@ -252,14 +252,20 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
     if adverse_dev > max_adverse_dev:
         return False, f"adverse price deviation {adverse_dev*100:.2f}% > {max_adverse_dev*100:.2f}%"
 
-    if mode in ("market", "chase"):
-        total_dev = abs(order_price - market_price) / market_price
-        if is_relaxed:
-            chase_limit = 0.008  # 寬鬆模式下追價極限放寬至 0.8%
-        else:
-            chase_limit = max(0.003, min(0.010, atr_pct * 0.8 if atr_pct > 0 else 0.004))
-        if total_dev > chase_limit:
-            return False, f"chase price drift {total_dev*100:.2f}% > {chase_limit*100:.2f}%"
+    # 原本這裡只在 market/chase 模式檢查「總偏移」，pullback（弱訊號預設模式）完全
+    # 跳過，只靠上面的 adverse_dev 擋。但 adverse_dev 只抓「往不利方向」的偏移——
+    # 如果價格在訊號產生後往「有利」方向暴衝（例如訊號價 0.000893、實際牌價已經衝到
+    # 0.000922，買方向來說不算 adverse），會被當成正常情況直接放行，實際上等於在
+    # 追價格噴發後的高點進場（TAGUSDT 實測案例：3.25% 落差，pullback 模式完全沒被
+    # 攔下）。總偏移檢查不分方向，只要訊號價跟目前牌價差太多就攔，不再限定 mode，
+    # 才能同時擋住「往不利方向追」跟「追噴發高點」兩種情況。
+    total_dev = abs(order_price - market_price) / market_price
+    if is_relaxed:
+        chase_limit = 0.008  # 寬鬆模式下追價極限放寬至 0.8%
+    else:
+        chase_limit = max(0.003, min(0.010, atr_pct * 0.8 if atr_pct > 0 else 0.004))
+    if total_dev > chase_limit:
+        return False, f"chase price drift {total_dev*100:.2f}% > {chase_limit*100:.2f}%"
 
     return True, "ok"
 
