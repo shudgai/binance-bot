@@ -596,12 +596,20 @@ def get_all_prices():
         from services.bot_manager_service import load_symbol_config
         symbols = load_symbol_config()
         prices = dict(_last_prices)
+        all_tickers = CACHE.get_all_tickers()
         for sym in symbols:
             if _binance_banned():
                 break
-            try:
-                ticker = client.futures_symbol_ticker(symbol=sym)
-                prices[sym] = float(ticker.get('price', 0))
+            if sym in all_tickers:
+                prices[sym] = float(all_tickers[sym].get('price', 0))
+            else:
+                # Fallback to direct call if not in cache (though it should be)
+                try:
+                    ticker = client.futures_symbol_ticker(symbol=sym)
+                    prices[sym] = float(ticker.get('price', 0))
+                except Exception as e:
+                    _note_binance_ban(e)
+                    continue
             except Exception as e:
                 _note_binance_ban(e)
                 continue

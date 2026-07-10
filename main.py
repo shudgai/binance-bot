@@ -117,11 +117,13 @@ if __name__ == "__main__":
     ensure_single_instance()
 
     # Import after single-instance check so we don't initialise twice
+    from core import ctx
     from core.ctx import init_states
     from core.symbol_profile import load_symbol_pool, load_symbol_profiles
     from core.config import DEFAULT_SYMBOLS
     from core.runner import main
     from services.binance_cache import BinanceDataCache
+    from core.exchange_client import exchange_futures
 
     # Initialise shared state
     ctx.CACHE = BinanceDataCache(exchange_futures)

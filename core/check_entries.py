@@ -340,14 +340,8 @@ async def check_entries():
 
         # --- 新增：等待收盤確認機制 ---
         if s.get("pending_side"):
-            if is_relaxed:
-                logger.info(f"⚡ [寬鬆即時確認] {sym} 寬鬆模式直接放行已還原的 pending {s['pending_side']} 訊號")
-                side = s["pending_side"]
-                strength = s.get("pending_strength", 5.0)
-                route = s.get("pending_route", "confirmed")
-                s["pending_side"] = None
-                candidates.append((sym, side, strength, route))
-                continue
+            # 移除寬鬆模式的即時確認，強迫所有訊號（包含寬鬆模式）都必須等待 K 線收盤確認
+            # 避免在 K 線走到一半、價格暴衝的瞬間（插針最高點/最低點）直接進場
             if current_candle_time <= s.get("pending_time", 0):
                 continue
 
@@ -707,17 +701,7 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
-        # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
-        if is_relaxed:
-            logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
-            # 寬鬆模式繞過 pending 確認，原本沒有機會走到下面設定 entry_reason 的那一行，
-            # 導致這種路線進場的單子平倉記錄永遠是 UNKNOWN，這裡補上。
-            s["entry_reason"] = route
-            from core.entry_reason_store import save_entry_reason
-            save_entry_reason(sym, route)
-            candidates.append((sym, side, strength, route))
-            continue
-
+        # 通過所有初步篩選，進入 pending 狀態等待下一根 K 線確認（不再允許即時開倉）
         # [新增] 記錄訊號產生時的價格，用於後續防範「開倉背離」
         s["pending_trigger_price"] = s["close_price"]
         s["pending_side"] = side

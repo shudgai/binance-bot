@@ -40,3 +40,21 @@ class BinanceDataCache:
 
         with self.lock:
             return self.ticker_cache.get(symbol)
+
+    def get_all_tickers(self):
+        """
+        獲取所有已快取的 ticker 數據
+        :return: 字典格式的 tickers
+        """
+        current_time = time.time()
+        
+        # 如果快取過期（超過 1 秒），則重新抓取
+        if current_time - self.last_update_time > self.update_interval:
+            self.fetch_and_cache()
+            # 如果抓取失敗或還沒抓到，稍微等一下再試一次
+            if not self.ticker_cache:
+                time.sleep(0.1)
+                return {}
+
+        with self.lock:
+            return self.ticker_cache

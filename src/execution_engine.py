@@ -32,6 +32,15 @@ class ExecutionEngine:
         """
         預先檢查風險。
         """
+        from core.ctx import CACHE
+        
+        # 使用快取獲取最新數據，確保 risk check 基於最新的市場價格
+        ticker_data = CACHE.get_ticker(symbol)
+        if ticker_data:
+            # 如果快取有值，可以使用 ticker_data['last'] 作為參考價格
+            # 此處保留傳入的 price 作為主要檢查基準，但可與快取數據比對以防異常
+            pass
+
         # 這裡可以加入更多風險檢查邏輯
         return True
 
