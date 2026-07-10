@@ -5,6 +5,7 @@ import numpy as np
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
+from core import ctx
 
 load_dotenv()
 
@@ -109,7 +110,7 @@ def round_step(qty, step):
 
 def get_price(symbol: str):
     """使用快取獲取價格，降低 API 權重消耗"""
-    ticker_data = CACHE.get_ticker(symbol)
+    ticker_data = ctx.CACHE.get_ticker(symbol) if ctx.CACHE else None
     if ticker_data:
         return ticker_data
     
@@ -596,7 +597,7 @@ def get_all_prices():
         from services.bot_manager_service import load_symbol_config
         symbols = load_symbol_config()
         prices = dict(_last_prices)
-        all_tickers = CACHE.get_all_tickers()
+        all_tickers = ctx.CACHE.get_all_tickers() if ctx.CACHE else {}
         for sym in symbols:
             if _binance_banned():
                 break
@@ -610,9 +611,6 @@ def get_all_prices():
                 except Exception as e:
                     _note_binance_ban(e)
                     continue
-            except Exception as e:
-                _note_binance_ban(e)
-                continue
         _last_prices = prices
         _last_prices_time = now
         return prices
@@ -976,7 +974,7 @@ def market_short(symbol: str, amount: float, signal_price: float = None):
     Execute a market short order with slippage protection and pre-flight price check.
     """
     # Layer 2: Pre-flight Price Check - 使用快取獲取當前價格
-    ticker_data = CACHE.get_ticker(symbol)
+    ticker_data = ctx.CACHE.get_ticker(symbol) if ctx.CACHE else None
     if ticker_data:
         current_price = float(ticker_data.get("price", 0))
     else:

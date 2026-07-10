@@ -123,10 +123,14 @@ if __name__ == "__main__":
     from core.config import DEFAULT_SYMBOLS
     from core.runner import main
     from services.binance_cache import BinanceDataCache
-    from core.exchange_client import exchange_futures
+    # BinanceDataCache 內部用同步方式呼叫 futures_ticker()，必須傳同步的
+    # python-binance client（services.binance_service.client），不能是
+    # core.exchange_client.exchange_futures 那個非同步的 ccxt 實例——傳錯的話
+    # fetch_tickers() 沒 await 只會拿到一個從未執行的 coroutine，快取永遠是空的。
+    from services.binance_service import client as _binance_sync_client
 
     # Initialise shared state
-    ctx.CACHE = BinanceDataCache(exchange_futures)
+    ctx.CACHE = BinanceDataCache(_binance_sync_client)
     # Initialise shared state
     symbols = load_symbol_pool() or list(DEFAULT_SYMBOLS)
     load_symbol_profiles()
