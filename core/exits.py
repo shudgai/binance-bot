@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import math
 import time
 import numpy as np
 
@@ -22,21 +23,34 @@ class DynamicExitManager:
     動態退出管理器：結合 ATR 趨勢追蹤與非線性耐心衰減模型。
     解決點：防止在利潤區間因市場微小震盪而導致計時器重置，導致無法入帳。
     """
-    def __init__(self, entry_price):
+    def __init__(self, entry_price, restored_peak_pct=0.0):
         self.entry_price = entry_price
-        self.max_price = entry_price
-        
+
         # 配置參數
         self.profit_threshold = 0.15        # 啟動門檻 (0.15%)
         self.stagnation_range = 0.0005       # 盤整區間 (0.05%)
         self.no_high_time_limit = 60         # 盤整判定時間 (60秒內沒創新高)
-        
+
+        # 還原重啟前已經記錄的峰值百分比（highest_profit_pct 全系統共用、有落地
+        # 存檔，重啟時會被還原）。這個管理器每次重啟都會重新 new 一個實例，如果
+        # 直接從 entry_price 重新算，就會完全忘記重啟前已經漲到哪裡，導致「已經
+        # 過了啟動門檻、正在回撤保護中」的單子，一重啟就打回從沒漲過的狀態，之後
+        # 只能等它重新漲到 0.15% 才會再啟動——這段空窗期完全沒有回撤保護，實測
+        # AVAXUSDT 案例：重啟前已經漲到 0.16%（超過門檻），重啟後價格已經回落，
+        # 新的管理器實例從未見過那個峰值，整段回撤過程完全沒被保護到。
+        self.max_price = entry_price * (1 + max(0.0, restored_peak_pct) / 100.0)
+        self.current_max_price = self.max_price
+
         # 狀態變數
-        self.is_active = False               # 是否進入利潤保護狀態
-        self.wait_start_time = None          # 進入狀態的時間點
-        self.wait_time_limit = 300           # 動態計算出的耐心秒數
-        self.last_high_time = None           # 上次創下最高點的時間
-        self.current_max_price = entry_price
+        self.is_active = restored_peak_pct >= self.profit_threshold
+        if self.is_active:
+            self.wait_start_time = time.time()
+            self.last_high_time = time.time()
+            self.wait_time_limit = self._calculate_wait_time(restored_peak_pct)
+        else:
+            self.wait_start_time = None          # 進入狀態的時間點
+            self.wait_time_limit = 300           # 動態計算出的耐心秒數
+            self.last_high_time = None           # 上次創下最高點的時間
 
     def update(self, current_price):
         """
@@ -75,8 +89,11 @@ class DynamicExitManager:
         time_since_high = time.time() - self.last_high_time
         
         # 1. 回撤比例 (Retracement) - 快速反應防線
-        if current_price < (self.current_max_price * 0.999):
-            print(f"💰 [觸發：回撤比例] 價格從最高點回落超過 0.1%，快速落袋為安。")
+        # 使用者反映 0.1% 容忍度對這種小獲利單子來說回吐比例偏高（ZEC 案例：峰值 0.31%
+        # 只是回撤 0.1% 價格，獲利卻被打回 0.11%，回吐了六成多）。收緊到 0.06%，讓它更早
+        # 鎖利，代價是對雜訊震盪更敏感、可能更容易在真正只是短暫回抽時就先出場。
+        if current_price < (self.current_max_price * 0.9970):
+            print(f"💰 [觸發：回撤比例] 價格從最高點回落超過 0.3%，快速落袋為安。")
             return "SELL"
 
         # 2. 動態耐心極限 (Time-out) - 強制入帳防線
@@ -340,7 +357,7 @@ async def check_exits(sym):
 
     # --- [新增] 動態退出管理器 (Dynamic Exit Manager) ---
     if "dynamic_exit_manager" not in s:
-        s["dynamic_exit_manager"] = DynamicExitManager(avg)
+        s["dynamic_exit_manager"] = DynamicExitManager(avg, restored_peak_pct=s.get("highest_profit_pct", 0.0) * 100)
     
     manager = s["dynamic_exit_manager"]
     exit_signal = manager.update(p)
@@ -427,6 +444,19 @@ async def check_exits(sym):
     # --- [新增] 執行動態移動停損更新 ---
     # 這會根據當前價格更新 s["trailing_stop_price"]
     update_trailing_stop(sym, p, is_long)
+
+    ts_price = s.get("trailing_stop_price")
+    if ts_price is not None and ts_price > 0:
+        if is_long:
+            if p <= ts_price:
+                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} <= 停損價 {ts_price:.6f}")
+                await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=True)
+                return
+        else:
+            if p >= ts_price:
+                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} >= 停損價 {ts_price:.6f}")
+                await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=True)
+                return
 
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     # Specifically handle BCH and XLM with higher ATR multipliers to account for their higher volatility
