@@ -59,6 +59,7 @@ async def wait_for_api_cooldown():
 async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
     if initial_delay > 0:
         await asyncio.sleep(initial_delay)
+    error_count = 0
     while True:
         try:
             await wait_for_api_cooldown()
@@ -69,16 +70,29 @@ async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
                     update_trade_signal(sym, trade)
             elif trades:
                 update_trade_signal(sym, trades)
+            error_count = 0  # 成功，重設錯誤計數
         except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
+            error_count += 1
             activate_api_cooldown()
             logger.info(f"🚨 [成交流限流] {sym} 暫停所有行情 REST 請求 {API_RATE_LIMIT_COOLDOWN_SEC:.0f} 秒: {e}")
         except Exception as e:
+            error_count += 1
             if "429" in str(e) or "-1003" in str(e):
                 activate_api_cooldown()
                 logger.info(f"🚨 [成交流限流] {sym} 觸發全域冷卻: {e}")
             else:
-                logger.info(f"⚠️ [成交流監聽異常] {sym}: {e}")
-        await asyncio.sleep(TRADE_POLL_INTERVAL_SEC)
+                # 只有連續失敗 3 次以上才輸出警告日誌，減少偶發性超時造成的日誌雜訊
+                if error_count >= 3:
+                    logger.info(f"⚠️ [成交流監聽異常] {sym} (連續失敗 {error_count} 次): {e}")
+                else:
+                    logger.debug(f"成交流監聽暫時性失敗 {sym}: {e}")
+
+        # 限制出錯時的避讓延遲在 15 秒以內，確保出錯後能快速重試、不影響成交速度
+        current_sleep = TRADE_POLL_INTERVAL_SEC
+        if error_count > 0:
+            current_sleep = min(TRADE_POLL_INTERVAL_SEC, 15.0)
+
+        await asyncio.sleep(current_sleep)
 
 
 async def ensure_watch_tasks(exchange):
@@ -433,7 +447,7 @@ async def main_loop(exchange):
     while True:
         try:
             loop_start = time.time()
-            await ensure_watch_tasks(exchange_market_data)
+            await ensure_watch_tasks(exchange_futures)
             if not PAPER_TRADING and loop_start - last_balance_update > 30:
                 await fetch_real_balance()
                 last_balance_update = loop_start

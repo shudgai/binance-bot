@@ -47,13 +47,22 @@ async def fetch_real_balance():
     global REAL_BALANCE
     if PAPER_TRADING:
         return
+    import asyncio
     from core.exchange_client import exchange_futures
-    try:
-        balance_info = await exchange_futures.fetch_balance()
-        usdt_balance = float(balance_info.get('USDT', {}).get('total', 150.0))
-        REAL_BALANCE = usdt_balance
-    except Exception as e:
-        logger.info(f"⚠️ [餘額獲取失敗] {e}")
+    last_exc = None
+    for attempt in range(2):  # 最多嘗試 2 次（首次 + 1 次重試）
+        try:
+            balance_info = await exchange_futures.fetch_balance()
+            usdt_balance = float(balance_info.get('USDT', {}).get('total', 150.0))
+            REAL_BALANCE = usdt_balance
+            return
+        except Exception as e:
+            last_exc = e
+            if attempt == 0:
+                # 第一次失敗：等 2 秒後重試（幣安 Demo 伺服器間歇性 502/-1007）
+                await asyncio.sleep(2)
+    # 兩次都失敗才輸出警告，並保留上次成功的餘額值
+    logger.info(f"⚠️ [餘額獲取失敗] {last_exc}")
 
 
 def get_balance():

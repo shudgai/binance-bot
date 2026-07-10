@@ -222,11 +222,13 @@ async def fetch_sma200_15m(exchange, sym):
 async def fetch_all_sma200(exchange):
     from core import ctx
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    tasks = [fetch_sma200_15m(exchange, sym) for sym in symbols]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(symbols):
-        if not isinstance(results[i], Exception):
-            ctx.STATES[sym]["sma200_15m"] = results[i]
+    for sym in symbols:
+        try:
+            val = await fetch_sma200_15m(exchange, sym)
+            ctx.STATES[sym]["sma200_15m"] = val
+        except Exception as e:
+            logger.info(f"⚠️ [SMA200獲取異常] {sym}: {e}")
+        await asyncio.sleep(0.1)  # 每次請求間隔 100ms 避免瞬間沖高權重
 
 
 async def fetch_ema_15m(exchange, sym):
@@ -248,13 +250,14 @@ async def fetch_ema_15m(exchange, sym):
 async def fetch_all_ema_15m(exchange):
     from core import ctx
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    tasks = [fetch_ema_15m(exchange, sym) for sym in symbols]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(symbols):
-        if not isinstance(results[i], Exception):
-            ema20, ema50 = results[i]
+    for sym in symbols:
+        try:
+            ema20, ema50 = await fetch_ema_15m(exchange, sym)
             ctx.STATES[sym]["ema20_15m"] = ema20
             ctx.STATES[sym]["ema50_15m"] = ema50
+        except Exception as e:
+            logger.info(f"⚠️ [15m EMA獲取異常] {sym}: {e}")
+        await asyncio.sleep(0.1)  # 每次請求間隔 100ms
 
 
 async def fetch_ema50_1h(exchange, sym):
@@ -275,11 +278,13 @@ async def fetch_ema50_1h(exchange, sym):
 async def fetch_all_ema50_1h(exchange):
     from core import ctx
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    tasks = [fetch_ema50_1h(exchange, sym) for sym in symbols]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for i, sym in enumerate(symbols):
-        if not isinstance(results[i], Exception):
-            ctx.STATES[sym]["ema50_1h"] = results[i]
+    for sym in symbols:
+        try:
+            val = await fetch_ema50_1h(exchange, sym)
+            ctx.STATES[sym]["ema50_1h"] = val
+        except Exception as e:
+            logger.info(f"⚠️ [1H EMA50獲取異常] {sym}: {e}")
+        await asyncio.sleep(0.1)  # 每次請求間隔 100ms
 
 
 async def fetch_bb_4h(exchange, sym):
