@@ -32,7 +32,7 @@ def should_block_order_flow(side, bids, asks, threshold, paper_trading):
         imbalanced = asks == 0 or bids / asks < threshold
     else:
         imbalanced = bids == 0 or asks / bids < threshold
-    return imbalanced and not paper_trading
+    return imbalanced
 
 
 def _import_update_trailing_stop():
@@ -99,6 +99,14 @@ async def _replace_exchange_exit_orders(sym):
     _, _, tp_dist, _ = _calc_sl_tp(sym, "buy" if is_long else "sell", s, avg, route)
     take_profit_price = avg + tp_dist if is_long else avg - tp_dist
     take_profit_price = round_step(take_profit_price, prec["tick_size"])
+
+    # 防禦性保底：進場已經會把數量夾在 MARKET_LOT_SIZE 上限之內（見 execute_order），
+    # 這裡理論上不該再超過，但攤平救援等會改變 qty 的路徑萬一漏夾，用同一個上限保底，
+    # 避免掛單直接被 -4005 拒絕、部位變成完全沒有交易所端保護。
+    _market_max_qty = prec.get('market_max_qty')
+    if _market_max_qty and _market_max_qty > 0 and qty > _market_max_qty:
+        logger.info(f"⚠️ [MARKET_MAX_QTY] {sym} 止損/停利數量 {qty:.4f} > 市價單上限 {_market_max_qty}，僅能為部分倉位掛單保護")
+        qty = round_step(_market_max_qty, prec["step_size"])
 
     stop_order = await exchange_futures.create_order(
         sym, type="STOP_MARKET", side=close_side, amount=qty,
@@ -531,22 +539,56 @@ async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
     結果，average/price 欄位常常還沒填（要過一下子交易所才處理完），如果直接信任
     這個回傳值，會退回去用呼叫端傳入的理論價格算獲利——這正是 PeakLock/RESCUE_TRAIL
     等鎖利機制「內部顯示賺錢、實際上虧損」的成因之一。這裡改成下單後主動再查一次
-    訂單狀態，確保拿到的是交易所真正的成交均價。"""
-    market_order = await exchange_futures.create_order(
-        sym, type="market", side=close_side, amount=qty,
-        params={"reduceOnly": True}
-    )
-    fill_price = float(market_order.get('average') or market_order.get('price') or 0.0)
-    if fill_price <= 0:
-        await asyncio.sleep(0.5)
-        try:
-            fetched = await exchange_futures.fetch_order(market_order['id'], sym)
-            fill_price = float(fetched.get('average') or fetched.get('price') or 0.0)
-        except Exception as fe:
-            logger.info(f"⚠️ [市價成交查詢失敗] {sym}: {fe}")
-    if fill_price <= 0:
-        fill_price = fallback_price
-    return fill_price
+    訂單狀態，確保拿到的是交易所真正的成交均價。
+
+    幣安期貨的 MARKET_LOT_SIZE 過濾器對市價單另外設有比一般 LOT_SIZE 更低的單筆數量
+    上限（實測 KAITOUSDT：LOT_SIZE 上限 100 萬，MARKET_LOT_SIZE 卻只有 500）。用限價
+    掛進場時不受這限制，倉位可能建到遠超過這個上限，但平倉時若整包數量一次送出就會被
+    直接拒絕（-4005 Quantity greater than max quantity），導致部位卡住平不掉、完全沒有
+    交易所端保護（真實發生過：KAITOUSDT 744 顆，止損/停利掛不上、市價平倉連續失敗）。
+    這裡改成依交易所回報的上限自動切成多筆市價單分批送出，確保無論部位多大都平得掉。"""
+    prec = await get_contract_precision(sym)
+    max_qty = prec.get('market_max_qty')
+    step = prec.get('step_size', 0.001)
+
+    chunks = []
+    if max_qty and max_qty > 0 and qty > max_qty:
+        remaining = qty
+        while remaining > 0.000001:
+            chunk = min(remaining, max_qty)
+            chunk = round_step(chunk, step) if step > 0 else chunk
+            if chunk <= 0:
+                break
+            chunks.append(chunk)
+            remaining -= chunk
+    else:
+        chunks = [qty]
+
+    total_filled_qty = 0.0
+    total_filled_notional = 0.0
+    for i, chunk_qty in enumerate(chunks):
+        market_order = await exchange_futures.create_order(
+            sym, type="market", side=close_side, amount=chunk_qty,
+            params={"reduceOnly": True}
+        )
+        chunk_fill_price = float(market_order.get('average') or market_order.get('price') or 0.0)
+        if chunk_fill_price <= 0:
+            await asyncio.sleep(0.5)
+            try:
+                fetched = await exchange_futures.fetch_order(market_order['id'], sym)
+                chunk_fill_price = float(fetched.get('average') or fetched.get('price') or 0.0)
+            except Exception as fe:
+                logger.info(f"⚠️ [市價成交查詢失敗] {sym}: {fe}")
+        if chunk_fill_price <= 0:
+            chunk_fill_price = fallback_price
+        total_filled_qty += chunk_qty
+        total_filled_notional += chunk_qty * chunk_fill_price
+        if len(chunks) > 1:
+            logger.info(f"📦 [市價分批平倉] {sym} 第 {i+1}/{len(chunks)} 批 {chunk_qty:.4f} @ {chunk_fill_price:.6f}（單筆市價單上限 {max_qty}）")
+
+    if total_filled_qty <= 0:
+        return fallback_price
+    return total_filled_notional / total_filled_qty
 
 
 async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
@@ -678,13 +720,11 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # （PeakLock 鎖利被回吐、但還沒真正虧損）會改用 is_stop_loss=False 走鎖利追價流程，
     # 此時理論利潤可能低於一般 0.35%/1.5% 門檻，若被這裡攔下會讓部位卡在保護線之下
     # 卻遲遲不出場，比直接放行更危險。
-    # [Opportunity_Rotation]（機會成本輪替）也要放行：check_entries.py 那邊已經先確認
-    # 過該倉位獲利 >= 0.3% 才會觸發輪替，如果這裡又用 fee_buffer（0.35%~1.5%，高波動幣
-    # 更高）擋下，會讓輪替判斷「已經讓位」但倉位實際上沒真的平掉，造成槽位數對不上。
     # [Dynamic_Exit_Manager] 自己內建 0.15% 啟動門檻 + 回撤/耐心逾時/盤整三選一的判斷才會
     # 決定出場，不是隨便一點點獲利就賣——不加進白名單的話，這裡的 0.35% 固定門檻會蓋掉
     # 它自己已經做過的判斷，等於它的 0.15% 設定形同虛設，永遠要等到 0.35% 才放行。
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[Opportunity_Rotation]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]"]
+    # （[Opportunity_Rotation] 機會成本輪替功能已依使用者要求移除，不會再產生這個 reason。）
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1147,14 +1187,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
                         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
                         return
-                    logger.info(f"⚠️ [OrderFlow_Paper_Override] {sym} 買盤較弱，但模擬交易放行以收集樣本")
             else:
                 if bids == 0 or asks / bids < _flow_threshold:
                     if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
                         logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
                         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
                         return
-                    logger.info(f"⚠️ [OrderFlow_Paper_Override] {sym} 賣盤較弱，但模擬交易放行以收集樣本")
         except Exception as e:
             logger.info(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:
@@ -1181,6 +1219,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         market_price = float(s.get("last_trade_price", 0.0) or 0)
 
     if market_price > 0:
+        # --- Slippage Filter (Layer 1) ---
+        # Compare signal_price (price) with current market_price
+        # We use 0.5% as default, but check if it's a high volatility coin
+        # High volatility is defined by ATR > 0.8% (as seen in other guards)
+        atr = float(s.get("current_atr", 0.0) or 0.0)
+        atr_pct = atr / market_price if market_price > 0 else 0.0
+        slippage_threshold = 0.010 if atr_pct > 0.008 else 0.005
+        
+        slippage = abs(price - market_price) / market_price
+        if slippage > slippage_threshold:
+            logger.info(f"🛑 [Slippage Filter] {sym} {side} 訊號價 {price:.6f} 與市場價 {market_price:.6f} 偏離 {slippage*100:.2f}% > 門檻 {slippage_threshold*100:.1f}%")
+            logger.info(f"🧱 [ORDER_BLOCK] {sym} 被滑點過大攔截，拒絕下單以避免追高/追低")
+            return
+
         deviation = abs(price - market_price) / market_price
         if deviation > 0.05:
             logger.info(f"🚨 [風控] {sym} 訂單價格 {price:.6f} 偏離市場參照價 {market_price:.6f} ({deviation*100:.2f}%)，已攔截異常訂單！")
@@ -1306,6 +1358,17 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
     base_amt = base_notional / price
     base_amt = await sanitize_order_qty(sym, base_amt)
+
+    # 幣安期貨的 MARKET_LOT_SIZE 過濾器對市價單另外設有比一般 LOT_SIZE 更低的單筆數量
+    # 上限（實測 KAITOUSDT：LOT_SIZE 上限 100 萬，MARKET_LOT_SIZE 卻只有 500）。進場走
+    # 限價/追價單不受這個限制，倉位可能建到遠超過這個上限，但之後市價平倉、或掛市價型
+    # 止損/停利單都會直接被拒絕（-4005 Quantity greater than max quantity），導致部位
+    # 卡住平不掉、完全沒有交易所端保護（真實發生過：KAITOUSDT 744 顆）。在源頭把進場
+    # 數量也一併夾在這個上限之內，確保建立的倉位永遠平得掉、掛得上止損/停利單。
+    _market_max_qty = (await get_contract_precision(sym)).get('market_max_qty')
+    if _market_max_qty and _market_max_qty > 0 and base_amt > _market_max_qty:
+        logger.info(f"⚠️ [MARKET_MAX_QTY] {sym} 計算數量 {base_amt:.4f} > 市價單上限 {_market_max_qty}，已自動縮減，避免日後平倉/止損掛單被拒")
+        base_amt = await sanitize_order_qty(sym, _market_max_qty)
 
     actual_notional = base_amt * price
     if actual_notional < 6.0 and actual_notional > 0:
