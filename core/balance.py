@@ -5,6 +5,7 @@ import time
 from core.config import (
     PAPER_TRADING, DUAL_SHOT_MAX_SLOTS, DUAL_SHOT_LEVERAGE,
     DAILY_LOSS_LIMIT_PCT, TAKER_FEE_RATE, ROUND_TRIP_FEE_PCT, LIVE_CAPITAL_CAP,
+    CAPITAL_SLOT_TIERS,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,11 +75,26 @@ def get_balance():
         return 150.0
 
 
+def get_dynamic_max_slots(balance=None) -> int:
+    """依本金階段動態決定同時開倉槽位數，見 core/config.py 的 CAPITAL_SLOT_TIERS。
+    本金越大，允許同時開的倉位越多，但刻意讓每槽金額隨本金一起成長，不會因為
+    槽位變多就把單筆金額稀釋回太小、被手續費/滑價吃掉太多。"""
+    if balance is None:
+        try:
+            balance = get_balance()
+        except Exception:
+            return DUAL_SHOT_MAX_SLOTS
+    for cap, slots in CAPITAL_SLOT_TIERS:
+        if balance < cap:
+            return slots
+    return CAPITAL_SLOT_TIERS[-1][1]
+
+
 def compute_per_coin_margin(sym=None, allocation_pct=None):
     balance = get_balance()
     if balance <= 0:
         return 0
-    allocated_margin = balance / DUAL_SHOT_MAX_SLOTS
+    allocated_margin = balance / get_dynamic_max_slots(balance)
     if allocation_pct is not None:
         allocated_margin *= allocation_pct
     return allocated_margin * 0.999

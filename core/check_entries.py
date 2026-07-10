@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 from core import ctx
-from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE, MAX_POSITIONS,
+from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
     DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, get_entry_strictness_profile)
 from core.indicators import (_get_atr, _macd_vals, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
@@ -215,49 +215,6 @@ def compute_indicators(sym):
             s["divergence"] = "bearish"
 
 
-def _find_rotation_candidate(new_strength):
-    """機會成本輪替：槽位滿了(remaining_slots<=0)時，找一個「已經停滯夠久、獲利
-    卻不再往上走」的舊倉位，讓給明顯更強的新訊號。使用者要求「用你的方式實作」，
-    對應說明時提出的兩道防線：
-      (a) 舊倉位要真的停滯夠久（20 分鐘沒創新高），不是單一 tick 沒漲就算；
-      (b) 新訊號強度要「明顯」贏過舊倉位進場當時的強度（差距 >= 10 分），
-          避免只是略強就頻繁換手、白付手續費/滑價。
-    另外要求舊倉位目前確實有獲利（>=0.3%）且至少已經持有 15 分鐘，虧損中或剛
-    開倉的部位一律不列入輪替候選，交給既有的停損/停利機制處理。"""
-    _STALL_SEC = 1200
-    _MIN_HOLD_SEC = 900
-    _MIN_PROFIT_PCT = 0.003
-    _STRENGTH_MARGIN = 10.0
-
-    now = time.time()
-    best_sym = None
-    best_stall = 0.0
-    for sym2, s2 in ctx.STATES.items():
-        qty2 = s2.get("qty", 0.0)
-        if abs(qty2) < 0.000001:
-            continue
-        avg2 = s2.get("avg_price", 0.0)
-        px2 = s2.get("close_price", 0.0)
-        if avg2 <= 0 or px2 <= 0:
-            continue
-        is_long2 = qty2 > 0
-        profit2 = (px2 - avg2) / avg2 if is_long2 else (avg2 - px2) / avg2
-        if profit2 < _MIN_PROFIT_PCT:
-            continue
-        if now - s2.get("open_time", now) < _MIN_HOLD_SEC:
-            continue
-        stall_sec2 = now - s2.get("peak_time", s2.get("open_time", now))
-        if stall_sec2 < _STALL_SEC:
-            continue
-        entry_strength2 = s2.get("entry_strength", 0.0)
-        if new_strength < entry_strength2 + _STRENGTH_MARGIN:
-            continue
-        if stall_sec2 > best_stall:
-            best_stall = stall_sec2
-            best_sym = sym2
-    return best_sym
-
-
 async def check_entries():
     from core.orders import execute_order, close_position
     from core.market_data import load_open_positions
@@ -269,7 +226,8 @@ async def check_entries():
         return
 
     open_count = get_open_position_count()
-    remaining_slots = MAX_POSITIONS - open_count
+    dynamic_max_positions = _bal.get_dynamic_max_slots()
+    remaining_slots = dynamic_max_positions - open_count
 
     from core.config import ENTRY_STRICTNESS_MODE
     is_relaxed = (ENTRY_STRICTNESS_MODE == "relaxed")
@@ -329,7 +287,7 @@ async def check_entries():
             continue
 
         # 開倉數限制 (針對新開倉)
-        if not has_position and open_count >= MAX_POSITIONS:
+        if not has_position and open_count >= dynamic_max_positions:
             continue
 
         # --- [NEW] 等待回踩 (Pullback Entry) 處理 ---
@@ -468,9 +426,18 @@ async def check_entries():
         # [Layer 0] 每幣種最低信號強度門檻
         profile = get_entry_strictness_profile()
         coin_profile_min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
-        min_sig = min(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
+        # 原本用 min() 取兩者較低的門檻，等於嚴格模式的全域門檻(15.0)永遠蓋掉個別幣種
+        # 特別調高的門檻（今天稍早才把主力幣/新幣門檻拉高到 18~24，min() 卻讓實際生效
+        # 門檻一直卡在 15.0，等於那次調整從未真正生效）。改成 max()，兩個門檻都當作
+        # 下限，用較嚴格的那個，個別幣種調高的門檻才會真正生效。
+        min_sig = max(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
         if profile.get("min_signal_strength", 10.0) <= 10.0:
             min_sig = max(min_sig - 1.5, 6.0)
+        # 大盤盤整（BTC 1H ADX 過低、沒有明確趨勢）時，動能型多空訊號普遍缺乏後續動能，
+        # 今天實測 AVAX/TRX/DOT/WLD/LINK 好幾筆都是這個情況：峰值都在 0.5% 以下就陰跌
+        # 打平出場。盤整期間拉高門檻，減少這種訊號品質不足以撐過盤整雜訊的進場。
+        if ctx.MARKET_WIND.get("is_ranging"):
+            min_sig += 5.0
         if strength < min_sig:
             set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
@@ -743,6 +710,11 @@ async def check_entries():
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         if is_relaxed:
             logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
+            # 寬鬆模式繞過 pending 確認，原本沒有機會走到下面設定 entry_reason 的那一行，
+            # 導致這種路線進場的單子平倉記錄永遠是 UNKNOWN，這裡補上。
+            s["entry_reason"] = route
+            from core.entry_reason_store import save_entry_reason
+            save_entry_reason(sym, route)
             candidates.append((sym, side, strength, route))
             continue
 
@@ -752,7 +724,13 @@ async def check_entries():
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
         s["pending_route"] = route
-        s["entry_reason"] = route  # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN
+        # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN。同時落地存檔（entry_reason_store），
+        # 因為這個欄位只存在記憶體內的 ctx.STATES，bot 重啟就會被清空——今天一天內重啟
+        # 很多次，導致幾乎所有平倉記錄的 entry_reason 都變成 UNKNOWN，完全查不到當初為何
+        # 進場。落地存檔後，重啟時可以比照 entry_time_store 的做法一併還原。
+        s["entry_reason"] = route
+        from core.entry_reason_store import save_entry_reason
+        save_entry_reason(sym, route)
 
         logger.info(f"⏳ [等待確認] {sym} 產生 {side} 訊號 ({route})，等待目前 K 線收盤確認...")
         logger.info(f"🧭 [ENTRY_GATE] {sym} 進入 pending 狀態 | side={side} route={route} strength={strength:.2f}")
@@ -781,18 +759,12 @@ async def check_entries():
         has_pos = abs(s["qty"]) > 0.000001
 
         if not has_pos:
+            # 使用者要求移除「機會成本輪替」：原本槽位滿了會找一個已經停滯夠久、
+            # 獲利卻不再往上走的舊倉位平倉讓位給更強新訊號，但這會把還在正常發展、
+            # 只是還沒繼續創新高的獲利倉位提早平倉。現在槽位滿了就單純跳過這個候選，
+            # 交給既有的停損/停利/停滯超時機制自然決定舊倉位何時該出場。
             if remaining_slots <= 0:
-                _rot_sym = _find_rotation_candidate(strength)
-                if not _rot_sym:
-                    continue
-                _rs = ctx.STATES[_rot_sym]
-                _rot_is_long = _rs["qty"] > 0
-                _rot_avg = _rs.get("avg_price", 0.0)
-                _rot_px = _rs.get("close_price", 0.0)
-                _rot_profit = (_rot_px - _rot_avg) / _rot_avg if _rot_is_long else (_rot_avg - _rot_px) / _rot_avg
-                logger.info(f"🔄 [機會成本輪替] {_rot_sym} 停滯已久且獲利 {_rot_profit*100:.2f}%，讓位給更強訊號 {sym} (強度 {strength:.1f} vs 原進場強度 {_rs.get('entry_strength', 0.0):.1f})")
-                await close_position(_rot_sym, "sell" if _rot_is_long else "buy", abs(_rs["qty"]), _rot_px, _rot_avg, reason="[Opportunity_Rotation]")
-                remaining_slots += 1
+                continue
 
             # --- 同方向集中度風控 (Direction Concentration Guard) ---
             # 使用者反映：好幾次同一時段內，雷達選出的幣種訊號一面倒向同一個方向
@@ -809,7 +781,7 @@ async def check_entries():
             # 但槽位數改成 3 之後，同一個公式算出來變成只剩 1，比例上收得比原本嚴
             # 很多。改成統一用比例（60%）反推，槽位數=5 時還是算出 3（跟原本一致），
             # 槽位數=3 時算出 2，比例維持一致，不會因為總槽位變少而被不成比例地收緊。
-            _MAX_SAME_DIRECTION = max(1, round(MAX_POSITIONS * 0.6))
+            _MAX_SAME_DIRECTION = max(1, round(dynamic_max_positions * 0.6))
             _DIRECTION_OVERRIDE_STRENGTH = 20.0
             # 趨勢放行也要有強度下限（15.0，低於一般豁免門檻 20，因為已經有大盤
             # 4H+1H 雙重確認撐腰，不用比純強訊號豁免更嚴）。實測 2026/7/8 熊市盤整

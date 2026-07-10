@@ -83,12 +83,21 @@ async def get_contract_precision(sym: str):
         # 價格最小跳動單位（例如 0.0001），不是小數位數，可以直接拿來當 tick_size 用於
         # round_step() 四捨五入交易所止損單的觸發價，避免下單時價格精度不合法被拒。
         tick_size = float(market.get('precision', {}).get('price', 0.0001) or 0.0001)
+        # 幣安期貨的 MARKET_LOT_SIZE 過濾器對「市價單」（含市價平倉、觸發後的
+        # STOP_MARKET/TAKE_PROFIT_MARKET）另外設有比一般 LOT_SIZE 更低的單筆數量上限
+        # （實測 KAITOUSDT：LOT_SIZE 上限 100 萬，MARKET_LOT_SIZE 卻只有 500）。用限價單
+        # 掛進場時不受這個限制，倉位可能建到遠超過 500，但之後任何用市價平倉或掛市價止損/
+        # 停利單都會被直接拒絕（-4005 Quantity greater than max quantity）——實測
+        # KAITOUSDT 真實發生過：進場 744 顆後，止損/停利掛不上、市價平倉也連續失敗，整段
+        # 期間部位完全沒有交易所端保護。ccxt 統一格式的 limits.market.max 就是這個欄位。
+        market_max_qty = market.get('limits', {}).get('market', {}).get('max')
         _PRECISION_CACHE[sym] = {
             'step_size': step_size,
             'min_qty': min_qty,
             'tick_size': tick_size,
             'qty_prec': market.get('precision', {}).get('amount', precision),
-            'price_prec': market.get('precision', {}).get('price', precision)
+            'price_prec': market.get('precision', {}).get('price', precision),
+            'market_max_qty': float(market_max_qty) if market_max_qty else None,
         }
     except Exception:
         _PRECISION_CACHE[sym] = {
@@ -96,7 +105,8 @@ async def get_contract_precision(sym: str):
             'min_qty': 0.001,
             'tick_size': 0.0001,
             'qty_prec': 3,
-            'price_prec': 3
+            'price_prec': 3,
+            'market_max_qty': None,
         }
 
     return _PRECISION_CACHE[sym]

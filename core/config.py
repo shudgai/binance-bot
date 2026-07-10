@@ -15,10 +15,25 @@ TIMEFRAME = '5m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 3
 DEFAULT_LEVERAGE = 5
+# DUAL_SHOT_MAX_SLOTS / MAX_POSITIONS 以下維持當作「本金 <200 USDT」時的預設值
+# （也是找不到餘額資料時的保守 fallback）。本金 200~1000 USDT 區間改用
+# CAPITAL_SLOT_TIERS 分階段動態決定槽位數，見 core/balance.py 的
+# get_dynamic_max_slots()：本金越大，允許同時開的倉位越多，但刻意讓每槽金額
+# 隨本金一起成長（不會因為槽位變多就把單筆金額稀釋回太小、被手續費/滑價吃掉）。
 DUAL_SHOT_MAX_SLOTS = 3
 DUAL_SHOT_LEVERAGE = 5
 DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
+
+# (本金上限[USDT], 該階段槽位數)，由小到大排序；本金落在哪一段的上限之內
+# 就用那一段的槽位數，超過最後一段（1000）則沿用最後一段的槽位數。
+CAPITAL_SLOT_TIERS = [
+    (200, 3),
+    (400, 4),
+    (600, 5),
+    (800, 6),
+    (1000, 7),
+]
 
 COIN_PROFILE_CONFIG = {
     # 第一類：核心趨勢型 (Core_Trend) - 穩健獲利為主

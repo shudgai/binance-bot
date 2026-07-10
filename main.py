@@ -121,7 +121,10 @@ if __name__ == "__main__":
     from core.symbol_profile import load_symbol_pool, load_symbol_profiles
     from core.config import DEFAULT_SYMBOLS
     from core.runner import main
+    from services.binance_cache import BinanceDataCache
 
+    # Initialise shared state
+    ctx.CACHE = BinanceDataCache(exchange_futures)
     # Initialise shared state
     symbols = load_symbol_pool() or list(DEFAULT_SYMBOLS)
     load_symbol_profiles()

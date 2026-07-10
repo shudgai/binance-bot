@@ -343,6 +343,7 @@ def reset_coin_state(sym):
     from core import ctx
     from core.peak_store import clear_peak
     from core.entry_time_store import clear_entry_time
+    from core.entry_reason_store import clear_entry_reason
     s = ctx.STATES[sym]
     s["qty"] = 0.0
     s["avg_price"] = 0.0
@@ -353,6 +354,8 @@ def reset_coin_state(sym):
     s["highest_profit_pct"] = 0.0
     clear_peak(sym)
     clear_entry_time(sym)
+    clear_entry_reason(sym)
+    s["entry_reason"] = None
     s["highest_close_pct"] = 0.0
     s["peak_time"] = 0.0
     s["has_partial_closed"] = False
@@ -365,6 +368,12 @@ def reset_coin_state(sym):
     s["pending_confirm_low"] = 0
     s["has_been_negative"] = False
     s["trail_tp_price"] = 0.0
+    # DynamicExitManager 只有「不存在才 new 一個」的邏輯（core/exits.py），平倉後如果
+    # 不把它清掉，下一次這個幣種重新進場會直接沿用上一筆單「已經啟動、峰值價格是舊倉位
+    # 的高點」的舊實例，導致新倉位還沒真正漲到啟動門檻，就因為舊實例的回撤規則被誤判
+    # 觸發賣出（實測 XRPUSDT 案例：新倉位自己峰值只有 0.05%，遠低於 0.15% 啟動門檻，
+    # 卻直接以 [Dynamic_Exit_Manager] 出場，正是沿用了上一筆單留下的舊實例）。
+    s.pop("dynamic_exit_manager", None)
     s["entry_count"] = 0
     s["avg_entry_price"] = 0.0
     s["first_entry_price"] = 0.0

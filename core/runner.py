@@ -12,13 +12,13 @@ import requests
 
 from core import ctx
 from core.config import (
-    PAPER_TRADING, MAX_POSITIONS, MAIN_LOOP_INTERVAL_SEC,
+    PAPER_TRADING, MAIN_LOOP_INTERVAL_SEC,
     TRADE_POLL_INTERVAL_SEC, TRADE_POLL_LIMIT, API_RATE_LIMIT_COOLDOWN_SEC,
 )
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state
 from core.peak_store import load_peak, save_peak, clear_peak
-from core.balance import fetch_real_balance
+from core.balance import fetch_real_balance, get_dynamic_max_slots
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
     fetch_all_sma200, fetch_all_ema50_1h, fetch_all_ema_15m, load_open_positions)
 from core.symbol_profile import (filter_valid_symbols, apply_symbol_profile, SYMBOL_PROFILES,
@@ -291,8 +291,15 @@ async def calibrate_with_exchange(exchange):
                         if ctx.STATES[sym].get("entry_count", 0) == 0:
                             ctx.STATES[sym]["entry_count"] = 1
 
+                        # 恢復 entry_reason：跟 open_time 同樣的道理，這個欄位只存在
+                        # ctx.STATES 記憶體內，重啟後如果不還原，平倉時查得到的進場原因
+                        # 就永遠是 UNKNOWN，沒辦法追查當初為什麼進場。
+                        from core.entry_reason_store import load_entry_reason
+                        _stored_entry_reason = load_entry_reason(sym)
+                        if _stored_entry_reason:
+                            ctx.STATES[sym]["entry_reason"] = _stored_entry_reason
 
-                        
+
                         # ── 重啟峰值保護 ──
                         # 讀取保存過的峰值與交易所當前未實現損益，避免重啟後把真正高點洗掉。
                         try:
@@ -676,7 +683,7 @@ def print_multi_status():
     cooldown_count = sum(1 for s in ctx.STATES.values() if s.get('status') == 'COOLDOWN')
     banned_count = sum(1 for s in ctx.STATES.values() if s.get('status') == 'BANNED')
 
-    logger.info(f"  📊 [統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{MAX_POSITIONS}")
+    logger.info(f"  📊 [統計] 監控池={total_monitored} | 冷卻={cooldown_count} | 禁賽={banned_count} | 持倉數:{active_count}/{get_dynamic_max_slots()}")
     logger.info("-" * 60)
 
 

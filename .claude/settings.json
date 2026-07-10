@@ -69,7 +69,15 @@
       "Bash(awk '/^2026-07-08 02:3[7-9]/' /home/shudgai999/project/binance-bot/logs/bot.log)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/bot_manager_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/orders.py'\\).read\\(\\)\\)\")",
       "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)['is_running']\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('core/market_data.py'\\).read\\(\\)\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('core/market_data.py'\\).read\\(\\)\\)\")",
+      "Bash(python3 -m py_compile core/config.py services/binance_service.py)",
+      "Bash(timeout 60 python3 -c ' *)",
+      "Bash(systemctl --user status binance-api.service --no-pager -l)",
+      "Bash(journalctl --user -u binance-api.service -n 60 --no-pager)",
+      "Bash(python3 -m py_compile services/binance_service.py services/api.py core/config.py)",
+      "Bash(python3 -c \"import services.api\")",
+      "Bash(.venv/bin/python3 -c \"import services.api; print\\('API IMPORT OK'\\)\")",
+      "Bash(journalctl --user -u binance-api.service --since \"2026-07-08 20:00\" --until \"2026-07-09 11:10\")"
     ]
   }
 }

@@ -2,6 +2,7 @@ import asyncio
 from core.config import COIN_PROFILE_CONFIG
 
 ALL_SYMBOLS = []
+CACHE = None
 STATES = {}
 MARKET_WIND = {
     "btc_trend": "NEUTRAL",
@@ -9,6 +10,8 @@ MARKET_WIND = {
     "allow_short": True,
     "btc_change_15m": 0.0,
     "eth_change_15m": 0.0,
+    "btc_adx_15m": 0.0,
+    "is_ranging": False,
 }
 PENDING_LIMIT_ORDERS = {}
 WATCH_TASKS = {}

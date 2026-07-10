@@ -90,6 +90,7 @@ def compute_signal_strength(sym):
     long_macd_hist_aligned  = macd_hist > 0 and macd_hist > prev_macd_hist
     short_macd_hist_aligned = macd_hist < 0 and macd_hist < prev_macd_hist
 
+    # 修改：不僅要求 MACD 方向對，還要求動能擴張，避免在動能衰竭時追高/殺低
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
@@ -109,10 +110,17 @@ def compute_signal_strength(sym):
     is_below_sma200 = sma200 > 0 and close < sma200 * 1.001
     sma200_neutral   = sma200 == 0
 
-    close_near_ema20_long  = ema20 <= 0 or close <= ema20 * 1.04
-    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.96
+    # 修改：收緊 EMA20 距離限制 (從 4% 縮小到 1.5%)，防止乖離過大時追價
+    close_near_ema20_long  = ema20 <= 0 or close <= ema20 * 1.015
+    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.985
     is_in_bb_zone_long  = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
     is_in_bb_zone_short = s.get("bb_up",  0) > 0 and close >= s["bb_up"]  * 0.99
+    
+    # 新增：布林通道極限過濾 (防止買在上軌、空在下軌)
+    bb_up = s.get("bb_up", 0)
+    bb_low = s.get("bb_low", 0)
+    not_overbought_bb = bb_up == 0 or close < bb_up * 0.995 # 不在布林上軌邊緣做多
+    not_oversold_bb = bb_low == 0 or close > bb_low * 1.005 # 不在布林下軌邊緣做空
 
     # 預先計算供 Log 顯示的預估強度
     l_ts = 0; s_ts = 0
@@ -192,9 +200,9 @@ def compute_signal_strength(sym):
     rsi_direction_long  = rsi > 25.0
     rsi_direction_short = rsi < 75.0
 
-    # Gate 3: MACD 方向一致即可
-    macd_ok_long  = long_macd_cross  or macd_hist > 0
-    macd_ok_short = short_macd_cross or macd_hist < 0
+    # Gate 3: MACD 方向不僅一致，且必須擴張 (避免動能衰竭時進場)
+    macd_ok_long  = long_macd_ok
+    macd_ok_short = short_macd_ok
 
     # SMA200 純加分
     sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
@@ -209,7 +217,8 @@ def compute_signal_strength(sym):
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
-        close_near_ema20_long
+        close_near_ema20_long and
+        not_overbought_bb  # 新增：防止買在布林上軌極限
     )
 
     route_a_short = (
@@ -219,7 +228,8 @@ def compute_signal_strength(sym):
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
-        close_near_ema20_short
+        close_near_ema20_short and
+        not_oversold_bb  # 新增：防止空在布林下軌極限
     )
 
     # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────

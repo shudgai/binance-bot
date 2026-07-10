@@ -5,6 +5,7 @@ import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
 from services.binance_service import get_atr_ranked_coins, get_hot_movers as _get_hot_movers
+from core.ctx import CACHE
 from core.config import COIN_PROFILE_CONFIG
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")

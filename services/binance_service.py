@@ -79,6 +79,28 @@ def get_contract_step(symbol):
         pass
     return 0.001
 
+_market_max_qty_cache = {}
+
+def get_market_max_qty(symbol):
+    """幣安期貨的 MARKET_LOT_SIZE 過濾器對市價單另外設有比一般 LOT_SIZE 更低的單筆
+    數量上限（實測 KAITOUSDT：LOT_SIZE 上限 100 萬，MARKET_LOT_SIZE 卻只有 500）。
+    倉位若是用限價單建立，可能建到遠超過這個上限，之後市價平倉若整包數量一次送出
+    會被直接拒絕（-4005 Quantity greater than max quantity），導致部位卡住平不掉。"""
+    if symbol in _market_max_qty_cache:
+        return _market_max_qty_cache[symbol]
+    try:
+        info = client.futures_exchange_info()
+        for s in info.get('symbols', []):
+            if s['symbol'] == symbol:
+                for f in s.get('filters', []):
+                    if f['filterType'] == 'MARKET_LOT_SIZE':
+                        max_qty = float(f['maxQty'])
+                        _market_max_qty_cache[symbol] = max_qty
+                        return max_qty
+    except Exception:
+        pass
+    return None
+
 def round_step(qty, step):
     if qty <= 0 or step <= 0:
         return 0.0
@@ -86,6 +108,12 @@ def round_step(qty, step):
     return round(round(qty / step) * step, precision)
 
 def get_price(symbol: str):
+    """使用快取獲取價格，降低 API 權重消耗"""
+    ticker_data = CACHE.get_ticker(symbol)
+    if ticker_data:
+        return ticker_data
+    
+    # 如果快取中沒有（例如還沒初始化或抓取失敗），回退到原本的邏輯
     now = time.time()
     cached = _single_price_cache.get(symbol)
     if cached and now - cached[0] < DASHBOARD_PRICE_CACHE_SEC:
@@ -881,9 +909,28 @@ def get_all_positions():
     _all_positions_cache = (now, result)
     return result
 
-def market_buy(symbol: str, amount: float):
-    price = _get_entry_price(symbol, "BUY")
-    qty = amount / price
+def market_buy(symbol: str, amount: float, signal_price: float = None):
+    """
+    Execute a market buy order with slippage protection and pre-flight price check.
+    """
+    # Layer 2: Pre-flight Price Check
+    ticker = client.futures_symbol_ticker(symbol=symbol)
+    current_price = float(ticker["price"])
+
+    # Layer 1: Slippage Filter
+    if signal_price is not None:
+        slippage_pct = abs(current_price - signal_price) / signal_price
+        
+        # Threshold: 0.5% default. (1.0% for high volatility coins - logic to be refined)
+        threshold = 0.005
+        
+        if slippage_pct > threshold:
+            print(f"[Slippage Filter] Order cancelled for {symbol}: "
+                  f"Signal {signal_price}, Current {current_price} (Slippage {slippage_pct:.2%})")
+            return None
+
+    # Use current_price for quantity calculation to ensure it matches what we see now
+    qty = amount / current_price
     step = get_contract_step(symbol)
     qty_str = str(round_step(qty, step))
 
@@ -903,12 +950,44 @@ def market_buy(symbol: str, amount: float):
             type=Client.ORDER_TYPE_MARKET,
             quantity=qty_str
         )
-    # 返回完整訂單資訊，以便後續更新真實成交價與數量
-    return order
+    
+    # Capture the actual fill price (avgPrice) from the exchange response
+    # For USDCUSDT limit order, avgPrice might not be in the immediate response, 
+    # so we fall back to the order price or current_price.
+    fill_price = float(order.get("avgPrice", current_price))
+    if symbol == 'USDCUSDT' and "avgPrice" not in order:
+        fill_price = 0.9999
 
-def market_short(symbol: str, amount: float):
-    price = _get_entry_price(symbol, "SELL")
-    qty = amount / price
+    return {
+        "order": order,
+        "fill_price": fill_price
+    }
+
+def market_short(symbol: str, amount: float, signal_price: float = None):
+    """
+    Execute a market short order with slippage protection and pre-flight price check.
+    """
+    # Layer 2: Pre-flight Price Check - 使用快取獲取當前價格
+    ticker_data = CACHE.get_ticker(symbol)
+    if ticker_data:
+        current_price = float(ticker_data.get("price", 0))
+    else:
+        ticker = client.futures_symbol_ticker(symbol=symbol)
+        current_price = float(ticker["price"])
+
+    # Layer 1: Slippage Filter
+    if signal_price is not None:
+        slippage_pct = abs(current_price - signal_price) / signal_price
+        
+        # Threshold: 0.5% default. (1.0% for high volatility coins - logic to be refined)
+        threshold = 0.005
+        
+        if slippage_pct > threshold:
+            print(f"[Slippage Filter] Order cancelled for {symbol}: "
+                  f"Signal {signal_price}, Current {current_price} (Slippage {slippage_pct:.2%})")
+            return None
+
+    qty = amount / current_price
     step = get_contract_step(symbol)
     qty_str = str(round_step(qty, step))
 
@@ -918,7 +997,13 @@ def market_short(symbol: str, amount: float):
         type=Client.ORDER_TYPE_MARKET,
         quantity=qty_str
     )
-    return order
+    
+    # Capture the actual fill price (avgPrice) from the exchange response
+    fill_price = float(order.get("avgPrice", current_price))
+    return {
+        "order": order,
+        "fill_price": fill_price
+    }
 
 def market_sell(symbol: str, base_asset: str):
     positions = client.futures_position_information(symbol=symbol)
@@ -931,7 +1016,8 @@ def market_sell(symbol: str, base_asset: str):
 
     side = Client.SIDE_SELL if qty > 0 else Client.SIDE_BUY
     step = get_contract_step(symbol)
-    qty_str = str(round_step(abs(qty), step))
+    abs_qty = abs(qty)
+    qty_str = str(round_step(abs_qty, step))
 
     if symbol == 'USDCUSDT':
         order = client.futures_create_order(
@@ -943,12 +1029,32 @@ def market_sell(symbol: str, base_asset: str):
             quantity=qty_str
         )
     else:
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type=Client.ORDER_TYPE_MARKET,
-            quantity=abs(qty)
-        )
+        # 市價單另有比一般 LOT_SIZE 更低的 MARKET_LOT_SIZE 單筆數量上限（見
+        # get_market_max_qty 說明），超過就直接被拒單、部位卡住平不掉。這裡切成
+        # 多筆市價單分批送出；回傳最後一筆的訂單資訊供呼叫端查詢成交價使用。
+        max_qty = get_market_max_qty(symbol)
+        if max_qty and max_qty > 0 and abs_qty > max_qty:
+            remaining = abs_qty
+            order = None
+            while remaining > 0.000001:
+                chunk = min(remaining, max_qty)
+                chunk = round_step(chunk, step) if step > 0 else chunk
+                if chunk <= 0:
+                    break
+                order = client.futures_create_order(
+                    symbol=symbol,
+                    side=side,
+                    type=Client.ORDER_TYPE_MARKET,
+                    quantity=chunk
+                )
+                remaining -= chunk
+        else:
+            order = client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type=Client.ORDER_TYPE_MARKET,
+                quantity=abs_qty
+            )
     # 返回完整訂單資訊，以便後續更新真實成交價與數量
     return order
 

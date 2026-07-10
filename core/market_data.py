@@ -8,7 +8,7 @@ from core.config import (
     TIMEFRAME, PAPER_TRADING,
     ATR_WARMUP_BATCH_SIZE, ATR_WARMUP_SYMBOL_COUNT, ATR_WARMUP_LIMIT, ATR_WARMUP_PAUSE_SEC,
 )
-from core.indicators import calculate_ema, calculate_bollinger_bands
+from core.indicators import calculate_ema, calculate_bollinger_bands, calculate_adx
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ async def update_market_wind(exchange):
         eth_ohlcv = await exchange.fetch_ohlcv("ETH/USDT", TIMEFRAME, limit=100)
         btc_ohlcv_1h = await exchange.fetch_ohlcv("BTC/USDT", '1h', limit=50)
         btc_ohlcv_4h = await exchange.fetch_ohlcv("BTC/USDT", '4h', limit=50)
+        btc_ohlcv_15m = await exchange.fetch_ohlcv("BTC/USDT", '15m', limit=60)
 
         global_market_wind["allow_long"] = True
         global_market_wind["allow_short"] = True
@@ -49,6 +50,25 @@ async def update_market_wind(exchange):
                 global_market_wind["btc_trend_1h"] = "NEUTRAL"
         else:
             global_market_wind["btc_trend_1h"] = "NEUTRAL"
+
+        # 大盤盤整偵測：用 BTC 15m ADX 判斷現在是不是趨勢盤。ADX < 20 是技術分析常見的
+        # 「弱趨勢/盤整」判斷標準，這種環境下動能型多空訊號普遍缺乏後續發展空間，
+        # 實測 AVAX/TRX/DOT/WLD/LINK 好幾筆都是這種盤整期進場、峰值不到 0.5% 就陰跌
+        # 打平出場。標記起來供 check_entries.py 在盤整期間拉高訊號門檻使用。
+        # 用 15m 而非 1H/4H：實測當下 BTC 近 5 小時價格在窄幅區間來回（63700~64100），
+        # 15m ADX(14) 抓出來是 5.4（明確盤整），但 1H ADX(14) 卻高達 49.9——1H 的 14 根
+        # 涵蓋 14 小時，還吃到窄幅盤整之前的一段真趨勢，反應太慢、跟不上「現在」的市況。
+        _RANGING_ADX_THRESHOLD = 20.0
+        if len(btc_ohlcv_15m) >= 20:
+            _btc_highs_15m = np.array([x[2] for x in btc_ohlcv_15m])
+            _btc_lows_15m = np.array([x[3] for x in btc_ohlcv_15m])
+            _btc_closes_15m_arr = np.array([x[4] for x in btc_ohlcv_15m])
+            _btc_adx_15m = float(calculate_adx(_btc_highs_15m, _btc_lows_15m, _btc_closes_15m_arr, 14))
+            global_market_wind["btc_adx_15m"] = _btc_adx_15m
+            global_market_wind["is_ranging"] = _btc_adx_15m < _RANGING_ADX_THRESHOLD
+        else:
+            global_market_wind["btc_adx_15m"] = 0.0
+            global_market_wind["is_ranging"] = False
 
         if len(btc_ohlcv_4h) >= 20:
             btc_closes_4h = [x[4] for x in btc_ohlcv_4h]
