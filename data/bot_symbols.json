@@ -1,7 +1,6 @@
 {
   "symbols": [
     "WLDUSDT",
-    "ZECUSDT",
     "UNIUSDT",
     "DOTUSDT",
     "ETHUSDT",
@@ -10,10 +9,11 @@
     "SOLUSDT",
     "XRPUSDT",
     "LINKUSDT",
+    "XLMUSDT",
     "SUIUSDT",
     "AVAXUSDT",
-    "INJUSDT",
     "NEARUSDT",
-    "ONDOUSDT"
+    "ENAUSDT",
+    "TRXUSDT"
   ]
 }

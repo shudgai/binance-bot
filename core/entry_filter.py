@@ -658,10 +658,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 保留給 RSI 還在正常範圍、單純是波動放大的情況。
     _rsi_now = s.get("current_rsi", 50.0)
     _rsi_hot = (side == 'buy' and _rsi_now >= 70.0) or (side == 'sell' and _rsi_now <= 30.0)
-    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 3.0) and not _rsi_hot
+    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.5) and not _rsi_hot
     if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.3:
         if _allow_mild_atr_spike:
-            logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x ≤ 3.0x)，RSI 未過熱 ({_rsi_now:.1f})，放寬進場")
+            logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x)，RSI 未過熱 ({_rsi_now:.1f})，放寬進場")
         else:
             _hot_note = f"，且 RSI 已過熱 ({_rsi_now:.1f})" if _rsi_hot else ""
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2.3x ({atr_24h_avg*2.3:.5f})，市場閃崩/閃漲中{_hot_note}，拒絕進場防止滑點掃損")

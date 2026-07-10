@@ -209,12 +209,11 @@ def compute_signal_strength(sym):
     sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
-    # 嚴格模式下必須連續 2 根方向一致；寬鬆模式下至少也要保證「最後一根K線」是同方向的，
-    # 絕對不允許在收黑K的時候追高買多、或收紅K的時候追空。
+    # 嚴格模式下移除單根K線豁免：必須連續 2 根方向一致，避免雜訊進場導致停損頻繁
     route_a_long = (
         sma200_hard_gate_long and
         macd_ok_long and
-        (last_two_candles_long or (is_relaxed and last_candle_long)) and
+        (last_two_candles_long or is_relaxed) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -225,7 +224,7 @@ def compute_signal_strength(sym):
     route_a_short = (
         sma200_hard_gate_short and
         macd_ok_short and
-        (last_two_candles_short or (is_relaxed and last_candle_short)) and
+        (last_two_candles_short or is_relaxed) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
@@ -246,8 +245,8 @@ def compute_signal_strength(sym):
         macd_ok_long and
         rsi_direction_long and
         rsi_ok_long and
-        # Route B 也需要確認：回測彈跳訊號本身容易被假突破欺騙，至少最後一根K線要收紅
-        (last_two_candles_long or (is_relaxed and last_candle_long))
+        # Route B 也需要連續2根確認：回測彈跳訊號本身容易被假突破欺騙
+        (last_two_candles_long or is_relaxed)
     )
 
     route_b_short = (
@@ -258,7 +257,7 @@ def compute_signal_strength(sym):
         macd_ok_short and
         rsi_direction_short and
         rsi_ok_short and
-        (last_two_candles_short or (is_relaxed and last_candle_short))
+        (last_two_candles_short or is_relaxed)
     )
 
     long_base_ok  = route_a_long or route_b_long

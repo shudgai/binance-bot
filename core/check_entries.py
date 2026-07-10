@@ -340,8 +340,14 @@ async def check_entries():
 
         # --- 新增：等待收盤確認機制 ---
         if s.get("pending_side"):
-            # 移除寬鬆模式的即時確認，強迫所有訊號（包含寬鬆模式）都必須等待 K 線收盤確認
-            # 避免在 K 線走到一半、價格暴衝的瞬間（插針最高點/最低點）直接進場
+            if is_relaxed:
+                logger.info(f"⚡ [寬鬆即時確認] {sym} 寬鬆模式直接放行已還原的 pending {s['pending_side']} 訊號")
+                side = s["pending_side"]
+                strength = s.get("pending_strength", 5.0)
+                route = s.get("pending_route", "confirmed")
+                s["pending_side"] = None
+                candidates.append((sym, side, strength, route))
+                continue
             if current_candle_time <= s.get("pending_time", 0):
                 continue
 
@@ -620,10 +626,20 @@ async def check_entries():
                 continue
 
         # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        if is_relaxed:
-            logger.info(f"🚀 [MTF 放行] 處於 relaxed 寬鬆模式，跳過 {sym} MTF 趨勢過濾")
-        elif s.get("mtf_filter", True):
-            if strength > 14.0 or route == "Automatic_Reverse":
+        if s.get("mtf_filter", True):
+            # 門檻整合 7dceb33 與今天的修正成綜合版，統一訂在 20（跟 entry_filter.py
+            # 的 _MACRO_OVERRIDE_STRENGTH、方向集中度豁免門檻對齊），不要太難開倉。
+            #
+            # Route B（EMA20 回測彈跳，core/signal_engine.py route_b_long/short）本身
+            # 只看 5m 的 EMA20/50 關係，完全不含任何 1H/15m 大週期的判斷——這道 1H 過濾
+            # 正是為了補上 Route B 缺的大週期確認，是它最需要的安全網。但實測 Route B
+            # 的強度分數常常整輪多個不相干幣種同時落在 26~32 的相近區間（明顯是被 BTC/
+            # 大盤動能帶動的共同分數，不是各幣種自己的進場品質），導致這道安全網幾乎每次
+            # 都被強度跳過：實測 TRUMPUSDT(RSI 71.7)/DOTUSDT(RSI 64.3)/ADAUSDT(RSI 42.9，
+            # 完全不算超買) 在同一小時內全部用這個 Override 跳過 1H 趨勢確認去追空，結果
+            # 6 戰 6 敗。改成 Route B 一律不給強度豁免、必須真的通過 1H 趨勢確認；Route A
+            # 本身條件更完整（含 5m RSI 方向/EMA50 gate 等更多重確認），繼續保留強度豁免。
+            if route != "b" and (strength > 20.0 or route == "Automatic_Reverse"):
                 logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
@@ -636,10 +652,13 @@ async def check_entries():
                         continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
+        # 使用者先前要求增加開倉次數，門檻從 1.5/1.2/1.3 下修到 1.3/1.0/1.1；後來發現
+        # 邊緣訊號進場後常常原地打轉、最高獲利很小就打平/小虧出場，要求拉回一點，
+        # 犧牲一些開倉次數換單筆品質，改成 1.4/1.1/1.2（介於原始與寬鬆之間）。
         atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
         base_rr_thresh = s.get("min_rr", 1.4)
 
-        rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 14.0 else base_rr_thresh)
+        rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
         if base_rr_thresh >= 2.0:
             rr_thresh = base_rr_thresh
 
@@ -654,11 +673,10 @@ async def check_entries():
 
         # 絕對獲利空間硬門檻 1.5% (MinProfit Hard Gate)
         # 防止在極低波動（ATR 極小）時進場
-        _HARD_MIN_PROFIT_PCT = 0.008  # 0.8% 硬門檻
+        _HARD_MIN_PROFIT_PCT = 0.015  # 1.5% 硬門檻
         if expected_profit_pct < _HARD_MIN_PROFIT_PCT:
             logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
             continue
-
 
         # --- Flip Buffer: 防止快速反手 ---
         last_entry_time = s.get("last_entry_time", 0.0)
@@ -689,7 +707,17 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
-        # 通過所有初步篩選，進入 pending 狀態等待下一根 K 線確認（不再允許即時開倉）
+        # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
+        if is_relaxed:
+            logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
+            # 寬鬆模式繞過 pending 確認，原本沒有機會走到下面設定 entry_reason 的那一行，
+            # 導致這種路線進場的單子平倉記錄永遠是 UNKNOWN，這裡補上。
+            s["entry_reason"] = route
+            from core.entry_reason_store import save_entry_reason
+            save_entry_reason(sym, route)
+            candidates.append((sym, side, strength, route))
+            continue
+
         # [新增] 記錄訊號產生時的價格，用於後續防範「開倉背離」
         s["pending_trigger_price"] = s["close_price"]
         s["pending_side"] = side

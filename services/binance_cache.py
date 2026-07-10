@@ -2,35 +2,40 @@ import time
 import threading
 
 class BinanceDataCache:
-    """全市場 ticker 快取，降低重複查價的 API 權重消耗。
+    """全市場價格快取，降低重複查價的 API 權重消耗。
 
     傳入的 exchange_client 必須是同步的 python-binance client（例如
     services.binance_service.client），不能是 core.exchange_client.exchange_futures
     那個非同步的 ccxt 實例——原本直接呼叫 exchange_client.fetch_tickers()（ccxt 的
     非同步方法）卻沒有 await，等於每次都在存一個從未真正執行的 coroutine 物件，
     快取永遠是空的，被 fetch_and_cache 自己的 try/except 悄悄吞掉，功能形同虛設。
-    改用同步 client 的 futures_ticker()（不帶 symbol，一次查全市場）。"""
+
+    資料來源用 futures_mark_price()（不帶 symbol，一次查全市場）而不是
+    futures_ticker()：兩者都能拿到全市場即時價格，但實測 futures_ticker() 全市場
+    權重高達 40，futures_mark_price() 全市場只要 10，便宜 4 倍。這個專案過去已經
+    因為權重問題吃過好幾次苦頭（IP 被封鎖、-1003 錯誤），之前 get_all_prices() 也
+    是為了同樣理由才從 futures_ticker() 改寫成只查監控池內幣種——選權重更低的全市場
+    端點，等於同時保有「一次拿到全市場資料、不用逐檔查」的效率，又避開最貴的那個
+    端點。"""
 
     def __init__(self, exchange_client):
         self.client = exchange_client
         self.ticker_cache = {}
         self.last_update_time = 0
-        # 全市場 futures_ticker() 權重高達 40（見 get_all_prices() 的說明），
-        # 原本設 1 秒更新一次等於每秒打一次權重 40 的重量級請求，會把 API 權重
-        # 衝到很誇張的程度（40 * 60 = 2400/分鐘），正是這個專案過去多次因為
-        # API 權重/IP 封鎖吃過苦頭的那種模式。拉長到 5 秒，對交易判斷用的即時性
-        # 仍然足夠，但大幅降低權重消耗。
+        # futures_mark_price() 全市場權重 10，每 5 秒更新一次等於 10/5秒 = 120/分鐘，
+        # 比原本誤用 futures_ticker()（40/5秒 = 480/分鐘）輕四倍，對幣安 2400/分鐘的
+        # 上限影響很小。
         self.update_interval = 5.0
         self.lock = threading.Lock()  # 確保多執行緒安全
 
     def fetch_and_cache(self):
-        """從幣安獲取最新全市場數據並存入快取，key 統一用原始交易對代號
+        """從幣安獲取最新全市場標記價格並存入快取，key 統一用原始交易對代號
         （例如 'BTCUSDT'，不含斜線），跟這個專案其餘程式碼慣用的符號格式一致。"""
         try:
-            tickers = self.client.futures_ticker()
+            tickers = self.client.futures_mark_price()
             with self.lock:
                 self.ticker_cache = {
-                    t["symbol"]: {**t, "price": float(t.get("lastPrice", 0) or 0)}
+                    t["symbol"]: {**t, "price": float(t.get("markPrice", 0) or 0)}
                     for t in tickers
                     if t.get("symbol")
                 }
@@ -42,7 +47,7 @@ class BinanceDataCache:
         """
         讓所有服務從快取中讀取數據
         :param symbol: 交易對 (例如 'BTCUSDT')
-        :return: 字典格式的 ticker 數據，至少含 'price' 欄位
+        :return: 字典格式的 ticker 數據，至少含 'price' 欄位（標記價格）
         """
         current_time = time.time()
 
@@ -59,7 +64,7 @@ class BinanceDataCache:
 
     def get_all_tickers(self):
         """
-        獲取所有已快取的 ticker 數據
+        獲取所有已快取的價格數據
         :return: 字典格式的 tickers，key 為交易對代號
         """
         current_time = time.time()
