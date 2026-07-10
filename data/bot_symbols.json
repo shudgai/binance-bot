@@ -1,20 +1,20 @@
 {
   "symbols": [
+    "SENTUSDT",
+    "WLDUSDT",
+    "ZECUSDT",
+    "UNIUSDT",
     "ADAUSDT",
     "ETHUSDT",
     "LTCUSDT",
+    "TIAUSDT",
+    "APEUSDT",
     "SOLUSDT",
-    "XRPUSDT",
     "DOTUSDT",
+    "XRPUSDT",
     "LINKUSDT",
     "AVAXUSDT",
-    "FETUSDT",
     "NEARUSDT",
-    "1000SHIBUSDT",
-    "ONDOUSDT",
-    "ENAUSDT",
-    "TRXUSDT",
-    "DOGEUSDT",
-    "HYPEUSDT"
+    "TRXUSDT"
   ]
 }

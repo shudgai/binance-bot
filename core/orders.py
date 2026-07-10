@@ -681,7 +681,10 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # [Opportunity_Rotation]（機會成本輪替）也要放行：check_entries.py 那邊已經先確認
     # 過該倉位獲利 >= 0.3% 才會觸發輪替，如果這裡又用 fee_buffer（0.35%~1.5%，高波動幣
     # 更高）擋下，會讓輪替判斷「已經讓位」但倉位實際上沒真的平掉，造成槽位數對不上。
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[Opportunity_Rotation]", "[High_Point_Stagnation]"]
+    # [Dynamic_Exit_Manager] 自己內建 0.15% 啟動門檻 + 回撤/耐心逾時/盤整三選一的判斷才會
+    # 決定出場，不是隨便一點點獲利就賣——不加進白名單的話，這裡的 0.35% 固定門檻會蓋掉
+    # 它自己已經做過的判斷，等於它的 0.15% 設定形同虛設，永遠要等到 0.35% 才放行。
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[Opportunity_Rotation]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
