@@ -1760,7 +1760,9 @@ createApp({
         // 多筆小額成交（_aggregate_fills_by_order 已合併，但仍可能不等於完整持倉量），
         // 重算出的損益會跟交易所實際持倉損益對不上。
         const getTradeUnrealizedPnl = (trade) => {
-            if (trade.is_close) return 0;
+            // 同一幣種可能保留多筆歷史開倉成交；只有目前持倉所對應的最新一筆
+            // 才能顯示整體倉位的未實現損益，否則會把同一個 PnL 重複貼到舊成交列。
+            if (!isOpenTrade(trade)) return 0;
             if (trade._is_open_position && typeof trade.unrealized_pnl === "number") return trade.unrealized_pnl;
             const pos = getPositionInfo(trade.symbol);
             if (!pos || Math.abs(pos.qty) < 0.001) return 0;

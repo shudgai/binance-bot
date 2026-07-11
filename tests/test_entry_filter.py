@@ -58,6 +58,25 @@ class EntryFilterTests(unittest.TestCase):
 
         self.assertTrue(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=16.6))
 
+    def test_extreme_reversal_rejects_falling_knife_long(self):
+        sym = "SUIUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["close_price"] = 0.742
+        s["current_vol"] = 1200.0
+        s["vol_ma20"] = 1000.0
+        s["current_atr"] = 0.001
+        s["atr_history"] = [0.001] * 10
+        s["current_rsi"] = 25.0
+        s["macd_line"] = -0.0004
+        s["macd_signal"] = -0.0003
+        s["ohlcv"] = [
+            [0, 0.750, 0.751, 0.746, 0.747, 1000],
+            [0, 0.747, 0.748, 0.741, 0.742, 1200],
+        ]
+        self.assertFalse(is_entry_allowed(sym, "buy", route="Extreme_Reversal", strength=18.0))
+
     def test_strong_signal_with_mild_atr_spike_is_allowed(self):
         sym = "XRPUSDT"
         init_states([sym])

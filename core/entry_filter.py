@@ -654,6 +654,22 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             _hot_note = f"，且 RSI 已過熱 ({_rsi_now:.1f})" if _rsi_hot else ""
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ATR爆發閘門] 當前 ATR ({current_atr:.5f}) > 歷史平均 2.3x ({atr_24h_avg*2.3:.5f})，市場閃崩/閃漲中{_hot_note}，拒絕進場防止滑點掃損")
             return False
+
+    # --- 極端動能反轉確認（所有路由適用）---
+    # 反轉路由可以逆大趨勢，但不能在 RSI 極端且 MACD/價格尚未翻向時直接接刀。
+    _macd_line = float(s.get("macd_line", 0.0) or 0.0)
+    _macd_signal = float(s.get("macd_signal", 0.0) or 0.0)
+    _recent_closes = [float(c[4]) for c in s.get("ohlcv", [])[-2:]]
+    _price_turn_up = len(_recent_closes) >= 2 and _recent_closes[-1] > _recent_closes[-2]
+    _price_turn_down = len(_recent_closes) >= 2 and _recent_closes[-1] < _recent_closes[-2]
+    if side == "buy" and _rsi_now <= 35.0:
+        if _macd_line <= _macd_signal or not _price_turn_up:
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ExtremeMomentumConfirm] RSI={_rsi_now:.1f} 極弱，MACD/價格尚未同步止跌，拒絕接刀做多")
+            return False
+    elif side == "sell" and _rsi_now >= 65.0:
+        if _macd_line >= _macd_signal or not _price_turn_down:
+            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [ExtremeMomentumConfirm] RSI={_rsi_now:.1f} 極強，MACD/價格尚未同步止漲，拒絕摸頭做空")
+            return False
     if route not in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse") and not is_entry_pin_safe(sym, side):
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [插針過濾] 反向長影線/方向未確認")
         return False

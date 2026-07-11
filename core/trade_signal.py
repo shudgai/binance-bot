@@ -2,6 +2,7 @@ import logging
 import time
 import numpy as np
 from core import ctx
+from core.config import ROUND_TRIP_FEE_PCT
 from core.peak_store import save_peak
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,15 @@ async def update_trade_signal(sym, trade):
             and ((_is_long and price <= _rt_ts) or (not _is_long and price >= _rt_ts))
         )
         if _rt_crossed and not s.get("_is_closing", False):
+            # 軟追蹤只能在扣除雙邊費用後仍為正時即時平倉；硬停損仍由主退出循環管理。
+            _fee_safe_floor = ROUND_TRIP_FEE_PCT + 0.0015
+            _soft_net_guard = _rt_peak < 0.006 and rt_profit < _fee_safe_floor
+            if _soft_net_guard:
+                logger.info(
+                    f"⏸️ [Realtime_Soft_Net_Guard] {sym} 已穿軟追蹤線，但目前毛利 "
+                    f"{rt_profit*100:.3f}% 尚不足費用安全底線 {_fee_safe_floor*100:.3f}%"
+                )
+                return
             from core.orders import close_position
             close_side = "sell" if _is_long else "buy"
             logger.info(

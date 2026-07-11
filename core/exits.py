@@ -487,17 +487,16 @@ async def check_exits(sym):
             cs = 'sell' if is_long else 'buy'
             logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
-            if _check_reversal_allowed(sym, s):
-                last_reverse = s.get("last_reverse_time", 0)
-                if time.time() - last_reverse > 1800:
-                    rev_side = "buy" if not is_long else "sell"
-                    s["pending_reverse"] = rev_side
-                    s["pending_reverse_time"] = time.time()
-                    s["last_reverse_time"] = time.time()
-                    # 沿用攤平失敗後的放寬動能確認標準：急速逆勢代表方向已經被價格
-                    # 明確打臉，MACD 這種落後指標可能還來不及完整反映，不用等它擴張。
-                    s["pending_reverse_after_rescue"] = True
-                    logger.info(f"🔄 [Rapid_Reverse] {sym} 急速逆勢出場後設置反手 → {rev_side}")
+            # 僅建立 5 分鐘有效的候選反手；check_entries 執行前會再次檢查
+            # COOLDOWN、大盤方向、價格位置與 MACD，不在退出路徑重複判斷。
+            last_reverse = s.get("last_reverse_time", 0)
+            if time.time() - last_reverse > 1800:
+                rev_side = "buy" if not is_long else "sell"
+                s["pending_reverse"] = rev_side
+                s["pending_reverse_time"] = time.time()
+                s["last_reverse_time"] = time.time()
+                s["pending_reverse_after_rescue"] = True
+                logger.info(f"🔄 [Rapid_Reverse] {sym} 急速逆勢出場後設置反手 → {rev_side}")
             return
 
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 0

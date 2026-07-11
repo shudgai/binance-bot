@@ -168,6 +168,8 @@ class TakeProfitTests(unittest.TestCase):
         s["vol_ma20"] = 1000.0
         s["current_vol"] = 100.0
         s["pnl_history"] = []
+        # 此測試只驗證剩餘倉位的 PeakLock；分批停利另有獨立測試。
+        s["has_partial_closed"] = True
 
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
@@ -222,8 +224,10 @@ class TakeProfitTests(unittest.TestCase):
         s["first_entry_price"] = 100.0
         s["entry_count"] = 1
         s["last_entry_direction"] = "buy"
-        s["close_price"] = 99.2
+        s["close_price"] = 98.9  # 逆勢 2.2 ATR，超過現行 2.0 ATR 門檻
         s["open_time"] = time.time() - 240
+        s["last_entry_time"] = time.time() - 120
+        s["last_entry_price"] = 100.0
         s["current_atr"] = 0.5
         s["current_rsi"] = 45.0
         s["prev_rsi"] = 47.0
@@ -243,7 +247,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(s.get("wrong_dir_side"), "buy")
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Rapid_Reversal]")
                 self.assertEqual(s.get("pending_reverse"), "sell")
 
         asyncio.run(run_check())
@@ -355,7 +359,8 @@ class TakeProfitTests(unittest.TestCase):
         s["qty"] = 1.0
         s["avg_price"] = 100.0
         s["close_price"] = 95.0
-        s["open_time"] = time.time() - 10
+        # 已離開 60 秒盲區，但仍在一般 90 秒觀察期內。
+        s["open_time"] = time.time() - 70
         s["current_atr"] = 0.5
         s["current_rsi"] = 50.0
         s["prev_macd_line"] = 0.0
@@ -373,7 +378,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Hard_SL]")
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Hard_Stop_Loss]")
                 self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
 
         asyncio.run(run_check())
@@ -409,8 +414,9 @@ class TakeProfitTests(unittest.TestCase):
         s["qty"] = 1.0
         s["avg_price"] = 100.0
         s["close_price"] = 100.35  # 0.35% profit
-        s["open_time"] = time.time() - 350  # held for 350s (> 300s limit)
-        s["peak_time"] = time.time() - 320  # no new high for 320s (> 300s limit)
+        # 現行弱動能且曾有峰值的停滯期限為 7200 秒。
+        s["open_time"] = time.time() - 7300
+        s["peak_time"] = time.time() - 7200
         s["current_atr"] = 0.5
         s["current_rsi"] = 50.0
         s["prev_macd_line"] = 0.0
@@ -428,7 +434,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[High_Point_Stagnation]")
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Stagnation_Timeout]")
 
         asyncio.run(run_check())
 

@@ -52,3 +52,26 @@ def test_realtime_trade_does_not_close_before_soft_activation():
         asyncio.run(update_trade_signal(sym, {"price": 100.05, "amount": 1.0}))
 
     close.assert_not_awaited()
+
+
+def test_realtime_soft_trailing_does_not_turn_small_peak_into_net_loss():
+    sym = "XRPUSDT"
+    init_states([sym])
+    reset_coin_state(sym)
+    state = STATES[sym]
+    state.update({
+        "qty": 1.0,
+        "avg_price": 100.0,
+        "current_atr": 0.1,
+        "highest_profit_pct": 0.0035,
+        "trailing_highest": 100.35,
+        "trailing_stop_price": 100.15,
+        "stop_loss": 100.15,
+        "trade_price_history": [100.20],
+        "trade_qty_history": [1.0],
+    })
+
+    with patch("core.orders.close_position", AsyncMock()) as close:
+        asyncio.run(update_trade_signal(sym, {"price": 99.95, "amount": 1.0}))
+
+    close.assert_not_awaited()
