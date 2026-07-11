@@ -2,18 +2,18 @@
   "symbols": [
     "WLDUSDT",
     "UNIUSDT",
+    "BCHUSDT",
     "DOTUSDT",
     "ETHUSDT",
     "ADAUSDT",
     "LTCUSDT",
     "SOLUSDT",
-    "XRPUSDT",
-    "LINKUSDT",
-    "XLMUSDT",
-    "SUIUSDT",
-    "AVAXUSDT",
-    "NEARUSDT",
+    "FETUSDT",
     "ENAUSDT",
-    "TRXUSDT"
+    "LINKUSDT",
+    "XRPUSDT",
+    "ONDOUSDT",
+    "AVAXUSDT",
+    "SUIUSDT"
   ]
 }

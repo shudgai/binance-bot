@@ -7,6 +7,12 @@ from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, CONFIG_FILE,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS, get_entry_strictness_profile)
 from core.indicators import _get_atr, _macd_vals, calculate_macd
+from core.strategy.strategy_engine import StrategyEngine
+
+logger = logging.getLogger(__name__)
+
+# Initialize the StrategyEngine
+strategy_engine = StrategyEngine()
 
 logger = logging.getLogger(__name__)
 
@@ -156,199 +162,16 @@ def compute_signal_strength(sym):
             return ("buy", strength, "Extreme_Reversal")
         logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI 極端超賣但反轉三確認未齊，暫不做多")
 
-    rsi_ok_long  = rsi < profile.get("rsi_long_ceiling", 75.0) and (rsi > profile.get("rsi_long_floor", 25.0) or (rsi >= max(profile.get("rsi_long_floor", 25.0) - 7.0, 20.0) and (long_macd_cross  or macd_hist > 0)))
-    rsi_ok_short = rsi > profile.get("rsi_short_floor", 25.0) and (rsi < profile.get("rsi_short_ceiling", 68.0) or (rsi <= profile.get("rsi_short_ceiling", 68.0) + 7.0 and (short_macd_cross or macd_hist < 0)))
-
-    # --- 加分機制 ---
-    long_trend_score = 0
-    short_trend_score = 0
-
-    if is_above_sma200:
-        long_trend_score += 4
-        short_trend_score -= 3
-    elif is_below_sma200 and not sma200_neutral:
-        long_trend_score -= 3
-        short_trend_score += 4
-
-    if trend_confluence_long and (long_macd_cross or macd_hist > 0):
-        long_trend_score += 5
-    if trend_confluence_short and (short_macd_cross or macd_hist < 0):
-        short_trend_score += 5
-
-    if trend_confluence_short and (long_macd_cross or macd_hist > 0):
-        long_trend_score -= 5
-    if trend_confluence_long and (short_macd_cross or macd_hist < 0):
-        short_trend_score -= 5
-
-    if last_two_candles_long:
-        long_trend_score += 3
-    if last_two_candles_short:
-        short_trend_score += 3
-
-    profile = get_entry_strictness_profile()
-    is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
-
-    # Gate 0: SMA200 硬性守衛 (Hard Gate)，絕對不可豁免
-    sma200_hard_gate_long  = sma200 <= 0 or close > sma200
-    sma200_hard_gate_short = sma200 <= 0 or close < sma200
-
-    # Gate 1: EMA50 方向 (寬鬆模式下僅供參考，不強制硬攔截)
-    ema50_gate_long  = ema50 <= 0 or close > ema50 or is_relaxed
-    ema50_gate_short = ema50 <= 0 or close < ema50 or is_relaxed
-
-    # Gate 2: RSI 方向區間（25-75，填補 Extreme_Reversal ≤20 和正常多頭 >35 之間的 20-35 死區）
-    rsi_direction_long  = rsi > 25.0
-    rsi_direction_short = rsi < 75.0
-
-    # Gate 3: MACD 方向不僅一致，且必須擴張 (避免動能衰竭時進場)
-    macd_ok_long  = long_macd_ok
-    macd_ok_short = short_macd_ok
-
-    # SMA200 純加分
-    sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
-    sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
-
-    # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
-    # 嚴格模式下移除單根K線豁免：必須連續 2 根方向一致，避免雜訊進場導致停損頻繁
-    route_a_long = (
-        sma200_hard_gate_long and
-        macd_ok_long and
-        (last_two_candles_long or is_relaxed) and
-        rsi_ok_long and
-        rsi_direction_long and
-        ema50_gate_long and
-        close_near_ema20_long and
-        not_overbought_bb  # 新增：防止買在布林上軌極限
-    )
-
-    route_a_short = (
-        sma200_hard_gate_short and
-        macd_ok_short and
-        (last_two_candles_short or is_relaxed) and
-        rsi_ok_short and
-        rsi_direction_short and
-        ema50_gate_short and
-        close_near_ema20_short and
-        not_oversold_bb  # 新增：防止空在布林下軌極限
-    )
-
-    # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────
-    near_ema20_pullback = ema20 > 0 and abs(close - ema20) / ema20 <= 0.015
-    ema20_above_ema50   = ema20 > 0 and ema50 > 0 and ema20 > ema50
-    ema20_below_ema50   = ema20 > 0 and ema50 > 0 and ema20 < ema50
-
-    route_b_long = (
-        sma200_hard_gate_long and
-        ema50_gate_long and
-        ema20_above_ema50 and
-        near_ema20_pullback and
-        macd_ok_long and
-        rsi_direction_long and
-        rsi_ok_long and
-        # Route B 也需要連續2根確認：回測彈跳訊號本身容易被假突破欺騙
-        (last_two_candles_long or is_relaxed)
-    )
-
-    route_b_short = (
-        sma200_hard_gate_short and
-        ema50_gate_short and
-        ema20_below_ema50 and
-        near_ema20_pullback and
-        macd_ok_short and
-        rsi_direction_short and
-        rsi_ok_short and
-        (last_two_candles_short or is_relaxed)
-    )
-
-    long_base_ok  = route_a_long or route_b_long
-    short_base_ok = route_a_short or route_b_short
-    route_tag     = "b" if (route_b_long or route_b_short) else "a"
-
-    if long_base_ok or short_base_ok:
-        long_str = 0.0
-        short_str = 0.0
-
-        min_entry_strength = profile.get("min_entry_strength", 10.0)
-
-        if long_base_ok:
-            long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
-            if long_macd_cross:    long_str += 5.0
-            if route_tag == "b":   long_str += 1.0   # 從 2.0 降到 1.0：回測進場需要更高原生強度
-            if last_two_candles_long:  long_str += 2.0   # 連2根確認加分
-            long_str += long_trend_score + sma200_bonus_long
-
-        if short_base_ok:
-            short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
-            if short_macd_cross:       short_str += 5.0
-            if route_tag == "b":       short_str += 1.0  # 從 2.0 降到 1.0
-            if last_two_candles_short: short_str += 2.0  # 連2根確認加分
-            short_str += short_trend_score + sma200_bonus_short
-
-        # 多空同時成立時比強度取勝，不再永遠偏向多單
-        if long_str >= short_str and long_base_ok:
-            return ("buy",  long_str  if long_str  >= min_entry_strength else 0.0, route_tag)
-        elif short_base_ok:
-            return ("sell", short_str if short_str >= min_entry_strength else 0.0, route_tag)
-
-    # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
-    if len(s["ohlcv"]) >= 50:
-        c1 = s["ohlcv"][-2]
-        c2 = s["ohlcv"][-3]
-
-        current_atr = s.get("current_atr", 0.0)
-        atr_history = s.get("atr_history", [])
-        atr_24h_avg = float(np.mean(atr_history)) if len(atr_history) > 0 else 0.0
-        if atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.0:
-            return (None, 0, None)
-
-        c2_vol_low = c2[5] < s.get("vol_ma20", 1) * 0.65
-
-        recent_low_50 = min([x[3] for x in s["ohlcv"][-50:]])
-        recent_high_50 = max([x[2] for x in s["ohlcv"][-50:]])
-        sma200 = s.get("sma200_15m", 0)
-
-        _exh_btc_4h = ctx.MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
-
-        # 多單：抓回檔底部
-        if c2[4] < c2[1] and c2_vol_low:
-            bb_low = s.get("bb_low", 0)
-            is_near_sma = (sma200 > 0) and (abs(c1[3] - sma200) / sma200 < 0.005)
-            is_near_low = (recent_low_50 > 0) and (c1[3] <= recent_low_50 * 1.005)
-            support_ok = (bb_low > 0 and c1[3] <= bb_low * 1.005) or is_near_sma or is_near_low
-
-            c2_mid = (c2[1] + c2[4]) / 2
-            price_rebound = c1[4] > c2[4]
-            has_lower_wick = (min(c1[1], c1[4]) - c1[3]) > abs(c1[4] - c1[1]) * 0.5
-            crossed_midpoint = c1[4] > c2_mid
-            pa_ok = price_rebound and has_lower_wick and crossed_midpoint
-            bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
-
-            trend_ok = (_exh_btc_4h != "BEAR")  # 宏觀雙熊不做多底接
-
-            if trend_ok and support_ok and (pa_ok or bounce_ok):
-                logger.info(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
-                return ("buy", 15.0, "Exhaustion_Entry")
-
-        # 空單：抓反彈頂部
-        if c2[4] > c2[1] and c2_vol_low:
-            bb_up = s.get("bb_up", 0)
-            is_near_sma_res = (sma200 > 0) and (abs(c1[2] - sma200) / sma200 < 0.005)
-            is_near_high = (recent_high_50 > 0) and (c1[2] >= recent_high_50 * 0.995)
-            resistance_ok = (bb_up > 0 and c1[2] >= bb_up * 0.995) or is_near_sma_res or is_near_high
-
-            c2_mid = (c2[1] + c2[4]) / 2
-            price_rebound = c1[4] < c2[4]
-            has_upper_wick = (c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 0.5
-            crossed_midpoint = c1[4] < c2_mid
-            pa_ok = price_rebound and has_upper_wick and crossed_midpoint
-            bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
-
-            trend_ok = (_exh_btc_4h != "BULL")  # 宏觀多頭不做空高空
-
-            if trend_ok and resistance_ok and (pa_ok or bounce_ok):
-                logger.info(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
-                return ("sell", 15.0, "Exhaustion_Entry")
-
+    # --- 使用 StrategyEngine 進行多重過濾門檻 (Multi-Layer Filtering) ---
+    strategy_signal = strategy_engine.check_signals(s.get("ohlcv", []))
+    
+    if strategy_signal:
+        side, strength = strategy_signal
+        # 轉換為小寫 side
+        side_lower = side.lower()
+        logger.info(f"@@COIN_DEBUG@@ 🛡️ {sym} 通過 StrategyEngine 過濾門檻 ({side_lower}) | Strength: {strength:.1f}")
+        return (side_lower, strength, "StrategyEngine_Gate")
+            
     return (None, 0, None)
 
 

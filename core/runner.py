@@ -352,6 +352,17 @@ async def calibrate_with_exchange(exchange):
         for sym, state in list(ctx.STATES.items()):
             if abs(state.get("qty", 0.0)) <= 0.000001 or sym in live_position_symbols:
                 continue
+            # 機器人自己正在平倉這個幣種時（core/orders.py 的 _is_closing 鎖）跳過，
+            # 不要當成「外部平倉」重複記錄一次。這個校準跟機器人自己的 close_position()
+            # 是分開的協程：close_position() 下單、等交易所回應期間會 await，剛好給這裡
+            # 插進來執行的機會——如果這時候交易所那邊已經成交完（部位已空），但
+            # close_position() 自己還沒跑到 mark_exit/reset_coin_state 那一步，這裡就會
+            # 誤判成「外部平倉」，把同一筆平倉用 [External_Manual_Close] 又記錄一次，
+            # 跟 close_position() 自己記的那筆（例如 [Dynamic_Exit_Manager]）重複，
+            # 數字還完全一樣（實測 LTCUSDT 案例：兩筆記錄相隔 9 秒，獲利/峰值一致）。
+            if state.get("_is_closing"):
+                logger.info(f"⏳ [CALIBRATION] {sym} 機器人自己正在平倉中，本輪跳過外部平倉判定，避免重複記錄")
+                continue
             await _record_external_position_close(exchange, sym, state)
             logger.info(f"🔄 [CALIBRATION] {sym} 本地仍有持倉 {state.get('qty', 0.0):.4f}，但交易所已無倉位；清理本地狀態與交易所退出單追蹤")
             from core.state_manager import mark_exit
