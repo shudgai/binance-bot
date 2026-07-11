@@ -356,6 +356,20 @@ async def calibrate_with_exchange(exchange):
                         except Exception as e_pnl:
                             logger.info(f"⚠️ [重啟峰值保護] {sym} 還原盈虧峰值失敗: {e_pnl}")
 
+                        # 重新接管交易所持倉時，重建本筆移動停損基準，禁止沿用上一筆高低點。
+                        _peak = max(0.0, float(ctx.STATES[sym].get("highest_profit_pct", 0.0) or 0.0))
+                        _entry = ctx.STATES[sym]["avg_price"]
+                        if real_qty > 0:
+                            ctx.STATES[sym]["trailing_highest"] = _entry * (1.0 + _peak)
+                            ctx.STATES[sym]["trailing_lowest"] = float("inf")
+                        else:
+                            ctx.STATES[sym]["trailing_highest"] = 0.0
+                            ctx.STATES[sym]["trailing_lowest"] = _entry * (1.0 - _peak)
+                        ctx.STATES[sym]["trailing_stop_price"] = 0.0
+                        ctx.STATES[sym]["stop_loss"] = 0.0
+                        ctx.STATES[sym]["is_breakeven_locked"] = False
+                        ctx.STATES[sym].pop("dynamic_exit_manager", None)
+
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 
 

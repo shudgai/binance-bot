@@ -536,6 +536,18 @@ async def check_exits(sym):
     update_trailing_stop(sym, p, is_long)
 
     ts_price = s.get("trailing_stop_price")
+    # 尚未達保本門檻時，停損不可能位於獲利側；若出現代表沿用了舊倉狀態。
+    _peak_for_sl = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    _invalid_profit_side_sl = (
+        _peak_for_sl < 0.004
+        and ts_price is not None and ts_price > 0
+        and ((is_long and ts_price >= avg) or (not is_long and ts_price <= avg))
+    )
+    if _invalid_profit_side_sl:
+        logger.info(f"⚠️ [Trailing_SL_Reset] {sym} 峰值僅 {_peak_for_sl*100:.3f}% 卻出現獲利側停損 {ts_price:.6f}，判定為舊倉殘值並重置")
+        s["trailing_stop_price"] = 0.0
+        s["stop_loss"] = 0.0
+        ts_price = 0.0
     if ts_price is not None and ts_price > 0:
         if is_long:
             if p <= ts_price:

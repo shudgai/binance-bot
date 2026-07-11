@@ -676,6 +676,19 @@ async def _close_position_inner(sym, close_side, qty, price, avg_price, reason="
         return
     s["_is_closing"] = True
     try:
+        # Cancel resting entry orders before a stop/TP close; otherwise they can fill after
+        # the close and silently reopen or reverse the position.
+        if not PAPER_TRADING:
+            for order_id, info in list(ctx.PENDING_LIMIT_ORDERS.items()):
+                if info.get("sym") != sym:
+                    continue
+                try:
+                    await exchange_futures.cancel_order(order_id, sym)
+                    logger.info(f"✅ [平倉前撤單] {sym} 已撤銷殘留進場單 {order_id}")
+                except Exception as exc:
+                    logger.info(f"ℹ️ [平倉前撤單] {sym} 進場單 {order_id} 無法撤銷或已成交: {exc}")
+                finally:
+                    ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
         await _close_position_inner_locked(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
     finally:
         s["_is_closing"] = False
@@ -1128,6 +1141,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🛑 [InvalidEntrySide] {sym} 收到無效開倉方向 {side!r}，拒絕下單")
         return
     s = ctx.STATES[sym]
+    if s.get("_is_closing", False):
+        logger.info(f"🛑 [CloseInProgress] {sym} 正在平倉，拒絕新的 {side} 進場單")
+        return
+    if not is_rescue_dca and any(info.get("sym") == sym for info in ctx.PENDING_LIMIT_ORDERS.values()):
+        logger.info(f"⏳ [PendingEntryGuard] {sym} 已有待成交進場單，拒絕重複送出 {side} 單")
+        return
     entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
     actual_entry_mode = _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
     
