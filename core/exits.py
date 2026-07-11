@@ -88,7 +88,6 @@ class DynamicExitManager:
             self.current_max_price = current_price
             self.max_profit_pct = current_profit
             self.last_high_time = time.time()
-            # 計算初始耐心時間
             self.wait_time_limit = self._calculate_wait_time(current_profit)
             print(f"🚀 [啟動] 利潤達 {current_profit:.2f}%，啟動動態退出機制。耐心限時: {self.wait_time_limit:.1f}秒")
 
@@ -111,13 +110,16 @@ class DynamicExitManager:
             print(f"📈 [顯著創新高] 價格: {current_price}，重置計時器。新耐心限時: {self.wait_time_limit:.1f}秒")
 
         # --- 第三階段：多重退出判定 (OR 關係) ---
+        # (之前這裡有一版想接 IndustrialRiskManager，用
+        # ctx.STATES[ctx.STATES.keys()[0]] 去抓「當前 ATR」——dict_keys 不能用 [0]
+        # 索引，一執行就是 TypeError。這個 class 目前只有 use_dynamic_exit_manager=True
+        # 時才會被呼叫，預設關閉所以還沒炸過，但保留這種寫法遲早會在打開開關的那一刻
+        # 讓機器人整個崩潰，所以先移除這段沒接上、本來就沒用到的 current_atr。)
         elapsed_time = time.time() - self.wait_start_time
         time_since_high = time.time() - self.last_high_time
         
-        # 1. 動態回撤比例 (Dynamic Retracement) - 快速反應防線
-        # 容忍正常 1m 雜訊：至少 0.12%，並隨峰值放寬至峰值的 25%（上限 0.5%）。
+        # 1. 傳統動態回撤 (保留作為極限防線)
         tolerance_pct = max(0.0012, min((self.max_profit_pct / 100.0) * 0.25, 0.0050))
-        
         is_retracing = False
         if self.is_long and current_price < (self.current_max_price * (1 - tolerance_pct)):
             is_retracing = True
@@ -125,15 +127,15 @@ class DynamicExitManager:
             is_retracing = True
 
         if is_retracing:
-            print(f"💰 [觸發：回撤比例] 價格從最高點回落超過 {tolerance_pct*100:.3f}%，快速落袋為安。")
+            print(f"💰 [觸發：回撤比例(極限)] 價格從最高點回落超過 {tolerance_pct*100:.3f}%，快速落袋為安。")
             return "SELL"
 
-        # 2. 動態耐心極限 (Time-out) - 強制入帳防線
+        # 2. 動態耐心極限 (Time-out)
         if elapsed_time >= self.wait_time_limit:
             print(f"💰 [觸發：耐心極限] 已等待 {elapsed_time:.1f}秒 (限時 {self.wait_time_limit:.1f}秒)，強制落袋為安。")
             return "SELL"
 
-        # 3. 盤整最高點 (Stagnation) - 動能耗盡防線
+        # 3. 盤整最高點 (Stagnation)
         is_stagnant = abs(current_price - self.current_max_price) <= (self.current_max_price * self.stagnation_range)
         if time_since_high > self.no_high_time_limit and is_stagnant:
             print(f"🛑 [觸發：盤整最高點] 價格在 {self.current_max_price} 附近停滯過久，動能耗盡，執行停利。")
@@ -230,7 +232,8 @@ def update_trailing_stop(sym, current_price, is_long):
         logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
-    min_trailing_profit = breakeven_threshold
+    profile_type = str(s.get("profile_type", ""))
+    min_trailing_profit = 0.010 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.006
 
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
@@ -238,16 +241,21 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 所有幣種峰值 0.15% 起使用軟移動停利，回吐 0.06%；價格創新高時停利線
-        # 只會跟著上移、永不下移。0.6%／1% 仍作為更強的保本鎖門檻。
-        # 實際觸發時仍由下方淨利保護確認成交價足以覆蓋雙邊費用，避免小利變虧損。
+        # 峰值 0.3%-0.6% 使用軟移動停利：允許回吐 0.2%，並覆蓋交易摩擦。
+        # 緩衝原本只留 0.03%（ROUND_TRIP_FEE_PCT+0.0003），但這道停利是靠機器人自己
+        # 每 10~25 秒巡檢現價才觸發市價出場，不是掛在交易所上即時成交的停損單——
+        # 巡檢間隔內價格經常已經滑落超過這條線本身（UNIUSDT 實測：軟停利線算出
+        # 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝，出場後倒賠手續費）。
+        # 緩衝改成跟下面「硬保本鎖」一致的 ROUND_TRIP_FEE_PCT+0.0015，留更多容錯空間
+        # 撐過巡檢延遲造成的滑落，才不會讓「有小賺」的單子最後變成淨虧收場。
         _hp_soft = s["highest_profit_pct"]
-        if 0.0015 <= _hp_soft < breakeven_threshold:
-            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0001)
-            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.0006), _soft_floor)
+        if 0.003 <= _hp_soft < breakeven_threshold:
+            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0015)
+            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.002), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_floor
+
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
             trail_sl = max(trail_sl, locked_sl)
@@ -305,14 +313,15 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單採對稱的全幣種軟移動停利。
+        # 空單對稱版，緩衝同理放寬到 ROUND_TRIP_FEE_PCT+0.0015（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
-        if 0.0015 <= _hp_soft < breakeven_threshold:
-            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0001)
-            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.0006), _soft_ceiling)
+        if 0.003 <= _hp_soft < breakeven_threshold:
+            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0015)
+            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.002), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_ceiling
+
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
             trail_sl = min(trail_sl, locked_sl)
@@ -658,8 +667,9 @@ async def check_exits(sym):
         is_profitable = profit_pct > HIGH_POINT_STAGNATION_MIN_PROFIT
         if is_profitable:
             # 獲利越高，要求的「沒創新高」時間越短，以便更快落袋為安
-            # 從 HIGH_POINT_STAGNATION_TIME (300s) 到最低 120s 之間線性縮減 (以 5% 超過門檻為基準)
-            dynamic_stagnation_time = max(120, int(HIGH_POINT_STAGNATION_TIME * (1 - (profit_pct - HIGH_POINT_STAGNATION_MIN_PROFIT) / 0.05)))
+            # 將動態滯留時間上調，給予更多空間。
+            # 從 HIGH_POINT_STAGNATION_TIME (300s) 到最低 120s 之間線性縮減，但基礎值更高。
+            dynamic_stagnation_time = max(120, int(HIGH_POINT_STAGNATION_TIME * 1.5 * (1 - (profit_pct - HIGH_POINT_STAGNATION_MIN_PROFIT) / 0.05)))
             peak_profit = s.get("highest_profit_pct", 0.0)
             allowed_giveback = max(0.0010, peak_profit * 0.25)
             is_near_peak = profit_pct >= max(0.0, peak_profit - allowed_giveback)
