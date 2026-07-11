@@ -58,11 +58,29 @@ def save_peak(symbol, peak):
     return new_peak
 
 
+def load_partial_take_profit(symbol):
+    key = _norm_symbol(symbol)
+    return bool(_read_store().get(f"{key}__PARTIAL_TP", False)) if key else False
+
+
+def save_partial_take_profit(symbol):
+    key = _norm_symbol(symbol)
+    if not key:
+        return
+    data = _read_store()
+    data[f"{key}__PARTIAL_TP"] = True
+    _write_store(data)
+
+
 def clear_peak(symbol):
     key = _norm_symbol(symbol)
     if not key:
         return
     data = _read_store()
-    if key in data:
-        data.pop(key, None)
+    changed = False
+    for store_key in (key, f"{key}__PARTIAL_TP"):
+        if store_key in data:
+            data.pop(store_key, None)
+            changed = True
+    if changed:
         _write_store(data)

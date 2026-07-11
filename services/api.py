@@ -318,7 +318,7 @@ def api_get_trades(symbol: str):
             return get_paper_trades(symbol_upper, pk)
         else:
             if symbol_upper != "ALL":
-                return get_trades(symbol_upper)
+                return _attach_round_trip_fees(get_trades(symbol_upper))
 
             # 儀表板只需本機已記錄的成交與目前持倉；不再為每個歷史幣種逐一呼叫
             # futures_account_trades，避免單次刷新累積數十個高權重請求。
@@ -376,9 +376,46 @@ def api_get_trades(symbol: str):
                     "fee": real_fee,
                     "_is_open_position": True,
                 })
-            return trades
+            return _attach_round_trip_fees(trades)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _attach_round_trip_fees(trades):
+    """FIFO 配對開平倉，平倉列計入完整來回手續費。"""
+    lots = {}
+    result = []
+    for original in sorted(trades, key=lambda item: int(item.get("time", 0) or 0)):
+        trade = dict(original)
+        symbol = str(trade.get("symbol", ""))
+        qty = abs(float(trade.get("qty", 0.0) or 0.0))
+        fee = float(trade.get("fee", 0.0) or 0.0)
+        if not trade.get("is_close"):
+            direction = "long" if trade.get("isBuyer") else "short"
+            lots.setdefault((symbol, direction), []).append([qty, fee])
+        else:
+            direction = "short" if trade.get("isBuyer") else "long"
+            queue = lots.setdefault((symbol, direction), [])
+            remaining = qty
+            entry_fee = 0.0
+            while remaining > 1e-12 and queue:
+                lot_qty, lot_fee = queue[0]
+                used = min(remaining, lot_qty)
+                ratio = used / lot_qty if lot_qty > 0 else 0.0
+                entry_fee += lot_fee * ratio
+                lot_qty -= used
+                lot_fee *= 1.0 - ratio
+                remaining -= used
+                if lot_qty <= 1e-12:
+                    queue.pop(0)
+                else:
+                    queue[0] = [lot_qty, lot_fee]
+            trade["entry_fee"] = entry_fee
+            trade["total_fee"] = entry_fee + fee
+            trade["net_pnl"] = float(trade.get("realized_pnl", 0.0) or 0.0) - entry_fee - fee
+        result.append(trade)
+    return result
+
 
 @app.post("/api/order/market-buy/{symbol}")
 def api_market_buy(symbol: str, amount: float = 150.0):
@@ -694,6 +731,7 @@ def _get_real_trades():
     
     trades = []
     tz = pytz.timezone('Asia/Taipei')
+    seen_closes = {}
     for t in history:
         try:
             timestamp_str = t.get("timestamp")
@@ -719,6 +757,14 @@ def _get_real_trades():
             profit_pct = float(t.get("profit_pct") or 0.0)
             fees = float(t.get("fees") or 0.0)
             sym = str(t.get("symbol", "")).replace("USDT", ":USDT")
+
+            # 舊版校準協程可能把 bot 自己的平倉再記成 ExternalClose。相同幣種、
+            # 進出價、數量且兩分鐘內的紀錄視為同一筆，保留先寫入的策略出場。
+            close_key = (sym, round(ae, 10), round(ax, 10), round(qty, 10))
+            previous_close_ms = seen_closes.get(close_key)
+            if previous_close_ms is not None and abs(exit_time_ms - previous_close_ms) <= 120000:
+                continue
+            seen_closes[close_key] = exit_time_ms
             
             # 判斷多空方向
             if profit_pct >= 0:
@@ -807,6 +853,7 @@ def api_history_download(date: str):
 
         tz = pytz.timezone('Asia/Taipei')
         filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]
+        filtered = _attach_round_trip_fees(filtered)
         if not filtered:
             raise HTTPException(status_code=404, detail=f"日期 {date} 無交易紀錄")
 
@@ -821,7 +868,7 @@ def api_history_download(date: str):
                    "買入(平空)"
 
             fee = t.get("fee", (t.get("price", 0) * abs(t.get("qty", 0))) * 0.0005)
-            net_pnl = t.get("realized_pnl", 0) - fee
+            net_pnl = t.get("net_pnl", t.get("realized_pnl", 0) - fee)
 
             writer.writerow([
                 ts,

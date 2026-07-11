@@ -17,7 +17,7 @@ from core.config import (
 )
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state
-from core.peak_store import load_peak, save_peak, clear_peak
+from core.peak_store import load_peak, save_peak, clear_peak, load_partial_take_profit
 from core.balance import fetch_real_balance, get_dynamic_max_slots
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
     fetch_all_sma200, fetch_all_ema50_1h, fetch_all_ema_15m, load_open_positions)
@@ -63,8 +63,14 @@ async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
     while True:
         try:
             await wait_for_api_cooldown()
-            async with ctx.request_semaphore:
-                trades = await exchange.fetch_trades(sym, limit=TRADE_POLL_LIMIT)
+            # ccxt.pro 的 watch_trades 走 WebSocket，不消耗 Binance REST request weight。
+            # 不支援 WS 的 exchange 才退回低頻 REST。
+            watch_trades = getattr(exchange, "watch_trades", None)
+            if callable(watch_trades):
+                trades = await watch_trades(sym)
+            else:
+                async with ctx.request_semaphore:
+                    trades = await exchange.fetch_trades(sym, limit=TRADE_POLL_LIMIT)
             if isinstance(trades, list):
                 for trade in trades:
                     update_trade_signal(sym, trade)
@@ -87,12 +93,14 @@ async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
                 else:
                     logger.debug(f"成交流監聽暫時性失敗 {sym}: {e}")
 
-        # 限制出錯時的避讓延遲在 15 秒以內，確保出錯後能快速重試、不影響成交速度
-        current_sleep = TRADE_POLL_INTERVAL_SEC
-        if error_count > 0:
-            current_sleep = min(TRADE_POLL_INTERVAL_SEC, 15.0)
-
-        await asyncio.sleep(current_sleep)
+        # WebSocket 本身會等待下一批成交，不需額外 sleep；REST fallback 才限頻。
+        if not callable(getattr(exchange, "watch_trades", None)):
+            current_sleep = TRADE_POLL_INTERVAL_SEC
+            if error_count > 0:
+                current_sleep = min(TRADE_POLL_INTERVAL_SEC, 15.0)
+            await asyncio.sleep(current_sleep)
+        elif error_count > 0:
+            await asyncio.sleep(min(2 ** min(error_count, 5), 30))
 
 
 async def ensure_watch_tasks(exchange):
@@ -217,11 +225,23 @@ async def _record_external_position_close(exchange, sym, state):
     position_value = avg_price * abs(old_qty)
     profit_pct = realized_pnl / position_value if position_value > 0 else 0.0
 
+    info = latest.get("info", {}) or {}
+    order_type = " ".join(str(info.get(key, "")) for key in ("type", "origType", "clientOrderId")).upper()
+    stored_stop_id = str(state.get("exchange_stop_order_id") or "")
+    stored_tp_id = str(state.get("exchange_take_profit_order_id") or "")
+    order_id_text = str(order_id or "")
+    if "TAKE_PROFIT" in order_type or (stored_tp_id and order_id_text == stored_tp_id):
+        exit_reason = "[External_Take_Profit]"
+    elif "STOP" in order_type or (stored_stop_id and order_id_text == stored_stop_id):
+        exit_reason = "[External_Stop_Loss]"
+    else:
+        exit_reason = "[External_Close]"
+
     from core.orders import record_trade_result
     recorded = record_trade_result(
         symbol=sym,
         entry_reason=state.get("entry_reason", "UNKNOWN"),
-        exit_reason="[External_Manual_Close]",
+        exit_reason=exit_reason,
         profit_pct=profit_pct,
         current_atr=state.get("current_atr", 0.0),
         max_profit_reached=state.get("highest_profit_pct", 0.0),
@@ -238,8 +258,8 @@ async def _record_external_position_close(exchange, sym, state):
     )
     if recorded:
         clear_peak(sym)
-        logger.info(f"🧾 [ExternalClose] {sym} 已同步手動平倉：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
-    return bool(recorded)
+        logger.info(f"🧾 [ExternalClose] {sym} 已同步交易所平倉 {exit_reason}：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
+    return exit_reason if recorded else None
 
 
 async def calibrate_with_exchange(exchange):
@@ -326,6 +346,7 @@ async def calibrate_with_exchange(exchange):
                                 _memory_peak = float(ctx.STATES[sym].get("highest_profit_pct", 0.0) or 0.0)
                                 _restored_peak = max(0.0, _cur_pct, _stored_peak, _memory_peak)
                                 ctx.STATES[sym]["highest_profit_pct"] = _restored_peak
+                                ctx.STATES[sym]["has_partial_closed"] = load_partial_take_profit(sym)
                                 if _restored_peak > 0:
                                     save_peak(sym, _restored_peak)
                                 logger.info(
@@ -363,10 +384,10 @@ async def calibrate_with_exchange(exchange):
             if state.get("_is_closing"):
                 logger.info(f"⏳ [CALIBRATION] {sym} 機器人自己正在平倉中，本輪跳過外部平倉判定，避免重複記錄")
                 continue
-            await _record_external_position_close(exchange, sym, state)
+            external_reason = await _record_external_position_close(exchange, sym, state)
             logger.info(f"🔄 [CALIBRATION] {sym} 本地仍有持倉 {state.get('qty', 0.0):.4f}，但交易所已無倉位；清理本地狀態與交易所退出單追蹤")
             from core.state_manager import mark_exit
-            mark_exit(sym, is_stop_loss=False, reason="[External_Manual_Close]")
+            mark_exit(sym, is_stop_loss=(external_reason == "[External_Stop_Loss]"), reason=external_reason or "[External_Close]")
             for key, label in (("exchange_stop_order_id", "止損"), ("exchange_take_profit_order_id", "停利")):
                 order_id = state.get(key)
                 if not order_id:

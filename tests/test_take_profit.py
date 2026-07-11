@@ -26,6 +26,18 @@ class TakeProfitTests(unittest.TestCase):
         should_exit, new_tp = update_trailing_stop(sym, 100.5, True)
 
         self.assertFalse(should_exit)
+        self.assertGreaterEqual(new_tp, 100.25)  # 費用 0.10% + 至少鎖定 0.15% 淨空間
+
+    def test_low_atr_move_does_not_trigger_tiny_profit_trailing(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 99.0, "trailing_highest": 100.0,
+                  "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7})
+        _, stop = update_trailing_stop(sym, 100.15, True)
+        self.assertLessEqual(stop, 100.0)
 
     def test_early_take_profit_triggers_on_small_profit(self):
         sym = "XRPUSDT"
@@ -193,7 +205,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_breakeven_lock_triggers_on_low_profit_0_35_percent(self):
+    def test_breakeven_does_not_lock_tiny_profit_0_35_percent(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -220,8 +232,7 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                self.assertTrue(s.get("is_breakeven_locked", False))
-                self.assertGreater(s.get("stop_loss", 0.0), s["avg_price"])
+                self.assertFalse(s.get("is_breakeven_locked", False))
                 mock_close.assert_not_called()
 
         asyncio.run(run_check())

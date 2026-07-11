@@ -330,7 +330,8 @@ def apply_all_symbol_profiles():
         if not json_profile:
             json_profile = default_profile.copy()
         py_profile = COIN_PROFILE_CONFIG.get(sym, {})
-        merged_profile = {**json_profile, **py_profile}
+        # 雷達即時 profile 必須覆蓋靜態預設，否則選幣後算出的 TP/SL/槓桿完全不生效。
+        merged_profile = {**py_profile, **json_profile}
         apply_symbol_profile(sym, merged_profile)
 
 

@@ -117,7 +117,7 @@ class ExchangeCalibrationTests(unittest.TestCase):
             history_path = os.path.join(temp_dir, "trade_history.json")
             with patch("core.orders.TRADE_HISTORY_FILE", history_path):
                 first = record_trade_result(
-                    "XRPUSDT", "entry", "[External_Manual_Close]", -0.05, 1.0,
+                    "XRPUSDT", "entry", "[External_Close]", -0.05, 1.0,
                     expected_entry=100.0, expected_exit=105.0,
                     actual_entry=100.0, actual_exit=105.0,
                     fees=0.2, qty=2.0,
@@ -126,7 +126,7 @@ class ExchangeCalibrationTests(unittest.TestCase):
                     timestamp_ms=1700000000000,
                 )
                 second = record_trade_result(
-                    "XRPUSDT", "entry", "[External_Manual_Close]", -0.05, 1.0,
+                    "XRPUSDT", "entry", "[External_Close]", -0.05, 1.0,
                     expected_entry=100.0, expected_exit=105.0,
                     actual_entry=100.0, actual_exit=105.0,
                     fees=0.2, qty=2.0,

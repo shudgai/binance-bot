@@ -4,6 +4,38 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def check_candle_strength(ohlcv, condition_func, score_threshold=0.5):
+    """用權重型「訊號強度」取代死板的「連續性」判斷。
+
+    原本 core/signal_engine.py 的 get_consecutive_count() 要求連續 N 根 K 線嚴格同向
+    （close[i] > close[i-1]），太死板：只要其中一根雜訊回抽，整個訊號就被打回 0。
+    改成對最近兩根「已收盤」K 線分別套用 condition_func，取平均分數跟門檻比較——
+    預設 score_threshold=0.5 時，2 根裡符合 1 根就算通過（分數 0.5），2 根都符合分數
+    才是 1.0，用來額外加權。
+
+    ohlcv: [[timestamp, open, high, low, close, volume], ...]，最新一筆在最後面。
+    condition_func: 傳入單根 K 線（同樣是 [timestamp, open, high, low, close, volume]
+                    格式），回傳布林值或數值分數。
+    score_threshold: 平均分數門檻，預設 0.5。
+
+    注意：ohlcv[-1] 通常是「當前尚未收盤」的那一根（交易所還在即時更新），只有
+    ohlcv[-2]、ohlcv[-3] 才是「已經收盤確認」的資料，所以取樣範圍是 ohlcv[-3:-1]
+    （不含 -1），不是天真地取最後兩筆。
+    """
+    target_candles = ohlcv[-3:-1]
+    if not target_candles:
+        return False
+
+    scores = []
+    for candle in target_candles:
+        res = condition_func(candle)
+        score_val = float(res) if isinstance(res, (bool, int, float)) else 0.0
+        scores.append(score_val)
+
+    avg_score = sum(scores) / len(scores)
+    return avg_score >= score_threshold
+
+
 def calculate_ema(prices, period):
     if len(prices) < period:
         return np.mean(prices)

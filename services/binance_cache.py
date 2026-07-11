@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 
@@ -22,10 +23,8 @@ class BinanceDataCache:
         self.client = exchange_client
         self.ticker_cache = {}
         self.last_update_time = 0
-        # futures_mark_price() 全市場權重 10，每 5 秒更新一次等於 10/5秒 = 120/分鐘，
-        # 比原本誤用 futures_ticker()（40/5秒 = 480/分鐘）輕四倍，對幣安 2400/分鐘的
-        # 上限影響很小。
-        self.update_interval = 5.0
+        # 全市場端點單次權重 10；15 秒足夠給非關鍵價格 fallback 使用。
+        self.update_interval = max(5.0, float(os.getenv("MARK_PRICE_CACHE_SEC", "15")))
         self.lock = threading.Lock()  # 確保多執行緒安全
 
     def fetch_and_cache(self):
@@ -42,6 +41,8 @@ class BinanceDataCache:
                 self.last_update_time = time.time()
         except Exception as e:
             print(f"❌ [快取錯誤] 無法更新數據: {e}")
+            return False
+        return True
 
     def get_ticker(self, symbol):
         """
@@ -54,10 +55,6 @@ class BinanceDataCache:
         # 如果快取過期，則重新抓取
         if current_time - self.last_update_time > self.update_interval:
             self.fetch_and_cache()
-            # 如果抓取失敗或還沒抓到，稍微等一下再試一次
-            if not self.ticker_cache:
-                time.sleep(0.1)
-                return self.get_ticker(symbol)
 
         with self.lock:
             return self.ticker_cache.get(symbol)
@@ -72,10 +69,6 @@ class BinanceDataCache:
         # 如果快取過期，則重新抓取
         if current_time - self.last_update_time > self.update_interval:
             self.fetch_and_cache()
-            # 如果抓取失敗或還沒抓到，稍微等一下再試一次
-            if not self.ticker_cache:
-                time.sleep(0.1)
-                return {}
 
         with self.lock:
             return self.ticker_cache

@@ -487,7 +487,7 @@ async def check_entries():
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        _d_multiplier = 0.03 if _is_low_vol_ce else 0.04
+        _d_multiplier = 0.60 if _is_low_vol_ce else 0.80
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             set_entry_diagnosis(f"{sym}: 量能不足，無法進場")
@@ -500,17 +500,16 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.03 if _is_low_vol_ce else 0.04
+            _rvol_multiplier = 0.60 if _is_low_vol_ce else 0.80
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
             liquidity_check = h24_quote_volume_est > 1000000
 
-            volume_price_sync = False
-            if side == "buy" and cp <= s["ohlcv"][-2][4] and price_change > 0 and current_vol > prev_vol:
-                volume_price_sync = True
-            elif side == "sell" and price_change < 0 and current_vol > prev_vol:
-                volume_price_sync = True
+            candle_open = s["ohlcv"][-2][1]
+            candle_close = s["ohlcv"][-2][4]
+            direction_ok = candle_close > candle_open if side == "buy" else candle_close < candle_open
+            volume_price_sync = direction_ok and current_vol >= prev_vol * 0.80
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
@@ -523,7 +522,19 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
-                    logger.info(f"⚠️ [LOW_PARTICIPATION] {sym} 量價不協同 (價格變動: {price_change:.6f}, 大於前量: {current_vol > prev_vol})，但已放寬不攔截")
+                    strong_volume_override = strength >= 28.0 and current_vol >= vol_ma20 * 1.20
+                    if not strong_volume_override:
+                        logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 量價不協同，無跟進量支持，放棄進場")
+                        set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
+                        continue
+                    logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 1.2x，允許進場")
+
+        # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
+        _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
+        if route not in ("Exhaustion_Entry", "Extreme_Reversal") and _atr_pct_5m < 0.0012:
+            logger.info(f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < 0.12%，放棄進場")
+            set_entry_diagnosis(f"{sym}: 即時波動不足，放棄進場")
+            continue
 
         # F. 極端區域防禦 (Extreme Zone Defense)
         if route != "Exhaustion_Entry" and strength <= 15.0:

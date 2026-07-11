@@ -10,7 +10,7 @@ from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRE
     TREND_PERSISTENCE_WINDOW, PRICE_MOVEMENT_THRESHOLD,
     COIN_PROFILE_CONFIG, DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
     SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER,
-    HIGH_POINT_STAGNATION_MIN_PROFIT, HIGH_POINT_STAGNATION_TIME)
+    HIGH_POINT_STAGNATION_MIN_PROFIT, HIGH_POINT_STAGNATION_TIME, ROUND_TRIP_FEE_PCT)
 from core.indicators import _get_atr, _macd_vals, calculate_ema, calculate_macd
 from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier
 from core.calc import profit_pct as _profit_pct
@@ -47,7 +47,7 @@ class DynamicExitManager:
         self.is_long = is_long
 
         # 配置參數
-        self.profit_threshold = 0.15        # 啟動門檻 (0.15%)
+        self.profit_threshold = 0.30        # 至少覆蓋來回費用與一般市場雜訊後才啟動
         self.stagnation_range = 0.0005       # 盤整區間 (0.05%)
         self.no_high_time_limit = 60         # 盤整判定時間 (60秒內沒創新高)
 
@@ -115,9 +115,8 @@ class DynamicExitManager:
         time_since_high = time.time() - self.last_high_time
         
         # 1. 動態回撤比例 (Dynamic Retracement) - 快速反應防線
-        # 將回撤容忍度收緊為最高利潤的 15% (原本為 30%)，
-        # 並將最小雜訊容忍下限調低至 0.05% (0.0005)。
-        tolerance_pct = max(0.0005, min((self.max_profit_pct / 100.0) * 0.15, 0.0020))
+        # 容忍正常 1m 雜訊：至少 0.12%，並隨峰值放寬至峰值的 25%（上限 0.5%）。
+        tolerance_pct = max(0.0012, min((self.max_profit_pct / 100.0) * 0.25, 0.0050))
         
         is_retracing = False
         if self.is_long and current_price < (self.current_max_price * (1 - tolerance_pct)):
@@ -203,21 +202,26 @@ def update_trailing_stop(sym, current_price, is_long):
         save_peak(sym, s["highest_profit_pct"])
 
     # --- [Updated] Break-Even Mechanism ---
-    # Once profit exceeds 0.2% (0.002), the stop-loss is automatically moved to the entry price (plus a tiny buffer)
-    # to ensure that once a trade is in profit, it doesn't revert to a loss.
-    breakeven_threshold = 0.002
+    # 保本線必須涵蓋雙邊 taker fee，另加 0.02% 滑價緩衝；否則名義保本仍會淨虧。
+    # 真正有意義的保本：至少曾獲利 0.40%，回撤時仍鎖住約 0.25% 毛利。
+    fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
+    breakeven_threshold = 0.0040
     if profit_pct > breakeven_threshold:
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
         if is_long:
-            new_be_sl = avg_price * 1.0001
+            new_be_sl = avg_price * (1.0 + fee_safe_profit)
             s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), new_be_sl)
+            s["stop_loss"] = s["trailing_stop_price"]
+            s["is_breakeven_locked"] = True
         else:
-            new_be_sl = avg_price * 0.9999
+            new_be_sl = avg_price * (1.0 - fee_safe_profit)
             s["trailing_stop_price"] = min(s.get("trailing_stop_price", float('inf')), new_be_sl)
         logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
+    profile_type = str(s.get("profile_type", ""))
+    min_trailing_profit = 0.010 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.006
 
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
@@ -225,10 +229,10 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr:
+        if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
             trail_sl = max(trail_sl, locked_sl)
-        elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr:
+        elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr and profit_pct >= min_trailing_profit:
             dynamic_sl = s["trailing_highest"] - (atr_val * trailing_distance_atr)
             trail_sl = max(trail_sl, dynamic_sl)
         elif trailing_activation_atr == 0:
@@ -274,10 +278,10 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr:
+        if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
             trail_sl = min(trail_sl, locked_sl)
-        elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr:
+        elif trailing_activation_atr > 0 and profit_atr_multiple >= trailing_activation_atr and profit_pct >= min_trailing_profit:
             dynamic_sl = s["trailing_lowest"] + (atr_val * trailing_distance_atr)
             trail_sl = min(trail_sl, dynamic_sl)
         elif trailing_activation_atr == 0:
@@ -393,7 +397,8 @@ async def check_exits(sym):
         s["dynamic_exit_manager"] = DynamicExitManager(avg, restored_peak_pct=s.get("highest_profit_pct", 0.0) * 100, is_long=is_long)
     
     manager = s["dynamic_exit_manager"]
-    exit_signal = manager.update(p)
+    # 預設停用重疊的舊 DynamicExitManager，由單一 trailing/partial TP 管理停利。
+    exit_signal = manager.update(p) if s.get("use_dynamic_exit_manager", False) else "HOLD"
     if exit_signal == "SELL":
         cs = 'sell' if is_long else 'buy'
         logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
@@ -461,6 +466,27 @@ async def check_exits(sym):
             return
 
         logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
+
+    # ── 分批停利：先落袋一半，剩餘部位繼續交給 trailing 捕捉趨勢。
+    # 高彈性幣要求 1.0%，其餘要求 max(0.6%, 3 ATR)，避免小利潤被手續費吃掉。
+    if not s.get("has_partial_closed", False) and not s.get("partial_tp_pending", False):
+        profile_type = str(s.get("profile_type", ""))
+        partial_floor = 0.010 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.006
+        partial_trigger = max(partial_floor, (current_atr / avg) * 3.0 if avg > 0 else partial_floor)
+        if profit_pct >= partial_trigger:
+            before_qty = abs(s["qty"])
+            s["partial_tp_pending"] = True
+            try:
+                cs = "sell" if is_long else "buy"
+                await close_position(sym, cs, before_qty * 0.5, p, avg, reason="[Partial_Take_Profit]", is_stop_loss=False)
+                if abs(s.get("qty", 0.0)) < before_qty - 1e-8:
+                    s["has_partial_closed"] = True
+                    from core.peak_store import save_partial_take_profit
+                    save_partial_take_profit(sym)
+                    logger.info(f"💰 [分批停利] {sym} 已落袋 50%，剩餘部位繼續追蹤趨勢")
+                    return
+            finally:
+                s["partial_tp_pending"] = False
 
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
@@ -563,7 +589,9 @@ async def check_exits(sym):
             # 獲利越高，要求的「沒創新高」時間越短，以便更快落袋為安
             # 從 HIGH_POINT_STAGNATION_TIME (300s) 到最低 120s 之間線性縮減 (以 5% 超過門檻為基準)
             dynamic_stagnation_time = max(120, int(HIGH_POINT_STAGNATION_TIME * (1 - (profit_pct - HIGH_POINT_STAGNATION_MIN_PROFIT) / 0.05)))
-            is_near_peak = s.get("highest_profit_pct", 0.0) <= (p * (1 + (HIGH_POINT_STAGNATION_MIN_PROFIT if is_long else -HIGH_POINT_STAGNATION_MIN_PROFIT)))
+            peak_profit = s.get("highest_profit_pct", 0.0)
+            allowed_giveback = max(0.0010, peak_profit * 0.25)
+            is_near_peak = profit_pct >= max(0.0, peak_profit - allowed_giveback)
             
             # ── [新增] 盤整行情處理 ──
             # 即使價格一直在變動（不到 300 秒就變動），但若處於盤整區間且價格在峰值附近，則判定為停滯

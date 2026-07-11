@@ -70,7 +70,7 @@ def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: in
     base_hard_sl = base.get("hard_sl_pct", 0.015)
     if atr_pct > 4.0:
         sl_mult   = round(base.get("sl_atr_multiplier", 2.5) + 1.0, 1)
-        lev_cap   = min(lev_cap, 2)
+        lev_cap   = min(lev_cap, 3)
         hard_sl   = min(max(base_hard_sl, 0.015), 0.020)
         trail_on  = True
         vol_tag   = "中高動能"
@@ -93,7 +93,7 @@ def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: in
 
     # ── ATR 排名越高 → TP 放大（讓強勢幣跑更遠）──
     rank_factor  = 1.0 + (total - rank) / max(total, 1) * 0.5   # rank1=+50%, rank=total=+0%
-    tp_mult      = round(base.get("tp_atr_multiplier", 10.0) * rank_factor, 1)
+    tp_mult      = round(min(8.0, max(4.0, base.get("tp_atr_multiplier", 6.0) * rank_factor)), 1)
 
     # ── 最終槓桿 ──
     final_lev = min(base.get("leverage", 3), lev_cap)
@@ -154,7 +154,7 @@ ATR_ELIGIBLE_SYMBOLS = [
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
 # 選幣數擴大到 12：新倉條件變嚴後，需要更多候選給 3 個倉位槽篩選。
 # 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 12 檔而同時開更多單。
-RADAR_SELECT_COUNT = 23
+RADAR_SELECT_COUNT = 10
 HOT_MOVERS_COUNT   = 0    # 不追熱門暴衝榜，避免急升急跌標的進入監控池
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
@@ -328,8 +328,19 @@ from services.binance_service import get_dynamic_top_15_coins
 
 def auto_radar_switch(force_start=False):
     """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。"""
-    # 1. 獲取動態選出的前 15 個幣種
-    best_symbols = get_dynamic_top_15_coins()
+    # 使用與儀表板 ATR Rank 相同的排名，不再走另一套全市場函式。
+    clean_blacklist()
+    scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
+    _, ranking = get_atr_ranked_coins(scan_pool, limit=len(scan_pool))
+    eligible = [r for r in ranking
+                if MIN_ATR_PCT_FOR_ENTRY <= r["atr_pct"] <= MAX_ATR_PCT_FOR_ENTRY
+                and MIN_1H_VOL_PCT_FOR_ENTRY <= r["one_h_vol_pct"] <= MAX_1H_VOL_PCT_FOR_ENTRY
+                and abs(r["change_pct"]) <= MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY]
+    # API 偶發缺少 1h K 線時不拿 0 值死水幣補位；候選不足則維持較小的高品質池。
+    best_symbols = [r["symbol"] for r in eligible[:RADAR_SELECT_COUNT]]
+    profiles = {r["symbol"]: _compute_dynamic_profile(
+        r["symbol"], r["atr_pct"], r["price"], idx + 1, len(eligible)
+    ) for idx, r in enumerate(eligible[:RADAR_SELECT_COUNT])}
     
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
@@ -338,6 +349,7 @@ def auto_radar_switch(force_start=False):
     # 2. 將選出的 15 個幣種寫入 bot_symbols.json
     # 使用 save_symbol_config 確保配置被正確持久化
     save_symbol_config(best_symbols)
+    _save_radar_profiles(profiles)
     
     add_system_log(f"🎯 [動態選幣] 已更新監控池為前 15 名動能幣種: {', '.join(best_symbols)}", "success")
     
