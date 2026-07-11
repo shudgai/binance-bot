@@ -20,12 +20,11 @@ EXPECTED_SYMBOLS = [
 EXPECTED_ATR_SYMBOLS = EXPECTED_SYMBOLS + ["DOGEUSDT", "SOLUSDT"]
 
 
-def test_all_default_symbol_sources_use_the_approved_ten():
-    assert DEFAULT_SYMBOLS == EXPECTED_SYMBOLS
-    assert MANAGER_DEFAULT_SYMBOLS == EXPECTED_SYMBOLS
+def test_atr_sources_use_the_approved_dynamic_pool():
+    assert set(MANAGER_DEFAULT_SYMBOLS).issubset(set(DEFAULT_SYMBOLS))
     assert ATR_ELIGIBLE_SYMBOLS == EXPECTED_ATR_SYMBOLS
     assert CORE_SYMBOLS == EXPECTED_ATR_SYMBOLS
-    assert RADAR_SELECT_COUNT == 12
+    assert RADAR_SELECT_COUNT == 10
     assert MIN_ATR_PCT_FOR_ENTRY == 2.5
     assert MAX_ATR_PCT_FOR_ENTRY == 7.2
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.42

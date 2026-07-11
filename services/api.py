@@ -43,8 +43,7 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     # 啟動 6:00 AM 定時器
     threading.Thread(target=daily_reset_daemon, daemon=True).start()
-    # 每 4 小時定期 ATR 雷達重掃
-    threading.Thread(target=_periodic_radar_daemon, daemon=True).start()
+    # 後續 ATR 重選由主交易進程單一排程負責，避免兩套排程互相覆蓋或重啟核心。
     # 啟動時跑雷達更新幣池（選最強 RADAR_SELECT_COUNT 隻）再恢復機器人
     threading.Thread(target=_startup_radar_restore, daemon=True).start()
     yield

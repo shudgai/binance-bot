@@ -691,22 +691,39 @@ async def periodic_htf_update(exchange):
 
 
 async def periodic_momentum_swap():
-    """
-    每 5 分鐘掃描目前監控幣種的即時動能（ATR% 與 1h 波動度）。
-    若某幣無持倉且動能不足，自動呼叫 replace_dead_coin() 換成池中動能最強的替補。
-    這樣確保幣種池隨時保持活躍，不讓「死水幣」佔住槽位卻毫無進場機會。
-    """
-    # 首次執行稍微延遲，等主迴圈完成初始化
-    await asyncio.sleep(60)
+    """每 15 分鐘完整 ATR 重選；保留持倉、下單中與 pending 幣種，且不重啟程序。"""
+    # 啟動雷達已先選過一次；等待 5 分鐘讓 ATR 與高週期指標完成暖機。
+    await asyncio.sleep(300)
     while True:
         try:
-            from services.radar_service import check_momentum_and_swap, FOLLOW_SYMBOLS_FROM
-            # 跟隨模式不自行換幣（換幣權交給來源部署）
+            from services.radar_service import auto_radar_switch, FOLLOW_SYMBOLS_FROM
             if not FOLLOW_SYMBOLS_FROM:
-                await asyncio.get_event_loop().run_in_executor(None, check_momentum_and_swap)
+                selected = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: auto_radar_switch(force_start=False, restart_on_change=False)
+                )
+                if selected:
+                    from core.state_manager import build_symbol_state
+                    from core.symbol_profile import apply_symbol_profile, load_symbol_profiles, save_symbol_pool
+                    protected = [
+                        sym for sym in ctx.ALL_SYMBOLS
+                        if abs(ctx.STATES.get(sym, {}).get("qty", 0.0)) > 0.000001
+                        or ctx.STATES.get(sym, {}).get("is_ordering", False)
+                        or ctx.STATES.get(sym, {}).get("pending_side")
+                    ]
+                    new_pool = list(dict.fromkeys(list(selected) + protected))
+                    profiles = load_symbol_profiles()
+                    old_pool = list(ctx.ALL_SYMBOLS)
+                    for sym in new_pool:
+                        if sym not in ctx.STATES:
+                            ctx.STATES[sym] = build_symbol_state(sym)
+                        apply_symbol_profile(sym, profiles.get(sym, {}))
+                    ctx.ALL_SYMBOLS[:] = new_pool
+                    save_symbol_pool(new_pool)
+                    if old_pool != new_pool:
+                        logger.info(f"🔄 [ATR定時重選-免重啟] 監控池已由 {len(old_pool)} 檔更新為 {len(new_pool)} 檔")
         except Exception as e:
-            logger.info(f"⚠️ [動能自動換幣] 執行失敗: {e}")
-        await asyncio.sleep(300)  # 每 5 分鐘檢查一次
+            logger.info(f"⚠️ [ATR定時重選] 執行失敗: {e}")
+        await asyncio.sleep(900)
 
 
 def print_multi_status():

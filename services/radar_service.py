@@ -335,7 +335,7 @@ def _follow_source_radar_switch(force_start=False):
 
 from services.binance_service import get_dynamic_top_15_coins
 
-def auto_radar_switch(force_start=False):
+def auto_radar_switch(force_start=False, restart_on_change=True):
     """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。"""
     status_before_scan = get_bot_status()
     # 使用與儀表板 ATR Rank 相同的排名，不再走另一套全市場函式。
@@ -410,7 +410,7 @@ def auto_radar_switch(force_start=False):
     
     # 3. 如果是強制啟動或正在運行，則啟動新幣池
     symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(best_symbols)
-    if force_start or (status_before_scan.get("is_running") and (symbols_changed or eligibility_changed)):
+    if restart_on_change and (force_start or (status_before_scan.get("is_running") and (symbols_changed or eligibility_changed))):
         # 注意：start_bot 會處理重新啟動邏輯
         start_bot(best_symbols, status_before_scan.get("trade_amount", 150.0))
     
