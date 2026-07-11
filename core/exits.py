@@ -528,7 +528,12 @@ async def check_exits(sym):
     _intra_peak_early = 0.0
     if _ohlcv_early and avg > 0:
         _lc = _ohlcv_early[-1]
-        _intra_peak_early = (_lc[2] - avg) / avg if is_long else (avg - _lc[3]) / avg
+        # 若本根 K 線在進場前已開始，HIGH/LOW 可能發生於持倉建立前；
+        # 該根內真正的進場後峰值只採用即時成交流紀錄。
+        _candle_started_sec = float(_lc[0] or 0.0) / 1000.0
+        _opened_sec = float(s.get("open_time", 0.0) or 0.0)
+        if _opened_sec <= 0 or _candle_started_sec >= _opened_sec:
+            _intra_peak_early = (_lc[2] - avg) / avg if is_long else (avg - _lc[3]) / avg
     _prev_peak_early = s.get("highest_profit_pct", 0.0)
     s["highest_profit_pct"] = max(
         _prev_peak_early,

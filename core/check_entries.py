@@ -358,12 +358,13 @@ async def check_entries():
 
         # --- 新增：等待收盤確認機制 ---
         if s.get("pending_side"):
-            if is_relaxed:
+            if is_relaxed and not s.get("pending_requires_close_confirmation", False):
                 logger.info(f"⚡ [寬鬆即時確認] {sym} 寬鬆模式直接放行已還原的 pending {s['pending_side']} 訊號")
                 side = s["pending_side"]
                 strength = s.get("pending_strength", 5.0)
                 route = s.get("pending_route", "confirmed")
                 s["pending_side"] = None
+                s["pending_requires_close_confirmation"] = False
                 candidates.append((sym, side, strength, route))
                 continue
             if current_candle_time <= s.get("pending_time", 0):
@@ -423,6 +424,7 @@ async def check_entries():
                     strength = s.get("pending_strength", 5.0)
                     route = s.get("pending_route", "confirmed")
                     s["pending_side"] = None
+                    s["pending_requires_close_confirmation"] = False
                     logger.info(f"🧭 [ENTRY_GATE] {sym} pending確認通過，加入候選隊列 | side={side} route={route} strength={strength:.2f}")
                     # 所有關卡在進入 pending 前已完成篩選，確認後直接放行
                     candidates.append((sym, side, strength, route))
@@ -430,8 +432,10 @@ async def check_entries():
                 else:
                     logger.info(f"❌ [訊號失效] {sym} {s['pending_side']} 訊號 K 線收盤反轉，取消開倉。")
                     s["pending_side"] = None
+                    s["pending_requires_close_confirmation"] = False
             else:
                 s["pending_side"] = None
+                s["pending_requires_close_confirmation"] = False
             continue
 
         # 原本的計算邏輯
@@ -514,6 +518,7 @@ async def check_entries():
         # 小幅放寬高波動量能門檻；背離、收盤確認與高位防追價仍維持嚴格。
         _d_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= 25.0 else 0.70)
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
+            s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             set_entry_diagnosis(f"{sym}: 量能不足，無法進場")
             continue
@@ -785,6 +790,7 @@ async def check_entries():
         s["pending_time"] = current_candle_time
         s["pending_strength"] = strength
         s["pending_route"] = route
+        s["pending_requires_close_confirmation"] = _force_close_confirmation
         # 保留到平倉記錄，避免 trade_history 全部 UNKNOWN。同時落地存檔（entry_reason_store），
         # 因為這個欄位只存在記憶體內的 ctx.STATES，bot 重啟就會被清空——今天一天內重啟
         # 很多次，導致幾乎所有平倉記錄的 entry_reason 都變成 UNKNOWN，完全查不到當初為何

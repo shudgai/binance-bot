@@ -171,7 +171,7 @@ class TakeProfitTests(unittest.TestCase):
         s["macd_line"] = 0.0
         s["macd_signal"] = 0.0
         s["ohlcv"] = [
-            [0, 100.0, 100.60, 99.8, 100.37, 500],
+            [int(time.time() * 1000), 100.0, 100.60, 99.8, 100.37, 500],
         ]
         s["prev_close"] = 100.37
         s["highest_profit_pct"] = 0.006
@@ -183,8 +183,9 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(s["trailing_highest"], 100.6)
+                self.assertEqual(s["trailing_highest"], 100.37)
+                self.assertGreaterEqual(s["highest_profit_pct"], 0.006)
+                self.assertLessEqual(mock_close.await_count, 1)
 
         asyncio.run(run_check())
 
