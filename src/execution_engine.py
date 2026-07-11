@@ -61,12 +61,37 @@ class ExecutionEngine:
             logger.info(f"已校正精度: {amount} -> {precision_amount}")
 
             # 4. 執行實際訂單
-            # 這裡假設使用的是 market 訂單，若為 limit 訂單可根據需求擴充參數
+            # --- [新增] 流動性與點差過濾 (Liquidity & Spread Filter) ---
+            # 獲取當前訂單簿以檢查點差
+            ticker = await self.exchange.fetch_ticker(symbol)
+            bid = ticker.get('bid', 0.0)
+            ask = ticker.get('ask', 0.0)
+            
+            if bid > 0 and ask > 0:
+                spread_pct = (ask - bid) / bid
+                if spread_pct > 0.001: # 點差超過 0.1%
+                    logger.warning(f"⚠️ 交易被跳過: {symbol} {side} 點差過大 ({spread_pct*100:.2f}%)，流動性不足。")
+                    return {"status": "skipped", "reason": "high_spread"}
+            
+            # 執行訂單優化：優先使用限價單 (Limit Order) 以確保成交價接近訊號價格
+            # 若 config 中未指定，預設使用限價單，除非價格波動過大
+            order_type = 'limit'
+            limit_price = price if price is not None else (ticker.get('ask') if side == 'buy' else ticker.get('bid'))
+            
+            # 如果是限價單且價格極端異常（例如偏離當前價格 2% 以上），則退回市價單以確保成交
+            if order_type == 'limit' and limit_price:
+                current_last = ticker.get('last', 0.0)
+                if abs(limit_price - current_last) / current_last > 0.02:
+                    order_type = 'market'
+                    limit_price = None
+                    logger.info(f"⚠️ 價格異常偏離，將 {symbol} {side} 訂單從 limit 切換為 market")
+
             order = await self.exchange.create_order(
                 symbol=symbol,
-                type='market',
+                type=order_type,
                 side=side,
-                amount=precision_amount
+                amount=precision_amount,
+                price=limit_price
             )
 
             # --- 防護層 3: 滑點預警 (Slippage Alert) ---

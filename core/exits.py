@@ -18,6 +18,25 @@ from core.calc import profit_pct as _profit_pct
 logger = logging.getLogger(__name__)
 
 
+class FastReversalGuard:
+    def __init__(self, max_immediate_deviation=0.005): # 0.5% 立即背離就砍
+        self.max_immediate_deviation = max_immediate_deviation
+
+    def check_instant_trap(self, entry_price, current_price, side):
+        """
+        偵測開倉後的「瞬間陷阱」
+        """
+        if side == 'buy':
+            deviation = (entry_price - current_price) / entry_price
+        else:
+            deviation = (current_price - entry_price) / entry_price
+            
+        # 如果在極短時間內背離超過門檻，立即觸發平倉訊號
+        if deviation > self.max_immediate_deviation:
+            return "EXIT_INSTANT_TRAP"
+        
+        return "KEEP_HOLDING"
+
 class DynamicExitManager:
     """
     動態退出管理器：結合 ATR 趨勢追蹤與非線性耐心衰減模型。
@@ -380,6 +399,18 @@ async def check_exits(sym):
         logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
         return
+
+    # --- [新增] 極速止損 (Fast-Exit Guard / Instant Trap) ---
+    # 檢查開倉後 60 秒內的「瞬間陷阱」
+    hold_sec = time.time() - s.get("open_time", time.time())
+    if hold_sec < 60 and s.get("open_time", 0) > 0:
+        guard = FastReversalGuard()
+        trap_signal = guard.check_instant_trap(avg, p, 'buy' if is_long else 'sell')
+        if trap_signal == "EXIT_INSTANT_TRAP":
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"⚡ [Instant_Trap_Trigger] {sym} 開倉 {hold_sec:.1f} 秒內出現嚴重背離，立即砍倉。")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Fast_Reversal_Guard]", is_stop_loss=True)
+            return
 
     # ── 急速逆勢提早出場 (Rapid Reversal Early Exit) ──
     # 用「距離上一次進場/攤平的時間」而不是「距離最初開倉的時間」，這樣攤平救援後

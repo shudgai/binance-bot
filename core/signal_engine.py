@@ -26,6 +26,7 @@ def compute_signal_strength(sym):
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
     if vol_ma10 > 0 and current_vol < vol_ma10 * 0.000015:
+        logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} [量能過濾] 當前量 {current_vol:.0f} < 均量 {vol_ma10:.0f} * 0.000015")
         return (None, 0, None)
 
     # --- 第三層防禦：極值檢查 (Extreme Value Defense) ---
@@ -39,7 +40,7 @@ def compute_signal_strength(sym):
         rsi_history = s.get("rsi_history", [])
         is_hooking_up = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
         if not (is_hooking_up and macd_hist_now > macd_hist_prev):
-            logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} [極值防禦] RSI {rsi:.1f} 尚未回勾且 MACD 未改善，拒絕接刀")
+            logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} [極值防禦] RSI {rsi:.1f} 尚未回勾且 MACD 未改善，拒絕接刀")
             return (None, 0, None)
 
     if rsi > rsi_extreme_high:
@@ -100,12 +101,44 @@ def compute_signal_strength(sym):
     long_macd_ok = long_macd_cross or long_macd_hist_aligned
     short_macd_ok = short_macd_cross or short_macd_hist_aligned
 
-    # --- 放寬：只需最後 1 根 K 線方向一致即可 ---
-    last_candle_long  = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4]
-    last_candle_short = len(s["ohlcv"]) >= 2 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4]
-    # 保留原連2根判斷供加分使用
-    last_two_candles_long  = len(s["ohlcv"]) >= 3 and s["ohlcv"][-1][4] > s["ohlcv"][-2][4] and s["ohlcv"][-2][4] > s["ohlcv"][-3][4]
-    last_two_candles_short = len(s["ohlcv"]) >= 3 and s["ohlcv"][-1][4] < s["ohlcv"][-2][4] and s["ohlcv"][-2][4] < s["ohlcv"][-3][4]
+    # --- 配置化連續性檢查 ---
+    # 預設為 1 根 (根據使用者建議放寬門檻)
+    CONSECUTIVE_COUNT = 1 
+    
+    def get_consecutive_count(ohlcv, side):
+        if len(ohlcv) < CONSECUTIVE_COUNT + 1:
+            return 0
+        
+        count = 0
+        for i in range(1, CONSECUTIVE_COUNT + 1):
+            curr_idx = -i
+            prev_idx = -i - 1
+            if side == "buy":
+                if ohlcv[curr_idx][4] > ohlcv[prev_idx][4]:
+                    count += 1
+                else:
+                    break
+            else:
+                if ohlcv[curr_idx][4] < ohlcv[prev_idx][4]:
+                    count += 1
+                else:
+                    break
+        return count
+
+    count_long = get_consecutive_count(s["ohlcv"], "buy")
+    count_short = get_consecutive_count(s["ohlcv"], "sell")
+    
+    # 基本判斷：只要符合要求的連續數量即可
+    last_candle_long  = count_long >= CONSECUTIVE_COUNT
+    last_candle_short = count_short >= CONSECUTIVE_COUNT
+    
+    # 加分判斷：如果比要求的數量更多（例如要求1根但實際有2根），給予額外強度
+    last_two_candles_long  = count_long >= 2
+    last_two_candles_short = count_short >= 2
+
+    # --- [新增] 分數與門檻 Debug 資訊 ---
+    # 這裡的門檻可以根據需求調整，預設與之前邏輯對齊
+    MIN_STRENGTH_THRESHOLD = 15.0 
 
     ema50 = s.get("ema50", 0.0)
     trend_confluence_long  = ema50 == 0.0 or close > ema50
@@ -146,6 +179,18 @@ def compute_signal_strength(sym):
 
     logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 預估強度(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
+    # --- [新增] 分數門檻檢查與原因日誌 ---
+    if raw_long_str >= MIN_STRENGTH_THRESHOLD and last_candle_long:
+        # 這裡可以進一步檢查其他細節
+        pass
+    elif raw_long_str < MIN_STRENGTH_THRESHOLD:
+        logger.debug(f"@@COIN_DEBUG@@ ❌ {sym} 拒絕做多 | 預估分數 {raw_long_str:.1f} < 門檻 {MIN_STRENGTH_THRESHOLD}")
+
+    if raw_short_str >= MIN_STRENGTH_THRESHOLD and last_candle_short:
+        pass
+    elif raw_short_str < MIN_STRENGTH_THRESHOLD:
+        logger.debug(f"@@COIN_DEBUG@@ ❌ {sym} 拒絕做空 | 預估分數 {raw_short_str:.1f} < 門檻 {MIN_STRENGTH_THRESHOLD}")
+
     # 極端反轉必須同時有 RSI 回勾、MACD 改善與反轉 K，不能只靠極端值猜底/猜頂。
     rsi_history = s.get("rsi_history", [])
     if rsi >= 80.0:
@@ -172,6 +217,8 @@ def compute_signal_strength(sym):
         logger.info(f"@@COIN_DEBUG@@ 🛡️ {sym} 通過 StrategyEngine 過濾門檻 ({side_lower}) | Strength: {strength:.1f}")
         return (side_lower, strength, "StrategyEngine_Gate")
             
+    # 最終拒絕原因日誌
+    logger.debug(f"@@COIN_DEBUG@@ ❌ {sym} 無有效訊號 | LongScore:{raw_long_str:.1f} ShortScore:{raw_short_str:.1f}")
     return (None, 0, None)
 
 

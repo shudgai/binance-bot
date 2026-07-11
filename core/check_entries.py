@@ -658,7 +658,10 @@ async def check_entries():
         atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
         base_rr_thresh = s.get("min_rr", 1.4)
 
-        rr_thresh = 1.1 if strength > 20.0 else (1.2 if strength > 15.0 else base_rr_thresh)
+        # 使用者反映現在幾乎完全開不了倉：實測訊號強度大多落在 15~26，strength>20 才給
+        # 最寬鬆 1.1 門檻的話，大部分訊號還是卡在 base_rr_thresh(1.4)~2.0。放寬斷點到
+        # >14/>12，讓目前實際出現的訊號強度範圍也能吃到比較寬鬆的 R:R 門檻。
+        rr_thresh = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else base_rr_thresh)
         if base_rr_thresh >= 2.0:
             rr_thresh = base_rr_thresh
 
@@ -671,9 +674,10 @@ async def check_entries():
             logger.info(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，無法覆蓋手續費與滑點，放棄暫存")
             continue
 
-        # 絕對獲利空間硬門檻 1.5% (MinProfit Hard Gate)
-        # 防止在極低波動（ATR 極小）時進場
-        _HARD_MIN_PROFIT_PCT = 0.015  # 1.5% 硬門檻
+        # 絕對獲利空間硬門檻 (MinProfit Hard Gate)
+        # 防止在極低波動（ATR 極小）時進場。原本 1.5%，使用者反映現在幾乎開不了倉，
+        # 降到 0.8%（防止過低波動進場的用意還在，只是門檻沒那麼高）。
+        _HARD_MIN_PROFIT_PCT = 0.008  # 0.8% 硬門檻
         if expected_profit_pct < _HARD_MIN_PROFIT_PCT:
             logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
             continue

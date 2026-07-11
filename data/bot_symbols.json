@@ -1,19 +1,19 @@
 {
   "symbols": [
+    "SENTUSDT",
+    "FARTCOINUSDT",
+    "DEXEUSDT",
     "WLDUSDT",
     "UNIUSDT",
-    "BCHUSDT",
     "DOTUSDT",
     "ETHUSDT",
     "ADAUSDT",
+    "1000PEPEUSDT",
     "LTCUSDT",
     "SOLUSDT",
-    "FETUSDT",
     "ENAUSDT",
     "LINKUSDT",
-    "XRPUSDT",
     "ONDOUSDT",
-    "AVAXUSDT",
-    "SUIUSDT"
+    "XRPUSDT"
   ]
 }
