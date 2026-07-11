@@ -238,10 +238,11 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 核心型低波動幣常達不到 0.6%。峰值 0.15% 起使用軟移動停利，回吐 0.06%；
+        # 所有幣種峰值 0.15% 起使用軟移動停利，回吐 0.06%；價格創新高時停利線
+        # 只會跟著上移、永不下移。0.6%／1% 仍作為更強的保本鎖門檻。
         # 實際觸發時仍由下方淨利保護確認成交價足以覆蓋雙邊費用，避免小利變虧損。
         _hp_soft = s["highest_profit_pct"]
-        if not is_high_beta and 0.0015 <= _hp_soft < breakeven_threshold:
+        if 0.0015 <= _hp_soft < breakeven_threshold:
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0001)
             _soft_sl = max(s["trailing_highest"] * (1.0 - 0.0006), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
@@ -304,9 +305,9 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單採對稱的核心型軟移動停利。
+        # 空單採對稱的全幣種軟移動停利。
         _hp_soft = s["highest_profit_pct"]
-        if not is_high_beta and 0.0015 <= _hp_soft < breakeven_threshold:
+        if 0.0015 <= _hp_soft < breakeven_threshold:
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0001)
             _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.0006), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)

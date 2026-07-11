@@ -323,11 +323,28 @@ class TakeProfitTests(unittest.TestCase):
                   "profile_type": "Speculative_Risk"})
         update_trailing_stop(sym, 100.7, True)
         self.assertFalse(s.get("is_breakeven_locked", False))
-        self.assertLess(s["trailing_stop_price"], s["avg_price"])
+        self.assertTrue(s.get("soft_trailing_armed", False))
+        self.assertGreater(s["trailing_stop_price"], s["avg_price"])
 
         update_trailing_stop(sym, 101.1, True)
         self.assertTrue(s.get("is_breakeven_locked", False))
         self.assertGreater(s["trailing_stop_price"], s["avg_price"])
+
+    def test_soft_trailing_only_moves_up_with_new_high(self):
+        sym = "INJUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.2,
+                  "trailing_stop_price": 0.0, "trailing_highest": 100.0,
+                  "profile_type": "High_Beta_Momentum"})
+        update_trailing_stop(sym, 100.2, True)
+        first_stop = s["trailing_stop_price"]
+        update_trailing_stop(sym, 100.4, True)
+        raised_stop = s["trailing_stop_price"]
+        update_trailing_stop(sym, 100.3, True)
+        self.assertGreater(raised_stop, first_stop)
+        self.assertEqual(s["trailing_stop_price"], raised_stop)
 
     def test_hard_stop_loss_still_triggers_during_initial_cooldown(self):
         from unittest.mock import patch, AsyncMock
