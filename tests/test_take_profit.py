@@ -48,10 +48,10 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 99.0, "trailing_highest": 100.0,
                   "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7})
-        _, stop = update_trailing_stop(sym, 100.15, True)
+        _, stop = update_trailing_stop(sym, 100.14, True)
         self.assertLessEqual(stop, 100.0)
 
-    def test_soft_trailing_does_not_activate_between_point_three_and_point_six(self):
+    def test_core_soft_trailing_activates_between_point_fifteen_and_point_six(self):
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -59,24 +59,20 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 99.0, "trailing_highest": 100.0})
         update_trailing_stop(sym, 100.4, True)
-        self.assertLessEqual(s["trailing_stop_price"], 100.0)
+        self.assertGreater(s["trailing_stop_price"], 100.0)
+        self.assertTrue(s["soft_trailing_armed"])
 
-    def test_soft_trailing_does_not_activate_below_point_three(self):
+    def test_soft_trailing_does_not_activate_below_point_fifteen(self):
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 99.0, "trailing_highest": 100.0})
-        update_trailing_stop(sym, 100.2, True)
+        update_trailing_stop(sym, 100.14, True)
         self.assertLessEqual(s["trailing_stop_price"], 100.0)
 
-    def test_soft_trailing_leaves_enough_margin_to_survive_poll_latency(self):
-        # 軟移動停利只靠機器人每 10~25 秒巡檢現價才觸發市價出場，不是掛在交易所
-        # 上即時成交的停損單。緩衝太薄的話，巡檢間隔內價格常常已經滑落超過這條線，
-        # 導致「帳面上有小賺」的單子扣完手續費變成淨虧（UNIUSDT 實測案例：軟停利線
-        # 算出 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝）。這裡驗證
-        # 軟停利線離成本價至少要有 ROUND_TRIP_FEE_PCT+0.0015 的緩衝空間。
+    def test_core_soft_trailing_creates_fee_safe_profit_side_stop(self):
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -84,7 +80,7 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.25,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
         update_trailing_stop(sym, 100.34, True)  # 峰值 0.34%，落在 0.3%-0.6% 軟停利區間
-        self.assertLess(s["trailing_stop_price"], s["avg_price"])
+        self.assertGreater(s["trailing_stop_price"], s["avg_price"])
 
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成

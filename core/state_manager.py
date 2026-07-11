@@ -370,6 +370,8 @@ def reset_coin_state(sym):
     s["peak_time"] = 0.0
     s["has_partial_closed"] = False
     s["is_breakeven_locked"] = False
+    s["soft_trailing_armed"] = False
+    s["soft_trailing_profit_floor"] = 0.0
     s["stop_loss"] = 0.0
     s["pending_side"] = None
     s["pending_time"] = 0

@@ -238,8 +238,15 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 舊版在峰值 0.3%-0.6% 使用軟移動停利，但靠輪詢觸發的市價出場會有延遲，
-        # 實盤多次在穿線後才成交，使小利變成淨虧；現在等 0.6% 保本門檻才鎖利。
+        # 核心型低波動幣常達不到 0.6%。峰值 0.15% 起使用軟移動停利，回吐 0.06%；
+        # 實際觸發時仍由下方淨利保護確認成交價足以覆蓋雙邊費用，避免小利變虧損。
+        _hp_soft = s["highest_profit_pct"]
+        if not is_high_beta and 0.0015 <= _hp_soft < breakeven_threshold:
+            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0001)
+            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.0006), _soft_floor)
+            trail_sl = max(trail_sl, _soft_sl)
+            s["soft_trailing_armed"] = True
+            s["soft_trailing_profit_floor"] = _soft_floor
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
             trail_sl = max(trail_sl, locked_sl)
@@ -297,7 +304,14 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單採相同門檻。
+        # 空單採對稱的核心型軟移動停利。
+        _hp_soft = s["highest_profit_pct"]
+        if not is_high_beta and 0.0015 <= _hp_soft < breakeven_threshold:
+            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0001)
+            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.0006), _soft_ceiling)
+            trail_sl = min(trail_sl, _soft_sl)
+            s["soft_trailing_armed"] = True
+            s["soft_trailing_profit_floor"] = _soft_ceiling
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
             trail_sl = min(trail_sl, locked_sl)
@@ -555,6 +569,7 @@ async def check_exits(sym):
     _peak_for_sl = float(s.get("highest_profit_pct", 0.0) or 0.0)
     _invalid_profit_side_sl = (
         _peak_for_sl < 0.003
+        and not s.get("soft_trailing_armed", False)
         and ts_price is not None and ts_price > 0
         and ((is_long and ts_price >= avg) or (not is_long and ts_price <= avg))
     )
@@ -566,14 +581,23 @@ async def check_exits(sym):
     if ts_price is not None and ts_price > 0:
         if is_long:
             if p <= ts_price:
-                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} <= 停損價 {ts_price:.6f}")
-                await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=True)
-                return
+                _soft_floor = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
+                if s.get("soft_trailing_armed", False) and _soft_floor > 0 and p < _soft_floor:
+                    logger.info(f"⏸️ [Soft_Trailing_Net_Guard] {sym} 已穿軟停利線，但現價 {p:.6f} 低於淨利底線 {_soft_floor:.6f}，不把小利平成虧損")
+                    # 繼續執行一般 ATR／硬停損，不在負報酬區誤用停利理由平倉。
+                else:
+                    logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} <= 停損價 {ts_price:.6f}")
+                    await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=False)
+                    return
         else:
             if p >= ts_price:
-                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} >= 停損價 {ts_price:.6f}")
-                await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=True)
-                return
+                _soft_ceiling = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
+                if s.get("soft_trailing_armed", False) and _soft_ceiling > 0 and p > _soft_ceiling:
+                    logger.info(f"⏸️ [Soft_Trailing_Net_Guard] {sym} 已穿軟停利線，但現價 {p:.6f} 高於淨利底線 {_soft_ceiling:.6f}，不把小利平成虧損")
+                else:
+                    logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} >= 停損價 {ts_price:.6f}")
+                    await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=False)
+                    return
 
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     # Specifically handle BCH and XLM with higher ATR multipliers to account for their higher volatility
