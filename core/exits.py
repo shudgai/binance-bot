@@ -216,7 +216,14 @@ def update_trailing_stop(sym, current_price, is_long):
             s["is_breakeven_locked"] = True
         else:
             new_be_sl = avg_price * (1.0 - fee_safe_profit)
-            s["trailing_stop_price"] = min(s.get("trailing_stop_price", float('inf')), new_be_sl)
+            # trailing_stop_price 初始值是 0.0（不是缺項），對空單而言 0.0 代表「尚未設定」
+            # 而不是「停損價=0」。直接 min(0.0, new_be_sl) 恆等於 0.0，保本鎖永遠鎖不上，
+            # 回檔時只能退到後面 ATR 動態停損那組更寬鬆的距離，等於整段保本機制形同虛設
+            # （AAVEUSDT 實測案例：峰值 0.48% > 0.40% 門檻卻完全沒鎖利，最後貼著成本價出場）。
+            _cur_ts_short = s.get("trailing_stop_price", 0.0)
+            s["trailing_stop_price"] = min(_cur_ts_short if _cur_ts_short > 0 else float('inf'), new_be_sl)
+            s["stop_loss"] = s["trailing_stop_price"]
+            s["is_breakeven_locked"] = True
         logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
@@ -263,7 +270,15 @@ def update_trailing_stop(sym, current_price, is_long):
 
             trail_sl = max(trail_sl, dynamic_sl)
 
-        safe_min_sl = liq_price * 1.2
+        # 這是「在真的被交易所強平前，自己先出場」的安全下限，理應落在 liq_price 跟
+        # avg_price 之間。原本寫成 liq_price * 1.2：liq_price 本身已經在 avg_price 下方
+        # (例如 8x 槓桿時只有 avg 的 0.8785 倍)，直接乘 1.2 會把它推過 avg_price，變成
+        # 「安全下限」高於進場價，導致還沒虧錢就被這道底線強制停損（XLMUSDT 實測案例：
+        # 8x 槓桿 liq_price=avg*0.8785，*1.2 後 =avg*1.054，直接高於進場價，開倉沒多久
+        # 淨值還沒跌破 0.1% 就被這條「安全線」洗出場）。改成在 liq_price 到 avg_price
+        # 的距離上取一個固定比例當緩衝，確保這條線永遠嚴格落在兩者之間。
+        _liq_buffer_frac = 0.15
+        safe_min_sl = liq_price + (avg_price - liq_price) * _liq_buffer_frac
         new_sl = max(trail_sl, safe_min_sl)
 
         if new_sl > s["trailing_stop_price"]:
@@ -311,7 +326,11 @@ def update_trailing_stop(sym, current_price, is_long):
 
             trail_sl = min(trail_sl, dynamic_sl)
 
-        safe_max_sl = liq_price * 0.98
+        # 空單對稱版：liq_price 在 avg_price 上方，同樣在兩者距離上取固定比例當緩衝，
+        # 而不是直接對 liq_price 乘一個係數（原本 *0.98 對高槓桿來說緩衝太薄，多空兩邊
+        # 的安全係數也不一致，屬於同一個計算方式錯誤的兩個症狀）。
+        _liq_buffer_frac = 0.15
+        safe_max_sl = liq_price - (liq_price - avg_price) * _liq_buffer_frac
         new_sl = min(trail_sl, safe_max_sl)
 
         if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:

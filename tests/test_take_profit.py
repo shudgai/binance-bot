@@ -39,6 +39,38 @@ class TakeProfitTests(unittest.TestCase):
         _, stop = update_trailing_stop(sym, 100.15, True)
         self.assertLessEqual(stop, 100.0)
 
+    def test_short_breakeven_lock_actually_engages(self):
+        # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
+        # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——
+        # AAVEUSDT 實測：峰值 0.48% > 0.40% 保本門檻，卻完全沒鎖利，最後貼著成本
+        # 價出場（扣兩邊手續費淨虧）。這裡驗證空單過了保本門檻後，
+        # trailing_stop_price 必須被鎖在成本價以下（對空單來說代表鎖住利潤）。
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": -1.0, "avg_price": 100.0, "current_atr": 0.05,
+                  "trailing_stop_price": 0.0, "trailing_lowest": float("inf")})
+        update_trailing_stop(sym, 99.5, False)  # profit_pct = 0.5% > 0.40% 門檻
+        self.assertGreater(s["trailing_stop_price"], 0.0)
+        self.assertLess(s["trailing_stop_price"], 100.0)
+
+    def test_liquidation_safety_floor_never_exceeds_entry_price(self):
+        # safe_min_sl 是「搶在交易所強平前自己先出場」的安全下限，理應落在
+        # liq_price 跟 avg_price 之間。舊公式直接對 liq_price 乘 1.2，8 倍槓桿時
+        # liq_price=avg*0.8785，*1.2=avg*1.054，安全下限反而超過進場價——等於
+        # 一開倉、還沒虧錢，就被這條「安全線」自己強制停損（XLMUSDT 實測案例）。
+        sym = "XLMUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1657.0, "avg_price": 0.1908, "current_atr": 0.00033,
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0,
+                  "leverage": 8, "trailing_activation_atr": 1.0,
+                  "trailing_distance_atr": 0.8})
+        update_trailing_stop(sym, 0.1906, True)  # 現價小虧，尚未達任何鎖利門檻
+        self.assertLess(s["trailing_stop_price"], s["avg_price"])
+
     def test_early_take_profit_triggers_on_small_profit(self):
         sym = "XRPUSDT"
         init_states([sym])
