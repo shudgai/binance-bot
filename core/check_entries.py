@@ -511,7 +511,8 @@ async def check_entries():
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        _d_multiplier = 0.60 if _is_low_vol_ce else 0.80
+        # 小幅放寬高波動量能門檻；背離、收盤確認與高位防追價仍維持嚴格。
+        _d_multiplier = 0.60 if _is_low_vol_ce else 0.70
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             set_entry_diagnosis(f"{sym}: 量能不足，無法進場")
@@ -524,7 +525,7 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.60 if _is_low_vol_ce else 0.80
+            _rvol_multiplier = 0.60 if _is_low_vol_ce else 0.70
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
@@ -533,7 +534,7 @@ async def check_entries():
             candle_open = s["ohlcv"][-2][1]
             candle_close = s["ohlcv"][-2][4]
             direction_ok = candle_close > candle_open if side == "buy" else candle_close < candle_open
-            volume_price_sync = direction_ok and current_vol >= prev_vol * 0.80
+            volume_price_sync = direction_ok and current_vol >= prev_vol * 0.70
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
@@ -548,13 +549,13 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
-                    strong_volume_override = strength >= 28.0 and current_vol >= vol_ma20 * 1.20
+                    strong_volume_override = strength >= 28.0 and current_vol >= vol_ma20 * 1.05
                     if not strong_volume_override:
                         s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                         logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 量價不協同，無跟進量支持，放棄進場")
                         set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
                         continue
-                    logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 1.2x，允許進場")
+                    logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 1.05x，允許進場")
 
         _prior_lp_streak = int(s.get("low_participation_streak", 0) or 0)
         _force_close_confirmation = route == "b" and _prior_lp_streak >= 3
