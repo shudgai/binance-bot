@@ -286,6 +286,10 @@ def apply_symbol_profile(sym, profile):
     state = ctx.STATES[sym]
     if isinstance(profile, str):
         profile = {"personality": profile}
+    # 所有呼叫路徑都必須先套用幣種靜態設定，再由雷達動態 profile 覆蓋。
+    # 重啟時若持倉幣不在當期雷達名單，SYMBOL_PROFILES 會回傳空 dict；舊版因此
+    # 遺失 trailing_activation_atr/profile_type，錯落入 activation=0 的通用追蹤分支。
+    profile = {**COIN_PROFILE_CONFIG.get(sym, {}), **(profile or {})}
     personality = profile.get("personality") or state.get("personality") or infer_symbol_personality(sym)
     personality_source = "manual" if profile.get("personality") else state.get("personality_source", "infer")
     template = get_personality_template(personality)

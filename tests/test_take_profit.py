@@ -12,6 +12,18 @@ from core.exits import update_trailing_stop, check_exits
 
 
 class TakeProfitTests(unittest.TestCase):
+    def test_static_profile_is_applied_when_radar_profile_is_missing(self):
+        from core.symbol_profile import apply_symbol_profile
+        sym = "INJUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.pop("trailing_activation_atr", None)
+        apply_symbol_profile(sym, {})
+        self.assertEqual(s["profile_type"], "High_Beta_Momentum")
+        self.assertEqual(s["trailing_activation_atr"], 0.8)
+        self.assertEqual(s["trailing_distance_atr"], 0.7)
+
     def test_trailing_take_profit_updates_target_with_price_rise(self):
         sym = "XRPUSDT"
         init_states([sym])
