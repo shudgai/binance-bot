@@ -646,9 +646,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # --- [ATR 爆發閘門 (Volatility Spike Gate)] ---
     # 瞬時波動率 > 2.3× 歷史平均 → 市場正處於「閃崩/閃漲」狀態，SL 必然過寬，拒絕常規進場
     # 豁免：Exhaustion_Entry（耗竭反轉）與 Extreme_Reversal（極端反轉）本就在極端波動中操作
-    # 另外，對於強訊號且僅為輕微 ATR 爆發的情況，放寬一次，避免高品質訊號被過度封鎖。
+    # 另外，對於強訊號且 RSI 未過熱的強訊號的情況，放寬一次，避免高品質訊號被過度封鎖。
     # 使用者先前要求增加開倉次數，門檻從 2.0x/2.3x 放寬到 2.5x/2.8x；後來發現邊緣訊號
-    # 進場後常常原地打轉，要求拉回一點，改成 2.3x/2.5x（介於原始與寬鬆之間）。
+    # 進場後常常原地打轉，要求拉回一點，改成一般 2.3x、強訊號 2.8x（介於原始與寬鬆之間）。
     _atr_spike_exempt = route in ("Exhaustion_Entry", "Extreme_Reversal")
     _atr_spike_ratio = current_atr / atr_24h_avg if atr_24h_avg > 0 else 0.0
     # RSI 偏熱時不給強訊號豁免：ATR 瞬間放大時如果 RSI 又已經在追價方向的極端
@@ -658,7 +658,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 保留給 RSI 還在正常範圍、單純是波動放大的情況。
     _rsi_now = s.get("current_rsi", 50.0)
     _rsi_hot = (side == 'buy' and _rsi_now >= 70.0) or (side == 'sell' and _rsi_now <= 30.0)
-    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.5) and not _rsi_hot
+    _allow_mild_atr_spike = (strength >= 24.0) and (atr_24h_avg > 0) and (_atr_spike_ratio <= 2.8) and not _rsi_hot
     if not _atr_spike_exempt and atr_24h_avg > 0 and current_atr > atr_24h_avg * 2.3:
         if _allow_mild_atr_spike:
             logger.info(f"⚡ [ALLOW] [ATR爆發閘門] {sym} 強勢({strength:.1f}) 且 ATR 輕微爆發 ({_atr_spike_ratio:.2f}x)，RSI 未過熱 ({_rsi_now:.1f})，放寬進場")

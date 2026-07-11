@@ -549,13 +549,13 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
-                    strong_volume_override = strength >= 28.0 and current_vol >= vol_ma20 * 1.05
+                    strong_volume_override = strength >= 25.0 and current_vol >= vol_ma20 * 0.55
                     if not strong_volume_override:
                         s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                         logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 量價不協同，無跟進量支持，放棄進場")
                         set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
                         continue
-                    logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 1.05x，允許進場")
+                    logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 0.55x，允許進場")
 
         _prior_lp_streak = int(s.get("low_participation_streak", 0) or 0)
         _force_close_confirmation = route == "b" and _prior_lp_streak >= 3
