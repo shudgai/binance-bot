@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core import exchange_client
-from core.orders import execute_order
+from core.orders import execute_order, _enforce_bracket_rr
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -78,6 +78,17 @@ class EntryRiskTests(unittest.TestCase):
             asyncio.run(execute_order(sym, "buy", 95.0))
 
         self.assertEqual(s["entry_count"], 1)
+
+
+    def test_long_bracket_enforces_minimum_reward_over_risk(self):
+        stop, take_profit = _enforce_bracket_rr(100.0, 97.0, 102.0, True, 0.1, min_rr=1.5)
+        self.assertEqual(stop, 97.0)
+        self.assertGreaterEqual(take_profit - 100.0, (100.0 - stop) * 1.5)
+
+    def test_short_bracket_enforces_minimum_reward_over_risk(self):
+        stop, take_profit = _enforce_bracket_rr(100.0, 103.0, 98.0, False, 0.1, min_rr=1.5)
+        self.assertEqual(stop, 103.0)
+        self.assertGreaterEqual(100.0 - take_profit, (stop - 100.0) * 1.5)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SH
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
     DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
     ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
-    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET)
+    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER)
 from core.exchange_client import exchange_futures, exchange_market_data, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
@@ -74,6 +74,27 @@ async def _cancel_exchange_exit_order(sym, state_key, label):
         s[state_key] = None
 
 
+def _enforce_bracket_rr(avg, stop_price, take_profit_price, is_long, tick_size, min_rr=EXIT_RR_MULTIPLIER):
+    """以最終掛單價保證停利距離至少為停損距離的 min_rr 倍。"""
+    avg = float(avg)
+    stop_price = float(stop_price)
+    take_profit_price = float(take_profit_price)
+    tick_size = float(tick_size)
+    stop_dist = (avg - stop_price) if is_long else (stop_price - avg)
+    tp_dist = (take_profit_price - avg) if is_long else (avg - take_profit_price)
+    if stop_dist <= 0:
+        raise ValueError("stop price is on the wrong side of entry")
+    required_tp_dist = stop_dist * float(min_rr)
+    if tp_dist < required_tp_dist:
+        target = avg + required_tp_dist if is_long else avg - required_tp_dist
+        take_profit_price = round_step(target, tick_size)
+        tp_dist = (take_profit_price - avg) if is_long else (avg - take_profit_price)
+        if tp_dist + 1e-12 < required_tp_dist:
+            take_profit_price += tick_size if is_long else -tick_size
+            take_profit_price = round_step(take_profit_price, tick_size)
+    return stop_price, take_profit_price
+
+
 async def _replace_exchange_exit_orders(sym):
     if PAPER_TRADING:
         return
@@ -99,6 +120,15 @@ async def _replace_exchange_exit_orders(sym):
     _, _, tp_dist, _ = _calc_sl_tp(sym, "buy" if is_long else "sell", s, avg, route)
     take_profit_price = avg + tp_dist if is_long else avg - tp_dist
     take_profit_price = round_step(take_profit_price, prec["tick_size"])
+    _original_tp = take_profit_price
+    stop_price, take_profit_price = _enforce_bracket_rr(
+        avg, stop_price, take_profit_price, is_long, prec["tick_size"]
+    )
+    if take_profit_price != _original_tp:
+        logger.info(
+            f"⚠️ [Bracket_RR_Guard] {sym} 最終掛單盈虧比不足，"
+            f"停利由 {_original_tp} 校正為 {take_profit_price}（最低 R:R={EXIT_RR_MULTIPLIER}）"
+        )
 
     # 防禦性保底：進場已經會把數量夾在 MARKET_LOT_SIZE 上限之內（見 execute_order），
     # 這裡理論上不該再超過，但攤平救援等會改變 qty 的路徑萬一漏夾，用同一個上限保底，

@@ -101,6 +101,22 @@ def is_pending_confirmation_valid(side, candle, trigger_price=None, max_divergen
     return False
 
 
+def is_pending_direction_still_valid(s, side):
+    """下單前複核等待中的方向，避免舊訊號在動能已反轉後仍成交。"""
+    candles = s.get("ohlcv", [])
+    if len(candles) < 2:
+        return False
+    prev_close = float(candles[-2][4])
+    current_close = float(s.get("close_price", candles[-1][4]) or candles[-1][4])
+    macd_line = float(s.get("macd_line", 0.0) or 0.0)
+    macd_signal = float(s.get("macd_signal", 0.0) or 0.0)
+    if side == "buy":
+        return not (current_close < prev_close and macd_line <= macd_signal)
+    if side == "sell":
+        return not (current_close > prev_close and macd_line >= macd_signal)
+    return False
+
+
 def detect_divergence(sym):
     s = ctx.STATES.get(sym)
     if not s or "rsi_history" not in s or len(s["rsi_history"]) < 3 or len(s.get("ohlcv", [])) < 3:
@@ -367,7 +383,8 @@ async def check_entries():
 
         # --- 新增：等待收盤確認機制 ---
         if s.get("pending_side"):
-            if is_relaxed and not s.get("pending_requires_close_confirmation", False):
+            if (is_relaxed and not s.get("pending_requires_close_confirmation", False)
+                    and is_pending_direction_still_valid(s, s["pending_side"])):
                 logger.info(f"⚡ [寬鬆即時確認] {sym} 寬鬆模式直接放行已還原的 pending {s['pending_side']} 訊號")
                 side = s["pending_side"]
                 strength = s.get("pending_strength", 5.0)
@@ -425,6 +442,10 @@ async def check_entries():
                             "level_high": prev_candle[2],
                             "level_low": prev_candle[3],
                         }
+
+                if is_valid and not is_pending_direction_still_valid(s, s["pending_side"]):
+                    logger.info(f"❌ [Pending_Direction_Invalid] {sym} {s['pending_side']} 訊號等待期間價格與 MACD 已同步反向，取消開倉")
+                    is_valid = False
 
                 if is_valid:
                     s["fake_breakout"] = None

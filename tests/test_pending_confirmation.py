@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.check_entries import is_pending_confirmation_valid
+from core.check_entries import is_pending_confirmation_valid, is_pending_direction_still_valid
 
 
 class PendingConfirmationTests(unittest.TestCase):
@@ -18,6 +18,25 @@ class PendingConfirmationTests(unittest.TestCase):
     def test_allows_bullish_candle_with_wider_upper_shadow(self):
         candle = [0, 100, 107, 95, 103, 1000]
         self.assertTrue(is_pending_confirmation_valid("buy", candle))
+
+
+    def test_rejects_pending_long_when_price_and_macd_turn_bearish(self):
+        state = {
+            "ohlcv": [[0, 1.912, 1.913, 1.911, 1.911, 1000], [0, 1.911, 1.912, 1.909, 1.910, 900]],
+            "close_price": 1.910,
+            "macd_line": -0.0020,
+            "macd_signal": -0.0010,
+        }
+        self.assertFalse(is_pending_direction_still_valid(state, "buy"))
+
+    def test_keeps_pending_long_on_pullback_when_macd_remains_bullish(self):
+        state = {
+            "ohlcv": [[0, 1.912, 1.913, 1.911, 1.911, 1000], [0, 1.911, 1.912, 1.909, 1.910, 900]],
+            "close_price": 1.910,
+            "macd_line": 0.0020,
+            "macd_signal": 0.0010,
+        }
+        self.assertTrue(is_pending_direction_still_valid(state, "buy"))
 
 
 if __name__ == "__main__":
