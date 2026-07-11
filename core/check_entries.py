@@ -512,7 +512,7 @@ async def check_entries():
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
         # 小幅放寬高波動量能門檻；背離、收盤確認與高位防追價仍維持嚴格。
-        _d_multiplier = 0.60 if _is_low_vol_ce else 0.70
+        _d_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= 25.0 else 0.70)
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
             set_entry_diagnosis(f"{sym}: 量能不足，無法進場")
@@ -525,7 +525,7 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.60 if _is_low_vol_ce else 0.70
+            _rvol_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= 25.0 else 0.70)
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
