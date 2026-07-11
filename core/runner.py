@@ -73,9 +73,9 @@ async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
                     trades = await exchange.fetch_trades(sym, limit=TRADE_POLL_LIMIT)
             if isinstance(trades, list):
                 for trade in trades:
-                    update_trade_signal(sym, trade)
+                    await update_trade_signal(sym, trade)
             elif trades:
-                update_trade_signal(sym, trades)
+                await update_trade_signal(sym, trades)
             error_count = 0  # 成功，重設錯誤計數
         except (ccxt.DDoSProtection, ccxt.RateLimitExceeded) as e:
             error_count += 1

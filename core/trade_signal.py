@@ -7,7 +7,7 @@ from core.peak_store import save_peak
 logger = logging.getLogger(__name__)
 
 
-def update_trade_signal(sym, trade):
+async def update_trade_signal(sym, trade):
     s = ctx.STATES[sym]
     price = float(trade.get("price", 0) or 0)
     amount = float(trade.get("amount", 0) or 0)
@@ -113,3 +113,22 @@ def update_trade_signal(sym, trade):
                         s["stop_loss"] = _ttp_sl
                         _cur_ts_rt = s.get("trailing_stop_price", 0)
                         s["trailing_stop_price"] = min(_cur_ts_rt if _cur_ts_rt > 0 else float("inf"), _ttp_sl)
+
+        # 成交流每個 tick 直接檢查移動停利穿越，不再等待主退出循環。
+        _rt_ts = float(s.get("trailing_stop_price", 0.0) or 0.0)
+        _rt_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
+        _rt_crossed = (
+            _rt_peak >= 0.003 and _rt_ts > 0
+            and ((_is_long and price <= _rt_ts) or (not _is_long and price >= _rt_ts))
+        )
+        if _rt_crossed and not s.get("_is_closing", False):
+            from core.orders import close_position
+            close_side = "sell" if _is_long else "buy"
+            logger.info(
+                f"⚡ [Realtime_Trailing_Trigger] {sym} 即時價格 {price:.6f} "
+                f"穿越移動停利 {_rt_ts:.6f}，立即平倉"
+            )
+            await close_position(
+                sym, close_side, abs(s["qty"]), price, avg_p,
+                reason="[Dynamic_Trailing]", is_stop_loss=(rt_profit <= 0),
+            )
