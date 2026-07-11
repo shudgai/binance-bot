@@ -1148,7 +1148,10 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"⏳ [PendingEntryGuard] {sym} 已有待成交進場單，拒絕重複送出 {side} 單")
         return
     entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
-    actual_entry_mode = _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
+    _force_pullback = bool(s.pop("force_pullback_entry", False)) and not is_rescue_dca
+    actual_entry_mode = "pullback" if _force_pullback else _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
+    if _force_pullback:
+        logger.info(f"🧲 [EntryModeOverride] {sym} 套用高波動上/下緣防追價，強制使用 pullback 限價")
     
     is_first_entry = (s.get("entry_count", 0) == 0)
 

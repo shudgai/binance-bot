@@ -115,6 +115,24 @@ def detect_divergence(sym):
     return None
 
 
+def has_near_extreme_momentum_divergence(s, side, price, price_tolerance=0.0015, rsi_drop=7.0):
+    """偵測接近高低點、但 RSI 已明顯轉弱的隱性背離。"""
+    candles = s.get("ohlcv", [])
+    rsi_history = s.get("rsi_history", [])
+    if len(candles) < 5 or len(rsi_history) < 3 or price <= 0:
+        return False
+    recent_closes = [float(c[4]) for c in candles[-10:] if len(c) > 4 and float(c[4]) > 0]
+    recent_rsi = [float(v) for v in rsi_history[-10:]]
+    if not recent_closes or not recent_rsi:
+        return False
+    current_rsi = float(s.get("current_rsi", recent_rsi[-1]))
+    if side == "buy":
+        recent_high = max(recent_closes)
+        return price >= recent_high * (1.0 - price_tolerance) and max(recent_rsi) - current_rsi >= rsi_drop
+    recent_low = min(recent_closes)
+    return price <= recent_low * (1.0 + price_tolerance) and current_rsi - min(recent_rsi) >= rsi_drop
+
+
 def check_all_divergence_logic():
     """自動掃描所有幣種的底背離訊號"""
     divergence_results = []
@@ -482,6 +500,12 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: RSI/MACD 仍偏強，阻擋做空")
                     continue
 
+        # C2. 近高低點動能背離：不要求價格剛好創新高，避免 SUI 類型的高位 RSI 急跌追價。
+        if route == "b" and has_near_extreme_momentum_divergence(s, side, cp):
+            logger.info(f"🛑 [NearExtreme_Divergence] {sym} {side} 價格仍貼近近期極值，但 RSI 動能已背離，取消進場")
+            set_entry_diagnosis(f"{sym}: 近極值動能背離，取消進場")
+            continue
+
         # D. 真實性驗證 (Volume Confirmation) - 動態門檻
         _atr_hist_ce = s.get("atr_history", [])
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
@@ -513,21 +537,30 @@ async def check_entries():
 
             if route != "Exhaustion_Entry":
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
+                    s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
                     set_entry_diagnosis(f"{sym}: 流動性不足，放棄進場")
                     continue
                 if not rvol_check and profile.get("min_signal_strength", 10.0) > 10.0:
                     _rvol_pct = int(_rvol_multiplier * 100)
+                    s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
                     strong_volume_override = strength >= 28.0 and current_vol >= vol_ma20 * 1.20
                     if not strong_volume_override:
+                        s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                         logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 量價不協同，無跟進量支持，放棄進場")
                         set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
                         continue
                     logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 1.2x，允許進場")
+
+        _prior_lp_streak = int(s.get("low_participation_streak", 0) or 0)
+        _force_close_confirmation = route == "b" and _prior_lp_streak >= 3
+        if _force_close_confirmation:
+            logger.info(f"⏳ [Participation_Recovery] {sym} 先前連續 {_prior_lp_streak} 次量價不協同，本次即使通過仍強制等待收盤確認")
+        s["low_participation_streak"] = 0
 
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
@@ -722,8 +755,20 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
+        # 高波動 Route B 位於布林帶上緣時禁止 chase/market，改成等待回踩成交。
+        _bb_low_entry = float(s.get("bb_low", 0.0) or 0.0)
+        _bb_up_entry = float(s.get("bb_up", 0.0) or 0.0)
+        _band_width_entry = _bb_up_entry - _bb_low_entry
+        _band_pos_entry = ((cp - _bb_low_entry) / _band_width_entry) if _band_width_entry > 0 else 0.5
+        if route == "b" and not _is_low_vol_ce and side == "buy" and _band_pos_entry >= 0.75:
+            s["force_pullback_entry"] = True
+            logger.info(f"🧲 [HighVol_UpperBand] {sym} 高波動做多位於布林帶 {_band_pos_entry*100:.0f}% 位置，禁止追價並改用回踩限價")
+        elif route == "b" and not _is_low_vol_ce and side == "sell" and _band_pos_entry <= 0.25:
+            s["force_pullback_entry"] = True
+            logger.info(f"🧲 [HighVol_LowerBand] {sym} 高波動做空位於布林帶 {_band_pos_entry*100:.0f}% 位置，禁止追價並改用回踩限價")
+
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
-        if is_relaxed:
+        if is_relaxed and not _force_close_confirmation:
             logger.info(f"⚡ [寬鬆即時開倉] {sym} 通過寬鬆篩選，繞過收盤等待直接進場！")
             # 寬鬆模式繞過 pending 確認，原本沒有機會走到下面設定 entry_reason 的那一行，
             # 導致這種路線進場的單子平倉記錄永遠是 UNKNOWN，這裡補上。
