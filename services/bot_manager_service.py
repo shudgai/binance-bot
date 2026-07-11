@@ -207,6 +207,18 @@ def get_bot_status():
             bot_status["watch_symbols"] = actual_symbols
             bot_status["active_symbols"] = actual_symbols
         bot_status["disabled_symbols"] = load_disabled_symbols()
+        config_path = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw_config = json.load(f)
+        raw_profiles = raw_config.get("profiles", {}) if isinstance(raw_config, dict) else {}
+        bot_status["trade_eligibility"] = {
+            sym: {
+                "eligible": bool((raw_profiles.get(sym) or {}).get("_trade_eligible", False)),
+                "reason": (raw_profiles.get(sym) or {}).get("_trade_eligibility_reason", "尚無雷達確認"),
+                "confirmations": int((raw_profiles.get(sym) or {}).get("_radar_confirmations", 0) or 0),
+            }
+            for sym in actual_symbols
+        }
     except Exception:
         pass
 

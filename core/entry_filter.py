@@ -600,32 +600,20 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
         sma200_15m = s.get("sma200_15m", 0)
-        # 需要強訊號才能繞過 1H EMA50 趨勢過濾。這裡曾被改成 14.0（低於原本的 16.0），
-        # 從實際虧損案例（BASUSDT 強度僅 15.39 就被放行逆勢進場後虧損）發現門檻太低，
-        # 拉高到 18.0，比原始的 16.0 更保守，減少邊緣強度訊號被誤放行進場。
-        _mtf_override_threshold = 18.0
+        _countertrend_route = route in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
 
         if ema50_1h > 0:
-            if side == 'buy' and cp <= ema50_1h:
-                if strength >= _mtf_override_threshold:
-                    logger.info(f"@@COIN_DEBUG@@ ⚠️ {sym} [MTF警告放行] 1H大趨勢向下，但訊號強度 {strength:.1f} >= {_mtf_override_threshold}，強勢覆蓋趨勢過濾，允許進場")
-                else:
-                    logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向下 (EMA50 {ema50_1h:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold} 不足，拒絕進場")
-                    return False
+            if side == 'buy' and cp <= ema50_1h and not _countertrend_route:
+                logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向下 (EMA50 {ema50_1h:.4f})，一般訊號不得以強度覆蓋，拒絕做多")
+                return False
             # 空單 MTF 1H EMA50 過濾：Exhaustion_Entry 不受限（反轉策略）
-            if side == 'sell' and route != "Exhaustion_Entry":
+            if side == 'sell' and not _countertrend_route:
                 if cp >= ema50_1h:
-                    if strength >= _mtf_override_threshold:
-                        logger.info(f"@@COIN_DEBUG@@ ⚠️ {sym} [MTF警告放行] 1H大趨勢向上，但訊號強度 {strength:.1f} >= {_mtf_override_threshold}，允許進場")
-                    else:
-                        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向上 (EMA50 {ema50_1h:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold} 不足，拒絕進場")
-                        return False
+                    logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向上 (EMA50 {ema50_1h:.4f})，一般訊號不得以強度覆蓋，拒絕做空")
+                    return False
                 if sma200_15m > 0 and cp >= sma200_15m:
-                    if strength >= _mtf_override_threshold:
-                        logger.info(f"@@COIN_DEBUG@@ ⚠️ {sym} [MTF警告放行] 15m趨勢向上 (SMA200 {sma200_15m:.4f})，強勢覆蓋，允許進場")
-                    else:
-                        logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 15m趨勢向上 (SMA200 {sma200_15m:.4f})，訊號強度 {strength:.1f} < {_mtf_override_threshold}，拒絕進場")
-                        return False
+                    logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 15m趨勢向上 (SMA200 {sma200_15m:.4f})，拒絕一般做空訊號")
+                    return False
 
     # --- 盤整/低波動過濾 (Choppiness) ---
     atr_history = s.get("atr_history", [])

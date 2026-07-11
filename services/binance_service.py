@@ -1310,8 +1310,11 @@ def get_atr_ranked_coins(symbols, limit=10):
     now = _time.time()
     cache_key = tuple(sorted(symbols))
     if cache_key in _atr_rankings_cache:
+        cached_at, cached_val = _atr_rankings_cache[cache_key]
+        if now - cached_at < 300:
             selected = [r["symbol"] for r in cached_val[:limit]]
             return selected, cached_val
+        _atr_rankings_cache.pop(cache_key, None)
 
     ticker_map = {}
     try:

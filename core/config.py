@@ -55,7 +55,7 @@ COIN_PROFILE_CONFIG = {
     # tp_atr_multiplier 依使用者要求改回 7dceb33 的寬停利目標，配合今天放寬過的
     # sl_tiers/PeakLock 階梯，讓有機會的單子有更大空間長成大賺，不要結構性地
     # 把目標設得比 7dceb33 窄很多。
-    "SUIUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": False, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
+    "SUIUSDT":  {"sl_atr_multiplier": 3.0, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True, "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 20.0, "loss_reentry_cooldown_sec": 7200, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
     "INJUSDT":  {"sl_atr_multiplier": 2.8, "tp_atr_multiplier": 14.0, "volume_threshold_factor": 1.2, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 18.0, "hard_sl_pct": 0.030, "disable_rescue_dca": False, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
     "APTUSDT":  {"sl_atr_multiplier": 2.8, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.0, "min_signal_strength": 17.0, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
 

@@ -299,6 +299,15 @@ async def check_entries():
         has_position = abs(s["qty"]) > 0.000001
         current_direction = "buy" if s["qty"] > 0 else "sell" if s["qty"] < 0 else None
 
+        # 雷達監控池與可交易池分離。既有持倉仍正常管理；只有新開倉會被觀察期攔截。
+        if not has_position:
+            from core.symbol_profile import SYMBOL_PROFILES
+            _radar_profile = SYMBOL_PROFILES.get(sym, {})
+            if _radar_profile and not bool(_radar_profile.get("_trade_eligible", False)):
+                _eligibility_reason = _radar_profile.get("_trade_eligibility_reason", "雷達觀察中")
+                set_entry_diagnosis(f"{sym}: {_eligibility_reason}")
+                continue
+
         # 開倉錯誤冷卻（例如幣安 -1007 送出狀態未知）：確認交易所端真的沒有新倉位後，
         # 短暫暫停這個幣種，避免立刻用同樣的條件反覆撞在同一個逾時問題上。
         if not has_position and time.time() < s.get("order_fail_cooldown_until", 0):
@@ -627,6 +636,27 @@ async def check_entries():
         if not is_entry_allowed(sym, side, route, strength):
             continue
 
+        # 高波動幣同方向虧損後不能很快再次追進。SUI 曾在多單失敗 75 分鐘後，
+        # 又被短週期 Route B 訊號帶回同方向，最後長時間套牢；依幣種設定延長冷卻。
+        _loss_reentry_cooldown = float(
+            COIN_PROFILE_CONFIG.get(sym, {}).get("loss_reentry_cooldown_sec", 0.0) or 0.0
+        )
+        _same_side_loss_time = float(
+            s.get("last_loss_time_long" if side == "buy" else "last_loss_time_short", 0.0) or 0.0
+        )
+        if (
+            route != "Automatic_Reverse"
+            and _loss_reentry_cooldown > 0
+            and _same_side_loss_time > 0
+            and time.time() - _same_side_loss_time < _loss_reentry_cooldown
+        ):
+            _remaining = _loss_reentry_cooldown - (time.time() - _same_side_loss_time)
+            logger.info(
+                f"⏳ [Loss Reentry Cooldown] {sym} 上次 {side} 虧損後同方向冷卻中，"
+                f"剩餘 {_remaining / 60:.0f} 分鐘，拒絕 {route} 進場"
+            )
+            continue
+
         # --- 反手冷卻時間 (min_flip_time) 過濾 ---
         # 注意：這裡必須用機器人「自己」上一次真正進場的方向與出場時間
         # (last_entry_direction / last_exit_time)，不能用 last_trade_side /
@@ -689,8 +719,9 @@ async def check_entries():
             # 完全不算超買) 在同一小時內全部用這個 Override 跳過 1H 趨勢確認去追空，結果
             # 6 戰 6 敗。改成 Route B 一律不給強度豁免、必須真的通過 1H 趨勢確認；Route A
             # 本身條件更完整（含 5m RSI 方向/EMA50 gate 等更多重確認），繼續保留強度豁免。
-            if route != "b" and (strength > 20.0 or route == "Automatic_Reverse"):
-                logger.info(f"🚀 [強勢訊號 Override] {sym} 強度 {strength:.2f} 極高或來自反手，跳過 MTF 趨勢過濾直接允許進場")
+            _countertrend_route = route in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
+            if _countertrend_route:
+                logger.info(f"↩️ [反轉策略] {sym} {route} 使用專用反轉確認，不套用順勢方向限制")
             else:
                 ema50_1h = s.get("ema50_1h", 0.0)
                 if ema50_1h > 0:

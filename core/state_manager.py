@@ -270,12 +270,22 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
                 logger.info(f"🚨 [連續虧損汰換異常] {sym}: {replacement_err}")
             return  # 已被永久汰換，不需再補位
 
-    # 冷卻補位已依使用者要求停用：現在監控池是固定 15 個精選幣種（高流動性/
-    # 高波動），原本這裡會在任何幣種進冷卻時，從幣安全市場隨機抓一個成交量高
-    # 的幣種頂進來維持監控池數量——但那個候補幣種不在精選名單內，等於每次
-    # 停損冷卻都會把名單稀釋成隨機雜訊幣（實測補進過 NATGASUSDT/ASTERUSDT/
-    # EIGENUSDT 等）。固定名單模式下改成：冷卻期間監控池單純少一個可交易幣種，
-    # 冷卻結束該幣種自動恢復 ACTIVE，不再補位。
+    # 冷卻期間只從 ATR_ELIGIBLE_SYMBOLS 高流動性白名單選替補，不抓全市場熱門幣。
+    # 原幣恢復時 _remove_cooldown_substitute 會移除尚未進場的臨時替補。
+    try:
+        from services.radar_service import _find_atr_replacement
+        from core.symbol_profile import apply_symbol_profile, SYMBOL_PROFILES, save_symbol_pool
+        substitute = _find_atr_replacement(ctx.ALL_SYMBOLS)
+        if substitute and substitute not in ctx.ALL_SYMBOLS:
+            ctx.ALL_SYMBOLS.append(substitute)
+            if substitute not in ctx.STATES:
+                ctx.STATES[substitute] = build_symbol_state(substitute)
+            apply_symbol_profile(substitute, SYMBOL_PROFILES.get(substitute, {}))
+            ctx.COOLDOWN_SUBSTITUTES[sym] = substitute
+            save_symbol_pool(ctx.ALL_SYMBOLS)
+            logger.info(f"♻️ [安全冷卻補位] {sym} 冷卻期間由白名單 {substitute} 暫代")
+    except Exception as replacement_err:
+        logger.info(f"⚠️ [安全冷卻補位失敗] {sym}: {replacement_err}")
 
 def update_state_with_fill(sym, order_data):
     """

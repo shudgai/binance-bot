@@ -203,9 +203,12 @@ def update_trailing_stop(sym, current_price, is_long):
 
     # --- [Updated] Break-Even Mechanism ---
     # 保本線必須涵蓋雙邊 taker fee，另加 0.02% 滑價緩衝；否則名義保本仍會淨虧。
-    # 0.6% 以下仍屬發展區，不用 Dynamic Trailing 提前停潤；達 0.6% 才啟動保本。
+    # 一般幣 0.6% 才保本；High Beta／Speculative 波動較大，至少 1% 才鎖利，
+    # 避免像 UNI 峰值 0.63% 就啟動，輪詢成交時只剩 0.14% 毛利。
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
-    breakeven_threshold = 0.0060
+    profile_type = str(s.get("profile_type", ""))
+    is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
+    breakeven_threshold = 0.010 if is_high_beta else 0.006
     if profit_pct > breakeven_threshold:
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
@@ -227,8 +230,7 @@ def update_trailing_stop(sym, current_price, is_long):
         logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
-    profile_type = str(s.get("profile_type", ""))
-    min_trailing_profit = 0.010 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.006
+    min_trailing_profit = breakeven_threshold
 
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
@@ -236,19 +238,8 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 峰值 0.3%-0.6% 使用軟移動停利：允許回吐 0.2%，並覆蓋交易摩擦。
-        # 緩衝原本只留 0.03%（ROUND_TRIP_FEE_PCT+0.0003），但這道停利是靠機器人自己
-        # 每 10~25 秒巡檢現價才觸發市價出場，不是掛在交易所上即時成交的停損單——
-        # 巡檢間隔內價格經常已經滑落超過這條線本身（UNIUSDT 實測：軟停利線算出
-        # 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝，出場後倒賠手續費）。
-        # 緩衝改成跟下面「硬保本鎖」一致的 ROUND_TRIP_FEE_PCT+0.0015，留更多容錯空間
-        # 撐過巡檢延遲造成的滑落，才不會讓「有小賺」的單子最後變成淨虧收場。
-        _hp_soft = s["highest_profit_pct"]
-        if 0.003 <= _hp_soft < breakeven_threshold:
-            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0015)
-            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.002), _soft_floor)
-            trail_sl = max(trail_sl, _soft_sl)
-
+        # 舊版在峰值 0.3%-0.6% 使用軟移動停利，但靠輪詢觸發的市價出場會有延遲，
+        # 實盤多次在穿線後才成交，使小利變成淨虧；現在等 0.6% 保本門檻才鎖利。
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
             trail_sl = max(trail_sl, locked_sl)
@@ -306,13 +297,7 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單對稱版，緩衝同理放寬到 ROUND_TRIP_FEE_PCT+0.0015（見多單那側的說明）。
-        _hp_soft = s["highest_profit_pct"]
-        if 0.003 <= _hp_soft < breakeven_threshold:
-            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0015)
-            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.002), _soft_ceiling)
-            trail_sl = min(trail_sl, _soft_sl)
-
+        # 空單採相同門檻。
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
             trail_sl = min(trail_sl, locked_sl)
@@ -450,7 +435,10 @@ async def check_exits(sym):
     if hold_sec < 60 and s.get("open_time", 0) > 0:
         guard = FastReversalGuard()
         trap_signal = guard.check_instant_trap(avg, p, 'buy' if is_long else 'sell')
-        if trap_signal == "EXIT_INSTANT_TRAP":
+        current_vol = float(s.get("current_vol", 0.0) or 0.0)
+        vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+        vol_ratio = current_vol / vol_ma20 if vol_ma20 > 0 else 0.0
+        if trap_signal == "EXIT_INSTANT_TRAP" and vol_ratio > 3.0:
             cs = 'sell' if is_long else 'buy'
             logger.info(f"⚡ [Instant_Trap_Trigger] {sym} 開倉 {hold_sec:.1f} 秒內出現嚴重背離，立即砍倉。")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Fast_Reversal_Guard]", is_stop_loss=True)
@@ -469,7 +457,9 @@ async def check_exits(sym):
         # 門檻原本是 1.2x，實際上線後對 ETH/SOL 這類主流大幣太敏感，短暫回檔（現貨
         # 換算損益只有 -0.24%~-0.6%）就被誤判成「急速逆勢」提前出場，反而讓單子沒機會
         # 等回本。拉高到 2.0x，只讓真正劇烈的逆勢（例如 MUSDT 那種閃崩）才觸發。
-        if profit_pct < 0 and _adverse_atr_mult >= 2.0:
+        # 最初 60 秒仍遵守盲區：只有 3 倍放量才允許急速逆勢提前砍倉。
+        _rapid_volume_confirmed = vol_ratio > 3.0 if hold_sec < 60 else True
+        if profit_pct < 0 and _adverse_atr_mult >= 2.0 and _rapid_volume_confirmed:
             cs = 'sell' if is_long else 'buy'
             logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)

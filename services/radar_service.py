@@ -49,6 +49,15 @@ FOLLOW_SYMBOLS_FROM = _resolve_follow_symbols_from()
 # 來源清單會寫入本地 bot_symbols.json，並保留本地持倉幣種。
 
 
+def is_strict_radar_eligible(row: dict) -> bool:
+    """Single source of truth for automatic, manual and UI ATR eligibility."""
+    return bool(
+        MIN_ATR_PCT_FOR_ENTRY <= float(row.get("atr_pct", 0.0) or 0.0) <= MAX_ATR_PCT_FOR_ENTRY
+        and MIN_1H_VOL_PCT_FOR_ENTRY <= float(row.get("one_h_vol_pct", 0.0) or 0.0) <= MAX_1H_VOL_PCT_FOR_ENTRY
+        and abs(float(row.get("change_pct", 0.0) or 0.0)) <= MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
+    )
+
+
 def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:
     """
     根據 ATR%、單價、排名，AI 輔助計算當期最佳個性參數。
@@ -328,19 +337,65 @@ from services.binance_service import get_dynamic_top_15_coins
 
 def auto_radar_switch(force_start=False):
     """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。"""
+    status_before_scan = get_bot_status()
     # 使用與儀表板 ATR Rank 相同的排名，不再走另一套全市場函式。
     clean_blacklist()
     scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
     _, ranking = get_atr_ranked_coins(scan_pool, limit=len(scan_pool))
-    eligible = [r for r in ranking
-                if MIN_ATR_PCT_FOR_ENTRY <= r["atr_pct"] <= MAX_ATR_PCT_FOR_ENTRY
-                and MIN_1H_VOL_PCT_FOR_ENTRY <= r["one_h_vol_pct"] <= MAX_1H_VOL_PCT_FOR_ENTRY
-                and abs(r["change_pct"]) <= MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY]
-    # API 偶發缺少 1h K 線時不拿 0 值死水幣補位；候選不足則維持較小的高品質池。
-    best_symbols = [r["symbol"] for r in eligible[:RADAR_SELECT_COUNT]]
-    profiles = {r["symbol"]: _compute_dynamic_profile(
-        r["symbol"], r["atr_pct"], r["price"], idx + 1, len(eligible)
-    ) for idx, r in enumerate(eligible[:RADAR_SELECT_COUNT])}
+    eligible = [r for r in ranking if is_strict_radar_eligible(r)]
+    # 先取完全符合動能區間者；不足 10 檔時，只從既定高流動性白名單的有效排名補足。
+    # 不再因嚴格門檻只剩 6~7 檔，也不會引入全市場隨機熱門幣。
+    selected_rows = list(eligible[:RADAR_SELECT_COUNT])
+    selected_symbols = {r["symbol"] for r in selected_rows}
+    if len(selected_rows) < RADAR_SELECT_COUNT:
+        safe_fallback = [
+            r for r in ranking
+            if r["symbol"] not in selected_symbols
+            and float(r.get("price", 0.0) or 0.0) > 0
+            and float(r.get("atr_pct", 0.0) or 0.0) > 0
+            and float(r.get("one_h_vol_pct", 0.0) or 0.0) > 0
+            and abs(float(r.get("change_pct", 0.0) or 0.0)) <= MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
+        ]
+        selected_rows.extend(safe_fallback[:RADAR_SELECT_COUNT - len(selected_rows)])
+
+    best_symbols = [r["symbol"] for r in selected_rows]
+    try:
+        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+            previous_profiles = (json.load(f) or {}).get("profiles", {})
+    except Exception:
+        previous_profiles = {}
+    strict_symbols = {r["symbol"] for r in eligible}
+    now = time.time()
+    profiles = {}
+    eligibility_changed = False
+    for idx, row in enumerate(selected_rows):
+        sym = row["symbol"]
+        profile = _compute_dynamic_profile(sym, row["atr_pct"], row["price"], idx + 1, len(selected_rows))
+        previous = previous_profiles.get(sym, {}) if isinstance(previous_profiles, dict) else {}
+        strict_now = sym in strict_symbols
+        strict_before = bool(previous.get("_radar_strict_eligible", False))
+        confirmations = int(previous.get("_radar_confirmations", 0) or 0) + 1 if strict_now and strict_before else (1 if strict_now else 0)
+        first_seen = float(previous.get("_radar_candidate_since", now) or now) if strict_now and strict_before else now
+        observed_sec = max(0.0, now - first_seen)
+        trade_eligible = strict_now and confirmations >= 2 and observed_sec >= 1800
+        if not strict_now:
+            reason = "僅監控：未通過嚴格 ATR／1H 波動條件"
+        elif confirmations < 2:
+            reason = "觀察中：等待第二次雷達確認"
+        elif observed_sec < 1800:
+            reason = f"觀察中：尚需 {int((1800-observed_sec)/60)+1} 分鐘"
+        else:
+            reason = "可交易：連續兩次雷達合格且觀察滿 30 分鐘"
+        profile.update({
+            "_radar_strict_eligible": strict_now,
+            "_radar_confirmations": confirmations,
+            "_radar_candidate_since": first_seen,
+            "_trade_eligible": trade_eligible,
+            "_trade_eligibility_reason": reason,
+        })
+        if bool(previous.get("_trade_eligible", False)) != trade_eligible:
+            eligibility_changed = True
+        profiles[sym] = profile
     
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
@@ -354,9 +409,10 @@ def auto_radar_switch(force_start=False):
     add_system_log(f"🎯 [動態選幣] 已更新監控池為前 15 名動能幣種: {', '.join(best_symbols)}", "success")
     
     # 3. 如果是強制啟動或正在運行，則啟動新幣池
-    if force_start or get_bot_status().get("is_running"):
+    symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(best_symbols)
+    if force_start or (status_before_scan.get("is_running") and (symbols_changed or eligibility_changed)):
         # 注意：start_bot 會處理重新啟動邏輯
-        start_bot(best_symbols, get_bot_status().get("trade_amount", 150.0))
+        start_bot(best_symbols, status_before_scan.get("trade_amount", 150.0))
     
     return best_symbols
 

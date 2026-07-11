@@ -529,6 +529,9 @@
                         @click="setActiveCoin(coin.symbol)"
                     >
                         <span>{{ coin.name }}<span v-if="disabledSymbols.includes(coin.symbol)" style="font-size:9px;color:#f44;margin-left:3px;">停</span><span
+                            v-else-if="bot.trade_eligibility && bot.trade_eligibility[coin.symbol] && !bot.trade_eligibility[coin.symbol].eligible"
+                            :title="bot.trade_eligibility[coin.symbol].reason"
+                            style="font-size:9px;color:#f5a623;margin-left:3px;">觀</span><span
                             v-if="trendBias[coin.symbol]"
                             :style="{ fontSize:'9px', marginLeft:'3px', fontWeight:'bold',
                                 color: trendBias[coin.symbol].bias==='long' ? '#2ecc71' :
@@ -565,6 +568,11 @@
                                 <span style="font-weight:700;font-size:14px;">{{ coin.name }}</span>
                                 <span :class="coin.priceClass" style="font-size:12px;font-family:monospace;">{{ formatMiniPrice(coin.price) }}</span>
                                 <span v-if="getPositionInfo(coin.symbol) && Math.abs(getPositionInfo(coin.symbol).qty) > 0" style="font-size:10px;background:var(--trade-down);color:#fff;border-radius:4px;padding:1px 5px;">持倉中</span>
+                                <span v-else-if="bot.trade_eligibility && bot.trade_eligibility[coin.symbol]"
+                                    :title="bot.trade_eligibility[coin.symbol].reason"
+                                    :style="{fontSize:'10px',borderRadius:'4px',padding:'1px 5px',color:'#fff',background:bot.trade_eligibility[coin.symbol].eligible ? '#20895e' : '#9a6700'}">
+                                    {{ bot.trade_eligibility[coin.symbol].eligible ? '可交易' : '觀察中' }}
+                                </span>
                             </div>
                             <div v-if="coinProfiles[coin.symbol]" style="margin-top:4px;font-size:10px;color:var(--text-muted);display:flex;gap:12px;flex-wrap:wrap;">
                                 <span>SL <b>{{ coinProfiles[coin.symbol].sl_atr_multiplier }}x</b></span>

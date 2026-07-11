@@ -99,7 +99,8 @@ def daily_reset_daemon():
 def _periodic_radar_daemon():
     """每 4 小時重新掃描 ATR 排名，更新監控幣池與動態個性參數。
     啟動時跳過第一輪（_startup_radar_restore 已掃過一次）。"""
-    INTERVAL = 4 * 3600
+    # 每 30 分鐘確認一次候選；新幣須連續兩次合格才轉為可交易。
+    INTERVAL = 30 * 60
     time.sleep(INTERVAL)
     while True:
         try:
@@ -239,10 +240,13 @@ def api_radar_scan():
 def api_radar_atr_rank():
     try:
         from services.binance_service import get_atr_ranked_coins
-        from services.radar_service import BLACKLIST
+        from services.radar_service import BLACKLIST, is_strict_radar_eligible
         scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
-        selected, full_ranking = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT)
-        return {"success": True, "selected": selected, "ranking": full_ranking}
+        _, full_ranking = get_atr_ranked_coins(scan_pool, limit=len(scan_pool))
+        strict_rows = [row for row in full_ranking if is_strict_radar_eligible(row)]
+        selected = [row["symbol"] for row in strict_rows[:RADAR_SELECT_COUNT]]
+        return {"success": True, "selected": selected, "ranking": full_ranking,
+                "eligible_ranking": strict_rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -506,9 +510,11 @@ def api_market_sell(symbol: str):
                     close_order_id = fills[-1].get("orderId") or order_id or close_time
                     position_value = entry_price * abs(qty)
                     profit_pct = realized_pnl / position_value if position_value > 0 else 0.0
+                    from core.entry_reason_store import load_entry_reason
+                    original_entry_reason = load_entry_reason(symbol_upper) or "MANUAL"
                     record_trade_result(
                         symbol=symbol_upper,
-                        entry_reason="MANUAL",
+                        entry_reason=original_entry_reason,
                         exit_reason="[手動平倉] [落袋為安]",
                         profit_pct=profit_pct,
                         current_atr=0.0,
@@ -1044,4 +1050,3 @@ def get_open_orders(symbol: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8005)
-

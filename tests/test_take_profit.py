@@ -39,7 +39,7 @@ class TakeProfitTests(unittest.TestCase):
         _, stop = update_trailing_stop(sym, 100.15, True)
         self.assertLessEqual(stop, 100.0)
 
-    def test_soft_trailing_profit_activates_between_point_three_and_point_six(self):
+    def test_soft_trailing_does_not_activate_between_point_three_and_point_six(self):
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -47,8 +47,7 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 99.0, "trailing_highest": 100.0})
         update_trailing_stop(sym, 100.4, True)
-        self.assertGreater(s["trailing_stop_price"], 100.0)
-        self.assertLess(s["trailing_stop_price"], 100.4)
+        self.assertLessEqual(s["trailing_stop_price"], 100.0)
 
     def test_soft_trailing_does_not_activate_below_point_three(self):
         sym = "XRPUSDT"
@@ -66,7 +65,6 @@ class TakeProfitTests(unittest.TestCase):
         # 導致「帳面上有小賺」的單子扣完手續費變成淨虧（UNIUSDT 實測案例：軟停利線
         # 算出 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝）。這裡驗證
         # 軟停利線離成本價至少要有 ROUND_TRIP_FEE_PCT+0.0015 的緩衝空間。
-        from core.config import ROUND_TRIP_FEE_PCT
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -74,8 +72,7 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.25,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
         update_trailing_stop(sym, 100.34, True)  # 峰值 0.34%，落在 0.3%-0.6% 軟停利區間
-        margin = (s["trailing_stop_price"] - 100.0) / 100.0
-        self.assertGreaterEqual(margin, ROUND_TRIP_FEE_PCT + 0.0015 - 1e-9)
+        self.assertLess(s["trailing_stop_price"], s["avg_price"])
 
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
@@ -307,6 +304,22 @@ class TakeProfitTests(unittest.TestCase):
                 mock_close.assert_not_called()
 
         asyncio.run(run_check())
+
+    def test_speculative_profile_waits_until_one_percent_to_lock(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.2,
+                  "trailing_stop_price": 0.0, "trailing_highest": 100.0,
+                  "profile_type": "Speculative_Risk"})
+        update_trailing_stop(sym, 100.7, True)
+        self.assertFalse(s.get("is_breakeven_locked", False))
+        self.assertLess(s["trailing_stop_price"], s["avg_price"])
+
+        update_trailing_stop(sym, 101.1, True)
+        self.assertTrue(s.get("is_breakeven_locked", False))
+        self.assertGreater(s["trailing_stop_price"], s["avg_price"])
 
     def test_hard_stop_loss_still_triggers_during_initial_cooldown(self):
         from unittest.mock import patch, AsyncMock
