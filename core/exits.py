@@ -236,6 +236,13 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
+        # 峰值 0.3%-0.6% 使用軟移動停利：允許回吐 0.2%，並覆蓋交易摩擦。
+        _hp_soft = s["highest_profit_pct"]
+        if 0.003 <= _hp_soft < breakeven_threshold:
+            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0003)
+            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.002), _soft_floor)
+            trail_sl = max(trail_sl, _soft_sl)
+
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
             trail_sl = max(trail_sl, locked_sl)
@@ -292,6 +299,12 @@ def update_trailing_stop(sym, current_price, is_long):
         trail_sl = s["trailing_stop_price"]
         if trail_sl == 0.0:
             trail_sl = float('inf')
+
+        _hp_soft = s["highest_profit_pct"]
+        if 0.003 <= _hp_soft < breakeven_threshold:
+            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0003)
+            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.002), _soft_ceiling)
+            trail_sl = min(trail_sl, _soft_sl)
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
@@ -539,7 +552,7 @@ async def check_exits(sym):
     # 尚未達保本門檻時，停損不可能位於獲利側；若出現代表沿用了舊倉狀態。
     _peak_for_sl = float(s.get("highest_profit_pct", 0.0) or 0.0)
     _invalid_profit_side_sl = (
-        _peak_for_sl < 0.006
+        _peak_for_sl < 0.003
         and ts_price is not None and ts_price > 0
         and ((is_long and ts_price >= avg) or (not is_long and ts_price <= avg))
     )

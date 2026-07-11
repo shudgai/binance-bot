@@ -39,6 +39,27 @@ class TakeProfitTests(unittest.TestCase):
         _, stop = update_trailing_stop(sym, 100.15, True)
         self.assertLessEqual(stop, 100.0)
 
+    def test_soft_trailing_profit_activates_between_point_three_and_point_six(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 99.0, "trailing_highest": 100.0})
+        update_trailing_stop(sym, 100.4, True)
+        self.assertGreater(s["trailing_stop_price"], 100.0)
+        self.assertLess(s["trailing_stop_price"], 100.4)
+
+    def test_soft_trailing_does_not_activate_below_point_three(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 99.0, "trailing_highest": 100.0})
+        update_trailing_stop(sym, 100.2, True)
+        self.assertLessEqual(s["trailing_stop_price"], 100.0)
+
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
         # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——

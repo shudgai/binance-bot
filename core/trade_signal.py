@@ -91,19 +91,25 @@ def update_trade_signal(sym, trade):
             _ts_atr_pct_rt = _atr_rt / price
             _lev_rt = s.get("leverage", 4)
             _hp_rt = s.get("highest_profit_pct", 0.0)
-            _ts_act_rt = max(0.020 / _lev_rt, _ts_atr_pct_rt * 0.3)
+            _ts_act_rt = 0.003 if _hp_rt < 0.006 else max(0.020 / _lev_rt, _ts_atr_pct_rt * 0.3)
             if _hp_rt > 0.02:       _ts_ret_rt = 0.001
             elif _hp_rt > 0.008:    _ts_ret_rt = 0.0015
-            elif _hp_rt > 0.004:    _ts_ret_rt = 0.002
-            elif _hp_rt > 0.002:    _ts_ret_rt = 0.003
+            elif _hp_rt >= 0.003:   _ts_ret_rt = 0.002
             else:                   _ts_ret_rt = min(max(0.0008, _hp_rt * 0.5), 0.002) if _hp_rt > 0 else 0.001
             if _hp_rt >= _ts_act_rt:
                 if _is_long:
                     _ttp_sl = s.get("trailing_highest", avg_p) * (1 - _ts_ret_rt)
+                    if _hp_rt < 0.006:
+                        _ttp_sl = max(_ttp_sl, avg_p * 1.0011)
                     if _ttp_sl > s.get("stop_loss", 0):
                         s["stop_loss"] = _ttp_sl
+                        s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0), _ttp_sl)
                 else:
                     _ttp_sl = s.get("trailing_lowest", avg_p) * (1 + _ts_ret_rt)
+                    if _hp_rt < 0.006:
+                        _ttp_sl = min(_ttp_sl, avg_p * 0.9989)
                     _cur_sl_rt = s.get("stop_loss", 0)
                     if _cur_sl_rt == 0 or _ttp_sl < _cur_sl_rt:
                         s["stop_loss"] = _ttp_sl
+                        _cur_ts_rt = s.get("trailing_stop_price", 0)
+                        s["trailing_stop_price"] = min(_cur_ts_rt if _cur_ts_rt > 0 else float("inf"), _ttp_sl)
