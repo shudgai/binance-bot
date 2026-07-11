@@ -42,7 +42,7 @@ class TakeProfitTests(unittest.TestCase):
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
         # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——
-        # AAVEUSDT 實測：峰值 0.48% > 0.40% 保本門檻，卻完全沒鎖利，最後貼著成本
+        # 空單達 0.6% 保本門檻後，必須正確鎖住獲利。
         # 價出場（扣兩邊手續費淨虧）。這裡驗證空單過了保本門檻後，
         # trailing_stop_price 必須被鎖在成本價以下（對空單來說代表鎖住利潤）。
         sym = "XRPUSDT"
@@ -51,7 +51,7 @@ class TakeProfitTests(unittest.TestCase):
         reset_coin_state(sym)
         s.update({"qty": -1.0, "avg_price": 100.0, "current_atr": 0.05,
                   "trailing_stop_price": 0.0, "trailing_lowest": float("inf")})
-        update_trailing_stop(sym, 99.5, False)  # profit_pct = 0.5% > 0.40% 門檻
+        update_trailing_stop(sym, 99.3, False)  # profit_pct = 0.7% > 0.6% 門檻
         self.assertGreater(s["trailing_stop_price"], 0.0)
         self.assertLess(s["trailing_stop_price"], 100.0)
 

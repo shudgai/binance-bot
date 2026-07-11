@@ -71,8 +71,8 @@ def update_trade_signal(sym, trade):
             s["highest_profit_pct"] = rt_profit
             save_peak(sym, rt_profit)
 
-        # 觸發門檻調整為 0.3% 以與 exits.py 一致，鎖定價格為成本 + 0.1% 手續費緩衝，避免有利潤變停損。
-        if rt_profit >= 0.003 and not s.get("is_breakeven_locked", False):
+        # 0.6% 以下保留發展空間；達 0.6% 才即時鎖定成本與摩擦緩衝。
+        if rt_profit >= 0.006 and not s.get("is_breakeven_locked", False):
             _buf = 0.001
             _be = avg_p * (1 + _buf) if _is_long else avg_p * (1 - _buf)
             _sl_now = s.get("stop_loss", 0)

@@ -203,9 +203,9 @@ def update_trailing_stop(sym, current_price, is_long):
 
     # --- [Updated] Break-Even Mechanism ---
     # 保本線必須涵蓋雙邊 taker fee，另加 0.02% 滑價緩衝；否則名義保本仍會淨虧。
-    # 真正有意義的保本：至少曾獲利 0.40%，回撤時仍鎖住約 0.25% 毛利。
+    # 0.6% 以下仍屬發展區，不用 Dynamic Trailing 提前停潤；達 0.6% 才啟動保本。
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
-    breakeven_threshold = 0.0040
+    breakeven_threshold = 0.0060
     if profit_pct > breakeven_threshold:
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
@@ -219,7 +219,7 @@ def update_trailing_stop(sym, current_price, is_long):
             # trailing_stop_price 初始值是 0.0（不是缺項），對空單而言 0.0 代表「尚未設定」
             # 而不是「停損價=0」。直接 min(0.0, new_be_sl) 恆等於 0.0，保本鎖永遠鎖不上，
             # 回檔時只能退到後面 ATR 動態停損那組更寬鬆的距離，等於整段保本機制形同虛設
-            # （AAVEUSDT 實測案例：峰值 0.48% > 0.40% 門檻卻完全沒鎖利，最後貼著成本價出場）。
+            # 0.6% 以上才屬於需要保本鎖利的區間。
             _cur_ts_short = s.get("trailing_stop_price", 0.0)
             s["trailing_stop_price"] = min(_cur_ts_short if _cur_ts_short > 0 else float('inf'), new_be_sl)
             s["stop_loss"] = s["trailing_stop_price"]
@@ -539,7 +539,7 @@ async def check_exits(sym):
     # 尚未達保本門檻時，停損不可能位於獲利側；若出現代表沿用了舊倉狀態。
     _peak_for_sl = float(s.get("highest_profit_pct", 0.0) or 0.0)
     _invalid_profit_side_sl = (
-        _peak_for_sl < 0.004
+        _peak_for_sl < 0.006
         and ts_price is not None and ts_price > 0
         and ((is_long and ts_price >= avg) or (not is_long and ts_price <= avg))
     )
