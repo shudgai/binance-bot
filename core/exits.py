@@ -237,9 +237,15 @@ def update_trailing_stop(sym, current_price, is_long):
         trail_sl = s["trailing_stop_price"]
 
         # 峰值 0.3%-0.6% 使用軟移動停利：允許回吐 0.2%，並覆蓋交易摩擦。
+        # 緩衝原本只留 0.03%（ROUND_TRIP_FEE_PCT+0.0003），但這道停利是靠機器人自己
+        # 每 10~25 秒巡檢現價才觸發市價出場，不是掛在交易所上即時成交的停損單——
+        # 巡檢間隔內價格經常已經滑落超過這條線本身（UNIUSDT 實測：軟停利線算出
+        # 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝，出場後倒賠手續費）。
+        # 緩衝改成跟下面「硬保本鎖」一致的 ROUND_TRIP_FEE_PCT+0.0015，留更多容錯空間
+        # 撐過巡檢延遲造成的滑落，才不會讓「有小賺」的單子最後變成淨虧收場。
         _hp_soft = s["highest_profit_pct"]
         if 0.003 <= _hp_soft < breakeven_threshold:
-            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0003)
+            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0015)
             _soft_sl = max(s["trailing_highest"] * (1.0 - 0.002), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
 
@@ -300,9 +306,10 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
+        # 空單對稱版，緩衝同理放寬到 ROUND_TRIP_FEE_PCT+0.0015（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
         if 0.003 <= _hp_soft < breakeven_threshold:
-            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0003)
+            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0015)
             _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.002), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)
 

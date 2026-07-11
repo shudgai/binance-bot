@@ -60,6 +60,23 @@ class TakeProfitTests(unittest.TestCase):
         update_trailing_stop(sym, 100.2, True)
         self.assertLessEqual(s["trailing_stop_price"], 100.0)
 
+    def test_soft_trailing_leaves_enough_margin_to_survive_poll_latency(self):
+        # 軟移動停利只靠機器人每 10~25 秒巡檢現價才觸發市價出場，不是掛在交易所
+        # 上即時成交的停損單。緩衝太薄的話，巡檢間隔內價格常常已經滑落超過這條線，
+        # 導致「帳面上有小賺」的單子扣完手續費變成淨虧（UNIUSDT 實測案例：軟停利線
+        # 算出 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝）。這裡驗證
+        # 軟停利線離成本價至少要有 ROUND_TRIP_FEE_PCT+0.0015 的緩衝空間。
+        from core.config import ROUND_TRIP_FEE_PCT
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.25,
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0})
+        update_trailing_stop(sym, 100.34, True)  # 峰值 0.34%，落在 0.3%-0.6% 軟停利區間
+        margin = (s["trailing_stop_price"] - 100.0) / 100.0
+        self.assertGreaterEqual(margin, ROUND_TRIP_FEE_PCT + 0.0015 - 1e-9)
+
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
         # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——
