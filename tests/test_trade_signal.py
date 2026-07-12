@@ -12,6 +12,57 @@ from core.check_entries import check_entries
 
 
 class TradeSignalTests(unittest.TestCase):
+    def _setup_ema20_pullback_state(self, rsi, macd_line, macd_signal, prev_macd_line, prev_macd_signal):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "closes": [100.0] * 20,
+            "close_price": 100.0,
+            "prev_close": 100.2,
+            "current_rsi": rsi,
+            "rsi_extreme_low": 20, "rsi_extreme_high": 75,
+            "ema20": 100.5, "ema50": 101.0,
+            "sma200_15m": 105.0,
+            "bb_low": 90.0, "bb_up": 110.0,
+            "macd_line": macd_line, "macd_signal": macd_signal,
+            "prev_macd_line": prev_macd_line, "prev_macd_signal": prev_macd_signal,
+            "vol_ma10": 0.0, "current_vol": 0.0,
+            "vol_ma20": 1000.0,
+            "current_atr": 0.3,
+            "atr_history": [0.3] * 10,
+            "ohlcv": [
+                [0, 101.0, 101.5, 99.0, 100.5, 1000],
+                [0, 100.5, 100.8, 99.5, 100.0, 1000],
+                [0, 100.0, 100.3, 99.7, 100.1, 1000],
+            ],
+            "rsi_history": [rsi, rsi],
+        })
+        return sym
+
+    def test_ema20_pullback_short_rejects_borderline_rsi_and_fresh_macd_cross(self):
+        # ADAUSDT/SUIUSDT 實測案例：RSI 才 55~58（中性偏多，不是超買）、MACD 柱狀圖
+        # 只有 -0.0002（剛翻負一點點，前一根還是正的，等於是剛穿越）。兩筆單都在做空
+        # 進場沒多久就被推回原方向，小虧收場。這種「RSI 沒逆勢就好、MACD 剛翻負就算數」
+        # 的訊號品質太邊緣，不該進場——Route A 跟 Route B 共用同一組 macd_ok_short/
+        # rsi_ok_short，所以兩條路線都要一起擋，不能只改 Route B（不然只是換個
+        # route_tag，訊號一樣會從 Route A 溜出去）。
+        sym = self._setup_ema20_pullback_state(
+            rsi=58.5, macd_line=-0.0014, macd_signal=-0.0012,
+            prev_macd_line=-0.0010, prev_macd_signal=-0.0011,
+        )
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+    def test_ema20_pullback_short_allows_confirmed_overbought_and_sustained_macd(self):
+        sym = self._setup_ema20_pullback_state(
+            rsi=62.0, macd_line=-0.006, macd_signal=-0.003,
+            prev_macd_line=-0.004, prev_macd_signal=-0.003,
+        )
+        side, strength, route = compute_signal_strength(sym)
+        self.assertEqual(side, "sell")
+        self.assertGreater(strength, 0)
+
     def test_trade_signal_triggers_breakout_reversal(self):
         sym = "XRPUSDT"
         init_states([sym])

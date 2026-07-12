@@ -639,17 +639,29 @@
                                     <span v-if="isOpenTrade(t)" :class="getTradeCurrentPrice(t) > t.price ? (t.isBuyer ? 'up' : 'down') : (getTradeCurrentPrice(t) < t.price ? (t.isBuyer ? 'down' : 'up') : '')" style="font-weight:600;">
                                         {{ getTradeCurrentPrice(t) > 0 ? (() => { const p = getTradeCurrentPrice(t); const abs = Math.abs(p); const d = abs < 0.0001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 5 : abs < 10 ? 4 : abs < 1000 ? 3 : 2; return p.toFixed(d); })() : '-' }}
                                     </span>
+                                    <span v-else-if="getTradeOutcomeDisplay(t)" :class="getTradeOutcomeDisplay(t).exitPrice > t.price ? (t.isBuyer ? 'up' : 'down') : (getTradeOutcomeDisplay(t).exitPrice < t.price ? (t.isBuyer ? 'down' : 'up') : '')">
+                                        {{ (() => { const p = getTradeOutcomeDisplay(t).exitPrice; const abs = Math.abs(p); const d = abs < 0.0001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 5 : abs < 10 ? 4 : abs < 1000 ? 3 : 2; return p.toFixed(d); })() }}
+                                        <span style="font-size:9px; opacity:0.7;">(平)</span>
+                                    </span>
                                     <span v-else style="color:var(--text-muted);">-</span>
                                 </td>
                                 <td>{{ t.qty }}</td>
                                 <td>{{ (t.price * Math.abs(t.qty)).toFixed(2) }}</td>
                                 <td style="color:#000000; font-size:70%;">{{ t.fee !== undefined ? t.fee.toFixed(4) : (t.price * Math.abs(t.qty) * 0.0005).toFixed(4) }}</td>
-                                <td :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
+                                <td v-if="isOpenTrade(t)" :class="getTradeUnrealizedPnl(t) > 0 ? 'up' : (getTradeUnrealizedPnl(t) < 0 ? 'down' : '')">
                                     {{ getTradeUnrealizedPnl(t) > 0 ? '+' : '' }}{{ getTradeUnrealizedPnlDisplay(t) }}
                                     <span v-if="getTradeUnrealizedPnl(t) !== 0" style="font-size:10px; opacity:0.8; margin-left:4px;">
                                         ({{ getTradeUnrealizedPnlPercent(t).toFixed(2) }}% / 實: {{ getTradeUnrealizedPnlPercentActual(t).toFixed(2) }}%)
                                     </span>
                                 </td>
+                                <td v-else-if="getTradeOutcomeDisplay(t)" :class="getTradeOutcomeDisplay(t).net > 0 ? 'up' : (getTradeOutcomeDisplay(t).net < 0 ? 'down' : '')">
+                                    {{ getTradeOutcomeDisplay(t).net > 0 ? '+' : '' }}{{ getTradeOutcomeDisplay(t).net.toFixed(4) }}
+                                    <span style="font-size:10px; opacity:0.8; margin-left:4px;">
+                                        ({{ getTradeOutcomeDisplay(t).pct.toFixed(2) }}% / 實: {{ getTradeOutcomeDisplay(t).pctActual.toFixed(2) }}%)
+                                    </span>
+                                    <span style="font-size:9px; opacity:0.7; margin-left:2px;">已平倉</span>
+                                </td>
+                                <td v-else style="color:#888; font-size:10px;">-</td>
                                 <td :class="(() => { const netPnl = t.is_close ? (t.net_pnl ?? (t.realized_pnl - (t.total_fee ?? t.fee ?? 0))) : 0; return netPnl > 0 ? 'up' : (netPnl < 0 ? 'down' : '') })()">
                                     <template v-if="t.is_close">
                                         {{ (() => { const net = t.net_pnl ?? (t.realized_pnl - (t.total_fee ?? t.fee ?? 0)); return (net > 0 ? '+' : '') + net.toFixed(4) })() }}
@@ -1811,6 +1823,49 @@ createApp({
             return pnl / base * 100;
         };
 
+        // 每筆進場成交都配對到「它自己」對應的出場成交（同幣種、依時間先進先出配對），
+        // 讓進場那一列即使已經平倉，也能直接顯示平倉價與損益，不用使用者自己往下找
+        // 對應的出場列。
+        const closedTradePairs = computed(() => {
+            const bySymbol = {};
+            for (const t of trades.value) {
+                (bySymbol[t.symbol] = bySymbol[t.symbol] || []).push(t);
+            }
+            const map = new Map();
+            for (const sym in bySymbol) {
+                const list = [...bySymbol[sym]].sort((a, b) => a.time - b.time);
+                const openQueue = [];
+                for (const t of list) {
+                    if (!t.is_close) {
+                        openQueue.push(t);
+                    } else {
+                        const opener = openQueue.shift();
+                        if (opener) map.set(opener, t);
+                    }
+                }
+            }
+            return map;
+        });
+
+        const getClosedPair = (trade) => {
+            if (trade.is_close) return null;
+            return closedTradePairs.value.get(trade) || null;
+        };
+
+        const getTradeOutcomeDisplay = (trade) => {
+            const closer = getClosedPair(trade);
+            if (!closer) return null;
+            const net = closer.net_pnl ?? (closer.realized_pnl - (closer.total_fee ?? closer.fee ?? 0));
+            const base = trade.price * Math.abs(trade.qty);
+            const lev = getPositionInfo(trade.symbol)?.leverage || bot.value?.leverage || 5;
+            return {
+                exitPrice: closer.price,
+                net,
+                pct: base > 0 ? (net / base * 100 * lev) : 0,
+                pctActual: base > 0 ? (net / base * 100) : 0,
+            };
+        };
+
         const isOpenTrade = (trade) => {
             if (trade.is_close) return false;
             const pos = getPositionInfo(trade.symbol);
@@ -2181,7 +2236,7 @@ createApp({
             toggleCurrency, setActiveCoin,
             formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, sortedTrades, liveTrades, error,
-            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeCurrentPrice, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, totalUnrealizedPnl, limitPrice,
+            toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeCurrentPrice, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, totalUnrealizedPnl, getClosedPair, getTradeOutcomeDisplay, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs, logRowClass,
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,

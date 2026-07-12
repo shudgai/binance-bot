@@ -206,10 +206,25 @@ def compute_signal_strength(sym):
     macd_ok_long  = long_macd_ok
     macd_ok_short = short_macd_ok
 
+    # 加強確認：實測發現 Route A/B 共用的 macd_ok_*/rsi_ok_* 太鬆——只要 RSI 沒有逆勢、
+    # MACD 柱狀圖剛好翻過零軸一點點就算數，趨勢其實還沒真的轉向，很快又被打回原方向
+    # （ADA/SUI 實測案例：做空進場時 RSI 才 55~58、MACD 柱狀圖只有 -0.0002，幾乎貼零，
+    # 進場沒多久 RSI 衝上 62.8、MACD 直接翻多頭）。一開始只打算加在 Route B，但實測發現
+    # 這兩個案例 Route A 的條件用同一組 macd_ok_short/rsi_ok_short，一樣會放行，等於只改
+    # Route B 沒有真的擋掉問題、只是把 route_tag 從 b 換成 a——所以兩條路線都要加：
+    # 1) RSI 要真的到偏高/偏低區（不是只要不逆勢就好）；
+    # 2) MACD 柱狀圖要連續兩個讀數同方向且持續擴張，不是這一根剛翻過零軸就算數
+    #    （因此不採用 long_macd_cross/short_macd_cross 這種「這一刻剛穿越」的豁免）。
+    _rsi_extreme_long  = rsi <= 40.0
+    _rsi_extreme_short = rsi >= 60.0
+    _macd_confirmed_long  = macd_hist > 0 and prev_macd_hist > 0 and macd_hist > prev_macd_hist
+    _macd_confirmed_short = macd_hist < 0 and prev_macd_hist < 0 and macd_hist < prev_macd_hist
+
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         sma200_hard_gate_long and
-        macd_ok_long and
+        _macd_confirmed_long and
+        _rsi_extreme_long and
         (last_two_candles_long or is_relaxed) and
         rsi_ok_long and
         rsi_direction_long and
@@ -220,7 +235,8 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         sma200_hard_gate_short and
-        macd_ok_short and
+        _macd_confirmed_short and
+        _rsi_extreme_short and
         (last_two_candles_short or is_relaxed) and
         rsi_ok_short and
         rsi_direction_short and
@@ -239,7 +255,8 @@ def compute_signal_strength(sym):
         ema50_gate_long and
         ema20_above_ema50 and
         near_ema20_pullback and
-        macd_ok_long and
+        _macd_confirmed_long and
+        _rsi_extreme_long and
         rsi_direction_long and
         rsi_ok_long and
         (last_two_candles_long or is_relaxed)
@@ -250,7 +267,8 @@ def compute_signal_strength(sym):
         ema50_gate_short and
         ema20_below_ema50 and
         near_ema20_pullback and
-        macd_ok_short and
+        _macd_confirmed_short and
+        _rsi_extreme_short and
         rsi_direction_short and
         rsi_ok_short and
         (last_two_candles_short or is_relaxed)
