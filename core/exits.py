@@ -608,6 +608,26 @@ async def check_exits(sym):
                     await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=False)
                     return
 
+    # ── 峰值回吐未回頭 → 提早停損，把損失壓到最小 ──
+    # 使用者要求：開倉後一度有利潤，後來反轉又持續沒回來的單子，不要傻等到硬停損線
+    # （通常 2~3%）才出場。上面的盲區保護已經給過一段觀察期，這裡再加一道更緊的防線：
+    # 只要「曾經有過像樣的峰值（排除純雜訊）」+「現在轉虧」+「動能持續往不利方向擴張
+    # （不是在峰值附近小幅震盪，是真的回不去了）」同時成立，就先出場，把虧損鎖在遠比
+    # 硬停損線緊的範圍，不要放著繼續等更大的停損線才認賠。
+    _giveback_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    if _giveback_peak >= 0.0015 and profit_pct < 0:
+        _gb_macd_now, _gb_macd_prev = _macd_vals(s)
+        _gb_momentum_against = (_gb_macd_now < _gb_macd_prev) if is_long else (_gb_macd_now > _gb_macd_prev)
+        _gb_atr_pct = (current_atr / avg) if avg > 0 else 0.0
+        # 損失上限用 ATR% 動態抓，但夾在 0.35%~0.8% 之間——比一般硬停損（2~3%）緊很多，
+        # 目的就是把這種「確認回不去」的單子損失壓到最小，不是又設一條新的一般停損線。
+        _gb_loss_cap = max(0.0035, min(_gb_atr_pct * 1.2, 0.008))
+        if _gb_momentum_against and profit_pct <= -_gb_loss_cap:
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"🛑 [Peak_Giveback] {sym} 曾有峰值 {_giveback_peak*100:.2f}% 後反轉持續未回頭 (現虧 {profit_pct*100:.2f}% <= -{_gb_loss_cap*100:.2f}%，動能持續不利)，提早停損降低損失")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Peak_Giveback]", is_stop_loss=True)
+            return
+
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     # Specifically handle BCH and XLM with higher ATR multipliers to account for their higher volatility
     base_sl_mult = s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER)

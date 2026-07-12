@@ -98,6 +98,77 @@ class TakeProfitTests(unittest.TestCase):
         self.assertGreater(s["trailing_stop_price"], 0.0)
         self.assertLess(s["trailing_stop_price"], 100.0)
 
+    def test_peak_giveback_cuts_loss_early_when_momentum_stays_against_position(self):
+        # 使用者要求：開倉後一度有利潤，後來反轉又持續沒回來的單子，不要傻等到硬停損線
+        # （通常 2~3%）才出場，先用一個更緊的門檻提早停損、把損失壓到最小。這裡驗證：
+        # 曾有 0.25% 峰值、現在轉虧 -0.5%（超過依 ATR 算出的 loss cap）、且 MACD 動能
+        # 持續往不利方向擴張，會觸發 [Peak_Giveback] 提早出場。
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 1.0, "avg_price": 100.0, "close_price": 99.5,
+            "open_time": time.time() - 300,
+            "last_entry_time": time.time() - 300,
+            "last_entry_price": 100.0,
+            "current_atr": 0.3,
+            "atr_history": [0.3] * 10,
+            "highest_profit_pct": 0.0025,
+            "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7,
+            "trailing_highest": 100.25,
+            "macd_line": -0.01, "macd_signal": 0.0,
+            "prev_macd_line": -0.005, "prev_macd_signal": 0.0,
+            "current_rsi": 45.0, "prev_rsi": 47.0,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "pnl_history": [],
+            "ohlcv": [],
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Peak_Giveback]")
+                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
+
+        asyncio.run(run_check())
+
+    def test_peak_giveback_does_not_fire_when_momentum_recovers(self):
+        # 同樣曾有峰值、現在轉虧，但 MACD 動能已經在往有利方向改善（不是持續惡化）
+        # ——這種情況不該被 Peak_Giveback 提早停損，要繼續給它機會。
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 1.0, "avg_price": 100.0, "close_price": 99.5,
+            "open_time": time.time() - 300,
+            "last_entry_time": time.time() - 300,
+            "last_entry_price": 100.0,
+            "current_atr": 0.3,
+            "atr_history": [0.3] * 10,
+            "highest_profit_pct": 0.0025,
+            "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7,
+            "trailing_highest": 100.25,
+            "macd_line": -0.005, "macd_signal": 0.0,
+            "prev_macd_line": -0.01, "prev_macd_signal": 0.0,
+            "current_rsi": 45.0, "prev_rsi": 47.0,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "pnl_history": [],
+            "ohlcv": [],
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                for call in mock_close.await_args_list:
+                    self.assertNotEqual(call.kwargs.get("reason"), "[Peak_Giveback]")
+
+        asyncio.run(run_check())
+
     def test_liquidation_safety_floor_never_exceeds_entry_price(self):
         # safe_min_sl 是「搶在交易所強平前自己先出場」的安全下限，理應落在
         # liq_price 跟 avg_price 之間。舊公式直接對 liq_price 乘 1.2，8 倍槓桿時
