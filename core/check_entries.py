@@ -511,6 +511,9 @@ async def check_entries():
         macd_hist = s.get("macd_hist", 0.0)
         vol_ma20 = s.get("vol_ma20", 0.0)
         volume = s["ohlcv"][-2][5] if len(s["ohlcv"]) > 1 else (s["ohlcv"][-1][5] if len(s["ohlcv"]) > 0 else 0)
+        # 無條件存到 state（不管走哪個 route），供後面第二輪分配資金時依流動性打折用；
+        # 每輪都重新算，不會有上一輪殘留的舊值被下一個候選誤用。
+        s["_entry_liquidity_usdt"] = vol_ma20 * cp * 288
 
         # A. 數據完整性檢查
         if sma200_15m == 0 or vol_ma20 == 0:
@@ -964,6 +967,21 @@ async def check_entries():
             _strength_scaled = max(0.0, min(1.0, (strength - _strength_floor) / (_strength_ceiling - _strength_floor)))
             absolute_alloc_pct = _min_alloc_pct + _strength_scaled * (_max_alloc_pct - _min_alloc_pct)
             allocation_pct = min(raw_ratio, absolute_alloc_pct, _max_alloc_pct)
+
+            # 流動性折扣：現有流動性檢查是二選一（過門檻 1,000,000 就全額進場、沒過就
+            # 整筆擋掉），但「剛好壓線過關」跟「流動性充裕」風險完全不同，同樣全額進場
+            # 不合理——薄的市場不管是進場追價還是將來急停損出場，滑點都會放大，甚至可能
+            # 賣不掉（KAITOUSDT 教訓）。門檻剛過（1,000,000）打 5 折，到 3 倍門檻
+            # （3,000,000）以上流動性視為充裕、不打折，中間線性插值。
+            _LIQ_MIN = 1_000_000
+            _LIQ_COMFORT = 3_000_000
+            _liq_est = s.get("_entry_liquidity_usdt")
+            if _liq_est is not None and _liq_est < _LIQ_COMFORT:
+                _liq_ratio = max(0.0, min(1.0, (_liq_est - _LIQ_MIN) / (_LIQ_COMFORT - _LIQ_MIN)))
+                _liq_discount = 0.5 + _liq_ratio * 0.5
+                if _liq_discount < 1.0:
+                    allocation_pct *= _liq_discount
+                    logger.info(f"⚖️ [Liquidity_Discount] {sym} 估算24H交易額 {_liq_est:,.0f} 偏薄（門檻 {_LIQ_MIN:,.0f}），倉位打折至 {_liq_discount*100:.0f}%")
 
             weight_label = f"{allocation_pct*100:.1f}%"
             logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%, 絕對強度換算上限 {absolute_alloc_pct*100:.1f}%)，實際分配資金為: {weight_label}")

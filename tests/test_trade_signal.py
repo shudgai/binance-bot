@@ -4,6 +4,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.exits import detect_market_regime
@@ -170,6 +171,80 @@ class TradeSignalTests(unittest.TestCase):
                 await check_entries()
                 mock_close.assert_called_once()
                 self.assertEqual(mock_close.await_args.args[1], "sell")
+
+        asyncio.run(run_check())
+
+    def _setup_liquidity_discount_state(self, vol_ma20):
+        sym = "XRPUSDT"
+        init_states([sym])
+        ctx.ALL_SYMBOLS[:] = [sym]
+        s = STATES[sym]
+        reset_coin_state(sym)
+        base_candles = [[0, 100.0, 100.3, 99.7, 100.0, vol_ma20] for _ in range(17)]
+        ohlcv = base_candles + [
+            [0, 101.0, 101.5, 99.0, 100.5, vol_ma20],
+            [0, 100.5, 100.8, 99.5, 100.0, vol_ma20 * 1.5],
+            [0, 100.0, 100.2, 99.5, 99.8, vol_ma20 * 1.5],
+        ]
+        s.update({
+            "status": "ACTIVE",
+            "closes": [100.0] * 20,
+            "close_price": 99.8,
+            "prev_close": 100.0,
+            "current_rsi": 62.0,
+            "rsi_extreme_low": 20, "rsi_extreme_high": 75,
+            "ema20": 100.5, "ema50": 101.0, "ema50_1h": 105.0,
+            "sma200_15m": 105.0,
+            "bb_low": 90.0, "bb_up": 110.0,
+            "macd_line": -0.006, "macd_signal": -0.003,
+            "prev_macd_line": -0.004, "prev_macd_signal": -0.003,
+            "macd_hist": -0.003,
+            "vol_ma10": 0.0, "current_vol": vol_ma20 * 1.5,
+            "vol_ma20": vol_ma20,
+            "current_atr": 0.3, "atr_history": [0.3] * 10,
+            "ohlcv": ohlcv,
+            "rsi_history": [62.0, 62.0],
+            "qty": 0.0, "pending_side": None, "pending_reverse": None,
+        })
+        return sym
+
+    def test_marginal_liquidity_discounts_allocation(self):
+        # 使用者要求：流動性檢查現有的門檻是二選一（過 1,000,000 全額進場、沒過整筆
+        # 擋掉），但「剛好壓線過關」風險比「流動性充裕」高很多，不該用同樣的倉位。
+        # 這裡驗證估算 24H 交易額剛過門檻（約 1,150,000）時，分配到的資金比例會被
+        # 打折到約 5 折附近，而不是跟流動性充裕時一樣的滿額。
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+        sym = self._setup_liquidity_discount_state(vol_ma20=40.0)  # h24 ≈ 1,150,000
+
+        async def run_check():
+            mock_exec = AsyncMock(return_value=None)
+            with patch("core.orders.execute_order", mock_exec), \
+                 patch("core.balance.is_daily_loss_halted", return_value=False), \
+                 patch("core.config.ENTRY_STRICTNESS_MODE", "relaxed"):
+                await check_entries()
+                await asyncio.sleep(0.05)
+                mock_exec.assert_called_once()
+                allocation = mock_exec.call_args.args[3]
+                self.assertLess(allocation, 0.5)
+
+        asyncio.run(run_check())
+
+    def test_ample_liquidity_does_not_discount_allocation(self):
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+        sym = self._setup_liquidity_discount_state(vol_ma20=200.0)  # h24 ≈ 5,760,000
+
+        async def run_check():
+            mock_exec = AsyncMock(return_value=None)
+            with patch("core.orders.execute_order", mock_exec), \
+                 patch("core.balance.is_daily_loss_halted", return_value=False), \
+                 patch("core.config.ENTRY_STRICTNESS_MODE", "relaxed"):
+                await check_entries()
+                await asyncio.sleep(0.05)
+                mock_exec.assert_called_once()
+                allocation = mock_exec.call_args.args[3]
+                self.assertGreater(allocation, 0.8)
 
         asyncio.run(run_check())
 

@@ -118,6 +118,32 @@ class TakeProfitTests(unittest.TestCase):
         self.assertGreater(second_stop, first_stop)
         self.assertGreater(second_stop, 100.50 * (1 - 0.0006))
 
+    def test_soft_trailing_widens_tolerance_while_macd_momentum_still_climbing(self):
+        # 使用者加碼要求：「動能一直往上就回吐容忍度要加寬，利潤到高處盤整時容忍度
+        # 再收緊」。MACD 柱狀圖還在往有利方向擴張時（真的在噴出），停利線應該放寬到
+        # 0.15%，不要一根雜訊就洗出場；柱狀圖不再擴張（盤整/停滯）時應收緊回 0.05%。
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0,
+                  "macd_line": 0.02, "macd_signal": 0.01,       # macd_hist = 0.01
+                  "prev_macd_line": 0.005, "prev_macd_signal": 0.005})  # prev_hist = 0.0 -> 攜張中
+        update_trailing_stop(sym, 100.50, True)
+        widened_stop = s["trailing_stop_price"]
+        # 容忍度 0.15% 時，停利線應落在峰值下方約 0.15%，而不是收緊版的 0.05%。
+        self.assertLess(widened_stop, 100.50 * (1 - 0.0012))
+
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0,
+                  "macd_line": 0.01, "macd_signal": 0.005,      # macd_hist = 0.005
+                  "prev_macd_line": 0.02, "prev_macd_signal": 0.01})   # prev_hist = 0.01 -> 動能停滯
+        update_trailing_stop(sym, 100.50, True)
+        tightened_stop = s["trailing_stop_price"]
+        self.assertGreater(tightened_stop, 100.50 * (1 - 0.0006))
+
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
         # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——

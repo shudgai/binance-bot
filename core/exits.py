@@ -241,15 +241,21 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 使用者要求「碰到小獲利就先入袋，不要冒風險等它變大，但利潤往上就跟上」：
+        # 使用者要求「碰到小獲利就先入袋，不要冒風險等它變大，但利潤往上就跟上」，
+        # 後續再加碼：「動能一直往上就回吐容忍度加寬，利潤到高處盤整時容忍度再收緊」。
         # 啟動門檻 0.20%（低於來回費用緩衝 0.15% 會導致門檻剛觸發那一刻停利線就高於
-        # 現價、瞬間誤砍，實測驗證過 0.20% 有安全空間）。回吐容忍度從原本 0.2% 收緊到
-        # 0.05%——一碰到小獲利，這條線幾乎貼著目前峰值，價格一創新高就馬上跟著往上，
-        # 只要小幅拉回就先落袋，不再給價格「回來」的空間賭它繼續漲。
+        # 現價、瞬間誤砍，實測驗證過 0.20% 有安全空間）。回吐容忍度不再是固定值，改
+        # 用 MACD 動能方向動態切換：柱狀圖還在往有利方向擴張（趨勢仍在推進）就放寬到
+        # 0.15%，給真正在噴出的走勢一點呼吸空間，不要一根雜訊就洗出場；柱狀圖不再擴張
+        # （動能停滯/盤整，代表這波可能要見頂了）就收緊到 0.05%，盡快把已經到手的獲利
+        # 鎖住，不賭它會繼續漲。
         _hp_soft = s["highest_profit_pct"]
         if 0.0020 <= _hp_soft < breakeven_threshold:
+            _soft_macd_now, _soft_macd_prev = _macd_vals(s)
+            _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
+            _soft_tolerance = 0.0015 if _soft_momentum_climbing else 0.0005
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
-            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.0005), _soft_floor)
+            _soft_sl = max(s["trailing_highest"] * (1.0 - _soft_tolerance), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_floor
@@ -311,11 +317,14 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單對稱版，啟動門檻與回吐容忍度同理收緊（見多單那側的說明）。
+        # 空單對稱版，啟動門檻與動態回吐容忍度同理（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
         if 0.0020 <= _hp_soft < breakeven_threshold:
+            _soft_macd_now, _soft_macd_prev = _macd_vals(s)
+            _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
+            _soft_tolerance = 0.0015 if _soft_momentum_climbing else 0.0005
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
-            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.0005), _soft_ceiling)
+            _soft_sl = min(s["trailing_lowest"] * (1.0 + _soft_tolerance), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_ceiling
