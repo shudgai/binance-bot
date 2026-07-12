@@ -127,10 +127,17 @@ async def update_trade_signal(sym, trade):
             _fee_safe_floor = ROUND_TRIP_FEE_PCT + 0.0015
             _soft_net_guard = _rt_peak < 0.006 and rt_profit < _fee_safe_floor
             if _soft_net_guard:
-                logger.info(
-                    f"⏸️ [Realtime_Soft_Net_Guard] {sym} 已穿軟追蹤線，但目前毛利 "
-                    f"{rt_profit*100:.3f}% 尚不足費用安全底線 {_fee_safe_floor*100:.3f}%"
-                )
+                # 這裡掛在 update_trade_signal，每一筆成交流 tick 都會跑到——像
+                # DOGEUSDT 這種高頻幣種，價格在軟停利線附近盤整時，同一句 log 一秒內
+                # 能重複噴幾十次，把 log 洗到看不到其他真正有用的訊息。狀態沒變就不用
+                # 每個 tick 都重印一次，節流成最多每 5 秒一次。
+                _last_log = s.get("_soft_net_guard_last_log", 0.0)
+                if ts_value - _last_log >= 5.0:
+                    s["_soft_net_guard_last_log"] = ts_value
+                    logger.info(
+                        f"⏸️ [Realtime_Soft_Net_Guard] {sym} 已穿軟追蹤線，但目前毛利 "
+                        f"{rt_profit*100:.3f}% 尚不足費用安全底線 {_fee_safe_floor*100:.3f}%"
+                    )
                 return
             from core.orders import close_position
             close_side = "sell" if _is_long else "buy"
