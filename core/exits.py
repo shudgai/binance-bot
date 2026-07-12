@@ -241,18 +241,15 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 使用者要求「每個利潤都要能入袋，利潤往上移動停利就往上」：軟移動停利原本要
-        # 峰值先衝到 0.3% 才開始運作，0.3% 以下完全沒有保護，等於一段「獲利真空期」
-        # ——只要利潤還沒衝到 0.3% 就回頭，一毛都鎖不住。啟動門檻下修，讓保護幾乎從
-        # 第一筆真正的淨利開始就跟著峰值一路往上棘輪，不用等到某個門檻才「突然」出現
-        # 一條停利線。門檻不能低於下面的來回費用緩衝本身（0.15%），否則門檻剛觸發那一
-        # 刻，算出來的停利線會直接高於現價、還沒回撤就先被自己的門檻誤觸出場（實測：
-        # 0.12% 觸發時，停利線 100.15 已經高於現價 100.12，會瞬間誤砍）。抓 0.20%，
-        # 確保啟動當下停利線一定還在現價之下，留出真正的回撤緩衝空間。
+        # 使用者要求「碰到小獲利就先入袋，不要冒風險等它變大，但利潤往上就跟上」：
+        # 啟動門檻 0.20%（低於來回費用緩衝 0.15% 會導致門檻剛觸發那一刻停利線就高於
+        # 現價、瞬間誤砍，實測驗證過 0.20% 有安全空間）。回吐容忍度從原本 0.2% 收緊到
+        # 0.05%——一碰到小獲利，這條線幾乎貼著目前峰值，價格一創新高就馬上跟著往上，
+        # 只要小幅拉回就先落袋，不再給價格「回來」的空間賭它繼續漲。
         _hp_soft = s["highest_profit_pct"]
         if 0.0020 <= _hp_soft < breakeven_threshold:
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
-            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.002), _soft_floor)
+            _soft_sl = max(s["trailing_highest"] * (1.0 - 0.0005), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_floor
@@ -314,11 +311,11 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單對稱版，啟動門檻同理下修為 0.20%（見多單那側的說明）。
+        # 空單對稱版，啟動門檻與回吐容忍度同理收緊（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
         if 0.0020 <= _hp_soft < breakeven_threshold:
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
-            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.002), _soft_ceiling)
+            _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.0005), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_ceiling

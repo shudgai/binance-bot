@@ -99,6 +99,25 @@ class TakeProfitTests(unittest.TestCase):
         self.assertTrue(s.get("soft_trailing_armed", False))
         self.assertLess(s["trailing_stop_price"], current_price)
 
+    def test_soft_trailing_locks_in_small_profit_and_follows_new_highs_tightly(self):
+        # 使用者要求「碰到小獲利就先入袋，不要冒風險等它變大，但利潤往上就跟上」：
+        # 回吐容忍度從 0.2% 收緊到 0.05%，價格一創新高，停利線幾乎貼著峰值一起往上。
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0})
+        update_trailing_stop(sym, 100.30, True)  # 峰值 0.30%
+        first_stop = s["trailing_stop_price"]
+        # 停利線應緊貼峰值（容忍度只有 0.05%），不是舊版寬鬆的 0.2%。
+        self.assertGreater(first_stop, 100.30 * (1 - 0.0006))
+        update_trailing_stop(sym, 100.50, True)  # 價格創新高到 0.50%
+        second_stop = s["trailing_stop_price"]
+        # 停利線必須跟著新高一起往上移動（棘輪只升不降）。
+        self.assertGreater(second_stop, first_stop)
+        self.assertGreater(second_stop, 100.50 * (1 - 0.0006))
+
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
         # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——
