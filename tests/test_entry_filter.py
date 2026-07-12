@@ -200,5 +200,36 @@ class EntryFilterTests(unittest.TestCase):
         self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=18.5))
 
 
+    def test_high_strength_cannot_short_from_lower_band(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        ctx.MARKET_WIND.update({"allow_long": True, "allow_short": True, "btc_trend_4h": None, "btc_trend_1h": None})
+        s.update({
+            "close_price": 100.2, "bb_low": 100.0, "bb_up": 110.0,
+            "current_vol": 1200.0, "vol_ma20": 1000.0,
+            "current_atr": 0.5, "atr_history": [0.5] * 20,
+            "current_rsi": 42.0, "ema20_15m": 101.0, "ema50_15m": 100.0,
+            "mtf_filter": False, "ohlcv": [[0, 100, 101, 99, 100.2, 1200]] * 21,
+        })
+        self.assertFalse(is_entry_allowed(sym, "sell", route="a", strength=30.2))
+
+    def test_high_strength_cannot_override_opposite_15m_trend(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        ctx.MARKET_WIND.update({"allow_long": True, "allow_short": True, "btc_trend_4h": None, "btc_trend_1h": None})
+        s.update({
+            "close_price": 109.0, "bb_low": 100.0, "bb_up": 110.0,
+            "current_vol": 1200.0, "vol_ma20": 1000.0,
+            "current_atr": 0.5, "atr_history": [0.5] * 20,
+            "current_rsi": 42.0, "ema20_15m": 108.0, "ema50_15m": 105.0,
+            "mtf_filter": True, "ohlcv": [[0, 109, 110, 108, 109, 1200]] * 21,
+        })
+        self.assertFalse(is_entry_allowed(sym, "sell", route="a", strength=30.2))
+
+
 if __name__ == "__main__":
     unittest.main()

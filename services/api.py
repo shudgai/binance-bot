@@ -1064,6 +1064,16 @@ def get_open_orders(symbol: str):
         return {"status": "error", "message": str(e)}
 
 
+@app.delete("/api/open-orders/{symbol}")
+def cancel_open_orders(symbol: str):
+    try:
+        result = client.futures_cancel_all_open_orders(symbol=symbol)
+        _open_orders_cache.pop(symbol, None)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8005)

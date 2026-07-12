@@ -300,10 +300,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         support_zone_upper = bb_lower * (1 + tol)
         is_in_support_zone = cp <= support_zone_upper
 
-        if not is_in_support_zone and strength < strength_threshold:
+        if not is_in_support_zone:
             # 只有超強訊號或超過 per-coin 門檻才允許在中軌上方買
             distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
-            logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 遠離下軌 {bb_lower:.6f} ({distance_to_support*100:.2f}%)，缺乏支撑。訊號強度 {strength:.1f} < {strength_threshold:.0f} 拒絕進場 (tol={tol*100:.2f}%)")
+            logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 遠離下軌 {bb_lower:.6f} ({distance_to_support*100:.2f}%)，缺乏支撑。趨勢多單缺乏支撐，拒絕進場 (tol={tol*100:.2f}%)")
             return False
 
         if is_in_support_zone:
@@ -318,9 +318,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         resistance_zone_lower = bb_upper * (1 - tol)
         is_in_resistance_zone = cp >= resistance_zone_lower
 
-        if not is_in_resistance_zone and strength < strength_threshold:
+        if not is_in_resistance_zone:
             distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
-            logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 遠離上軌 {bb_upper:.6f} ({distance_to_resistance*100:.2f}%)，缺乏阻力。訊號強度 {strength:.1f} < {strength_threshold:.0f} 拒絕進場 (tol={tol*100:.2f}%)")
+            logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 遠離上軌 {bb_upper:.6f} ({distance_to_resistance*100:.2f}%)，缺乏阻力。趨勢空單缺乏阻力，拒絕進場 (tol={tol*100:.2f}%)")
             return False
 
         if is_in_resistance_zone:
@@ -436,8 +436,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20_15m = s.get("ema20_15m", 0.0)
     ema50_15m = s.get("ema50_15m", 0.0)
     current_rsi_mtf = s.get("current_rsi", 50.0)
-    # 逆勢需訊號夠強才允許突破 15m 趨勢封鎖
-    _mtf_strong_override = strength >= 20.0
+    # 分數高不代表方向正確；逆 15m 趨勢不得再以強度分數跳過。
     # 使用者要求放寬：超買/超賣豁免門檻從 60/40 收窄到 55/45，讓 RSI 已經明顯偏向
     # 反轉方向（但還沒到傳統超買/超賣 60/40）的訊號也能突破 15m 趨勢封鎖，仍保留
     # 中性 RSI（45~55）時不逆勢的保護，不是整道過濾器失效。
@@ -448,17 +447,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     _mtf_buy_rsi_override = 45.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:
-            if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向上逆勢做空 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
-            elif current_rsi_mtf >= _mtf_sell_rsi_override:
+            if current_rsi_mtf >= _mtf_sell_rsi_override:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 — RSI {current_rsi_mtf:.1f} 已達 {_mtf_sell_rsi_override:.0f} 偏多門檻，允許")
             else:
                 logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向上，逆勢做空 且 RSI {current_rsi_mtf:.1f} < {_mtf_sell_rsi_override:.0f}，拒絕")
                 return False
         elif side == 'buy' and ema20_15m < ema50_15m:
-            if _mtf_strong_override:
-                logger.info(f"⚡ [ALLOW] [Filter:MTF_Trend] {sym} 15m 向下逆勢做多 — 極強訊號 {strength:.1f} ≥ 20，允許逆勢")
-            elif current_rsi_mtf <= _mtf_buy_rsi_override:
+            if current_rsi_mtf <= _mtf_buy_rsi_override:
                 logger.info(f"⚠️ [WARN] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 — RSI {current_rsi_mtf:.1f} 已達 {_mtf_buy_rsi_override:.0f} 偏空門檻，允許")
             else:
                 logger.info(f"🛑 [BLOCK] [Filter:MTF_Trend] {sym} 15m 大趨勢向下，逆勢做多 且 RSI {current_rsi_mtf:.1f} > {_mtf_buy_rsi_override:.0f}，拒絕")

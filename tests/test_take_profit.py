@@ -160,11 +160,8 @@ class TakeProfitTests(unittest.TestCase):
         self.assertGreater(s["trailing_stop_price"], 0.0)
         self.assertLess(s["trailing_stop_price"], 100.0)
 
-    def test_peak_giveback_cuts_loss_early_when_momentum_stays_against_position(self):
-        # 使用者要求：開倉後一度有利潤，後來反轉又持續沒回來的單子，不要傻等到硬停損線
-        # （通常 2~3%）才出場，先用一個更緊的門檻提早停損、把損失壓到最小。這裡驗證：
-        # 曾有 0.25% 峰值、現在轉虧 -0.5%（超過依 ATR 算出的 loss cap）、且 MACD 動能
-        # 持續往不利方向擴張，會觸發 [Peak_Giveback] 提早出場。
+    def test_peak_giveback_does_not_create_tiny_stop_below_entry(self):
+        # 小幅盤中峰值後轉負，不能繞過 ATR/硬停損另造超窄停損。
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -191,16 +188,13 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Peak_Giveback]")
-                self.assertTrue(mock_close.await_args.kwargs["is_stop_loss"])
+                for call in mock_close.await_args_list:
+                    self.assertNotEqual(call.kwargs.get("reason"), "[Peak_Giveback]")
 
         asyncio.run(run_check())
 
-    def test_peak_giveback_loss_cap_tightened_to_point_one_two_to_point_two_five(self):
-        # 使用者反映原本 0.35%~0.8% 的損失上限太寬（實際峰值常常只有 0.15%~0.6%，
-        # 上限比峰值本身還大），改成 0.12%~0.25%。這裡驗證只虧 -0.20% 就要能提早出場
-        # ——用舊門檻（0.35% 下限）這筆單子不會被攔下，改窄後才會。
+    def test_small_noise_peak_does_not_bypass_atr_stop(self):
+        # 即使小峰值後回落 0.20%，也應繼續交給正式風控判斷。
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -227,8 +221,8 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Peak_Giveback]")
+                for call in mock_close.await_args_list:
+                    self.assertNotEqual(call.kwargs.get("reason"), "[Peak_Giveback]")
 
         asyncio.run(run_check())
 

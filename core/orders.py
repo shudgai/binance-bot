@@ -886,6 +886,16 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         try:
             _since_ms = int(s.get("open_time", 0.0) * 1000) or None
             _fee_trades = await exchange_futures.fetch_my_trades(sym, since=_since_ms, limit=50)
+            if _since_ms is None:
+                # 恢復倉位沒有 open_time 時，不能把該幣最近 50 筆歷史手續費全算進來。
+                # 由最新成交往回，只取本次平倉到前一次已實現損益之間的一個倉位週期。
+                _cycle = []
+                for _trade in reversed(_fee_trades):
+                    _realized = float(_trade.get("realizedPnl", 0.0) or (_trade.get("info") or {}).get("realizedPnl", 0.0) or 0.0)
+                    if _cycle and _realized != 0.0:
+                        break
+                    _cycle.append(_trade)
+                _fee_trades = list(reversed(_cycle))
             _real_fees = sum(float((t.get("fee") or {}).get("cost", 0.0) or 0.0) for t in _fee_trades)
         except Exception as _fee_e:
             logger.info(f"⚠️ [手續費查詢失敗] {sym}: {_fee_e}")

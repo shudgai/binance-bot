@@ -615,27 +615,8 @@ async def check_exits(sym):
                     await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=False)
                     return
 
-    # ── 峰值回吐未回頭 → 提早停損，把損失壓到最小 ──
-    # 使用者要求：開倉後一度有利潤，後來反轉又持續沒回來的單子，不要傻等到硬停損線
-    # （通常 2~3%）才出場。上面的盲區保護已經給過一段觀察期，這裡再加一道更緊的防線：
-    # 只要「曾經有過像樣的峰值（排除純雜訊）」+「現在轉虧」+「動能持續往不利方向擴張
-    # （不是在峰值附近小幅震盪，是真的回不去了）」同時成立，就先出場，把虧損鎖在遠比
-    # 硬停損線緊的範圍，不要放著繼續等更大的停損線才認賠。
-    _giveback_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
-    if _giveback_peak >= 0.0015 and profit_pct < 0:
-        _gb_macd_now, _gb_macd_prev = _macd_vals(s)
-        _gb_momentum_against = (_gb_macd_now < _gb_macd_prev) if is_long else (_gb_macd_now > _gb_macd_prev)
-        _gb_atr_pct = (current_atr / avg) if avg > 0 else 0.0
-        # 損失上限用 ATR% 動態抓，夾在 0.12%~0.25% 之間——使用者反映這台機器人實際
-        # 常見的峰值本來就只有 0.15%~0.6%，原本 0.35%~0.8% 的門檻太寬，等於峰值都還
-        # 沒吐光損失上限就先超過峰值本身。下限 0.12% 貼著雙邊手續費成本(0.1%)一點點
-        # 緩衝，低於這個等於一虧就先確定倒賠手續費，沒有意義。
-        _gb_loss_cap = max(0.0012, min(_gb_atr_pct * 0.6, 0.0025))
-        if _gb_momentum_against and profit_pct <= -_gb_loss_cap:
-            cs = 'sell' if is_long else 'buy'
-            logger.info(f"🛑 [Peak_Giveback] {sym} 曾有峰值 {_giveback_peak*100:.2f}% 後反轉持續未回頭 (現虧 {profit_pct*100:.2f}% <= -{_gb_loss_cap*100:.2f}%，動能持續不利)，提早停損降低損失")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Peak_Giveback]", is_stop_loss=True)
-            return
+    # 小幅峰值回吐到負報酬時，不另設超窄 Peak_Giveback 停損；
+    # 真正失效交由下方 Rapid_Reversal、ATR 與 Hard_Stop 管理。
 
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     # Specifically handle BCH and XLM with higher ATR multipliers to account for their higher volatility

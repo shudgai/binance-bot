@@ -833,9 +833,11 @@ async def check_entries():
         _band_pos_entry = ((cp - _bb_low_entry) / _band_width_entry) if _band_width_entry > 0 else 0.5
         if side == "buy" and _band_pos_entry >= 0.80:
             s["force_pullback_entry"] = True
+            _force_close_confirmation = True
             logger.info(f"🧲 [UpperBand_Pullback] {sym} 做多位於布林帶 {_band_pos_entry*100:.0f}% 位置，保留訊號並改用回踩限價")
         elif side == "sell" and _band_pos_entry <= 0.20:
             s["force_pullback_entry"] = True
+            _force_close_confirmation = True
             logger.info(f"🧲 [LowerBand_Pullback] {sym} 做空位於布林帶 {_band_pos_entry*100:.0f}% 位置，保留訊號並改用回踩限價")
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
