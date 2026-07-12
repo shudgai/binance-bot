@@ -366,7 +366,16 @@ async def check_entries():
                     src = pending_rev_data.get("source", "Signal")
                     logger.info(f"⚡ [{sym}] [Reversal_Confirmed] {src} 反手確認！平倉並反手建倉 ({pending_rev_data['side']})，強度 {pending_rev_data.get('strength',0):.1f}")
                     # 1. 平倉舊倉位
-                    await close_position(sym, current_direction, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
+                    # 平倉方向要跟「持倉方向」相反（多倉用 sell 平、空倉用 buy 平），不是
+                    # current_direction 本身——這裡曾經直接把 current_direction 當平倉方向
+                    # 傳進去，等於「多倉卻送 buy 平倉」，方向完全反了。orders.py 的
+                    # _close_position_inner_locked 有一道防禦會偵測到方向衝突並自動修正
+                    # （log 會印 [CRITICAL_ERROR] 平倉方向衝突），所以實際送到交易所的單一直
+                    # 都是修正後的正確方向、沒有真的反向下錯單，但這個呼叫點本身從一開始
+                    # 就傳錯，等於每次自動反手都要靠那道安全網才沒出事（實測 log 62 次
+                    # CRITICAL_ERROR 全部來自這裡）。直接在源頭傳對，不要繼續依賴安全網。
+                    close_side = "sell" if current_direction == "buy" else "buy"
+                    await close_position(sym, close_side, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[AUTOMATIC_REVERSE]")
                     await asyncio.sleep(1)
                     reset_coin_state(sym)
                     # 2. 反手建倉，並記錄反手時間（冷卻 30 分鐘防連續反手）
@@ -813,17 +822,18 @@ async def check_entries():
                 logger.info(f"⚠️ [假突破記憶] {sym} 距上次同向假突破不到 2 ATR，但強度 {strength:.1f} >= {_effective_min:.1f}，允許進場")
                 strength *= 0.85
 
-        # 高波動 Route B 位於布林帶上緣時禁止 chase/market，改成等待回踩成交。
+        # 有效訊號位於布林帶邊緣時不整筆丟棄，保留訊號但強制用回踩限價；
+        # 這樣增加開倉機會，同時避免多單追上軌、空單殺下軌。
         _bb_low_entry = float(s.get("bb_low", 0.0) or 0.0)
         _bb_up_entry = float(s.get("bb_up", 0.0) or 0.0)
         _band_width_entry = _bb_up_entry - _bb_low_entry
         _band_pos_entry = ((cp - _bb_low_entry) / _band_width_entry) if _band_width_entry > 0 else 0.5
-        if route == "b" and not _is_low_vol_ce and side == "buy" and _band_pos_entry >= 0.75:
+        if side == "buy" and _band_pos_entry >= 0.80:
             s["force_pullback_entry"] = True
-            logger.info(f"🧲 [HighVol_UpperBand] {sym} 高波動做多位於布林帶 {_band_pos_entry*100:.0f}% 位置，禁止追價並改用回踩限價")
-        elif route == "b" and not _is_low_vol_ce and side == "sell" and _band_pos_entry <= 0.25:
+            logger.info(f"🧲 [UpperBand_Pullback] {sym} 做多位於布林帶 {_band_pos_entry*100:.0f}% 位置，保留訊號並改用回踩限價")
+        elif side == "sell" and _band_pos_entry <= 0.20:
             s["force_pullback_entry"] = True
-            logger.info(f"🧲 [HighVol_LowerBand] {sym} 高波動做空位於布林帶 {_band_pos_entry*100:.0f}% 位置，禁止追價並改用回踩限價")
+            logger.info(f"🧲 [LowerBand_Pullback] {sym} 做空位於布林帶 {_band_pos_entry*100:.0f}% 位置，保留訊號並改用回踩限價")
 
         # 通過 Flip Buffer，進入 pending 狀態等待下一根 K 線確認
         if is_relaxed and not _force_close_confirmation:

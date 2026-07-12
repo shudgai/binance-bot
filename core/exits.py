@@ -241,16 +241,17 @@ def update_trailing_stop(sym, current_price, is_long):
 
         trail_sl = s["trailing_stop_price"]
 
-        # 峰值 0.3%-0.6% 使用軟移動停利：允許回吐 0.2%，並覆蓋交易摩擦。
-        # 緩衝原本只留 0.03%（ROUND_TRIP_FEE_PCT+0.0003），但這道停利是靠機器人自己
-        # 每 10~25 秒巡檢現價才觸發市價出場，不是掛在交易所上即時成交的停損單——
-        # 巡檢間隔內價格經常已經滑落超過這條線本身（UNIUSDT 實測：軟停利線算出
-        # 3.5259，12 秒後巡檢到時現價已經是 3.522，早就穿過緩衝，出場後倒賠手續費）。
-        # 緩衝改成跟下面「硬保本鎖」一致的 ROUND_TRIP_FEE_PCT+0.0015，留更多容錯空間
-        # 撐過巡檢延遲造成的滑落，才不會讓「有小賺」的單子最後變成淨虧收場。
+        # 使用者要求「每個利潤都要能入袋，利潤往上移動停利就往上」：軟移動停利原本要
+        # 峰值先衝到 0.3% 才開始運作，0.3% 以下完全沒有保護，等於一段「獲利真空期」
+        # ——只要利潤還沒衝到 0.3% 就回頭，一毛都鎖不住。啟動門檻下修，讓保護幾乎從
+        # 第一筆真正的淨利開始就跟著峰值一路往上棘輪，不用等到某個門檻才「突然」出現
+        # 一條停利線。門檻不能低於下面的來回費用緩衝本身（0.15%），否則門檻剛觸發那一
+        # 刻，算出來的停利線會直接高於現價、還沒回撤就先被自己的門檻誤觸出場（實測：
+        # 0.12% 觸發時，停利線 100.15 已經高於現價 100.12，會瞬間誤砍）。抓 0.20%，
+        # 確保啟動當下停利線一定還在現價之下，留出真正的回撤緩衝空間。
         _hp_soft = s["highest_profit_pct"]
-        if 0.003 <= _hp_soft < breakeven_threshold:
-            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0015)
+        if 0.0020 <= _hp_soft < breakeven_threshold:
+            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
             _soft_sl = max(s["trailing_highest"] * (1.0 - 0.002), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
@@ -313,10 +314,10 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單對稱版，緩衝同理放寬到 ROUND_TRIP_FEE_PCT+0.0015（見多單那側的說明）。
+        # 空單對稱版，啟動門檻同理下修為 0.20%（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
-        if 0.003 <= _hp_soft < breakeven_threshold:
-            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0015)
+        if 0.0020 <= _hp_soft < breakeven_threshold:
+            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
             _soft_sl = min(s["trailing_lowest"] * (1.0 + 0.002), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
@@ -456,7 +457,7 @@ async def check_exits(sym):
     # --- [新增] 極速止損 (Fast-Exit Guard / Instant Trap) ---
     # 檢查開倉後 60 秒內的「瞬間陷阱」
     hold_sec = time.time() - s.get("open_time", time.time())
-    if hold_sec < 60 and s.get("open_time", 0) > 0:
+    if hold_sec < 60 and s.get("open_time", 0) > 0 and not s.get("restored_from_exchange", False):
         guard = FastReversalGuard()
         trap_signal = guard.check_instant_trap(avg, p, 'buy' if is_long else 'sell')
         current_vol = float(s.get("current_vol", 0.0) or 0.0)
@@ -815,7 +816,7 @@ async def check_exits(sym):
 
         # 攤平後的停損線不能比「原始進場價的停損線」更寬鬆：取新均價停損線跟原始
         # 進場價停損線中「較緊」的那一個，避免攤平失敗時虧損被無限放大。
-        first_ep = s.get("first_entry_price", avg)
+        first_ep = float(s.get("first_entry_price", 0.0) or avg)
         if is_long:
             _hard_sl_price = max(avg * (1 - _hard_sl), first_ep * (1 - _hard_sl))
             _hard_sl_hit = p <= _hard_sl_price

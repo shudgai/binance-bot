@@ -297,8 +297,14 @@ async def calibrate_with_exchange(exchange):
                     # 讀出來的，兩個進程不共用記憶體——不寫回檔案，介面永遠看不到
                     # 這個剛救回來的幣種，即使 log 訊息說「並在介面顯示」也不成立。
                     try:
-                        from core.symbol_profile import save_symbol_pool
-                        save_symbol_pool(ctx.ALL_SYMBOLS)
+                        from core.symbol_profile import load_symbol_pool, save_symbol_pool
+                        # 不可用子行程當下的局部清單覆蓋雷達完整池；只把救回的持倉幣加入。
+                        _persisted_pool = load_symbol_pool()
+                        _merged_pool = list(_persisted_pool)
+                        for _candidate in ctx.ALL_SYMBOLS:
+                            if _candidate not in _merged_pool:
+                                _merged_pool.append(_candidate)
+                        save_symbol_pool(_merged_pool)
                     except Exception as se:
                         logger.info(f"⚠️ [持倉救回寫檔失敗] {sym}: {se}")
 
@@ -311,6 +317,11 @@ async def calibrate_with_exchange(exchange):
                     if current_qty == 0:
                         ctx.STATES[sym]["entry_price"] = float(pos.get('entryPrice', pos.get('avg_price', 0.0)))
                         ctx.STATES[sym]["avg_price"] = ctx.STATES[sym]["entry_price"]
+                        # 還原持倉的原始進場基準，避免 reset 後的 0 使空單硬停損立即誤觸發。
+                        ctx.STATES[sym]["first_entry_price"] = ctx.STATES[sym]["entry_price"]
+                        ctx.STATES[sym]["last_entry_price"] = ctx.STATES[sym]["entry_price"]
+                        ctx.STATES[sym]["last_entry_direction"] = "buy" if real_qty > 0 else "sell"
+                        ctx.STATES[sym]["restored_from_exchange"] = True
                         # 恢復 open_time：優先用存檔的真實進場時間，而不是無條件蓋成
                         # 重啟當下的時間。原本每次重啟都會把持倉時間打回 0，導致靠
                         # 「持倉多久」判斷的機制（例如停滯超時）永遠算不到真正的持倉

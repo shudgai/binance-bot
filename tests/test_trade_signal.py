@@ -63,6 +63,21 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(side, "sell")
         self.assertGreater(strength, 0)
 
+    def test_route_a_accepts_one_of_two_directional_candles_before_pending_confirmation(self):
+        sym = self._setup_ema20_pullback_state(
+            rsi=55.0, macd_line=-0.006, macd_signal=-0.003,
+            prev_macd_line=-0.004, prev_macd_signal=-0.003,
+        )
+        # 最近兩根已收盤 K 線一陽一陰：Route A 應產生候選，後續 check_entries
+        # 仍會等待下一根收盤確認，因此不是無確認直接下單。
+        STATES[sym]["ohlcv"][0][1] = 100.0
+        STATES[sym]["ohlcv"][0][4] = 100.5
+
+        side, strength, route = compute_signal_strength(sym)
+        self.assertEqual(side, "sell")
+        self.assertGreater(strength, 0)
+        self.assertEqual(route, "a")
+
     def test_trade_signal_triggers_breakout_reversal(self):
         sym = "XRPUSDT"
         init_states([sym])
@@ -124,6 +139,39 @@ class TradeSignalTests(unittest.TestCase):
 
         self.assertIsNone(side)
         self.assertEqual(strength, 0)
+
+    def test_automatic_reverse_closes_with_opposite_side_not_current_direction(self):
+        # 使用者反映「常會有反向的情況發生」——實測 log 62 次 [CRITICAL_ERROR] 平倉方向
+        # 衝突，全部來自 [AUTOMATIC_REVERSE]：多倉卻送出 close_side="buy"、空倉卻送出
+        # close_side="sell"，直接把「目前持倉方向」當平倉方向傳給 close_position，跟
+        # 平倉該用的方向（相反方向）完全搞反。orders.py 的防禦有自動修正、沒有真的反向
+        # 下錯單，但呼叫點本身從一開始就傳錯，每次都要靠安全網才沒出事。這裡直接驗證
+        # 多倉自動反手時，close_position 收到的是 "sell"（不是 "buy"）。
+        from unittest.mock import patch, AsyncMock
+        import asyncio, time as time_module
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "status": "ACTIVE",
+            "qty": 1.0, "avg_price": 100.0, "close_price": 95.0,  # 多倉
+            "ohlcv": [[time_module.time() * 1000, 95, 96, 94, 95, 1000]],
+            "pending_reverse_trigger": {
+                "side": "sell", "time": 0, "strength": 18.0, "source": "BB_Breakout",
+            },
+        })
+
+        async def run_check():
+            with patch("core.check_entries.is_reversal_still_valid", AsyncMock(return_value=True)), \
+                 patch("core.orders.close_position", AsyncMock()) as mock_close, \
+                 patch("core.orders.execute_order", AsyncMock()), \
+                 patch("core.balance.is_daily_loss_halted", return_value=False):
+                await check_entries()
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.args[1], "sell")
+
+        asyncio.run(run_check())
 
     def test_check_entries_handles_missing_macd_tiny_threshold(self):
         sym = "XRPUSDT"

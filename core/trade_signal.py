@@ -124,7 +124,7 @@ async def update_trade_signal(sym, trade):
         )
         if _rt_crossed and not s.get("_is_closing", False):
             # 軟追蹤只能在扣除雙邊費用後仍為正時即時平倉；硬停損仍由主退出循環管理。
-            _fee_safe_floor = ROUND_TRIP_FEE_PCT + 0.0015
+            _fee_safe_floor = ROUND_TRIP_FEE_PCT + 0.0005
             _soft_net_guard = _rt_peak < 0.006 and rt_profit < _fee_safe_floor
             if _soft_net_guard:
                 # 這裡掛在 update_trade_signal，每一筆成交流 tick 都會跑到——像

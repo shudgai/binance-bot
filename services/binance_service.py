@@ -759,47 +759,125 @@ def _save_pnl_baseline_by_symbol(baseline_by_symbol: dict) -> None:
     except Exception:
         pass
 
+def _compute_realized_pnl_since(start_ms: int) -> dict:
+    """按 baseline 時間加總成交淨損益，避免 limit=1000 的滾動窗口污染歷史差分。"""
+    from services.bot_manager_service import load_symbol_config
+    from services.radar_service import CORE_SYMBOLS
+    import json as _json
+    from core.config import TRADE_HISTORY_FILE
+
+    query_symbols = {_normalize_symbol_for_pnl(s) for s in CORE_SYMBOLS if s}
+    query_symbols.update(_normalize_symbol_for_pnl(s) for s in load_symbol_config() if s)
+    query_symbols.update(_load_pnl_symbol_registry())
+    try:
+        with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = _json.load(f)
+        query_symbols.update(_normalize_symbol_for_pnl(t.get("symbol", "")) for t in history if t.get("symbol"))
+    except Exception:
+        pass
+    query_symbols = {s for s in query_symbols if s}
+    _save_pnl_symbol_registry(query_symbols)
+
+    result = {}
+    for sym in query_symbols:
+        if _binance_banned():
+            raise RuntimeError("Binance API temporarily unavailable")
+        total = 0.0
+        params = {"symbol": sym, "startTime": int(start_ms), "limit": 1000}
+        last_id = None
+        while True:
+            try:
+                trades = client.futures_account_trades(**params)
+            except Exception as e:
+                _note_binance_ban(e)
+                if "-1121" in str(e) or "Invalid symbol" in str(e):
+                    break
+                raise RuntimeError(f"查詢 {sym} baseline 後成交失敗: {e}")
+            for t in trades:
+                total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
+            if len(trades) < 1000:
+                break
+            ids = [int(t.get("id")) for t in trades if t.get("id") is not None]
+            if not ids:
+                break
+            next_id = max(ids) + 1
+            if last_id is not None and next_id <= last_id:
+                break
+            last_id = next_id
+            params = {"symbol": sym, "fromId": next_id, "limit": 1000}
+        result[sym] = total
+    return result
+
+
+def get_realized_pnl_trades_since_baseline() -> list:
+    """回傳 baseline 後的幣安原始成交，供歷史筆記本用同一資料源精確加總。"""
+    try:
+        import json as _json
+        with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
+            baseline_data = _json.load(f)
+        start_ms = int(float(baseline_data.get("set_at", 0.0) or 0.0) * 1000)
+    except Exception:
+        return []
+    if start_ms <= 0:
+        return []
+
+    from services.bot_manager_service import load_symbol_config
+    from services.radar_service import CORE_SYMBOLS
+    query_symbols = {_normalize_symbol_for_pnl(s) for s in CORE_SYMBOLS if s}
+    query_symbols.update(_normalize_symbol_for_pnl(s) for s in load_symbol_config() if s)
+    query_symbols.update(_load_pnl_symbol_registry())
+    query_symbols = {s for s in query_symbols if s}
+    _save_pnl_symbol_registry(query_symbols)
+
+    all_trades = []
+    for sym in sorted(query_symbols):
+        params = {"symbol": sym, "startTime": start_ms, "limit": 1000}
+        last_id = None
+        while True:
+            try:
+                trades = client.futures_account_trades(**params)
+            except Exception as e:
+                _note_binance_ban(e)
+                if "-1121" in str(e) or "Invalid symbol" in str(e):
+                    break
+                raise RuntimeError(f"查詢 {sym} 歷史成交失敗: {e}")
+            all_trades.extend(trades)
+            if len(trades) < 1000:
+                break
+            ids = [int(t.get("id")) for t in trades if t.get("id") is not None]
+            if not ids:
+                break
+            next_id = max(ids) + 1
+            if last_id is not None and next_id <= last_id:
+                break
+            last_id = next_id
+            params = {"symbol": sym, "fromId": next_id, "limit": 1000}
+    return all_trades
+
 def get_total_realized_pnl_usdt() -> float:
-    """對外回傳的總已實現利潤（已扣掉 baseline，有防突變快取機制）。
-    
-    baseline 逐幣種記錄，不是單一數字：查詢用的幣種清單（pnl_symbol_registry.json）
-    會隨著雷達換幣、冷卻補位持續變大，如果 baseline 只存一個總數，重置之後任何
-    「registry 裡新出現的幣種」（哪怕它是很久以前交易過、跟這次重置完全無關的幣）
-    整段歷史損益都會被算成「重置後的新損益」，因為 baseline 那個總數從來沒扣過它。
-    實測重置後 3 筆新單只虧約 -0.33 USDT，介面卻顯示 -6.07——就是被某個新加入
-    registry 的舊歷史損益污染。改成逐幣種比較：每個幣種只計算「現在」與「這個
-    幣種自己 baseline」的差；一個幣種如果 baseline 裡還沒有紀錄（代表它是重置後才
-    第一次被查詢到的新面孔），就把它當下的原始損益直接設為它自己的 baseline，
-    這一輪先貢獻 0，之後才真的按「這個幣種在這之後賺賠多少」計算，不會把它整段
-    舊歷史一次算進來。
-    """
+    """回傳 baseline 設定時間之後的已實現損益，含所有成交手續費。"""
     global _total_pnl_cache
+    try:
+        import json as _json
+        with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
+            baseline_data = _json.load(f)
+        start_ms = int(float(baseline_data.get("set_at", 0.0) or 0.0) * 1000)
+    except Exception:
+        start_ms = 0
+    if start_ms <= 0:
+        return 0.0
+
     now = time.time()
-    # 延長快取至 30 秒以降低幣安 API 限流機率，且當發生錯誤時，保底使用舊快取
     if now - _total_pnl_cache[0] < 30 and _total_pnl_cache[1] is not None:
-        raw_by_symbol = _total_pnl_cache[1]
+        since_by_symbol = _total_pnl_cache[1]
     else:
         try:
-            raw_by_symbol = _compute_raw_realized_pnl_by_symbol()
-            _total_pnl_cache = (now, raw_by_symbol)
+            since_by_symbol = _compute_realized_pnl_since(start_ms)
+            _total_pnl_cache = (now, since_by_symbol)
         except Exception:
-            # 查詢失敗時，若先前有快取就用快取，沒有才用空字典，避免利潤數據歸零或亂跳
-            raw_by_symbol = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else {}
+            since_by_symbol = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else {}
+    return sum(float(v) for v in since_by_symbol.values())
 
-    baseline_by_symbol = _load_pnl_baseline_by_symbol()
-    total_delta = 0.0
-    baseline_changed = False
-    for sym, raw in raw_by_symbol.items():
-        if sym not in baseline_by_symbol:
-            baseline_by_symbol[sym] = raw
-            baseline_changed = True
-            continue
-        total_delta += raw - baseline_by_symbol[sym]
-
-    if baseline_changed:
-        _save_pnl_baseline_by_symbol(baseline_by_symbol)
-
-    return total_delta
 
 def reset_total_realized_pnl_baseline() -> float:
     """重置 baseline 並清空快取變數：把「現在每個幣種各自的原始損益」存成新的
@@ -813,8 +891,9 @@ def reset_total_realized_pnl_baseline() -> float:
         raw_by_symbol = _total_pnl_cache[1] if _total_pnl_cache[1] is not None else {}
 
     # 重置快取為當前時間與新值
-    _total_pnl_cache = (time.time(), raw_by_symbol)
     _save_pnl_baseline_by_symbol(dict(raw_by_symbol))
+    # 新算法的快取是 baseline 後增量，不能沿用重置前的累計 raw map。
+    _total_pnl_cache = (0.0, None)
     return sum(raw_by_symbol.values())
 
 def get_position(symbol: str, quote_asset: str, base_asset: str):

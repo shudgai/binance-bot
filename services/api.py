@@ -822,7 +822,25 @@ def api_history_summary():
                 state = json.load(f)
             trades = state.get("trades", [])
         else:
-            trades = _get_real_trades()
+            from services.binance_service import get_realized_pnl_trades_since_baseline
+            raw_trades = get_realized_pnl_trades_since_baseline()
+            tz = pytz.timezone('Asia/Taipei')
+            daily = {}
+            close_orders = {}
+            for t in raw_trades:
+                dt = datetime.datetime.fromtimestamp(int(t.get("time", 0)) / 1000, tz=tz)
+                date_key = dt.strftime("%Y-%m-%d")
+                entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
+                realized = float(t.get("realizedPnl", 0.0) or 0.0)
+                fee = float(t.get("commission", 0.0) or 0.0)
+                entry["pnl"] += realized - fee
+                entry["fee"] += fee
+                if realized != 0.0:
+                    close_orders.setdefault(date_key, set()).add(str(t.get("orderId", t.get("id"))))
+            for date_key, order_ids in close_orders.items():
+                daily[date_key]["trades"] = len(order_ids)
+            summaries = [{"date": k, "trades": v["trades"], "fee": round(v["fee"], 4), "pnl": round(v["pnl"], 4)} for k, v in sorted(daily.items(), reverse=True)]
+            return {"summaries": summaries}
 
         tz = pytz.timezone('Asia/Taipei')
         daily = {}

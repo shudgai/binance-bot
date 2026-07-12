@@ -1093,6 +1093,7 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
         s["last_buy_time"] = now
         s["last_entry_time"] = now
         s["last_entry_price"] = fill_price
+        s["restored_from_exchange"] = False
         s["last_entry_direction"] = side
         s["entry_count"] += 1
         if s["entry_count"] == 1:
@@ -1857,6 +1858,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             s["last_buy_time"] = now
             s["last_entry_time"] = now
             s["last_entry_price"] = fill_price
+            s["restored_from_exchange"] = False
             s["last_entry_direction"] = side
             s["entry_count"] += 1
 

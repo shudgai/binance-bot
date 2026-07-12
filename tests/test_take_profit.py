@@ -81,6 +81,23 @@ class TakeProfitTests(unittest.TestCase):
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
         update_trailing_stop(sym, 100.34, True)  # 峰值 0.34%，落在 0.3%-0.6% 軟停利區間
         self.assertGreater(s["trailing_stop_price"], s["avg_price"])
+        self.assertAlmostEqual(s["soft_trailing_profit_floor"], 100.15, places=6)
+
+    def test_soft_trailing_activates_early_without_instant_spurious_close(self):
+        # 使用者要求「每個利潤都要能入袋」，啟動門檻從 0.3% 下修到 0.2%。門檻不能
+        # 低於來回費用緩衝本身（0.15%），否則門檻剛觸發那一刻算出來的停利線會直接
+        # 高於現價，還沒真的回撤就先被自己的門檻誤觸出場。這裡驗證峰值剛好卡在新
+        # 門檻 0.20% 時，停利線嚴格低於當下價格（不會瞬間誤砍）。
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0})
+        current_price = 100.20  # 峰值剛好 0.20%，新門檻的邊界
+        update_trailing_stop(sym, current_price, True)
+        self.assertTrue(s.get("soft_trailing_armed", False))
+        self.assertLess(s["trailing_stop_price"], current_price)
 
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成

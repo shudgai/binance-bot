@@ -600,7 +600,7 @@
                 <h3 style="margin-top:0;margin-bottom:10px;font-size:12px;color:var(--text-muted);text-transform:uppercase; display: flex; justify-content: space-between; align-items: center;">
                     近期交易紀錄 (Trade History)
                     <span style="display:flex; align-items:center; gap:12px;">
-                        <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showAllTradesModal = true; fetchAllTradesHistory()">查看完整歷史紀錄</span>
+                        <span style="color: var(--primary); cursor: pointer; text-decoration: underline;" @click="showHistoryNotebook = true; fetchHistorySummary()">查看完整歷史紀錄</span>
                         <span @click="toggleTradeHistoryFullscreen" style="cursor:pointer; font-size:16px; color:var(--text-muted); line-height:1;" :title="tradeHistoryFullscreen ? '還原正常顯示' : '全螢幕顯示'">
                             {{ tradeHistoryFullscreen ? '⊠' : '⛶' }}
                         </span>

@@ -160,6 +160,30 @@ class ExchangeCalibrationTests(unittest.TestCase):
         ensure_orders.assert_awaited_once_with(self.sym)
         self.assertEqual(ctx.STATES[self.sym]["qty"], 2.0)
         self.assertEqual(ctx.STATES[self.sym]["avg_price"], 100.0)
+        self.assertEqual(ctx.STATES[self.sym]["first_entry_price"], 100.0)
+        self.assertEqual(ctx.STATES[self.sym]["last_entry_price"], 100.0)
+        self.assertEqual(ctx.STATES[self.sym]["last_entry_direction"], "buy")
+        self.assertTrue(ctx.STATES[self.sym]["restored_from_exchange"])
+
+    def test_restored_short_keeps_a_valid_hard_stop_reference(self):
+        exchange = AsyncMock()
+        exchange.fetch_positions.return_value = [{
+            "symbol": "XRP/USDT:USDT",
+            "contracts": 2.0,
+            "side": "short",
+            "entryPrice": 100.0,
+            "info": {"positionAmt": "-2.0"},
+        }]
+
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.orders._ensure_exchange_exit_orders", new=AsyncMock()):
+            asyncio.run(calibrate_with_exchange(exchange))
+
+        state = ctx.STATES[self.sym]
+        self.assertEqual(state["qty"], -2.0)
+        self.assertEqual(state["first_entry_price"], 100.0)
+        self.assertEqual(state["last_entry_direction"], "sell")
+        self.assertTrue(state["restored_from_exchange"])
 
 
 if __name__ == "__main__":

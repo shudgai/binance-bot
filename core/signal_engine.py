@@ -226,23 +226,23 @@ def compute_signal_strength(sym):
     route_a_long = (
         sma200_hard_gate_long and
         _macd_confirmed_long and
-        (last_two_candles_long or is_relaxed) and
+        # Route A 後面仍會等待下一根收盤確認；此處只要求最近兩根至少一根同向，
+        # 避免 2 根同向 + 下一根確認形成過度嚴格的三段重複確認。
+        (last_candle_long or is_relaxed) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
-        close_near_ema20_long and
-        not_overbought_bb
+        close_near_ema20_long
     )
 
     route_a_short = (
         sma200_hard_gate_short and
         _macd_confirmed_short and
-        (last_two_candles_short or is_relaxed) and
+        (last_candle_short or is_relaxed) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
-        close_near_ema20_short and
-        not_oversold_bb
+        close_near_ema20_short
     )
 
     # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────
