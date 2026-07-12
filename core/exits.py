@@ -619,9 +619,11 @@ async def check_exits(sym):
         _gb_macd_now, _gb_macd_prev = _macd_vals(s)
         _gb_momentum_against = (_gb_macd_now < _gb_macd_prev) if is_long else (_gb_macd_now > _gb_macd_prev)
         _gb_atr_pct = (current_atr / avg) if avg > 0 else 0.0
-        # 損失上限用 ATR% 動態抓，但夾在 0.35%~0.8% 之間——比一般硬停損（2~3%）緊很多，
-        # 目的就是把這種「確認回不去」的單子損失壓到最小，不是又設一條新的一般停損線。
-        _gb_loss_cap = max(0.0035, min(_gb_atr_pct * 1.2, 0.008))
+        # 損失上限用 ATR% 動態抓，夾在 0.12%~0.25% 之間——使用者反映這台機器人實際
+        # 常見的峰值本來就只有 0.15%~0.6%，原本 0.35%~0.8% 的門檻太寬，等於峰值都還
+        # 沒吐光損失上限就先超過峰值本身。下限 0.12% 貼著雙邊手續費成本(0.1%)一點點
+        # 緩衝，低於這個等於一虧就先確定倒賠手續費，沒有意義。
+        _gb_loss_cap = max(0.0012, min(_gb_atr_pct * 0.6, 0.0025))
         if _gb_momentum_against and profit_pct <= -_gb_loss_cap:
             cs = 'sell' if is_long else 'buy'
             logger.info(f"🛑 [Peak_Giveback] {sym} 曾有峰值 {_giveback_peak*100:.2f}% 後反轉持續未回頭 (現虧 {profit_pct*100:.2f}% <= -{_gb_loss_cap*100:.2f}%，動能持續不利)，提早停損降低損失")

@@ -135,6 +135,41 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
+    def test_peak_giveback_loss_cap_tightened_to_point_one_two_to_point_two_five(self):
+        # 使用者反映原本 0.35%~0.8% 的損失上限太寬（實際峰值常常只有 0.15%~0.6%，
+        # 上限比峰值本身還大），改成 0.12%~0.25%。這裡驗證只虧 -0.20% 就要能提早出場
+        # ——用舊門檻（0.35% 下限）這筆單子不會被攔下，改窄後才會。
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 1.0, "avg_price": 100.0, "close_price": 99.8,  # profit_pct = -0.20%
+            "open_time": time.time() - 300,
+            "last_entry_time": time.time() - 300,
+            "last_entry_price": 100.0,
+            "current_atr": 0.3,
+            "atr_history": [0.3] * 10,
+            "highest_profit_pct": 0.002,
+            "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7,
+            "trailing_highest": 100.2,
+            "macd_line": -0.01, "macd_signal": 0.0,
+            "prev_macd_line": -0.005, "prev_macd_signal": 0.0,
+            "current_rsi": 45.0, "prev_rsi": 47.0,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "pnl_history": [],
+            "ohlcv": [],
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Peak_Giveback]")
+
+        asyncio.run(run_check())
+
     def test_peak_giveback_does_not_fire_when_momentum_recovers(self):
         # 同樣曾有峰值、現在轉虧，但 MACD 動能已經在往有利方向改善（不是持續惡化）
         # ——這種情況不該被 Peak_Giveback 提早停損，要繼續給它機會。
