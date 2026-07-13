@@ -1377,7 +1377,7 @@ def get_1h_volatility(symbol: str):
 
 _atr_rankings_cache = {}
 
-def get_atr_ranked_coins(symbols, limit=10):
+def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
     """Rank symbols by tradable momentum: medium-high daily ATR plus recent 1h movement.
     
     Daily ATR alone tends to select coins that were violent yesterday but are flat now.
@@ -1387,6 +1387,33 @@ def get_atr_ranked_coins(symbols, limit=10):
         return [], []
     import time as _time
     now = _time.time()
+
+    ticker_map = {}
+    try:
+        ticker_map = {t.get("symbol"): t for t in market_client.futures_ticker()}
+    except Exception:
+        ticker_map = {}
+
+    if not symbols:
+        symbols = []
+        try:
+            candidates = []
+            for t in ticker_map.values():
+                sym = t.get("symbol", "")
+                if sym.endswith("USDT") and "_" not in sym:
+                    if blacklist and sym in blacklist:
+                        continue
+                    q_vol = float(t.get("quoteVolume", 0.0) or 0.0)
+                    # 確保交易量足夠大以避免小幣/土狗
+                    if q_vol >= 15000000.0:
+                        candidates.append((sym, q_vol))
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            # 取最活躍的 50 個幣種做 ATR 排行，防止呼叫過多 klines 觸發 429 限流
+            symbols = [x[0] for x in candidates[:50]]
+        except Exception as e:
+            print(f"[ATR Rank] Error getting all futures tickers: {e}")
+            symbols = ["NEARUSDT", "AVAXUSDT", "UNIUSDT", "ETCUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", "DOTUSDT", "LTCUSDT", "BCHUSDT", "LINKUSDT", "AAVEUSDT"]
+
     cache_key = tuple(sorted(symbols))
     if cache_key in _atr_rankings_cache:
         cached_at, cached_val = _atr_rankings_cache[cache_key]
@@ -1394,12 +1421,6 @@ def get_atr_ranked_coins(symbols, limit=10):
             selected = [r["symbol"] for r in cached_val[:limit]]
             return selected, cached_val
         _atr_rankings_cache.pop(cache_key, None)
-
-    ticker_map = {}
-    try:
-        ticker_map = {t.get("symbol"): t for t in market_client.futures_ticker()}
-    except Exception:
-        ticker_map = {}
 
     ranked = []
     for sym in symbols:

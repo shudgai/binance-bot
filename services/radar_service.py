@@ -163,8 +163,8 @@ ATR_ELIGIBLE_SYMBOLS = [
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
 # 選幣數擴大到 12：新倉條件變嚴後，需要更多候選給 3 個倉位槽篩選。
 # 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 12 檔而同時開更多單。
-RADAR_SELECT_COUNT = 10
-HOT_MOVERS_COUNT   = 0    # 不追熱門暴衝榜，避免急升急跌標的進入監控池
+RADAR_SELECT_COUNT = 12
+HOT_MOVERS_COUNT   = 0
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
 # 動能篩選門檻（12 檔候選版）：
@@ -340,11 +340,10 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     status_before_scan = get_bot_status()
     # 使用與儀表板 ATR Rank 相同的排名，不再走另一套全市場函式。
     clean_blacklist()
-    scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
-    _, ranking = get_atr_ranked_coins(scan_pool, limit=len(scan_pool))
+    # 全市場動態掃描 (無白名單限制)
+    _, ranking = get_atr_ranked_coins(symbols=None, limit=50, blacklist=BLACKLIST)
     eligible = [r for r in ranking if is_strict_radar_eligible(r)]
-    # 先取完全符合動能區間者；不足 10 檔時，只從既定高流動性白名單的有效排名補足。
-    # 不再因嚴格門檻只剩 6~7 檔，也不會引入全市場隨機熱門幣。
+    # 先取完全符合動能區間者；不足 12 檔時，從有效排名補足。
     selected_rows = list(eligible[:RADAR_SELECT_COUNT])
     selected_symbols = {r["symbol"] for r in selected_rows}
     if len(selected_rows) < RADAR_SELECT_COUNT:
@@ -421,8 +420,7 @@ def _find_atr_replacement(current_syms):
     try:
         clean_blacklist()
         ignore_list = list(set(current_syms) | set(BLACKLIST.keys()))
-        scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in ignore_list]
-        replacement_candidates, _ = get_atr_ranked_coins(scan_pool, limit=RADAR_SELECT_COUNT + 5)
+        replacement_candidates, _ = get_atr_ranked_coins(symbols=None, limit=RADAR_SELECT_COUNT + 5, blacklist=ignore_list)
         for sym in replacement_candidates:
             if sym not in current_syms:
                 return sym
