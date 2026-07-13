@@ -665,7 +665,7 @@ async def check_exits(sym):
     if sym in ["BCH", "XLM"]:
         base_sl_mult *= 1.2  # Increase by 20% for high-volatility assets
     _sl_mult   = get_effective_exit_setting(sym, "sl_atr_multiplier", base_sl_mult, is_long)
-    _rr_thresh = get_effective_exit_setting(sym, "rr_threshold", 1.3, is_long)
+    _rr_thresh = min(get_effective_exit_setting(sym, "rr_threshold", 1.3, is_long), 2.0)
     _hard_sl   = get_effective_exit_setting(sym, "hard_stop_loss_pct", s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT), is_long)
     _atr_sl_pct = (_sl_mult * _entry_atr / avg) if avg > 0 else 0.006
     expected_loss_pct = max(_hard_sl, _atr_sl_pct, 0.005)

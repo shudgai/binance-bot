@@ -190,7 +190,8 @@ def is_entry_volume_confirmed(sym, side):
     expected_risk = sl_multiplier * current_atr
 
     rr_ratio = expected_profit / expected_risk if expected_risk > 0 else 0
-    rr_threshold = s.get("rr_threshold", 1.3)
+    # 盈虧比放寬：全局最高上限設為 2.0，降低開倉門檻
+    rr_threshold = min(s.get("rr_threshold", 1.3), 2.0)
     if rr_ratio < rr_threshold:
         logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [盈虧比過濾] 預計R:R ({rr_ratio:.2f}) < {rr_threshold} (TP: {tp_multiplier}x, SL: {sl_multiplier}x)")
         return False
@@ -307,13 +308,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 1.0
             _route_a_trend_override = (
                 route == "a" and strength >= 24.0
-                and _band_position <= 0.75
-                and s.get("current_rsi", 50.0) <= 65.0
+                and _band_position <= 0.90
+                and s.get("current_rsi", 50.0) <= 72.0
                 and s.get("macd_line", 0.0) > s.get("macd_signal", 0.0)
             )
             _route_b_momentum_override = (
                 route == "b" and strength >= 30.0
-                and s.get("current_rsi", 50.0) <= 55.0
+                and s.get("current_rsi", 50.0) <= 65.0
             )
             if _route_a_trend_override:
                 logger.info(f"⚡ [SUPPORT_ZONE_TREND_OVERRIDE] {sym} Route A 強勢做多 ({strength:.1f})，位於布林帶 {_band_position*100:.0f}% 且 MACD 已確認，允許順勢進場")
@@ -343,13 +344,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 0.0
             _route_a_trend_override = (
                 route == "a" and strength >= 24.0
-                and _band_position >= 0.25
-                and s.get("current_rsi", 50.0) >= 35.0
+                and _band_position >= 0.10
+                and s.get("current_rsi", 50.0) >= 28.0
                 and s.get("macd_line", 0.0) < s.get("macd_signal", 0.0)
             )
             _route_b_momentum_override = (
                 route == "b" and strength >= 30.0
-                and s.get("current_rsi", 50.0) >= 45.0
+                and s.get("current_rsi", 50.0) >= 35.0
             )
             if _route_a_trend_override:
                 logger.info(f"⚡ [RESISTANCE_ZONE_TREND_OVERRIDE] {sym} Route A 強勢做空 ({strength:.1f})，位於布林帶 {_band_position*100:.0f}% 且 MACD 已確認，允許順勢進場")
