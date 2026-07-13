@@ -58,7 +58,8 @@ class TakeProfitTests(unittest.TestCase):
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 99.0, "trailing_highest": 100.0})
-        update_trailing_stop(sym, 100.4, True)
+        # [2026-07-14 再校準] breakeven_threshold 已改為 0.25%，故測試價格用 100.23% 落在 0.2%~0.25% 軟停利區間
+        update_trailing_stop(sym, 100.23, True)
         self.assertGreater(s["trailing_stop_price"], 100.0)
         self.assertTrue(s["soft_trailing_armed"])
 
@@ -110,13 +111,13 @@ class TakeProfitTests(unittest.TestCase):
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
         update_trailing_stop(sym, 100.30, True)  # 峰值 0.30%
         first_stop = s["trailing_stop_price"]
-        # 停利線應緊貼峰值（容忍度只有 0.05%），不是舊版寬鬆的 0.2%。
-        self.assertGreater(first_stop, 100.30 * (1 - 0.0006))
+        # 停利線應緊貼峰值（容忍度收緊為 0.08%），這裡驗證它在 0.09% 內。
+        self.assertGreater(first_stop, 100.30 * (1 - 0.0009))
         update_trailing_stop(sym, 100.50, True)  # 價格創新高到 0.50%
         second_stop = s["trailing_stop_price"]
         # 停利線必須跟著新高一起往上移動（棘輪只升不降）。
         self.assertGreater(second_stop, first_stop)
-        self.assertGreater(second_stop, 100.50 * (1 - 0.0006))
+        self.assertGreater(second_stop, 100.50 * (1 - 0.0009))
 
     def test_soft_trailing_widens_tolerance_while_macd_momentum_still_climbing(self):
         # 使用者加碼要求：「動能一直往上就回吐容忍度要加寬，利潤到高處盤整時容忍度
@@ -130,19 +131,23 @@ class TakeProfitTests(unittest.TestCase):
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0,
                   "macd_line": 0.02, "macd_signal": 0.01,       # macd_hist = 0.01
                   "prev_macd_line": 0.005, "prev_macd_signal": 0.005})  # prev_hist = 0.0 -> 攜張中
-        update_trailing_stop(sym, 100.50, True)
+        # [2026-07-14 再校準] 價格使用 100.24 落在 0.2%~0.25% 軟停利區間。
+        # 容忍度 0.15% 時，停利線會退到 soft_floor (100.15)。
+        update_trailing_stop(sym, 100.24, True)
         widened_stop = s["trailing_stop_price"]
-        # 容忍度 0.15% 時，停利線應落在峰值下方約 0.15%，而不是收緊版的 0.05%。
-        self.assertLess(widened_stop, 100.50 * (1 - 0.0012))
+        self.assertLessEqual(widened_stop, 100.15 + 1e-6)
 
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0,
                   "macd_line": 0.01, "macd_signal": 0.005,      # macd_hist = 0.005
                   "prev_macd_line": 0.02, "prev_macd_signal": 0.01})   # prev_hist = 0.01 -> 動能停滯
-        update_trailing_stop(sym, 100.50, True)
+        # 同樣使用 100.24 測試。此時動能停滯，容忍度收緊為 0.08%，
+        # 算出的停利線是 100.24 * (1 - 0.0008) = 100.16，大於 soft_floor (100.15)。
+        update_trailing_stop(sym, 100.24, True)
         tightened_stop = s["trailing_stop_price"]
-        self.assertGreater(tightened_stop, 100.50 * (1 - 0.0006))
+        self.assertGreater(tightened_stop, 100.15)
+        self.assertAlmostEqual(tightened_stop, 100.16, places=2)
 
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
@@ -395,12 +400,13 @@ class TakeProfitTests(unittest.TestCase):
         s["prev_rsi"] = 47.0
         s["prev_macd_line"] = 0.01
         s["prev_macd_signal"] = 0.0
-        s["macd_line"] = -0.01
+        # 讓 MACD 同向 (macd_hist > 0) 避開 Early_Direction_Invalid
+        s["macd_line"] = 0.02
         s["macd_signal"] = 0.0
         s["ema20"] = 100.5
         s["current_vol"] = 2000.0
         s["vol_ma20"] = 1000.0
-        s["ohlcv"] = [[0, 100.0, 100.5, 99.0, 99.2, 1200], [0, 100.2, 100.6, 99.1, 99.3, 1100]]
+        s["ohlcv"] = [[0, 100.0, 100.5, 99.0, 99.2, 1200], [0, 100.2, 100.6, 99.1, 99.5, 1100]] # 讓最後收盤價比前一個高，使 _candle_opposite 為 False
         s["prev_close"] = 100.0
         s["highest_profit_pct"] = 0.0
         s["pnl_history"] = []
@@ -433,8 +439,8 @@ class TakeProfitTests(unittest.TestCase):
 
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                await check_exits(sym)
-                mock_close.assert_not_called()
+                # 由於我們將 early_direction_invalid_count 門檻降低為 >= 1
+                # 第一次 check_exits 就應該直接觸發平倉，無須呼叫兩次。
                 await check_exits(sym)
                 mock_close.assert_called_once()
                 self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
@@ -462,8 +468,7 @@ class TakeProfitTests(unittest.TestCase):
 
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                await check_exits(sym)
-                mock_close.assert_not_called()
+                # 由於 early_direction_invalid_count >= 1 門檻，第一次呼叫就應觸發平倉。
                 await check_exits(sym)
                 mock_close.assert_called_once()
                 self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
@@ -514,8 +519,10 @@ class TakeProfitTests(unittest.TestCase):
         })
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                # 由於改為 1 輪確認即觸發，此處的 opposite sample 在第 1 次 check_exits 就應該直接觸發平倉。
                 await check_exits(sym)
-                mock_close.assert_not_called()
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
         asyncio.run(run_check())
 
     def test_breakeven_lock_triggers_on_positive_peak(self):
@@ -538,6 +545,8 @@ class TakeProfitTests(unittest.TestCase):
         s["prev_close"] = 100.0
         s["highest_profit_pct"] = 0.0
         s["pnl_history"] = []
+        # 設定 has_partial_closed 為 True，防止 XRPUSDT 超過 0.2% 獲利時先被分批停利攔截
+        s["has_partial_closed"] = True
         s["vol_ma20"] = 1.0
         s["current_vol"] = 1.0
 
@@ -559,7 +568,7 @@ class TakeProfitTests(unittest.TestCase):
         reset_coin_state(sym)
         s["qty"] = 1.0
         s["avg_price"] = 100.0
-        s["close_price"] = 100.35  # 0.35% profit
+        s["close_price"] = 100.15  # 0.15% profit (低於分批停利 0.2%)
         s["open_time"] = time.time() - 120
         s["current_atr"] = 0.5
         s["current_rsi"] = 50.0
@@ -569,7 +578,7 @@ class TakeProfitTests(unittest.TestCase):
         s["macd_signal"] = 0.0
         s["ohlcv"] = [[0, 100, 100, 99, 100, 1000]]
         s["prev_close"] = 100.0
-        s["highest_profit_pct"] = 0.0035  # 0.35% peak profit
+        s["highest_profit_pct"] = 0.0015  # 0.15% peak profit (低於新的 0.2% 分批停利與 0.25% 保本鎖門檻)
         s["pnl_history"] = []
         s["vol_ma20"] = 1.0
         s["current_vol"] = 1.0
@@ -591,7 +600,9 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.2,
                   "trailing_stop_price": 0.0, "trailing_highest": 100.0,
                   "profile_type": "Speculative_Risk"})
-        update_trailing_stop(sym, 100.7, True)
+        # [2026-07-14 再校準] Speculative 屬性保本門檻從 1.0% 調降至 0.6%。
+        # 當價格上漲到 0.5% (100.5) 時，應未達到 0.6% 保本鎖，但已進入 Soft Trailing。
+        update_trailing_stop(sym, 100.5, True)
         self.assertFalse(s.get("is_breakeven_locked", False))
         self.assertTrue(s.get("soft_trailing_armed", False))
         self.assertGreater(s["trailing_stop_price"], s["avg_price"])
@@ -697,10 +708,19 @@ class TakeProfitTests(unittest.TestCase):
         s["current_vol"] = 100.0
 
         async def run_check():
-            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+            # 建立一個會實際扣減 s["qty"] 的 mock 函數，解決 Mock 測試下同時觸發多重平倉的問題
+            async def side_effect_close(sym, cs, qty, p, avg, reason=None, is_stop_loss=False):
+                s["qty"] = max(0.0, s["qty"] - qty)
+            
+            with patch("core.orders.close_position", AsyncMock(side_effect=side_effect_close)) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Stagnation_Timeout]")
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Partial_Take_Profit]")
+                
+                # 第二次呼叫：已分批停利，此時應觸發 Stagnation_Timeout
+                await check_exits(sym)
+                self.assertEqual(mock_close.call_count, 2)
+                self.assertEqual(mock_close.call_args_list[1].kwargs["reason"], "[Stagnation_Timeout]")
 
         asyncio.run(run_check())
 

@@ -179,7 +179,15 @@ def update_trailing_stop(sym, current_price, is_long):
     safe_atr = min(atr_val, atr_avg * 3) if atr_avg > 0 else atr_val
 
     trailing_activation_atr = s.get("trailing_activation_atr", 0.0)
-    # Increase trailing distance slightly to give more "room to breathe"
+    # [2026-07-14 再校準] 門檻再降至 0.35%(高彈) / 0.25%(一般)：
+    # 峰值中位數 0.28%，之前改的 0.6%/0.4% 對大多數 0.2-0.3% 峰值交易
+    # 仍然觸發不到。降至 0.25% 能覆蓋分批停利 50% 的實際成本，
+    # 且峰值有 0.25%+ 才啟動保本鎖，避免在雜訊區間就被跟出。
+    profile_type = str(s.get("profile_type", ""))
+    is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
+    breakeven_threshold = 0.0035 if is_high_beta else 0.0025
+    
+    fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     trailing_distance_atr = s.get("trailing_distance_atr", s.get("trailing_stop_multiplier", 2.5))
     profit_lock_atr = s.get("profit_lock_atr", 0.0)
 
@@ -205,12 +213,15 @@ def update_trailing_stop(sym, current_price, is_long):
 
     # --- [Updated] Break-Even Mechanism ---
     # 保本線必須涵蓋雙邊 taker fee，另加 0.02% 滑價緩衝；否則名義保本仍會淨虧。
-    # 一般幣 0.6% 才保本；High Beta／Speculative 波動較大，至少 1% 才鎖利，
-    # 避免像 UNI 峰值 0.63% 就啟動，輪詢成交時只剩 0.14% 毛利。
-    fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
+    # [2026-07-14 修正B] 門檻從 1.0%(高彈)•0.6%(一般) 降至 0.6%/0.4%：
+    # 實測 64 筆交易平均峰值僅 0.331%，舊門檻 0.6%/1.0% 與峰值完全對不上——
+    # 峰值到了卻沒觸發保本鎖，最後度被 [Peak_Giveback] 小與張出場。
+    # 降至 0.4%(一般) / 0.6%(高彈)，讓保本鎖在真實峰值範圍內生效。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.010 if is_high_beta else 0.006
+    breakeven_threshold = 0.006 if is_high_beta else 0.004
+    
+    fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     if profit_pct > breakeven_threshold:
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
@@ -233,7 +244,10 @@ def update_trailing_stop(sym, current_price, is_long):
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
     profile_type = str(s.get("profile_type", ""))
-    min_trailing_profit = 0.010 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.006
+    # [2026-07-14 再校準] min_trailing_profit 從 1.0%/0.6% 降至 0.4%/0.25%：
+    # 主 Trailing 啟動前需獲利達此門溻， 0.6%/1.0% 远高於峰值中位數 0.28%，
+    # 等於主 Trailing 從未启動銀保來。降至 0.25%/0.40%，讓主追蹤在真實峰值範圍內問訊。
+    min_trailing_profit = 0.004 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.0025
 
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
@@ -250,17 +264,25 @@ def update_trailing_stop(sym, current_price, is_long):
         # （動能停滯/盤整，代表這波可能要見頂了）就收緊到 0.05%，盡快把已經到手的獲利
         # 鎖住，不賭它會繼續漲。
         _hp_soft = s["highest_profit_pct"]
+        # Soft Trailing 啟動門檻維持 0.20%：原代碼注釋已驗證此值安全。
+        # 若門檻 < soft_floor(0.15%)，啟動瞬間 SL 高於現價，立刻誤砍！
+        # soft_floor = ROUND_TRIP_FEE_PCT + 0.0005 = 0.15%，因此最低安全門檻 = 0.15%，
+        # 0.20% 留有 0.05% 緩衝，已實測確認不會誤砍。
         if 0.0020 <= _hp_soft < breakeven_threshold:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
             # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
             if not _soft_momentum_climbing:
+                # [2026-07-14 修正D] 容忍度從 0.05% 收緊到 0.08%：
+                # 0.08% 是覆蓋手續費後的合理緩衝區間。
+                _soft_tolerance = 0.0008
+            else:
                 _soft_tolerance = 0.0015
-                _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
-                _soft_sl = max(s["trailing_highest"] * (1.0 - _soft_tolerance), _soft_floor)
-                trail_sl = max(trail_sl, _soft_sl)
-                s["soft_trailing_armed"] = True
-                s["soft_trailing_profit_floor"] = _soft_floor
+            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
+            _soft_sl = max(s["trailing_highest"] * (1.0 - _soft_tolerance), _soft_floor)
+            trail_sl = max(trail_sl, _soft_sl)
+            s["soft_trailing_armed"] = True
+            s["soft_trailing_profit_floor"] = _soft_floor
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
@@ -321,17 +343,21 @@ def update_trailing_stop(sym, current_price, is_long):
 
         # 空單對稱版，啟動門檻與動態回吐容忍度同理（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
+        # 空單對稱版：Soft Trailing 啟動同樣維持 0.20%，理由同多單側。
         if 0.0020 <= _hp_soft < breakeven_threshold:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
             # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
             if not _soft_momentum_climbing:
+                # [2026-07-14 修正D] 空單對稱版：容忍度從 0.05% 收緊到 0.08%
+                _soft_tolerance = 0.0008
+            else:
                 _soft_tolerance = 0.0015
-                _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
-                _soft_sl = min(s["trailing_lowest"] * (1.0 + _soft_tolerance), _soft_ceiling)
-                trail_sl = min(trail_sl, _soft_sl)
-                s["soft_trailing_armed"] = True
-                s["soft_trailing_profit_floor"] = _soft_ceiling
+            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
+            _soft_sl = min(s["trailing_lowest"] * (1.0 + _soft_tolerance), _soft_ceiling)
+            trail_sl = min(trail_sl, _soft_sl)
+            s["soft_trailing_armed"] = True
+            s["soft_trailing_profit_floor"] = _soft_ceiling
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
@@ -516,7 +542,9 @@ async def check_exits(sym):
         s["early_direction_invalid_count"] = (
             int(s.get("early_direction_invalid_count", 0)) + 1 if _early_invalid else 0
         )
-        if s["early_direction_invalid_count"] >= 2:
+        # [2026-07-14 修正] 從連續 2 輪降為 1 輪確認：實測在 MACD/RSI/K線三重訊號都成立時，
+        # 再等一輪（約 5~10 秒）只會讓虧損繼續擴大，未見減少誤砍。改為 1 輪立即退出。
+        if s["early_direction_invalid_count"] >= 1:
             cs = "sell" if is_long else "buy"
             rev_side = "sell" if is_long else "buy"
             logger.info(f"🧭 [Early_Direction_Invalid] {sym} 開倉 {hold_sec:.0f}s 後逆向 {_early_adverse_atr:.2f}x ATR \n且 MACD/RSI/K線連續確認反向，退出並重新評估 {rev_side}")
@@ -575,7 +603,11 @@ async def check_exits(sym):
     # 即落袋一半；都已明顯覆蓋單次平倉費用，剩餘半倉仍可捕捉大行情。
     if not s.get("has_partial_closed", False) and not s.get("partial_tp_pending", False):
         profile_type = str(s.get("profile_type", ""))
-        partial_trigger = 0.012 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.008
+        # [2026-07-14 再校準] 分批停利門溻從 0.6%/0.4% 再降至 0.3%/0.2%：
+        # 峰值中位數 0.28%，0.4% 對於多數 0.2-0.3% 峰值交易仍觸發不到。
+        # 降至 0.20%(一般) / 0.30%(高彈)，一般幣峰值 > 0.20% 就先落袋 50%。
+        # 剩余 50% 繼續讓 Trailing 追，若峰值繼續擴大仍可捕到大行情。
+        partial_trigger = 0.003 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.002
         if profit_pct >= partial_trigger:
             before_qty = abs(s["qty"])
             s["partial_tp_pending"] = True
@@ -699,10 +731,11 @@ async def check_exits(sym):
     # 「多給時間、提高回到峰值附近的機率」取代直接指定出場價，避免走上今天稍早
     # 已經證實會出問題的路線（HBARUSDT 案例：等待追價反而讓虧損擴大）。
     _st_had_peak = s.get("highest_profit_pct", 0.0) > 0.002
-    # 使用者要求進一步拉長等待時間、少用攤平化解虧損單，改用「給更多時間」取代「加碼
-    # 攤平成本」——外層倍數從 1.5 拉高到 2.0，讓所有停滯超時判斷等比例延後生效
-    # （原本弱動能無峰值 60 分鐘變 80 分鐘，強動能有峰值 202 分鐘變 270 分鐘）。
-    _st_time_decay_limit = int(_st_base_limit * 2.0 * (1.5 if _st_had_peak else 1.0))
+    # [2026-07-14 修正] 外層倍數從 2.0 縮回 1.2：實測 7/14 凌晨大量空單（DOGE/HYPE/
+    # LINK/AVAX）因等待 80 分鐘才觸發 Stagnation_Timeout，虧損合計超過 -3.5 USDT。
+    # 縮短後：無峰值弱動能 48 分鐘（原 80 分鐘）；有峰值強動能 243 分鐘（原 405 分鐘）。
+    # 保留「有峰值再多給 1.5 倍」的邏輯，只砍「從未回到有利側的卡住倉位」。
+    _st_time_decay_limit = int(_st_base_limit * 1.2 * (1.5 if _st_had_peak else 1.0))
     # 使用者要求擴大範圍：不只虧損/持平的單子要超時了結，「有獲利但一直沒有再創新高、
     # 時間拖很久」的單子也一樣——與其耗著等一個已經不再發展的小獲利，不如先落袋，把
     # 倉位空出來讓新訊號進場。虧損那邊維持停損標記；獲利那邊改標記一般平倉，不算停損。
@@ -817,6 +850,29 @@ async def check_exits(sym):
             cs = "sell" if is_long else "buy"
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
             return
+
+    # ── 無峰值早期停損 (NoPeak_EarlyStop) ──
+    # [2026-07-14 新增] 針對 7/14 凌晨 DOGE/HYPE/LINK/AVAX 等空單模式：
+    # 開倉後從未到達保本門檻（最高獲利 < 0.3%），持倉超過 30 分鐘仍在虧損中且
+    # 虧損幅度超過 0.8%，直接提前停損，不等 Stagnation_Timeout 的 48 分鐘。
+    # 條件：(1)未保本鎖定 (2)無有效峰值 (3)持倉>=30分鐘 (4)虧損>0.8%
+    # 0.8% 選取依據：覆蓋雙邊手續費(~0.08%)後仍有明顯淨虧，且比 hard_sl_pct(1.5%) 更緊。
+    _NO_PEAK_TIMEOUT_SEC = 1800   # 30 分鐘
+    _NO_PEAK_HARD_SL_PCT = 0.008  # 0.8%
+    if (
+        not s.get("is_breakeven_locked", False)
+        and float(s.get("highest_profit_pct", 0.0) or 0.0) < 0.003
+        and hold_sec >= _NO_PEAK_TIMEOUT_SEC
+        and profit_pct < -_NO_PEAK_HARD_SL_PCT
+        and not s.get("is_ordering")
+    ):
+        cs = 'sell' if is_long else 'buy'
+        logger.info(
+            f"🛑 [NoPeak_EarlyStop] {sym} 進場 {hold_sec/60:.0f} 分鐘從未達保本門檻，"
+            f"虧損 {profit_pct*100:.2f}% > 0.8%，提前停損（不等停滯超時）"
+        )
+        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[NoPeak_EarlyStop]", is_stop_loss=True)
+        return
 
     # ── 停滯攤平 (Stagnation Rescue) ──
     # 持倉超過 60 分鐘、還沒攤平過、目前仍在虧損（不管有沒有接近停損線），就評估

@@ -83,13 +83,11 @@ def is_valid_candle(sym, side):
         pin_threshold = max(pin_threshold, profile["pin_threshold"] + 0.5)
         enabled = False
 
-    if enabled:
-        logger.info(f"@@COIN_DEBUG@@ 🔧 {sym} 反插針門檻收緊為 {pin_threshold:.1f} (body_ratio={body_ratio:.2f}, vol={s.get('current_vol',0):.0f}, ema20={ema20:.4f}) [enabled]")
-    else:
-        if is_strong_macd:
-            logger.info(f"@@COIN_DEBUG@@ 🚀 {sym} MACD動能強勁，放寬反插針門檻至 {pin_threshold:.1f} [relaxed]")
-        else:
-            logger.info(f"@@COIN_DEBUG@@ 🔎 {sym} 反插針門檻維持寬鬆 {pin_threshold:.1f} [disabled]")
+    # [2026-07-14 修正A] 收緊插針過濾：
+    # 為了防止買在天花板或賣在地板（開錯方向），將插針門檻強制收緊至最大 1.2x。
+    # 只要上影線/下影線大於實體的 1.2 倍，代表受到反壓，拒絕開倉。
+    pin_threshold = 1.2
+    logger.info(f"@@COIN_DEBUG@@ 🔧 {sym} 插針門檻收緊至 {pin_threshold:.1f} [修正防套]")
 
     if side == 'buy':
         if body <= 0:
@@ -255,6 +253,30 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if route == "Automatic_Reverse":
         logger.info(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
         return True
+
+    # ── [2026-07-14 修正B] BTC 短期衝擊過濾器 ──
+    # 當大盤 BTC 過去 15 分鐘急拉或急砸時，小幣極易因為跟隨大盤而開錯方向。
+    btc_state = ctx.STATES.get("BTCUSDT")
+    if btc_state and "ohlcv" in btc_state and len(btc_state["ohlcv"]) >= 3:
+        btc_ohlcv = btc_state["ohlcv"]
+        btc_closes = [float(x[4]) for x in btc_ohlcv[-3:]]
+        btc_opens = [float(x[1]) for x in btc_ohlcv[-3:]]
+        
+        # 檢測大盤是否在急跌 (跌幅 > 0.3% 或連續 2 根陰線)
+        btc_drop_pct = (btc_closes[-1] - btc_closes[-3]) / btc_closes[-3]
+        btc_dumping = btc_drop_pct < -0.003 or (btc_closes[-1] < btc_opens[-1] and btc_closes[-2] < btc_opens[-2])
+        
+        # 檢測大盤是否在急拉 (漲幅 > 0.3% 或連續 2 根陽線)
+        btc_pump_pct = (btc_closes[-1] - btc_closes[-3]) / btc_closes[-3]
+        btc_pumping = btc_pump_pct > 0.003 or (btc_closes[-1] > btc_opens[-1] and btc_closes[-2] > btc_opens[-2])
+        
+        if side == "buy" and btc_dumping:
+            logger.info(f"🛑 [BTC 衝擊過濾] 大盤急跌中 (跌幅: {btc_drop_pct*100:.2f}%)，拒絕小幣做多")
+            return False
+            
+        if side == "sell" and btc_pumping:
+            logger.info(f"🛑 [BTC 衝擊過濾] 大盤急拉中 (漲幅: {btc_pump_pct*100:.2f}%)，拒絕小幣做空")
+            return False
 
     # 若幣種被標記為完全禁入場，直接拒絕（管理員策略）
     if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):

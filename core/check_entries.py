@@ -780,7 +780,10 @@ async def check_entries():
         # 邊緣訊號進場後常常原地打轉、最高獲利很小就打平/小虧出場，要求拉回一點，
         # 犧牲一些開倉次數換單筆品質，改成 1.4/1.1/1.2（介於原始與寬鬆之間）。
         atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-        base_rr_thresh = s.get("min_rr", 1.4)
+        # [2026-07-14 修正E] base_rr_thresh 從 1.4 降至 1.2：
+        # 分批停利門溻已降至 0.20%，前半倉更快落袋下來，預期 R:R 需求可略降。
+        # 0.2% 峰值對應的止損最多 0.15%，崇實際 R:R ~1.3 不需要 1.4 門溻。
+        base_rr_thresh = s.get("min_rr", 1.2)
 
         # 使用者反映現在幾乎完全開不了倉：實測訊號強度大多落在 15~26，strength>20 才給
         # 最寬鬆 1.1 門檻的話，大部分訊號還是卡在 base_rr_thresh(1.4)~2.0。放寬斷點到

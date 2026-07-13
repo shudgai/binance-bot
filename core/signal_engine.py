@@ -196,11 +196,11 @@ def compute_signal_strength(sym):
     sma200_hard_gate_long  = sma200 <= 0 or close > sma200
     sma200_hard_gate_short = sma200 <= 0 or close < sma200
 
-    # Gate 1: EMA50 方向
-    # 多單：嚴格確認，不因寬鬆模式豁免（避免在空頭趨勢中做多）
-    # 空單：寬鬆模式下允許豁免（做空本就是逆勢操作，容錯高一點）
-    ema50_gate_long  = ema50 <= 0 or close > ema50   # 多單不豁免
-    ema50_gate_short = ema50 <= 0 or close < ema50 or is_relaxed
+    # [2026-07-14 修正C] 空單不再職予寬鬆模式豆免：實測所有幣種淨損益都是負的（除
+    # DOGE/BCH/XRP），空單在 BTC 偵多目環境中役率極低。移除空單的 is_relaxed
+    # 豆免，讓空單和多單都需要真實 EMA50 方向確認才能進場。
+    ema50_gate_long  = ema50 <= 0 or close > ema50   # 多單不豆免
+    ema50_gate_short = ema50 <= 0 or close < ema50   # [2026-07-14] 空單同樣不豆免
 
     # Gate 2: RSI 方向區間
     rsi_direction_long  = rsi > 25.0
@@ -251,6 +251,9 @@ def compute_signal_strength(sym):
         _long_btc_ok               # 多單：大盤方向確認
     )
 
+    # [2026-07-14 修正C] 空單加入 BTC 大盤過濾：BTC 4H 多頭禁止做空，與多單對稱。
+    # 實測所有幣種在強卥幣幣 +BTC徨年環境下空單完全不利，加入跟多單對稱的大盤小幣。
+    _short_btc_ok = _btc_trend != "BULL"  # 空單：大盤不能是明確多頭
     route_a_short = (
         sma200_hard_gate_short and
         _route_a_macd_short and
@@ -258,7 +261,8 @@ def compute_signal_strength(sym):
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
-        close_near_ema20_short
+        close_near_ema20_short and
+        _short_btc_ok              # 空單：大盤方向確認（與多單對稱）
     )
 
     # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────
