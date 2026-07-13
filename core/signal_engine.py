@@ -352,7 +352,7 @@ def compute_signal_strength(sym):
                     logger.info(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                     return ("buy", 15.0, "Exhaustion_Entry")
 
-            # 空單：抓反彈頂部
+            # 空單：抓反彈頂部 - 要求更嚴格的確認，避免開錯方向
             if c2[4] > c2[1] and c2_vol_low:
                 bb_up_v = s.get("bb_up", 0)
                 is_near_sma_res = (sma200 > 0) and (abs(c1[2] - sma200) / sma200 < 0.005)
@@ -363,13 +363,21 @@ def compute_signal_strength(sym):
                 price_rebound = c1[4] < c2[4]
                 has_upper_wick = (c1[2] - max(c1[1], c1[4])) > abs(c1[4] - c1[1]) * 0.5
                 crossed_midpoint = c1[4] < c2_mid
+                # PA 確認必要：需要有上影線插針且已跌穿前根中點
                 pa_ok = price_rebound and has_upper_wick and crossed_midpoint
                 bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
+                # 嚴格版：BTC 4H 必須明確偏空或至少中性
                 trend_ok = (_exh_btc_4h != "BULL")
 
-                if trend_ok and resistance_ok and (pa_ok or bounce_ok):
-                    logger.info(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
+                # 新增：MACD 確認（柱狀圖必須已翻負或 RSI 偏高）
+                _exh_rsi = s.get("current_rsi", 50.0)
+                _exh_macd = s.get("macd_hist", 0.0)
+                _exh_macd_confirm = _exh_macd < 0 or _exh_rsi >= 60.0
+
+                # 嚴格版：只有 PA 確認（插針反轉）才夠資格，單純量縮陰線不夠
+                if trend_ok and resistance_ok and _exh_macd_confirm and pa_ok:
+                    logger.info(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, MACD_Confirm:{_exh_macd_confirm})")
                     return ("sell", 15.0, "Exhaustion_Entry")
 
     # --- 使用 StrategyEngine 進行多重過濾門檻 (Multi-Layer Filtering) ---

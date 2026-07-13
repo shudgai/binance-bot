@@ -1274,20 +1274,26 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             _atr_avg_of = float(np.mean(_atr_hist_of)) if len(_atr_hist_of) > 0 else 0.0
             _atr_cur_of = _s.get("current_atr", 0.0)
             _is_low_vol_of = (_atr_avg_of > 0 and _atr_cur_of <= _atr_avg_of)
-            _flow_threshold = 0.75 if _is_low_vol_of else 0.80
+            # 強訊號（強度 >= 20）直接豁免 OrderFlow 過濾，避免封鎖高品質進場訊號
+            _signal_str_of = signal_strength or 0.0
+            _flow_bypass = _signal_str_of >= 20.0
+            _flow_threshold = 0.55 if _is_low_vol_of else 0.60
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
-            if side == 'buy':
-                if asks == 0 or bids / asks < _flow_threshold:
-                    if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
-                        logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
-                        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
-                        return
+            if not _flow_bypass:
+                if side == 'buy':
+                    if asks == 0 or bids / asks < _flow_threshold:
+                        if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
+                            logger.info(f"🛑 [Filter:OrderFlow] {sym} 買盤支撐不足 (BidVol: {bids:.2f} / AskVol: {asks:.2f} < {_flow_threshold} | {_flow_label})，疑似假突破，拒絕做多！")
+                            logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
+                            return
+                else:
+                    if bids == 0 or asks / bids < _flow_threshold:
+                        if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
+                            logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
+                            logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
+                            return
             else:
-                if bids == 0 or asks / bids < _flow_threshold:
-                    if should_block_order_flow(side, bids, asks, _flow_threshold, PAPER_TRADING or USE_TESTNET):
-                        logger.info(f"🛑 [Filter:OrderFlow] {sym} 賣盤壓力不足 (AskVol: {asks:.2f} / BidVol: {bids:.2f} < {_flow_threshold} | {_flow_label})，疑似假跌破，拒絕做空！")
-                        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
-                        return
+                logger.info(f"⚡ [OrderFlow_Bypass] {sym} 強訊號 ({_signal_str_of:.1f} >= 20)，豁免 OrderFlow 過濾直接進場")
         except Exception as e:
             logger.info(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:

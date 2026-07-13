@@ -253,12 +253,14 @@ def update_trailing_stop(sym, current_price, is_long):
         if 0.0020 <= _hp_soft < breakeven_threshold:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
-            _soft_tolerance = 0.0015 if _soft_momentum_climbing else 0.0005
-            _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
-            _soft_sl = max(s["trailing_highest"] * (1.0 - _soft_tolerance), _soft_floor)
-            trail_sl = max(trail_sl, _soft_sl)
-            s["soft_trailing_armed"] = True
-            s["soft_trailing_profit_floor"] = _soft_floor
+            # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
+            if not _soft_momentum_climbing:
+                _soft_tolerance = 0.0015
+                _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
+                _soft_sl = max(s["trailing_highest"] * (1.0 - _soft_tolerance), _soft_floor)
+                trail_sl = max(trail_sl, _soft_sl)
+                s["soft_trailing_armed"] = True
+                s["soft_trailing_profit_floor"] = _soft_floor
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
@@ -322,12 +324,14 @@ def update_trailing_stop(sym, current_price, is_long):
         if 0.0020 <= _hp_soft < breakeven_threshold:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
-            _soft_tolerance = 0.0015 if _soft_momentum_climbing else 0.0005
-            _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
-            _soft_sl = min(s["trailing_lowest"] * (1.0 + _soft_tolerance), _soft_ceiling)
-            trail_sl = min(trail_sl, _soft_sl)
-            s["soft_trailing_armed"] = True
-            s["soft_trailing_profit_floor"] = _soft_ceiling
+            # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
+            if not _soft_momentum_climbing:
+                _soft_tolerance = 0.0015
+                _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
+                _soft_sl = min(s["trailing_lowest"] * (1.0 + _soft_tolerance), _soft_ceiling)
+                trail_sl = min(trail_sl, _soft_sl)
+                s["soft_trailing_armed"] = True
+                s["soft_trailing_profit_floor"] = _soft_ceiling
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
@@ -571,7 +575,7 @@ async def check_exits(sym):
     # 即落袋一半；都已明顯覆蓋單次平倉費用，剩餘半倉仍可捕捉大行情。
     if not s.get("has_partial_closed", False) and not s.get("partial_tp_pending", False):
         profile_type = str(s.get("profile_type", ""))
-        partial_trigger = 0.004 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.003
+        partial_trigger = 0.012 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.008
         if profit_pct >= partial_trigger:
             before_qty = abs(s["qty"])
             s["partial_tp_pending"] = True

@@ -92,11 +92,11 @@ async def update_trade_signal(sym, trade):
             _ts_atr_pct_rt = _atr_rt / price
             _lev_rt = s.get("leverage", 4)
             _hp_rt = s.get("highest_profit_pct", 0.0)
-            _ts_act_rt = 0.003 if _hp_rt < 0.006 else max(0.020 / _lev_rt, _ts_atr_pct_rt * 0.3)
-            if _hp_rt > 0.02:       _ts_ret_rt = 0.001
-            elif _hp_rt > 0.008:    _ts_ret_rt = 0.0015
-            elif _hp_rt >= 0.003:   _ts_ret_rt = 0.002
-            else:                   _ts_ret_rt = min(max(0.0008, _hp_rt * 0.5), 0.002) if _hp_rt > 0 else 0.001
+            _ts_act_rt = 0.006 if _hp_rt < 0.012 else max(0.020 / _lev_rt, _ts_atr_pct_rt * 0.3)
+            if _hp_rt > 0.03:       _ts_ret_rt = 0.003
+            elif _hp_rt > 0.015:    _ts_ret_rt = 0.004
+            elif _hp_rt >= 0.006:   _ts_ret_rt = 0.005
+            else:                   _ts_ret_rt = min(max(0.0015, _hp_rt * 0.5), 0.005) if _hp_rt > 0 else 0.002
             if _hp_rt >= _ts_act_rt:
                 if _is_long:
                     _ttp_sl = s.get("trailing_highest", avg_p) * (1 - _ts_ret_rt)

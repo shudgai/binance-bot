@@ -493,8 +493,11 @@ async def check_entries():
         # 門檻一直卡在 15.0，等於那次調整從未真正生效）。改成 max()，兩個門檻都當作
         # 下限，用較嚴格的那個，個別幣種調高的門檻才會真正生效。
         min_sig = max(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
-        if profile.get("min_signal_strength", 10.0) <= 10.0:
-            min_sig = max(min_sig - 1.5, 6.0)
+        # 當整體環境處於寬鬆模式時，我們應該真的放寬個別幣種的門檻，而不是卡死在 max()
+        if profile.get("min_signal_strength", 15.0) < 15.0:
+            # 依據 profile 放寬的程度等比例降低幣種門檻
+            reduction = 15.0 - profile.get("min_signal_strength", 15.0)
+            min_sig = max(coin_profile_min_sig - reduction, profile.get("min_signal_strength", 10.0), 6.0)
         # 大盤盤整（BTC 1H ADX 過低、沒有明確趨勢）時，動能型多空訊號普遍缺乏後續動能，
         # 今天實測 AVAX/TRX/DOT/WLD/LINK 好幾筆都是這個情況：峰值都在 0.5% 以下就陰跌
         # 打平出場。盤整期間拉高門檻，減少這種訊號品質不足以撐過盤整雜訊的進場。
