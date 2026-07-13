@@ -22,6 +22,17 @@ async def update_trade_signal(sym, trade):
         ts_value = time.time()
 
     s["last_trade_price"] = price
+    s["close_price"] = price
+    s["last_ohlcv_update"] = time.time()
+    
+    # 同步修改當前開著的 K 線 (ohlcv[-1])，確保即時指標計算與止損判斷最精準
+    if "ohlcv" in s and s["ohlcv"]:
+        _lc = s["ohlcv"][-1]
+        if len(_lc) >= 5:
+            _lc[4] = price
+            _lc[2] = max(_lc[2], price)
+            _lc[3] = min(_lc[3], price)
+            
     s["last_trade_qty"] = amount
     s["last_trade_side"] = str(trade.get("side", "buy") or "buy")
     s["last_trade_time"] = ts_value
