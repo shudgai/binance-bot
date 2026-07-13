@@ -308,7 +308,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 1.0
             _route_a_trend_override = (
                 route == "a" and strength >= 24.0
-                and _band_position <= 0.90
+                and _band_position <= 2.0
                 and s.get("current_rsi", 50.0) <= 72.0
                 and s.get("macd_line", 0.0) > s.get("macd_signal", 0.0)
             )
@@ -344,7 +344,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 0.0
             _route_a_trend_override = (
                 route == "a" and strength >= 24.0
-                and _band_position >= 0.10
+                and _band_position >= -1.0
                 and s.get("current_rsi", 50.0) >= 28.0
                 and s.get("macd_line", 0.0) < s.get("macd_signal", 0.0)
             )
