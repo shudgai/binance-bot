@@ -196,8 +196,10 @@ def compute_signal_strength(sym):
     sma200_hard_gate_long  = sma200 <= 0 or close > sma200
     sma200_hard_gate_short = sma200 <= 0 or close < sma200
 
-    # Gate 1: EMA50 方向 (寬鬆模式下僅供參考，不強制硬攔截)
-    ema50_gate_long  = ema50 <= 0 or close > ema50 or is_relaxed
+    # Gate 1: EMA50 方向
+    # 多單：嚴格確認，不因寬鬆模式豁免（避免在空頭趨勢中做多）
+    # 空單：寬鬆模式下允許豁免（做空本就是逆勢操作，容錯高一點）
+    ema50_gate_long  = ema50 <= 0 or close > ema50   # 多單不豁免
     ema50_gate_short = ema50 <= 0 or close < ema50 or is_relaxed
 
     # Gate 2: RSI 方向區間
@@ -234,16 +236,19 @@ def compute_signal_strength(sym):
     _route_a_macd_short = _macd_confirmed_short or _macd_turn_short
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
+    # 多單：在寬鬆模式下仍需要 K 線方向確認（last_candle_long），不可完全豁免
+    # 另外要求 BTC 大盤不是空頭（避免逆大盤做多）
+    _btc_trend = ctx.MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
+    _long_btc_ok = _btc_trend != "BEAR"  # 多單：大盤不能是明確空頭
     route_a_long = (
         sma200_hard_gate_long and
         _route_a_macd_long and
-        # Route A 後面仍會等待下一根收盤確認；此處只要求最近兩根至少一根同向，
-        # 避免 2 根同向 + 下一根確認形成過度嚴格的三段重複確認。
-        (last_candle_long or is_relaxed) and
+        last_candle_long and       # 多單必須要有收盤確認，不因寬鬆模式豁免
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
-        close_near_ema20_long
+        close_near_ema20_long and
+        _long_btc_ok               # 多單：大盤方向確認
     )
 
     route_a_short = (
@@ -264,13 +269,14 @@ def compute_signal_strength(sym):
     route_b_long = (
         sma200_hard_gate_long and
         ema50_gate_long and
-        ema20_above_ema50 and
+        ema20_above_ema50 and       # EMA20 > EMA50 確保多頭結構
         near_ema20_pullback and
         _macd_confirmed_long and
-        _rsi_extreme_long and
+        _rsi_extreme_long and       # RSI <= 40 才算真正超賣
         rsi_direction_long and
         rsi_ok_long and
-        (last_two_candles_long or is_relaxed)
+        last_two_candles_long and   # 多單 Route B 必須 2 根確認，不豁免
+        _long_btc_ok                # 大盤不能是空頭
     )
 
     route_b_short = (
