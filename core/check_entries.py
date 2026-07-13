@@ -1138,7 +1138,8 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
 
     if route != "Automatic_Reverse":
         refreshed = compute_signal_strength(sym)
-        if not refreshed or refreshed[0] != side:
-            return False, f"latest signal no longer supports {side}"
+        # 只有當信號完全反轉（例如做空變成做多）時才取消；不要因為新的 5m K線暫時沒有信號而取消
+        if refreshed and refreshed[0] != side:
+            return False, f"latest signal reversed to {refreshed[0]}"
 
     return True, "ok"
