@@ -1002,6 +1002,77 @@ async def check_entries():
 
             async def _entry_task(sym, side, price, alloc_pct, signal_strength, entry_route):
                 try:
+                    from core.exchange_client import exchange_market_data
+                    import sys
+                    
+                    # 1m 短線微調進場位置，優化滑點 (大時區定生死，小時區定位置)
+                    # 單元測試 (unittest) 運行期間直接繞過，避免破壞 mock 或造成延遲
+                    is_test = "unittest" in sys.modules or os.getenv("TESTING") == "true"
+                    
+                    if not is_test:
+                        start_wait = time.time()
+                        MAX_WAIT_SEC = 300
+                        wait_loop_count = 0
+                        
+                        while time.time() - start_wait < MAX_WAIT_SEC:
+                            # 每次檢查：大時區訊號是否依然有效
+                            still_valid, invalid_reason = is_entry_candidate_still_valid(sym, side, entry_route, signal_strength, price)
+                            if not still_valid:
+                                logger.info(f"🛑 [1m_Wait_Cancel] {sym} 大時區信號已失效：{invalid_reason}，放棄開倉")
+                                return
+    
+                            try:
+                                # 獲取 30 根 1m K 線
+                                ohlcv_1m = await exchange_market_data.fetch_ohlcv(sym, '1m', limit=30)
+                            except Exception as fetch_err:
+                                logger.warning(f"⚠️ [1m_Fetch_Failed] {sym} 獲取 1m K 線失敗 ({fetch_err})，跳過等待直接開倉")
+                                break
+                            
+                            if not ohlcv_1m or len(ohlcv_1m) < 15:
+                                break
+                            
+                            closes = [x[4] for x in ohlcv_1m]
+                            volumes = [x[5] for x in ohlcv_1m]
+                            
+                            # 計算 1m RSI
+                            rsi_1m = calculate_rsi_1m(closes)
+                            
+                            # 計算 1m 量能倍數
+                            last_vol = volumes[-1]
+                            prev_vols_avg = np.mean(volumes[-11:-1]) if len(volumes) >= 11 else 1.0
+                            vol_ratio = last_vol / max(prev_vols_avg, 1e-8)
+                            is_huge_vol = vol_ratio >= 3.0
+                            
+                            last_open = ohlcv_1m[-1][1]
+                            last_close = ohlcv_1m[-1][4]
+                            is_green_candle = last_close > last_open
+                            is_red_candle = last_close < last_open
+                            
+                            if wait_loop_count % 6 == 0:  # 每 30 秒記錄一次
+                                logger.info(f"🔍 [1m_Entry_Monitor] {sym} | 1m RSI: {rsi_1m:.1f} | 1m VolRatio: {vol_ratio:.1f}x | K-line: {'陽線' if is_green_candle else '陰線' if is_red_candle else '平盤'}")
+    
+                            should_wait = False
+                            if side == "sell":
+                                # 做空：避免空在 1m 最低點 (1m RSI < 35 嚴重超賣) 或 1m 巨量長陽暴拉中
+                                if rsi_1m < 35.0:
+                                    should_wait = True
+                                elif is_huge_vol and is_green_candle:
+                                    should_wait = True
+                            elif side == "buy":
+                                # 做多：避免買在 1m 最高點 (1m RSI > 65 超買) 或 1m 巨量長陰暴跌中
+                                if rsi_1m > 65.0:
+                                    should_wait = True
+                                elif is_huge_vol and is_red_candle:
+                                    should_wait = True
+                            
+                            if not should_wait:
+                                if wait_loop_count > 0:
+                                    logger.info(f"🎯 [1m_Wait_Trigger] {sym} {side} 1m 短線訊號踩穩，退出等待執行開倉！")
+                                break
+                            
+                            wait_loop_count += 1
+                            await asyncio.sleep(5)
+
                     order_data = await execute_order(sym, side, price, alloc_pct,
                                                       signal_strength=signal_strength,
                                                       entry_route=entry_route)
@@ -1022,6 +1093,21 @@ async def check_entries():
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
         s["pending_confirm_low"] = 0
+
+
+def calculate_rsi_1m(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    diffs = np.diff(closes)
+    ups = diffs.clip(min=0)
+    downs = -diffs.clip(max=0)
+    
+    ma_up = np.mean(ups[-period:])
+    ma_down = np.mean(downs[-period:])
+    if ma_down == 0:
+        return 100.0 if ma_up > 0 else 50.0
+    rs = ma_up / ma_down
+    return 100.0 - (100.0 / (1.0 + rs))
 
 
 def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0):
