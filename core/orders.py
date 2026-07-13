@@ -113,14 +113,29 @@ async def _replace_exchange_exit_orders(sym):
     is_long = s["qty"] > 0
 
     hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
+    # 計算初步的停損價格
     stop_price = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
     stop_price = round_step(stop_price, prec["tick_size"])
+    stop_dist = (avg - stop_price) if is_long else (stop_price - avg)
 
     route = s.get("entry_reason", "a")
     _, _, tp_dist, _ = _calc_sl_tp(sym, "buy" if is_long else "sell", s, avg, route)
     take_profit_price = avg + tp_dist if is_long else avg - tp_dist
     take_profit_price = round_step(take_profit_price, prec["tick_size"])
     _original_tp = take_profit_price
+
+    # 確保停損價格不會大於停利價格 (在 RR 比例強制執行前先做初步檢查)
+    # 如果 hard_sl_pct 導致的 stop_dist 大於 tp_dist，則強制縮減 stop_dist 或擴大 tp_dist
+    current_tp_dist = (take_profit_price - avg) if is_long else (avg - take_profit_price)
+    if stop_dist > current_tp_dist:
+        logger.info(f"⚠️ [SL_GT_TP_Guard] {sym} 偵測到停損距離 ({stop_dist:.4f}) 大於停利距離 ({current_tp_dist:.4f})。正在自動校正...")
+        # 優先縮減停損距離，確保其在合理的範圍內，同時保留 RR 比例檢查
+        # 這裡簡單處理：將 stop_dist 設為 tp_dist 的 0.8 倍，確保停損距離較小
+        new_stop_dist = current_tp_dist * 0.8
+        stop_price = avg - new_stop_dist if is_long else avg + new_stop_dist
+        stop_price = round_step(stop_price, prec["tick_size"])
+        stop_dist = new_stop_dist
+
     stop_price, take_profit_price = _enforce_bracket_rr(
         avg, stop_price, take_profit_price, is_long, prec["tick_size"]
     )
@@ -402,6 +417,23 @@ def _entry_pending_adverse_guard(sym, side, reference_price, current_price, is_r
         return False, f"pending adverse move {adverse_dev*100:.2f}% > {max_adverse_dev*100:.2f}%"
 
     return True, "ok"
+
+
+def _pending_entry_setup_valid(info, validator=None):
+    """Revalidate a resting first-entry order against the latest full signal."""
+    if info.get("is_rescue_dca", False):
+        return True, "rescue_dca"
+    route = info.get("entry_route")
+    if not route:
+        return True, "legacy_order"
+    if validator is None:
+        from core.check_entries import is_entry_candidate_still_valid
+        validator = is_entry_candidate_still_valid
+    return validator(
+        info.get("sym"), info.get("side"), route,
+        float(info.get("signal_strength", 0.0) or 0.0),
+        float(info.get("signal_price") or info.get("price") or 0.0),
+    )
 
 
 def _find_exchange_position(positions, sym):
@@ -1679,6 +1711,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 "sym": sym, "side": side, "qty": base_amt,
                 "price": limit_price or price, "signal_price": price,
                 "timestamp": order_ts, "is_rescue_dca": is_rescue_dca,
+                "entry_route": entry_route, "signal_strength": signal_strength,
+                # 首倉訊號壽命最多兩分鐘；救援單沿用全域期限。
+                "timeout": DUAL_SHOT_ORDER_TIMEOUT if is_rescue_dca else min(DUAL_SHOT_ORDER_TIMEOUT, 120),
             }
             logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type})")
 
@@ -1924,8 +1959,6 @@ async def check_stale_limit_orders():
     每 30 秒檢查一次 PENDING_LIMIT_ORDERS。
     超過 MAX_WAIT_SECONDS 仍未撮合的限價進場單自動撤銷。
     """
-    MAX_WAIT_SECONDS = DUAL_SHOT_ORDER_TIMEOUT
-
     while True:
         await asyncio.sleep(30)
         if PAPER_TRADING:
@@ -1939,11 +1972,18 @@ async def check_stale_limit_orders():
             sym = info["sym"]
             side = info.get("side", "")
             original_qty = info.get("qty", 0.0)
-            should_cancel = elapsed > MAX_WAIT_SECONDS
+            max_wait_seconds = float(info.get("timeout", DUAL_SHOT_ORDER_TIMEOUT))
+            should_cancel = elapsed > max_wait_seconds
             cancel_reason = (
-                f"已掛單 {elapsed:.1f} 秒 > {MAX_WAIT_SECONDS}s"
+                f"已掛單 {elapsed:.1f} 秒 > {max_wait_seconds:.0f}s"
                 if should_cancel else ""
             )
+
+            if not should_cancel:
+                setup_ok, setup_reason = _pending_entry_setup_valid(info)
+                if not setup_ok:
+                    should_cancel = True
+                    cancel_reason = f"進場訊號已失效: {setup_reason}"
 
             if not should_cancel:
                 latest_ref_price = 0.0

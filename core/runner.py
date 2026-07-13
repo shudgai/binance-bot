@@ -16,7 +16,7 @@ from core.config import (
     TRADE_POLL_INTERVAL_SEC, TRADE_POLL_LIMIT, API_RATE_LIMIT_COOLDOWN_SEC,
 )
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
-from core.state_manager import build_symbol_state, update_states, reset_coin_state
+from core.state_manager import build_symbol_state, update_states, reset_coin_state, repair_invalid_states
 from core.peak_store import load_peak, save_peak, clear_peak, load_partial_take_profit
 from core.balance import fetch_real_balance, get_dynamic_max_slots
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
@@ -262,6 +262,24 @@ async def _record_external_position_close(exchange, sym, state):
     return exit_reason if recorded else None
 
 
+async def _infer_exchange_open_time(exchange, sym):
+    """Infer the current position lifecycle start when the local timestamp store is missing."""
+    try:
+        trades = await exchange.fetch_my_trades(sym, limit=100)
+    except Exception as exc:
+        logger.info(f"⚠️ [CALIBRATION] {sym} 無法由成交反推開倉時間: {exc}")
+        return 0.0
+    cycle = []
+    for trade in reversed(trades or []):
+        realized = float(trade.get("realizedPnl", 0.0) or (trade.get("info") or {}).get("realizedPnl", 0.0) or 0.0)
+        if cycle and realized != 0.0:
+            break
+        cycle.append(trade)
+    timestamps = [int(t.get("timestamp") or (t.get("info") or {}).get("time") or 0) for t in cycle]
+    timestamps = [ts for ts in timestamps if ts > 0]
+    return min(timestamps) / 1000.0 if timestamps else 0.0
+
+
 async def calibrate_with_exchange(exchange):
     """
     與交易所進行實際持倉校準。
@@ -331,8 +349,10 @@ async def calibrate_with_exchange(exchange):
                         if _stored_open_time > 0:
                             ctx.STATES[sym]["open_time"] = _stored_open_time
                         else:
-                            ctx.STATES[sym]["open_time"] = time.time()
+                            _inferred_open_time = await _infer_exchange_open_time(exchange, sym)
+                            ctx.STATES[sym]["open_time"] = _inferred_open_time or time.time()
                             save_entry_time(sym, ctx.STATES[sym]["open_time"])
+                            logger.info(f"🕒 [CALIBRATION] {sym} 本地進場時間遺失，已由交易所成交反推為 {ctx.STATES[sym]["open_time"]:.0f}")
                         if ctx.STATES[sym].get("entry_count", 0) == 0:
                             ctx.STATES[sym]["entry_count"] = 1
 
@@ -504,6 +524,9 @@ async def main_loop(exchange):
     while True:
         try:
             loop_start = time.time()
+            # Shared state is read by status, exits, calibration and entries. Repair it before
+            # any consumer runs so one corrupted symbol cannot disable the whole trading loop.
+            repair_invalid_states()
             await ensure_watch_tasks(exchange_futures)
             if not PAPER_TRADING and loop_start - last_balance_update > 30:
                 await fetch_real_balance()
@@ -530,29 +553,56 @@ async def main_loop(exchange):
                     await asyncio.sleep(60)
                     continue
 
+            current_time = time.time()
+            # 1. 更新 K 線 (每30秒)
+            if ctx.LAST_KLINES_UPDATE < current_time - 30:
+                await fetch_all_klines(exchange_market_data)
+                ctx.LAST_KLINES_UPDATE = current_time
+                logger.info(f"🔄 [KLines] 已更新市場行情資料")
+
+            from core.strategy.factory import StrategyFactory
+
+            # 準備併發任務
+            tasks = []
+
             for sym in ctx.ALL_SYMBOLS:
-                if ctx.STATES[sym].get("sync_required"):
+                state = ctx.STATES[sym]
+                state["adjusted_this_tick"] = False
+
+                # 同步檢查
+                if state.get("sync_required"):
                     logger.info(f"🔄 [SYNC_REQUIRED] 正在重新校準 {sym}...")
                     await load_open_positions()
-                    ctx.STATES[sym]["sync_required"] = False
+                    state["sync_required"] = False
 
-            for sym in ctx.ALL_SYMBOLS:
-                ctx.STATES[sym]["adjusted_this_tick"] = False
-
-            print_multi_status()
-            await fetch_all_klines(exchange_market_data)
-            for sym in ctx.ALL_SYMBOLS:
-                if ctx.STATES[sym].get("status") == "COOLDOWN":
-                    if time.time() < ctx.STATES[sym].get("next_status_time", 0):
+                # 冷卻檢查
+                if state.get("status") == "COOLDOWN":
+                    if current_time < state.get("next_status_time", 0):
                         continue
                     else:
-                        ctx.STATES[sym]["status"] = "ACTIVE"
+                        state["status"] = "ACTIVE"
                         logger.info(f"✅ [冷卻結束] {sym} 恢復 ACTIVE 狀態")
 
-                await safe_execute(compute_indicators, sym)
+                # 加入到併發任務清單 (指標計算 + 出場檢查)
+                if state.get("status") == "ACTIVE":
+                    # 指標計算
+                    tasks.append(safe_execute(compute_indicators, sym))
+
+                    # 出場檢查
+                    if PAPER_TRADING:
+                        # 此處 check_paper_pending_order 為同步檢查，保持在迴圈中或獨立處理
+                        # 為了保證順序，這裡先處理
+                        pass
+
+                    strategy = StrategyFactory.create_strategy(sym)
+                    tasks.append(safe_execute(strategy.check_exit, sym))
+
+            # 執行所有指標與出場檢查 (併發)
+            if tasks:
+                await asyncio.gather(*tasks)
 
             # --- 背離自動掃描 ---
-            if time.time() % 300 < MAIN_LOOP_INTERVAL_SEC:
+            if current_time % 300 < MAIN_LOOP_INTERVAL_SEC:
                 div_list = check_all_divergence_logic()
                 for msg in div_list:
                     logger.info(f"🌟 [自動背離掃描] {msg}")
@@ -565,26 +615,13 @@ async def main_loop(exchange):
                 logger.info(f"⚠️ [狀態更新異常]: {e}")
 
             # --- AI 大腦診斷（已停用）---
-            # 停用原因：1) 沒有設定 OPENAI_API_KEY，每次呼叫都收到 401 静默失敗，
-            # 完全沒有實際作用；2) 就算補上 key，這是全自動套用（信心分數過門檻就
-            # 直接寫入 bot_symbols.json 生效），跟目前每次調整風控參數都要先分析
-            # 數據、跟使用者確認過的做法互相矛盾，背景自動改參數的風險比效益大。
-            # try:
-            #     from services.ai_manager import ai_engine
-            #     if time.time() % 1800 < 6:
-            #         asyncio.create_task(ai_engine.run_ai_diagnosis_cycle())
-            # except ImportError:
-            #     pass
+            # (保持原樣...)
 
-            # --- 出場檢查區塊 (最關鍵的防禦) ---
-            from core.strategy.factory import StrategyFactory
-            for sym in ctx.ALL_SYMBOLS:
-                if ctx.STATES[sym].get("status") != "ACTIVE":
-                    continue
-                if PAPER_TRADING:
-                    await check_paper_pending_order(sym)
-                strategy = StrategyFactory.create_strategy(sym)
-                await safe_execute(strategy.check_exit, sym) # Actually safe_execute expects a function and sym. 
+            # 紙上交易 pending 檢查 (若有)
+            if PAPER_TRADING:
+                for sym in ctx.ALL_SYMBOLS:
+                    if ctx.STATES[sym].get("status") == "ACTIVE":
+                        await check_paper_pending_order(sym)
 
             # --- 進場檢查區塊 ---
             try:

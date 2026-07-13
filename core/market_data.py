@@ -199,6 +199,7 @@ async def fetch_all_klines(exchange):
         if not isinstance(results[i], Exception):
             ctx.STATES[sym]["ohlcv"] = results[i]
             ctx.STATES[sym]["close_price"] = results[i][-1][4]
+            ctx.STATES[sym]["last_ohlcv_update"] = time.time()
         else:
             logger.info(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
 

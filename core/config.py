@@ -207,7 +207,7 @@ BAN_WINDOW = 1800          # 縮短至 30 分鐘觀測窗口，更快偵測連�
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 2    # 30 分鐘內觸發 2 次停損就封禁（原 3 次）
 SL_ATR_MULTIPLIER = 1.8
-TP_ATR_MULTIPLIER = 3.0
+TP_ATR_MULTIPLIER = 6.0
 HARD_STOP_LOSS_PCT = 0.030
 EXIT_RR_MULTIPLIER = 1.5
 
@@ -230,6 +230,8 @@ MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY = float(os.getenv("MAX_24H_ABS_CHANGE_PCT_FOR_E
 
 TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
+# 虧損出場後避免同一幣種立刻沿用已失效的同方向訊號再次進場；個別幣種仍可覆蓋。
+DEFAULT_LOSS_REENTRY_COOLDOWN_SEC = int(os.getenv("DEFAULT_LOSS_REENTRY_COOLDOWN_SEC", 3600))
 
 # 全域調整：進場方式改回 7dceb33 的 auto 模式，依訊號強度自動選 pullback/chase/market
 # （原本被改成強制全部用 pullback，不管訊號多強都要等拉回才進場，實測 AVAXUSDT

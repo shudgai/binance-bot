@@ -200,6 +200,22 @@ class EntryFilterTests(unittest.TestCase):
         self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=18.5))
 
 
+    def test_narrow_band_does_not_turn_entire_band_into_support_or_resistance(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        ctx.MARKET_WIND.update({"allow_long": True, "allow_short": True, "btc_trend_4h": None, "btc_trend_1h": None})
+        s.update({
+            "close_price": 100.5, "bb_low": 100.0, "bb_up": 101.0,
+            "current_vol": 1200.0, "vol_ma20": 1000.0, "current_atr": 0.2,
+            "atr_history": [0.2] * 20, "current_rsi": 50.0,
+            "ema20_15m": 0.0, "ema50_15m": 0.0, "mtf_filter": False,
+            "ohlcv": [[0, 100.4, 100.6, 100.3, 100.5, 1200]] * 21,
+        })
+        self.assertFalse(is_entry_allowed(sym, "buy", route="a", strength=30.0))
+        self.assertFalse(is_entry_allowed(sym, "sell", route="a", strength=30.0))
+
     def test_high_strength_cannot_short_from_lower_band(self):
         sym = "XRPUSDT"
         init_states([sym])

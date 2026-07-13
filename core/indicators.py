@@ -49,14 +49,32 @@ def calculate_ema(prices, period):
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     if len(prices) < slow + signal:
         return 0, 0, 0, 0, 0
-    ema_fast = np.array([calculate_ema(prices[:i+1], fast) for i in range(fast-1, len(prices))])
-    ema_slow = np.array([calculate_ema(prices[:i+1], slow) for i in range(slow-1, len(prices))])
-    macd_line = ema_fast[-1] - ema_slow[-1]
-    prev_macd_line = ema_fast[-2] - ema_slow[-2] if len(ema_fast) >= 2 and len(ema_slow) >= 2 else macd_line
-    macd_vals = ema_fast[-signal*2:] - ema_slow[-signal*2:]
-    signal_vals = np.array([calculate_ema(macd_vals[:i+1], signal) for i in range(signal-1, len(macd_vals))])
-    macd_signal = signal_vals[-1] if len(signal_vals) > 0 else 0
-    prev_macd_signal = signal_vals[-2] if len(signal_vals) >= 2 else macd_signal
+
+    def get_ema_series(data, period):
+        if len(data) < period:
+            return np.zeros(len(data))
+        multiplier = 2.0 / (period + 1)
+        series = np.zeros(len(data))
+        series[:period] = np.mean(data[:period])
+        for i in range(period, len(data)):
+            series[i] = (data[i] - series[i-1]) * multiplier + series[i-1]
+        return series
+
+    ema_fast_series = get_ema_series(prices, fast)
+    ema_slow_series = get_ema_series(prices, slow)
+
+    macd_line_series = ema_fast_series - ema_slow_series
+
+    macd_line = macd_line_series[-1]
+    prev_macd_line = macd_line_series[-2] if len(macd_line_series) >= 2 else macd_line
+
+    # Signal line is an EMA of the MACD line
+    macd_vals_for_signal = macd_line_series[-(signal*2):]
+    signal_series = get_ema_series(macd_vals_for_signal, signal)
+
+    macd_signal = signal_series[-1] if len(signal_series) > 0 else 0
+    prev_macd_signal = signal_series[-2] if len(signal_series) >= 2 else macd_signal
+
     macd_hist = macd_line - macd_signal
     return macd_line, macd_signal, macd_hist, prev_macd_line, prev_macd_signal
 

@@ -414,6 +414,110 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
+    def test_confirmed_early_short_invalidation_exits_and_rechecks_long(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "INJUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": -33.9, "avg_price": 4.825, "close_price": 4.852,
+            "open_time": time.time() - 480, "last_entry_time": time.time() - 480,
+            "last_entry_price": 4.825, "current_atr": 0.01814,
+            "atr_history": [0.01814] * 20, "current_rsi": 59.8,
+            "macd_line": -0.0130, "macd_signal": -0.0135,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "ohlcv": [[0, 4.82, 4.84, 4.81, 4.825, 1000], [1, 4.825, 4.86, 4.82, 4.852, 1100]],
+            "pnl_history": [],
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_not_called()
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
+                self.assertEqual(s.get("pending_reverse"), "buy")
+
+        asyncio.run(run_check())
+
+    def test_confirmed_early_invalidation_exits_at_one_atr(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "INJUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": -10.0, "avg_price": 100.0, "close_price": 100.30,
+            "open_time": time.time() - 300, "last_entry_time": time.time() - 300,
+            "last_entry_price": 100.0, "current_atr": 0.28,
+            "atr_history": [0.28] * 20, "current_rsi": 58.0,
+            "macd_line": 0.01, "macd_signal": 0.0,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "ohlcv": [[0, 100.0, 100.1, 99.9, 100.0, 1000],
+                      [1, 100.0, 100.4, 99.9, 100.3, 1100]],
+            "pnl_history": [],
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_not_called()
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
+
+        asyncio.run(run_check())
+
+    def test_small_profit_takes_half_before_it_can_fully_give_back(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 2.0, "avg_price": 100.0, "close_price": 100.32,
+            "open_time": time.time() - 300, "last_entry_time": time.time() - 300,
+            "last_entry_price": 100.0, "current_atr": 0.2,
+            "atr_history": [0.2] * 20, "current_rsi": 55.0,
+            "macd_line": 0.01, "macd_signal": 0.0,
+            "prev_macd_line": 0.005, "prev_macd_signal": 0.0,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "ohlcv": [], "pnl_history": [], "profile_type": "Core_Trend",
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_called_once()
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Partial_Take_Profit]")
+                self.assertAlmostEqual(mock_close.await_args.args[2], 1.0)
+
+        asyncio.run(run_check())
+
+    def test_single_early_opposite_sample_does_not_exit(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "INJUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": -1.0, "avg_price": 4.825, "close_price": 4.852,
+            "open_time": time.time() - 480, "last_entry_time": time.time() - 480,
+            "last_entry_price": 4.825, "current_atr": 0.01814,
+            "atr_history": [0.01814] * 20, "current_rsi": 59.8,
+            "macd_line": -0.0130, "macd_signal": -0.0135,
+            "current_vol": 1000.0, "vol_ma20": 1000.0,
+            "ohlcv": [[0, 4.82, 4.84, 4.81, 4.825, 1000], [1, 4.825, 4.86, 4.82, 4.852, 1100]],
+            "pnl_history": [],
+        })
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_not_called()
+        asyncio.run(run_check())
+
     def test_breakeven_lock_triggers_on_positive_peak(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"

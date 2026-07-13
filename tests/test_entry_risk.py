@@ -7,12 +7,52 @@ from unittest.mock import patch, AsyncMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.ctx import STATES, init_states
-from core.state_manager import reset_coin_state
+from core.state_manager import reset_coin_state, repair_invalid_states, get_open_position_count
+from core import ctx
 from core import exchange_client
-from core.orders import execute_order, _enforce_bracket_rr
+from core.orders import execute_order, _enforce_bracket_rr, _pending_entry_setup_valid
 
 
 class EntryRiskTests(unittest.TestCase):
+    def test_float_symbol_state_is_repaired_before_position_count(self):
+        sym = "BROKENUSDT"
+        original_symbols = list(ctx.ALL_SYMBOLS)
+        original_state = ctx.STATES.get(sym)
+        try:
+            if sym not in ctx.ALL_SYMBOLS:
+                ctx.ALL_SYMBOLS.append(sym)
+            ctx.STATES[sym] = 12.34
+
+            self.assertEqual(repair_invalid_states(), [sym])
+            self.assertIsInstance(ctx.STATES[sym], dict)
+            self.assertEqual(ctx.STATES[sym]["qty"], 0.0)
+            self.assertIsInstance(get_open_position_count(), int)
+        finally:
+            ctx.ALL_SYMBOLS[:] = original_symbols
+            if original_state is None:
+                ctx.STATES.pop(sym, None)
+            else:
+                ctx.STATES[sym] = original_state
+
+    def test_pending_first_entry_revalidates_latest_signal(self):
+        info = {
+            "sym": "AAVEUSDT", "side": "sell", "entry_route": "b",
+            "signal_strength": 30.6, "signal_price": 96.06,
+            "is_rescue_dca": False,
+        }
+        revalidate = unittest.mock.Mock(return_value=(False, "bullish divergence"))
+        self.assertEqual(
+            _pending_entry_setup_valid(info, validator=revalidate),
+            (False, "bullish divergence"),
+        )
+        revalidate.assert_called_once_with("AAVEUSDT", "sell", "b", 30.6, 96.06)
+
+    def test_pending_rescue_order_keeps_separate_risk_path(self):
+        self.assertEqual(
+            _pending_entry_setup_valid({"is_rescue_dca": True}),
+            (True, "rescue_dca"),
+        )
+
     def test_additional_entry_updates_average_price_safely(self):
         sym = "XRPUSDT"
         init_states([sym])

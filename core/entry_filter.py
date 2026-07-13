@@ -296,15 +296,33 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         tol = coin_cfg.get("support_zone_tolerance_pct", 0.015)  # default 1.5%（原 0.5%）
         strength_threshold = coin_cfg.get("support_zone_strength_threshold", 12.0)  # 原 20.0
 
-        # 買入時必須在下軌附近（有支撑）
-        support_zone_upper = bb_lower * (1 + tol)
+        # 以布林帶自身寬度定義位置；用幣價 1.5% 會在窄帶行情覆蓋整條帶。
+        _band_width = bb_upper - bb_lower if bb_upper > bb_lower else 0.0
+        support_zone_upper = bb_lower + _band_width * 0.45 if _band_width > 0 else bb_lower * (1 + tol)
         is_in_support_zone = cp <= support_zone_upper
+        if strength > 40:
+            is_in_support_zone = True
 
         if not is_in_support_zone:
-            # 只有超強訊號或超過 per-coin 門檻才允許在中軌上方買
-            distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
-            logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 遠離下軌 {bb_lower:.6f} ({distance_to_support*100:.2f}%)，缺乏支撑。趨勢多單缺乏支撐，拒絕進場 (tol={tol*100:.2f}%)")
-            return False
+            _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 1.0
+            _route_a_trend_override = (
+                route == "a" and strength >= 24.0
+                and _band_position <= 0.75
+                and s.get("current_rsi", 50.0) <= 65.0
+                and s.get("macd_line", 0.0) > s.get("macd_signal", 0.0)
+            )
+            _route_b_momentum_override = (
+                route == "b" and strength >= 30.0
+                and s.get("current_rsi", 50.0) <= 55.0
+            )
+            if _route_a_trend_override:
+                logger.info(f"⚡ [SUPPORT_ZONE_TREND_OVERRIDE] {sym} Route A 強勢做多 ({strength:.1f})，位於布林帶 {_band_position*100:.0f}% 且 MACD 已確認，允許順勢進場")
+            elif _route_b_momentum_override:
+                logger.info(f"⚡ [SUPPORT_ZONE_OVERRIDE] {sym} Route B 強勢做多 ({strength:.1f}) 且 RSI {s.get('current_rsi', 50.0):.1f} 未過熱，允許突破進場")
+            else:
+                distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
+                logger.info(f"🛑 [SUPPORT_ZONE] {sym} 買入價 {cp:.6f} 不在布林帶下方35%支撐區 (需 <= {support_zone_upper:.6f}；距下軌 {distance_to_support*100:.2f}%)，拒絕趨勢多單")
+                return False
 
         if is_in_support_zone:
             logger.info(f"✅ [SUPPORT_ZONE] {sym} 買入價在支撑區 [{bb_lower:.6f} ~ {support_zone_upper:.6f}]，有支撑，允許進場")
@@ -314,14 +332,33 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         tol = coin_cfg.get("support_zone_tolerance_pct", 0.015)  # 原 0.5%
         strength_threshold = coin_cfg.get("support_zone_strength_threshold", 12.0)  # 原 20.0
 
-        # 賣出時必須在上軌附近（有阻力）
-        resistance_zone_lower = bb_upper * (1 - tol)
+        # 空單只能位於布林帶上方 35% 的阻力區，不能在帶中央或下緣殺低。
+        _band_width = bb_upper - bb_lower if bb_upper > bb_lower else 0.0
+        resistance_zone_lower = bb_upper - _band_width * 0.45 if _band_width > 0 else bb_upper * (1 - tol)
         is_in_resistance_zone = cp >= resistance_zone_lower
+        if strength > 40:
+            is_in_resistance_zone = True
 
         if not is_in_resistance_zone:
-            distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
-            logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 遠離上軌 {bb_upper:.6f} ({distance_to_resistance*100:.2f}%)，缺乏阻力。趨勢空單缺乏阻力，拒絕進場 (tol={tol*100:.2f}%)")
-            return False
+            _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 0.0
+            _route_a_trend_override = (
+                route == "a" and strength >= 24.0
+                and _band_position >= 0.25
+                and s.get("current_rsi", 50.0) >= 35.0
+                and s.get("macd_line", 0.0) < s.get("macd_signal", 0.0)
+            )
+            _route_b_momentum_override = (
+                route == "b" and strength >= 30.0
+                and s.get("current_rsi", 50.0) >= 45.0
+            )
+            if _route_a_trend_override:
+                logger.info(f"⚡ [RESISTANCE_ZONE_TREND_OVERRIDE] {sym} Route A 強勢做空 ({strength:.1f})，位於布林帶 {_band_position*100:.0f}% 且 MACD 已確認，允許順勢進場")
+            elif _route_b_momentum_override:
+                logger.info(f"⚡ [RESISTANCE_ZONE_OVERRIDE] {sym} Route B 強勢做空 ({strength:.1f}) 且 RSI {s.get('current_rsi', 50.0):.1f} 未超賣，允許跌破進場")
+            else:
+                distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
+                logger.info(f"🛑 [RESISTANCE_ZONE] {sym} 賣出價 {cp:.6f} 不在布林帶上方35%阻力區 (需 >= {resistance_zone_lower:.6f}；距上軌 {distance_to_resistance*100:.2f}%)，拒絕趨勢空單")
+                return False
 
         if is_in_resistance_zone:
             logger.info(f"✅ [RESISTANCE_ZONE] {sym} 賣出價在阻力區 [{resistance_zone_lower:.6f} ~ {bb_upper:.6f}]，有阻力，允許進場")

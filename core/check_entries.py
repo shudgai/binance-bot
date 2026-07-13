@@ -7,7 +7,8 @@ import numpy as np
 
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
-    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT, get_entry_strictness_profile)
+    DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT,
+    DEFAULT_LOSS_REENTRY_COOLDOWN_SEC, get_entry_strictness_profile)
 from core.indicators import (_get_atr, _macd_vals, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -558,7 +559,10 @@ async def check_entries():
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
         # 小幅放寬高波動量能門檻；背離、收盤確認與高位防追價仍維持嚴格。
-        _d_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= 25.0 else 0.70)
+        # 24 分已屬強訊號；讓 24.x 不再因只差不到 1 分而被高波動量能閘門
+        # 重複攔截。只降低強訊號分界，最低 0.55x 均量與其他風控維持不變。
+        _strong_participation_strength = 24.0
+        _d_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= _strong_participation_strength else 0.70)
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
@@ -572,7 +576,7 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= 25.0 else 0.70)
+            _rvol_multiplier = 0.60 if _is_low_vol_ce else (0.55 if strength >= _strong_participation_strength else 0.70)
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
@@ -596,7 +600,7 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
-                    strong_volume_override = strength >= 25.0 and current_vol >= vol_ma20 * 0.55
+                    strong_volume_override = strength >= _strong_participation_strength and current_vol >= vol_ma20 * 0.55
                     if not strong_volume_override:
                         s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                         logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 量價不協同，無跟進量支持，放棄進場")
@@ -669,10 +673,13 @@ async def check_entries():
         if not is_entry_allowed(sym, side, route, strength):
             continue
 
-        # 高波動幣同方向虧損後不能很快再次追進。SUI 曾在多單失敗 75 分鐘後，
-        # 又被短週期 Route B 訊號帶回同方向，最後長時間套牢；依幣種設定延長冷卻。
+        # 任一幣種同方向虧損後都不能立刻沿用已失效的訊號追進；預設冷卻一小時，
+        # 高波動幣仍可透過個別設定延長（例如 SUI 兩小時）。Automatic_Reverse 已經
+        # 通過反手確認，方向不同，因此維持豁免。
         _loss_reentry_cooldown = float(
-            COIN_PROFILE_CONFIG.get(sym, {}).get("loss_reentry_cooldown_sec", 0.0) or 0.0
+            COIN_PROFILE_CONFIG.get(sym, {}).get(
+                "loss_reentry_cooldown_sec", DEFAULT_LOSS_REENTRY_COOLDOWN_SEC
+            ) or 0.0
         )
         _same_side_loss_time = float(
             s.get("last_loss_time_long" if side == "buy" else "last_loss_time_short", 0.0) or 0.0

@@ -13,6 +13,21 @@ from core.check_entries import check_entries
 
 
 class TradeSignalTests(unittest.TestCase):
+    def test_oversold_recovery_can_open_confirmed_reversal_long_above_rsi_20(self):
+        sym = self._setup_ema20_pullback_state(
+            rsi=28.0, macd_line=-0.004, macd_signal=-0.002,
+            prev_macd_line=-0.006, prev_macd_signal=-0.002,
+        )
+        STATES[sym]["rsi_history"] = [26.0, 28.0]
+        # ohlcv[-2] is the latest fully closed candle; make it a confirmed reversal candle.
+        STATES[sym]["ohlcv"][-2] = [0, 99.8, 100.6, 99.5, 100.4, 1200]
+
+        side, strength, route = compute_signal_strength(sym)
+
+        self.assertEqual(side, "buy")
+        self.assertGreaterEqual(strength, 16.0)
+        self.assertEqual(route, "Extreme_Reversal")
+
     def _setup_ema20_pullback_state(self, rsi, macd_line, macd_signal, prev_macd_line, prev_macd_signal):
         sym = "XRPUSDT"
         init_states([sym])
@@ -78,6 +93,14 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(side, "sell")
         self.assertGreater(strength, 0)
         self.assertEqual(route, "a")
+
+    def test_route_a_rejects_macd_that_is_still_bearish_but_contracting(self):
+        sym = self._setup_ema20_pullback_state(
+            rsi=44.0, macd_line=-0.004, macd_signal=-0.003,
+            prev_macd_line=-0.005, prev_macd_signal=-0.003,
+        )
+
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
 
     def test_trade_signal_triggers_breakout_reversal(self):
         sym = "XRPUSDT"

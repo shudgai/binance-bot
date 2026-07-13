@@ -123,22 +123,15 @@ async def update_trade_signal(sym, trade):
             and ((_is_long and price <= _rt_ts) or (not _is_long and price >= _rt_ts))
         )
         if _rt_crossed and not s.get("_is_closing", False):
-            # 軟追蹤只能在扣除雙邊費用後仍為正時即時平倉；硬停損仍由主退出循環管理。
+            # 停利線一旦被穿越就必須退出。舊邏輯在跳價後若目前毛利已低於費用安全線，
+            # 反而拒絕平倉，會把已鎖定的小利繼續拖成虧損（XLM 0.37% 峰值案例）。
+            # 費用安全線只用來決定停利線位置，不能在穿越後變成「禁止止盈」。
             _fee_safe_floor = ROUND_TRIP_FEE_PCT + 0.0005
-            _soft_net_guard = _rt_peak < 0.006 and rt_profit < _fee_safe_floor
-            if _soft_net_guard:
-                # 這裡掛在 update_trade_signal，每一筆成交流 tick 都會跑到——像
-                # DOGEUSDT 這種高頻幣種，價格在軟停利線附近盤整時，同一句 log 一秒內
-                # 能重複噴幾十次，把 log 洗到看不到其他真正有用的訊息。狀態沒變就不用
-                # 每個 tick 都重印一次，節流成最多每 5 秒一次。
-                _last_log = s.get("_soft_net_guard_last_log", 0.0)
-                if ts_value - _last_log >= 5.0:
-                    s["_soft_net_guard_last_log"] = ts_value
-                    logger.info(
-                        f"⏸️ [Realtime_Soft_Net_Guard] {sym} 已穿軟追蹤線，但目前毛利 "
-                        f"{rt_profit*100:.3f}% 尚不足費用安全底線 {_fee_safe_floor*100:.3f}%"
-                    )
-                return
+            if _rt_peak < 0.006 and rt_profit < _fee_safe_floor:
+                logger.info(
+                    f"⚠️ [Realtime_Trailing_Gap] {sym} 價格跳過軟停利線，當前毛利 "
+                    f"{rt_profit*100:.3f}% 已低於費用安全線 {_fee_safe_floor*100:.3f}%，立即退出防止擴大回吐"
+                )
             from core.orders import close_position
             close_side = "sell" if _is_long else "buy"
             logger.info(

@@ -156,26 +156,28 @@ def compute_signal_strength(sym):
 
     raw_long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100) + l_ts + (5.0 if long_macd_cross else 0.0)
     raw_short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100) + s_ts + (5.0 if short_macd_cross else 0.0)
-    if rsi >= 80.0: raw_short_str = 15.0 + ((rsi - 80.0) / 2.0)
-    if rsi <= 20.0: raw_long_str = 15.0 + ((20.0 - rsi) / 2.0)
+    _reversal_rsi_low = 30.0
+    _reversal_rsi_high = 70.0
+    if rsi >= _reversal_rsi_high: raw_short_str = 15.0 + ((rsi - _reversal_rsi_high) / 2.0)
+    if rsi <= _reversal_rsi_low: raw_long_str = 15.0 + ((_reversal_rsi_low - rsi) / 2.0)
 
     logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 預估強度(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # 極端反轉必須同時有 RSI 回勾、MACD 改善與反轉 K，不能只靠極端值猜底/猜頂。
     rsi_history = s.get("rsi_history", [])
-    if rsi >= 80.0:
+    if rsi >= _reversal_rsi_high:
         rsi_hook = len(rsi_history) >= 2 and rsi_history[-1] < rsi_history[-2]
         if rsi_hook and macd_hist < prev_macd_hist and last_candle_short:
-            strength = 15.0 + ((rsi - 80.0) / 2.0)
+            strength = 15.0 + ((rsi - _reversal_rsi_high) / 2.0)
             return ("sell", strength, "Extreme_Reversal")
-        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI 極端超買但反轉三確認未齊，暫不做空")
+        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入反轉觀察區，但回勾/MACD/K線三確認未齊，暫不做空")
 
-    if rsi <= 20.0:
+    if rsi <= _reversal_rsi_low:
         rsi_hook = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
         if rsi_hook and macd_hist > prev_macd_hist and last_candle_long:
-            strength = 15.0 + ((20.0 - rsi) / 2.0)
+            strength = 15.0 + ((_reversal_rsi_low - rsi) / 2.0)
             return ("buy", strength, "Extreme_Reversal")
-        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI 極端超賣但反轉三確認未齊，暫不做多")
+        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入止跌觀察區，但回勾/MACD/K線三確認未齊，暫不做多")
 
     # --- Route A/B 主要進場邏輯 ---
     # 這段原本存在，2026-07-11 被外部工具的一次提交（新增 StrategyEngine 之後）誤刪，
@@ -219,13 +221,22 @@ def compute_signal_strength(sym):
     # 48+、站上 SMA200/EMA50、MACD 多頭，卻因為 RSI 沒到 40 以下被 Route A 拒絕）。
     _rsi_extreme_long  = rsi <= 40.0
     _rsi_extreme_short = rsi >= 60.0
-    _macd_confirmed_long  = macd_hist > 0 and prev_macd_hist > 0 and macd_hist > prev_macd_hist
-    _macd_confirmed_short = macd_hist < 0 and prev_macd_hist < 0 and macd_hist < prev_macd_hist
+    # Route A 只在「剛轉向」或「既有方向重新擴張」時進場。單純仍在零軸同側、但
+    # 柱狀圖正在收斂，不再追單（UNI 3.509 空單即屬此類）。新交叉另要求 RSI 已站到
+    # 新方向一側，避免 RSI 仍偏多時只因極小的 bearish cross 就過早做空，反向亦同。
+    _macd_direction_long  = macd_hist > 0 and prev_macd_hist > 0
+    _macd_direction_short = macd_hist < 0 and prev_macd_hist < 0
+    _macd_confirmed_long  = _macd_direction_long and macd_hist > prev_macd_hist
+    _macd_confirmed_short = _macd_direction_short and macd_hist < prev_macd_hist
+    _macd_turn_long = long_macd_cross and rsi >= 48.0
+    _macd_turn_short = short_macd_cross and rsi <= 52.0
+    _route_a_macd_long = _macd_confirmed_long or _macd_turn_long
+    _route_a_macd_short = _macd_confirmed_short or _macd_turn_short
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     route_a_long = (
         sma200_hard_gate_long and
-        _macd_confirmed_long and
+        _route_a_macd_long and
         # Route A 後面仍會等待下一根收盤確認；此處只要求最近兩根至少一根同向，
         # 避免 2 根同向 + 下一根確認形成過度嚴格的三段重複確認。
         (last_candle_long or is_relaxed) and
@@ -237,7 +248,7 @@ def compute_signal_strength(sym):
 
     route_a_short = (
         sma200_hard_gate_short and
-        _macd_confirmed_short and
+        _route_a_macd_short and
         (last_candle_short or is_relaxed) and
         rsi_ok_short and
         rsi_direction_short and

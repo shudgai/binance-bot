@@ -62,6 +62,7 @@ def build_symbol_state(sym):
         "trade_signal_strength": 0.0,
         "trade_signal_reason": "",
         "pending_side": None,
+        "early_direction_invalid_count": 0,
         "pending_time": 0,
         "pending_signal_price": 0.0,
         "pending_confirm_high": 0,
@@ -102,6 +103,25 @@ def build_symbol_state(sym):
         "volatility_cap": conf.get("volatility_cap", 3.0),
         "last_peak_time": 0.0,
     }
+
+
+def repair_invalid_states():
+    """Repair missing/corrupted per-symbol state without letting one bad value stop the bot."""
+    from core import ctx
+
+    repaired = []
+    required_symbols = list(dict.fromkeys(list(ctx.ALL_SYMBOLS) + list(ctx.STATES.keys())))
+    for sym in required_symbols:
+        state = ctx.STATES.get(sym)
+        if isinstance(state, dict):
+            continue
+        logger.error(
+            "🚨 [STATE_CORRUPTION] %s 狀態應為 dict，實際為 %s (%r)；已自動重建",
+            sym, type(state).__name__, state,
+        )
+        ctx.STATES[sym] = build_symbol_state(sym)
+        repaired.append(sym)
+    return repaired
 
 def _remove_cooldown_substitute(sym):
     """冷卻/封禁結束時，將原幣種復位到監控池，並移除候補幣種（若未開倉）。"""
@@ -166,6 +186,7 @@ def _enforce_symbol_pool_cap():
 
 def update_states():
     from core import ctx
+    repair_invalid_states()
     now = time.time()
 
     # 處理 ALL_SYMBOLS 中的幣種狀態轉移
@@ -372,6 +393,7 @@ def reset_coin_state(sym):
     s["is_breakeven_locked"] = False
     s["soft_trailing_armed"] = False
     s["soft_trailing_profit_floor"] = 0.0
+    s["early_direction_invalid_count"] = 0
     s["stop_loss"] = 0.0
     s["pending_side"] = None
     s["pending_time"] = 0
@@ -419,6 +441,7 @@ def reset_coin_state(sym):
 
 def get_active_count():
     from core import ctx
+    repair_invalid_states()
     return sum(1 for s in ctx.STATES.values() if s["status"] == "ACTIVE")
 
 def get_open_position_count():
@@ -431,6 +454,7 @@ def get_open_position_count():
     超過 MAX_POSITIONS 的上限（實際發生過同時開到 7 筆，遠超過設定的 3 筆）。
     改成連 is_ordering（訂單正在派發中，還沒確認成交）也一起算進佔用額度。"""
     from core import ctx
+    repair_invalid_states()
     return sum(
         1 for s in ctx.STATES.values()
         if abs(s["qty"]) > 0.000001 or s.get("is_ordering")

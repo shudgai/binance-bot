@@ -483,6 +483,45 @@ async def check_exits(sym):
     # 用 ATR 倍數而非固定百分比衡量「急速」，高低價幣都適用同一套標準。
     _time_since_entry = time.time() - s.get("last_entry_time", 0)
     _ref_price = s.get("last_entry_price", avg) or avg
+    # 早期方向失效：不像 2 ATR 急殺，只在進場 1~10 分鐘內，價格至少逆向
+    # 1.0 ATR（且至少 0.25%），並由 MACD、RSI、K 線三者共同確認反方向。
+    # 舊門檻 1.25 ATR 實際常等到 -0.44%~-0.79% 才退出；在三重反向確認成立時
+    # 不必再多承受 0.25 ATR。仍要求連續兩輪，避免一個 tick 的雜訊誤砍。
+    # 連續兩輪成立才退出，避免單一 tick 雜訊；退出後只建立反向候選，仍須通過完整閘門。
+    if 60 <= hold_sec <= 600 and current_atr > 0 and avg > 0:
+        _early_adverse_atr = ((avg - p) if is_long else (p - avg)) / current_atr
+        _early_adverse_pct = max(0.0, -profit_pct)
+        _macd_opposite = (
+            (is_long and s.get("macd_line", 0.0) < s.get("macd_signal", 0.0)) or
+            (not is_long and s.get("macd_line", 0.0) > s.get("macd_signal", 0.0))
+        )
+        _rsi_opposite = (
+            (is_long and s.get("current_rsi", 50.0) <= 45.0) or
+            (not is_long and s.get("current_rsi", 50.0) >= 55.0)
+        )
+        _candles = s.get("ohlcv", [])
+        _candle_opposite = False
+        if len(_candles) >= 2:
+            _prev_c = float(_candles[-2][4])
+            _cur_c = float(s.get("close_price", _candles[-1][4]) or _candles[-1][4])
+            _candle_opposite = (_cur_c < _prev_c) if is_long else (_cur_c > _prev_c)
+        _early_invalid = (
+            _early_adverse_atr >= 1.0 and _early_adverse_pct >= 0.0025
+            and _macd_opposite and _rsi_opposite and _candle_opposite
+        )
+        s["early_direction_invalid_count"] = (
+            int(s.get("early_direction_invalid_count", 0)) + 1 if _early_invalid else 0
+        )
+        if s["early_direction_invalid_count"] >= 2:
+            cs = "sell" if is_long else "buy"
+            rev_side = "sell" if is_long else "buy"
+            logger.info(f"🧭 [Early_Direction_Invalid] {sym} 開倉 {hold_sec:.0f}s 後逆向 {_early_adverse_atr:.2f}x ATR \n且 MACD/RSI/K線連續確認反向，退出並重新評估 {rev_side}")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Early_Direction_Invalid]", is_stop_loss=True)
+            s["pending_reverse"] = rev_side
+            s["pending_reverse_time"] = time.time()
+            s["pending_reverse_after_rescue"] = True
+            return
+
     if _time_since_entry < 180 and current_atr > 0 and _ref_price > 0:
         _adverse_atr_mult = (_ref_price - p) / current_atr if is_long else (p - _ref_price) / current_atr
         # 門檻原本是 1.2x，實際上線後對 ETH/SOL 這類主流大幣太敏感，短暫回檔（現貨
@@ -527,11 +566,12 @@ async def check_exits(sym):
         logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
 
     # ── 分批停利：先落袋一半，剩餘部位繼續交給 trailing 捕捉趨勢。
-    # 高彈性幣要求 1.0%，其餘要求 max(0.6%, 3 ATR)，避免小利潤被手續費吃掉。
+    # 最近真實交易的常見峰值只有 0.3%~0.4%，舊門檻 0.6%/1.0%（另加 3 ATR）
+    # 幾乎永遠碰不到，等於沒有分批停利。一般幣達 0.30%、高彈性幣達 0.40%
+    # 即落袋一半；都已明顯覆蓋單次平倉費用，剩餘半倉仍可捕捉大行情。
     if not s.get("has_partial_closed", False) and not s.get("partial_tp_pending", False):
         profile_type = str(s.get("profile_type", ""))
-        partial_floor = 0.010 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.006
-        partial_trigger = max(partial_floor, (current_atr / avg) * 3.0 if avg > 0 else partial_floor)
+        partial_trigger = 0.004 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.003
         if profit_pct >= partial_trigger:
             before_qty = abs(s["qty"])
             s["partial_tp_pending"] = True
@@ -599,21 +639,18 @@ async def check_exits(sym):
             if p <= ts_price:
                 _soft_floor = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
                 if s.get("soft_trailing_armed", False) and _soft_floor > 0 and p < _soft_floor:
-                    logger.info(f"⏸️ [Soft_Trailing_Net_Guard] {sym} 已穿軟停利線，但現價 {p:.6f} 低於淨利底線 {_soft_floor:.6f}，不把小利平成虧損")
-                    # 繼續執行一般 ATR／硬停損，不在負報酬區誤用停利理由平倉。
-                else:
-                    logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} <= 停損價 {ts_price:.6f}")
-                    await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=False)
-                    return
+                    logger.info(f"⚠️ [Soft_Trailing_Gap] {sym} 現價 {p:.6f} 已跳過淨利底線 {_soft_floor:.6f}，立即退出防止回吐擴大")
+                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} <= 停損價 {ts_price:.6f}")
+                await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=(profit_pct <= 0))
+                return
         else:
             if p >= ts_price:
                 _soft_ceiling = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
                 if s.get("soft_trailing_armed", False) and _soft_ceiling > 0 and p > _soft_ceiling:
-                    logger.info(f"⏸️ [Soft_Trailing_Net_Guard] {sym} 已穿軟停利線，但現價 {p:.6f} 高於淨利底線 {_soft_ceiling:.6f}，不把小利平成虧損")
-                else:
-                    logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} >= 停損價 {ts_price:.6f}")
-                    await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=False)
-                    return
+                    logger.info(f"⚠️ [Soft_Trailing_Gap] {sym} 現價 {p:.6f} 已跳過淨利底線 {_soft_ceiling:.6f}，立即退出防止回吐擴大")
+                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} >= 停損價 {ts_price:.6f}")
+                await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=(profit_pct <= 0))
+                return
 
     # 小幅峰值回吐到負報酬時，不另設超窄 Peak_Giveback 停損；
     # 真正失效交由下方 Rapid_Reversal、ATR 與 Hard_Stop 管理。
