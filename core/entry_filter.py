@@ -212,8 +212,8 @@ def is_entry_pin_safe(sym, side):
     """
     插針過濾 (Pin-Bar Safety Check)
     檢查最新 K 線是否存在對方向不利的長影線（插針假突破）。
-    - 多單：若上影線 > 實體 * 2.0，代表壓力強，拒絕做多。
-    - 空單：若下影線 > 實體 * 2.0，代表支撐強，拒絕做空。
+    - 多單：若上影線 > 實體 * pin_threshold，代表壓力強，拒絕做多。
+    - 空單：若下影線 > 實體 * pin_threshold，代表支撐強，拒絕做空。
     若 K 線資料不足或實體為 0，放行（保守地允許）。
     """
     s = ctx.STATES.get(sym)
@@ -229,9 +229,13 @@ def is_entry_pin_safe(sym, side):
     upper_wick = h - max(o, c)
     lower_wick = min(o, c) - l
 
-    if side == "buy" and len(s["ohlcv"]) >= 2 and c <= s["ohlcv"][-2][4] and upper_wick > body * 2.0:
+    from core.config import get_entry_strictness_profile
+    profile = get_entry_strictness_profile()
+    pin_threshold = profile.get("pin_threshold", 2.0)
+
+    if side == "buy" and len(s["ohlcv"]) >= 2 and c <= s["ohlcv"][-2][4] and upper_wick > body * pin_threshold:
         return False  # 上影線過長，壓力強 → 拒絕多單
-    if side == "sell" and lower_wick > body * 2.0:
+    if side == "sell" and lower_wick > body * pin_threshold:
         return False  # 下影線過長，支撐強 → 拒絕空單
     return True
 

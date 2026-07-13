@@ -11,15 +11,21 @@ from core.entry_filter import is_entry_pin_safe, get_entry_strictness_profile, i
 
 class EntryFilterTests(unittest.TestCase):
     def test_bad_pinbar_rejects_long_entry(self):
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s["ohlcv"] = [
-            [0, 100, 101, 99, 100, 1000],
-            [0, 100, 108, 95, 97, 1000],
-        ]
-        self.assertFalse(is_entry_pin_safe(sym, "buy"))
+        from core import config
+        original_mode = config.ENTRY_STRICTNESS_MODE
+        config.ENTRY_STRICTNESS_MODE = "balanced"
+        try:
+            sym = "XRPUSDT"
+            init_states([sym])
+            s = STATES[sym]
+            reset_coin_state(sym)
+            s["ohlcv"] = [
+                [0, 100, 101, 99, 100, 1000],
+                [0, 100, 108, 95, 97, 1000],
+            ]
+            self.assertFalse(is_entry_pin_safe(sym, "buy"))
+        finally:
+            config.ENTRY_STRICTNESS_MODE = original_mode
 
     def test_entry_strictness_profile_switches_between_modes(self):
         relaxed = get_entry_strictness_profile("relaxed")
