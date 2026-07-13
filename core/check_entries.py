@@ -1053,14 +1053,14 @@ async def check_entries():
     
                             should_wait = False
                             if side == "sell":
-                                # 做空：避免空在 1m 最低點 (1m RSI < 35 嚴重超賣) 或 1m 巨量長陽暴拉中
-                                if rsi_1m < 35.0:
+                                # 做空：避免空在 1m 最低點 (1m RSI < 40 嚴重超賣) 或 1m 巨量長陽暴拉中
+                                if rsi_1m < 40.0:
                                     should_wait = True
                                 elif is_huge_vol and is_green_candle:
                                     should_wait = True
                             elif side == "buy":
-                                # 做多：避免買在 1m 最高點 (1m RSI > 65 超買) 或 1m 巨量長陰暴跌中
-                                if rsi_1m > 65.0:
+                                # 做多：避免買在 1m 最高點 (1m RSI > 60 超買) 或 1m 巨量長陰暴跌中
+                                if rsi_1m > 60.0:
                                     should_wait = True
                                 elif is_huge_vol and is_red_candle:
                                     should_wait = True
@@ -1139,7 +1139,7 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
     if route != "Automatic_Reverse":
         refreshed = compute_signal_strength(sym)
         # 只有當信號完全反轉（例如做空變成做多）時才取消；不要因為新的 5m K線暫時沒有信號而取消
-        if refreshed and refreshed[0] != side:
+        if refreshed and refreshed[0] is not None and refreshed[0] != side:
             return False, f"latest signal reversed to {refreshed[0]}"
 
     return True, "ok"
