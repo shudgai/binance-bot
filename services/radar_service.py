@@ -14,30 +14,11 @@ SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "d
 def _resolve_follow_symbols_from(base_dir: str | None = None) -> str:
     """Resolve the shared symbol source path for strategy sync between deployments.
 
-    Priority:
-    1. Explicit FOLLOW_SYMBOLS_FROM environment variable.
-    2. Shared sibling deployment at ../binance-bot/data/bot_symbols.json.
-    3. Current deployment's local data/bot_symbols.json.
+    Only follows when explicitly set via FOLLOW_SYMBOLS_FROM environment variable.
     """
     configured = os.getenv("FOLLOW_SYMBOLS_FROM", "").strip()
     if configured:
         return configured
-
-    repo_root = os.path.abspath(base_dir or os.path.dirname(os.path.dirname(__file__)))
-    parent_dir = os.path.dirname(repo_root)
-    own_config_path = os.path.join(repo_root, "data", "bot_symbols.json")
-    candidates = [
-        os.path.join(parent_dir, "binance-bot", "data", "bot_symbols.json"),
-        os.path.join(parent_dir, "binance-bot-live", "data", "bot_symbols.json"),
-    ]
-
-    for candidate in candidates:
-        # 若候選路徑其實就是自己（例如本部署自己就叫 binance-bot），不能拿自己
-        # 當作跟隨來源——否則會變成每次都在讀自己剛寫入的清單、判定「榜單未變」，
-        # 導致真正的 ATR 排名/波動度過濾邏輯整個被跳過，形同雷達失效（實際發生過：
-        # RADAR_SELECT_COUNT 已改成 8，但幣池一直卡在舊的 12～13 檔不會縮減）。
-        if os.path.exists(candidate) and os.path.abspath(candidate) != os.path.abspath(own_config_path):
-            return candidate
     return ""
 
 
