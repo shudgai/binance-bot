@@ -1397,12 +1397,45 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
     if not symbols:
         symbols = []
         try:
+            from core.exchange_client import exchange_market_data, convert_to_ccxt_symbol
+            ccxt_markets = exchange_market_data.markets
+            if not ccxt_markets:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if not loop.is_running():
+                        loop.run_until_complete(exchange_market_data.load_markets())
+                        ccxt_markets = exchange_market_data.markets
+                except Exception:
+                    pass
+            if not ccxt_markets:
+                try:
+                    import ccxt
+                    sync_exchange = ccxt.binance({'options': {'defaultType': 'future', 'fetchMarkets': ['linear']}})
+                    sync_exchange.load_markets()
+                    ccxt_markets = sync_exchange.markets
+                except Exception as e:
+                    print(f"[ATR Rank] Sync exchange load markets failed: {e}")
+            ccxt_markets = ccxt_markets or {}
+            
             candidates = []
             for t in ticker_map.values():
                 sym = t.get("symbol", "")
                 if sym.endswith("USDT") and "_" not in sym:
                     if blacklist and sym in blacklist:
                         continue
+                    # 確保該幣種存在於 CCXT 的可交易期貨清單中，避開 BZUSDT / CLUSDT 等商品期貨
+                    ccxt_sym = convert_to_ccxt_symbol(sym)
+                    ccxt_perp_sym = f"{ccxt_sym}:{sym[-4:]}"
+                    if ccxt_perp_sym not in ccxt_markets:
+                        continue
+                    
+                    market_info = ccxt_markets.get(ccxt_perp_sym, {})
+                    info_dict = market_info.get("info", {}) if isinstance(market_info, dict) else {}
+                    # 過濾非加密貨幣合約 (例如 underlyingType: COMMODITY, contractType: TRADIFI_PERPETUAL)
+                    if info_dict.get("underlyingType") == "COMMODITY" or "TRADIFI" in str(info_dict.get("contractType", "")):
+                        continue
+                        
                     q_vol = float(t.get("quoteVolume", 0.0) or 0.0)
                     # 確保交易量足夠大以避免小幣/土狗
                     if q_vol >= 15000000.0:
