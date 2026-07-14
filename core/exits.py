@@ -220,6 +220,7 @@ def update_trailing_stop(sym, current_price, is_long):
     breakeven_threshold = 0.006 if is_high_beta else 0.004
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
+    _hp_soft = s.get("highest_profit_pct", 0.0)
     if profit_pct > breakeven_threshold:
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
@@ -261,7 +262,6 @@ def update_trailing_stop(sym, current_price, is_long):
         # 0.15%，給真正在噴出的走勢一點呼吸空間，不要一根雜訊就洗出場；柱狀圖不再擴張
         # （動能停滯/盤整，代表這波可能要見頂了）就收緊到 0.05%，盡快把已經到手的獲利
         # 鎖住，不賭它會繼續漲。
-        _hp_soft = s["highest_profit_pct"]
         # Soft Trailing 啟動門檻拉高至 0.45%，給予利潤足夠的奔跑與震盪空間
         if 0.0045 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
@@ -935,3 +935,41 @@ async def check_exits(sym):
             logger.info(f"🛑 [Hard_Stop_Loss] {sym} 觸發硬停損線 {(_hard_sl_price if is_long else _hard_sl_price):.4f}，執行平倉")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_Stop_Loss]", is_stop_loss=True)
             return
+
+async def _attempt_forced_rescue(sym, s, is_long, p):
+    from core.symbol_profile import is_rescue_dca_disabled
+    if is_rescue_dca_disabled(sym):
+        logger.info(f"🚫 [攤平限制] {sym} 被配置為禁止自動攤平救援")
+        return False
+
+    if s.get("entry_count", 0) >= 2:
+        logger.info(f"🚫 [攤平限制] {sym} 已攤平過 (次數: {s.get('entry_count')})，不允許重複攤平")
+        return False
+
+    s["is_ordering"] = True
+    try:
+        cs = 'buy' if is_long else 'sell'
+        
+        # 接刀防呆保護：當 MACD 擴張或 RSI 急速惡化時，不進行攤平，而是照原停損計畫出場
+        macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
+        prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
+        rsi_now = s.get("current_rsi", 50.0)
+        rsi_prev = s.get("prev_rsi", rsi_now)
+        
+        is_falling_knife = (is_long and macd_hist < 0 and macd_hist < prev_macd_hist) or \
+                            (not is_long and macd_hist > 0 and macd_hist > prev_macd_hist) or \
+                            (is_long and rsi_now < rsi_prev) or \
+                            (not is_long and rsi_now > rsi_prev)
+        if is_falling_knife:
+            logger.info(f"🔪 [接刀保護] {sym} 即將停損，但走勢仍在急殺/急拉中（RSI:{rsi_prev:.1f}→{rsi_now:.1f}），不適合攤平，照計畫出場")
+            return False
+
+        from core.orders import execute_order
+        logger.info(f"🚑 [緊急攤平救援] {sym} 觸發攤平機制，新下單 0.2x 倉位以拉低成本均價，並觀察 60 秒...")
+        await execute_order(sym, cs, p, allocation_pct=0.20, is_rescue_dca=True)
+        s["last_rescue_time"] = time.time()
+        s["is_breakeven_locked"] = False
+        s["highest_profit_pct"] = 0.0
+    finally:
+        s["is_ordering"] = False
+    return True
