@@ -306,25 +306,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             if btc_macd_hist > 0 and btc_climbing:
                 logger.info(f"⚠️ [大盤共振參考] BTC 1H MACD 處於多頭動能擴張期，但允許小幣獨立做空")
 
-    # ── [2026-07-14 修正] 1m 短線順向確認 ──
-    # 只讀倒數第二根已收線 K 棒，避免當前 K 棒在同一分鐘內翻紅/翻黑而反覆否決訊號。
-    # 單根反色只能攔截一般訊號；完整共振且 >=25 分的 Route A 不應被這個單一雜訊否決。
-    # 豁免反轉與反手路由，因為這些策略本質就是摸底/接針/變盤反手。
-    if route not in ("Exhaustion_Entry", "Extreme_Reversal"):
-        if not is_last_closed_1m_aligned(s, side):
-            # 放寬：豁免強度從 25 降至 18（與 BTC_MOMENTUM_OVERRIDE_STRENGTH 對齊）
-            if has_strong_local_momentum_override(route, strength) or strength >= 18.0:
-                logger.info(
-                    f"⚡ [SHORT_TERM_OVERRIDE] {sym} Route A {side} 強度 {strength:.1f} >= 18，"
-                    "略過單根已收線 1m 反色 K 棒"
-                )
-            else:
-                candle_color = "陰線" if side == "buy" else "陽線"
-                logger.info(
-                    f"🛑 [短線順向過濾] {sym} 上一根已收線 1m K 線為{candle_color}，拒絕逆向"
-                    f"{'做多' if side == 'buy' else '做空'}"
-                )
-                return False
+
 
     # 若幣種被標記為完全禁入場，直接拒絕（管理員策略）
     if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):
