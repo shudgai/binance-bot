@@ -102,6 +102,18 @@ class TradeSignalTests(unittest.TestCase):
 
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
 
+    def test_route_a_allows_mild_macd_contraction_with_directional_candle(self):
+        sym = self._setup_ema20_pullback_state(
+            rsi=55.0, macd_line=-0.0058, macd_signal=-0.003,
+            prev_macd_line=-0.006, prev_macd_signal=-0.003,
+        )
+
+        side, strength, route = compute_signal_strength(sym)
+
+        self.assertEqual(side, "sell")
+        self.assertGreaterEqual(strength, 18.0)
+        self.assertEqual(route, "a")
+
     def test_trade_signal_triggers_breakout_reversal(self):
         sym = "XRPUSDT"
         init_states([sym])
@@ -163,6 +175,26 @@ class TradeSignalTests(unittest.TestCase):
 
         self.assertIsNone(side)
         self.assertEqual(strength, 0)
+
+    def test_route_a_allows_long_inside_sma200_neutral_buffer(self):
+        sym = self._setup_ema20_pullback_state(
+            rsi=55.0, macd_line=0.006, macd_signal=0.003,
+            prev_macd_line=0.0058, prev_macd_signal=0.003,
+        )
+        s = STATES[sym]
+        s.update({
+            "close_price": 100.0,
+            "ema20": 99.8,
+            "ema50": 99.5,
+            "sma200_15m": 100.4,
+            "ohlcv": [[0, 99.8, 100.2, 99.7, 100.0, 1000]] * 3,
+        })
+
+        side, strength, route = compute_signal_strength(sym)
+
+        self.assertEqual(side, "buy")
+        self.assertGreaterEqual(strength, 17.0)
+        self.assertEqual(route, "a")
 
     def test_automatic_reverse_closes_with_opposite_side_not_current_direction(self):
         # 使用者反映「常會有反向的情況發生」——實測 log 62 次 [CRITICAL_ERROR] 平倉方向

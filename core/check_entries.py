@@ -608,9 +608,9 @@ async def check_entries():
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        # 已收盤 K 棒的量能確認。24 分以上已有方向、動能等多重共振，
+        # 已收盤 K 棒的量能確認。17 分以上已有方向、動能等多重共振，
         # 量能門檻放寬至均量 45%；一般訊號仍需 55%~65%，避免無量假突破。
-        _strong_participation_strength = 24.0
+        _strong_participation_strength = 17.0
         _d_multiplier = 0.45 if strength >= _strong_participation_strength else (0.55 if _is_low_vol_ce else 0.65)
         if route not in ("Exhaustion_Entry", "Extreme_Reversal") and volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1

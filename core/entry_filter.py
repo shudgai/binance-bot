@@ -363,11 +363,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if not is_in_support_zone:
             _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 1.0
             _route_a_trend_override = (
-                route == "a" and strength >= 24.0
+                route == "a" and strength >= 17.0
                 # 強趨勢可離開下方支撐區進場，但仍禁止在布林帶
-                # 最上方 25% 追多，避免放寬後重新買在短線高點。
-                and _band_position <= 0.75
-                and s.get("current_rsi", 50.0) <= 65.0
+                # 最上方 15% 追多，避免放寬後重新買在短線高點。
+                and _band_position <= 0.85
+                and s.get("current_rsi", 50.0) <= 68.0
                 and s.get("macd_line", 0.0) > s.get("macd_signal", 0.0)
             )
             _route_b_momentum_override = (
@@ -401,11 +401,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         if not is_in_resistance_zone:
             _band_position = (cp - bb_lower) / _band_width if _band_width > 0 else 0.0
             _route_a_trend_override = (
-                route == "a" and strength >= 24.0
-                # 允許強空頭在中段提前進場，但下方 30% 仍禁止追空，
+                route == "a" and strength >= 17.0
+                # 允許強空頭在中段提前進場，但下方 15% 仍禁止追空，
                 # 避免剛開倉就遇到技術反彈。
-                and _band_position >= 0.30
-                and s.get("current_rsi", 50.0) >= 45.0
+                and _band_position >= 0.15
+                and s.get("current_rsi", 50.0) >= 40.0
                 and s.get("macd_line", 0.0) < s.get("macd_signal", 0.0)
             )
             _route_b_momentum_override = (

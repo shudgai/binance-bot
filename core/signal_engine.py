@@ -192,9 +192,10 @@ def compute_signal_strength(sym):
 
     is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
 
-    # Gate 0: SMA200 硬性守衛 (Hard Gate)，絕對不可豁免
-    sma200_hard_gate_long  = sma200 <= 0 or close > sma200
-    sma200_hard_gate_short = sma200 <= 0 or close < sma200
+    # Gate 0: SMA200 方向守衛。均線附近常因微小價差反覆切換方向，保留
+    # 0.5% 中性緩衝帶；超出緩衝的真正逆勢單仍禁止。
+    sma200_hard_gate_long  = sma200 <= 0 or close >= sma200 * 0.995
+    sma200_hard_gate_short = sma200 <= 0 or close <= sma200 * 1.005
 
     # [2026-07-14 修正C] 空單不再職予寬鬆模式豆免：實測所有幣種淨損益都是負的（除
     # DOGE/BCH/XRP），空單在 BTC 偵多目環境中役率極低。移除空單的 is_relaxed
@@ -230,10 +231,20 @@ def compute_signal_strength(sym):
     _macd_direction_short = macd_hist < 0 and prev_macd_hist < 0
     _macd_confirmed_long  = _macd_direction_long and macd_hist > prev_macd_hist
     _macd_confirmed_short = _macd_direction_short and macd_hist < prev_macd_hist
+    # 容許同方向動能小幅整理：只要仍保有前一讀數 85% 以上，且已有同向
+    # 收盤 K 棒，就視為趨勢仍有效。明顯收斂仍拒絕，避免追進衰竭段。
+    _macd_stable_long = (
+        _macd_direction_long and last_candle_long
+        and macd_hist >= prev_macd_hist * 0.85
+    )
+    _macd_stable_short = (
+        _macd_direction_short and last_candle_short
+        and abs(macd_hist) >= abs(prev_macd_hist) * 0.85
+    )
     _macd_turn_long = long_macd_cross and rsi >= 48.0
     _macd_turn_short = short_macd_cross and rsi <= 52.0
-    _route_a_macd_long = _macd_confirmed_long or _macd_turn_long
-    _route_a_macd_short = _macd_confirmed_short or _macd_turn_short
+    _route_a_macd_long = _macd_confirmed_long or _macd_stable_long or _macd_turn_long
+    _route_a_macd_short = _macd_confirmed_short or _macd_stable_short or _macd_turn_short
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
     # 多單：在寬鬆模式下仍需要 K 線方向確認（last_candle_long），不可完全豁免
