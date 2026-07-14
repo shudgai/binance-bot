@@ -542,9 +542,8 @@ async def check_exits(sym):
         s["early_direction_invalid_count"] = (
             int(s.get("early_direction_invalid_count", 0)) + 1 if _early_invalid else 0
         )
-        # [2026-07-14 修正] 從連續 2 輪降為 1 輪確認：實測在 MACD/RSI/K線三重訊號都成立時，
-        # 再等一輪（約 5~10 秒）只會讓虧損繼續擴大，未見減少誤砍。改為 1 輪立即退出。
-        if s["early_direction_invalid_count"] >= 1:
+        # [2026-07-14 修正] 恢復為連續 2 輪確認：1 輪確認太敏感易受雜訊誤判導致快速停損。
+        if s["early_direction_invalid_count"] >= 2:
             cs = "sell" if is_long else "buy"
             rev_side = "sell" if is_long else "buy"
             logger.info(f"🧭 [Early_Direction_Invalid] {sym} 開倉 {hold_sec:.0f}s 後逆向 {_early_adverse_atr:.2f}x ATR \n且 MACD/RSI/K線連續確認反向，退出並重新評估 {rev_side}")
@@ -561,9 +560,9 @@ async def check_exits(sym):
         # 等回本。拉高到 2.0x，只讓真正劇烈的逆勢（例如 MUSDT 那種閃崩）才觸發。
         # 最初 60 秒仍遵守盲區：只有 3 倍放量才允許急速逆勢提前砍倉。
         _rapid_volume_confirmed = vol_ratio > 3.0 if hold_sec < 60 else True
-        if profit_pct < 0 and _adverse_atr_mult >= 2.0 and _rapid_volume_confirmed:
+        if profit_pct < -0.005 and _adverse_atr_mult >= 3.5 and _rapid_volume_confirmed:
             cs = 'sell' if is_long else 'buy'
-            logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR，提早出場評估反手")
+            logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR (虧損: {profit_pct*100:.2f}%)，提早出場評估反手")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
             # 僅建立 5 分鐘有效的候選反手；check_entries 執行前會再次檢查
             # COOLDOWN、大盤方向、價格位置與 MACD，不在退出路徑重複判斷。

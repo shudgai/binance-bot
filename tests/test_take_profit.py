@@ -391,7 +391,7 @@ class TakeProfitTests(unittest.TestCase):
         s["first_entry_price"] = 100.0
         s["entry_count"] = 1
         s["last_entry_direction"] = "buy"
-        s["close_price"] = 98.9  # 逆勢 2.2 ATR，超過現行 2.0 ATR 門檻
+        s["close_price"] = 98.0  # 逆勢 4.0 ATR，大於 3.5 ATR 新門檻
         s["open_time"] = time.time() - 240
         s["last_entry_time"] = time.time() - 120
         s["last_entry_price"] = 100.0
@@ -439,8 +439,8 @@ class TakeProfitTests(unittest.TestCase):
 
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                # 由於我們將 early_direction_invalid_count 門檻降低為 >= 1
-                # 第一次 check_exits 就應該直接觸發平倉，無須呼叫兩次。
+                await check_exits(sym)
+                mock_close.assert_not_called()
                 await check_exits(sym)
                 mock_close.assert_called_once()
                 self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
@@ -468,7 +468,8 @@ class TakeProfitTests(unittest.TestCase):
 
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                # 由於 early_direction_invalid_count >= 1 門檻，第一次呼叫就應觸發平倉。
+                await check_exits(sym)
+                mock_close.assert_not_called()
                 await check_exits(sym)
                 mock_close.assert_called_once()
                 self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
@@ -519,10 +520,8 @@ class TakeProfitTests(unittest.TestCase):
         })
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                # 由於改為 1 輪確認即觸發，此處的 opposite sample 在第 1 次 check_exits 就應該直接觸發平倉。
                 await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
+                mock_close.assert_not_called()
         asyncio.run(run_check())
 
     def test_breakeven_lock_triggers_on_positive_peak(self):
