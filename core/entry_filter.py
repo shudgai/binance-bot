@@ -427,10 +427,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 logger.info(f"⚡ [SUPPORT_ZONE_OVERRIDE] {sym} Route B 強勢做多 ({strength:.1f}) 且 RSI {s.get('current_rsi', 50.0):.1f} 未過熱，允許突破進場")
             elif strength >= 18.0:
                 # ───【限價掛單機制：多單】───
-                # 當強訊號現價高於支撐區時，不直接拒絕，而是轉化為 pullback 限價掛單，掛在支撐上限
+                # 當強訊號現價高於支撐區時，轉化為 pullback 限價掛單。
+                # 低波動時直接掛在更划算的布林帶下軌 (bb_lower)，普通波動掛在支撐上限。
                 s["force_pullback_entry"] = True
-                s["close_price"] = support_zone_upper # 修改下單目標價為支撐上限
-                logger.info(f"🧲 [SUPPORT_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f} 偏高，轉化為限價單掛在支撐上限 {support_zone_upper:.6f}")
+                atr_history_v = s.get("atr_history", [])
+                atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
+                current_atr_v = s.get("current_atr", 0.0)
+                is_low_vol = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
+                s["close_price"] = bb_lower if (is_low_vol and bb_lower > 0) else support_zone_upper
+                logger.info(f"🧲 [SUPPORT_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f}，限價單掛在 {s['close_price']:.6f} ({'下軌' if is_low_vol else '支撐上限'})")
                 is_in_support_zone = True
             else:
                 distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
@@ -469,10 +474,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 logger.info(f"⚡ [RESISTANCE_ZONE_OVERRIDE] {sym} Route B 強勢做空 ({strength:.1f}) 且 RSI {s.get('current_rsi', 50.0):.1f} 未超賣，允許跌破進場")
             elif strength >= 18.0:
                 # ───【限價掛單機制：空單】───
-                # 當強訊號現價低於阻力區時，不直接拒絕，而是轉化為 pullback 限價掛單，掛在阻力下限
+                # 當強訊號現價低於阻力區時，轉化為 pullback 限價掛單。
+                # 低波動時直接掛在更划算的布林帶上軌 (bb_upper)，普通波動掛在阻力下限。
                 s["force_pullback_entry"] = True
-                s["close_price"] = resistance_zone_lower # 修改下單目標價為阻力下限
-                logger.info(f"🧲 [RESISTANCE_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f} 偏低，轉化為限價單掛在阻力下限 {resistance_zone_lower:.6f}")
+                atr_history_v = s.get("atr_history", [])
+                atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
+                current_atr_v = s.get("current_atr", 0.0)
+                is_low_vol = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
+                s["close_price"] = bb_upper if (is_low_vol and bb_upper > 0) else resistance_zone_lower
+                logger.info(f"🧲 [RESISTANCE_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f}，限價單掛在 {s['close_price']:.6f} ({'上軌' if is_low_vol else '阻力下限'})")
                 is_in_resistance_zone = True
             else:
                 distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
@@ -599,7 +609,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 使用者進一步指示：只放寬空單這邊（跟 BTC 4H+1H 熊市大方向一致，風險比多單
     # 逆勢低），賣出門檻再收到 50（中性線）；多單維持 45 不動，因為多單本來就是在
     # 逆著目前 BTC 熊市大方向，不應該一起放寬。
-    _mtf_sell_rsi_override = 50.0
+    # 使用者要求放寬：逆勢做空的 RSI 門檻降至 42.0 (原 50.0)，增加窄幅波動中的限價掛單機會
+    _mtf_sell_rsi_override = 42.0
     _mtf_buy_rsi_override = 45.0
     if ema20_15m > 0 and ema50_15m > 0 and route not in ("Extreme_Reversal", "Exhaustion_Entry"):
         if side == 'sell' and ema20_15m > ema50_15m:

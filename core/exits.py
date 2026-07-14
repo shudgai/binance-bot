@@ -262,14 +262,23 @@ def update_trailing_stop(sym, current_price, is_long):
         # （動能停滯/盤整，代表這波可能要見頂了）就收緊到 0.05%，盡快把已經到手的獲利
         # 鎖住，不賭它會繼續漲。
         _hp_soft = s["highest_profit_pct"]
-        # Soft Trailing 啟動門檻 0.20%
-        if 0.0020 <= _hp_soft:
+        # Soft Trailing 啟動門檻拉高至 0.45%，給予利潤足夠的奔跑與震盪空間
+        if 0.0045 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
+            
+            # 低波動防護：當前波動小於平均 ATR 時，放寬回吐容忍度，防止雜訊抖動出場
+            atr_history_v = s.get("atr_history", [])
+            atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
+            is_low_vol_exit = (atr_val <= atr_24h_avg_v)
+
             if not _soft_momentum_climbing:
-                _soft_tolerance = 0.0008
+                # 盤整/轉向時收緊，但低波動時仍需 0.16% 緩衝防洗，普通波動 0.08%
+                _soft_tolerance = 0.0016 if is_low_vol_exit else 0.0008
             else:
-                _soft_tolerance = 0.0015
+                # 動能推進中放寬：低波動 0.25% 緩衝，普通波動 0.15%
+                _soft_tolerance = 0.0025 if is_low_vol_exit else 0.0015
+                
             # 保本低限：進場價 + 雙邊費用 + 0.05% 安全微利
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
             # 獲利回吐平倉點，硬性要求不可低於保本低限 _soft_floor，確保不虧損
@@ -337,15 +346,21 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        _hp_soft = s["highest_profit_pct"]
-        # 空單對稱版：Soft Trailing 啟動門檻 0.20%
-        if 0.0020 <= _hp_soft:
+        # 空單對稱版：Soft Trailing 啟動門檻拉高至 0.45%
+        if 0.0045 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
+            
+            # 低波動防護：當前波動小於平均 ATR 時，放寬回吐容忍度，防止雜訊抖動出場
+            atr_history_v = s.get("atr_history", [])
+            atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
+            is_low_vol_exit = (atr_val <= atr_24h_avg_v)
+
             if not _soft_momentum_climbing:
-                _soft_tolerance = 0.0008
+                _soft_tolerance = 0.0016 if is_low_vol_exit else 0.0008
             else:
-                _soft_tolerance = 0.0015
+                _soft_tolerance = 0.0025 if is_low_vol_exit else 0.0015
+
             # 保本高限：進場價 - 雙邊費用 - 0.05% 安全微利
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
             # 獲利回吐平倉點，硬性要求不可高於保本高限 _soft_ceiling，確保不虧損
