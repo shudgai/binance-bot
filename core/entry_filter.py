@@ -238,6 +238,14 @@ def is_entry_pin_safe(sym, side):
     return True
 
 
+BTC_MOMENTUM_OVERRIDE_STRENGTH = 25.0
+
+
+def has_strong_local_momentum_override(route, strength):
+    """Only a fully aligned, very strong Route A signal may ignore BTC 1H lag."""
+    return route == "a" and float(strength or 0.0) >= BTC_MOMENTUM_OVERRIDE_STRENGTH
+
+
 def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = ctx.STATES[sym]
     cp = s["close_price"]
@@ -281,8 +289,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 return False
             # [2026-07-14 新增] 大盤 1H MACD 負向擴張時禁做多
             if btc_macd_hist < 0 and not btc_climbing:
-                logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於空頭動能擴張期，拒絕小幣做多")
-                return False
+                if has_strong_local_momentum_override(route, strength):
+                    logger.info(
+                        f"⚡ [BTC_MOMENTUM_OVERRIDE] {sym} Route A 多單強度 {strength:.1f} "
+                        f">= {BTC_MOMENTUM_OVERRIDE_STRENGTH:.0f}，幣種自身完整共振，"
+                        "略過 BTC 1H 空頭 MACD 單一阻擋"
+                    )
+                else:
+                    logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於空頭動能擴張期，拒絕小幣做多")
+                    return False
             
         if side == "sell":
             if btc_pumping:
@@ -290,8 +305,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                 return False
             # [2026-07-14 新增] 大盤 1H MACD 正向擴張時禁做空
             if btc_macd_hist > 0 and btc_climbing:
-                logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於多頭動能擴張期，拒絕小幣做空")
-                return False
+                if has_strong_local_momentum_override(route, strength):
+                    logger.info(
+                        f"⚡ [BTC_MOMENTUM_OVERRIDE] {sym} Route A 空單強度 {strength:.1f} "
+                        f">= {BTC_MOMENTUM_OVERRIDE_STRENGTH:.0f}，幣種自身完整共振，"
+                        "略過 BTC 1H 多頭 MACD 單一阻擋"
+                    )
+                else:
+                    logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於多頭動能擴張期，拒絕小幣做空")
+                    return False
 
     # ── [2026-07-14 新增] 1m 短線順向確認 ──
     # 確保絕對不買在下跌途中的 1m K 線，也絕對不空在反彈上漲的 1m K 線。

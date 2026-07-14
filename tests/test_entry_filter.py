@@ -6,10 +6,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
-from core.entry_filter import is_entry_pin_safe, get_entry_strictness_profile, is_entry_allowed
+from core.entry_filter import (
+    get_entry_strictness_profile,
+    has_strong_local_momentum_override,
+    is_entry_allowed,
+    is_entry_pin_safe,
+)
 
 
 class EntryFilterTests(unittest.TestCase):
+    def test_only_very_strong_route_a_can_override_btc_1h_momentum(self):
+        self.assertTrue(has_strong_local_momentum_override("a", 25.0))
+        self.assertTrue(has_strong_local_momentum_override("a", 29.5))
+        self.assertFalse(has_strong_local_momentum_override("a", 24.9))
+        self.assertFalse(has_strong_local_momentum_override("Extreme_Reversal", 29.5))
+        self.assertFalse(has_strong_local_momentum_override("Exhaustion_Entry", 29.5))
+
     def test_bad_pinbar_rejects_long_entry(self):
         from core import config
         original_mode = config.ENTRY_STRICTNESS_MODE
