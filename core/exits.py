@@ -262,25 +262,23 @@ def update_trailing_stop(sym, current_price, is_long):
         # （動能停滯/盤整，代表這波可能要見頂了）就收緊到 0.05%，盡快把已經到手的獲利
         # 鎖住，不賭它會繼續漲。
         _hp_soft = s["highest_profit_pct"]
-        # Soft Trailing 啟動門檻維持 0.20%：原代碼注釋已驗證此值安全。
-        # 若門檻 < soft_floor(0.15%)，啟動瞬間 SL 高於現價，立刻誤砍！
-        # soft_floor = ROUND_TRIP_FEE_PCT + 0.0005 = 0.15%，因此最低安全門檻 = 0.15%，
-        # 0.20% 留有 0.05% 緩衝，已實測確認不會誤砍。
+        # Soft Trailing 啟動門檻 0.20%
         if 0.0020 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
-            # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
             if not _soft_momentum_climbing:
-                # [2026-07-14 修正D] 容忍度從 0.05% 收緊到 0.08%：
-                # 0.08% 是覆蓋手續費後的合理緩衝區間。
                 _soft_tolerance = 0.0008
             else:
                 _soft_tolerance = 0.0015
+            # 保本低限：進場價 + 雙邊費用 + 0.05% 安全微利
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
+            # 獲利回吐平倉點，硬性要求不可低於保本低限 _soft_floor，確保不虧損
             _soft_sl = max(s["trailing_highest"] * (1.0 - _soft_tolerance), _soft_floor)
             trail_sl = max(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_floor
+            # 強制將目前的移動停損更新為保本以上的價格
+            s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0.0), _soft_sl)
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 1.001
@@ -339,23 +337,25 @@ def update_trailing_stop(sym, current_price, is_long):
         if trail_sl == 0.0:
             trail_sl = float('inf')
 
-        # 空單對稱版，啟動門檻與動態回吐容忍度同理（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
-        # 空單對稱版：Soft Trailing 啟動同樣維持 0.20%，理由同多單側。
+        # 空單對稱版：Soft Trailing 啟動門檻 0.20%
         if 0.0020 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
-            # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
             if not _soft_momentum_climbing:
-                # [2026-07-14 修正D] 空單對稱版：容忍度從 0.05% 收緊到 0.08%
                 _soft_tolerance = 0.0008
             else:
                 _soft_tolerance = 0.0015
+            # 保本高限：進場價 - 雙邊費用 - 0.05% 安全微利
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
+            # 獲利回吐平倉點，硬性要求不可高於保本高限 _soft_ceiling，確保不虧損
             _soft_sl = min(s["trailing_lowest"] * (1.0 + _soft_tolerance), _soft_ceiling)
             trail_sl = min(trail_sl, _soft_sl)
             s["soft_trailing_armed"] = True
             s["soft_trailing_profit_floor"] = _soft_ceiling
+            # 強制將目前的移動停損更新為保本高限以下的價格（空單需要小於保本價）
+            ts_price_val = s.get("trailing_stop_price", float('inf'))
+            s["trailing_stop_price"] = min(ts_price_val if ts_price_val > 0 else float('inf'), _soft_sl)
 
         if profit_lock_atr > 0 and profit_atr_multiple >= profit_lock_atr and profit_pct >= min_trailing_profit:
             locked_sl = avg_price * 0.999
@@ -635,10 +635,11 @@ async def check_exits(sym):
         _baseline_volumes = [float(c[5] or 0.0) for c in _completed[-21:-1] if float(c[5] or 0.0) > 0]
         _baseline_vol = float(np.mean(_baseline_volumes)) if _baseline_volumes else 0.0
         _completed_vol_ratio = _latest_completed_vol / _baseline_vol if _baseline_vol > 0 else 1.0
+        # 優化量縮門檻：獲利達 0.30% 且利潤仍保持在高位，但量縮至均量 70% 以下，觸發高點鎖利
         _peak_volume_contracting = (
-            _peak_profit >= 0.005
-            and profit_pct >= max(0.004, _peak_profit * 0.85)
-            and _completed_vol_ratio <= 0.65
+            _peak_profit >= 0.003
+            and profit_pct >= max(0.0025, _peak_profit * 0.85)
+            and _completed_vol_ratio <= 0.70
         )
 
     s["peak_volume_contraction_count"] = (
