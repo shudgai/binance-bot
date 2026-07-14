@@ -551,8 +551,8 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: RSI/MACD 仍偏強，阻擋做空")
                     continue
 
-        # C2. 近高低點動能背離：不要求價格剛好創新高，避免 SUI 類型的高位 RSI 急跌追價。
-        if route == "b" and has_near_extreme_momentum_divergence(s, side, cp):
+        # C2. 近高低點動能背離：推廣到所有路由（包含順勢、回測及反轉），只要動能已背離，取消進場
+        if has_near_extreme_momentum_divergence(s, side, cp):
             logger.info(f"🛑 [NearExtreme_Divergence] {sym} {side} 價格仍貼近近期極值，但 RSI 動能已背離，取消進場")
             set_entry_diagnosis(f"{sym}: 近極值動能背離，取消進場")
             continue

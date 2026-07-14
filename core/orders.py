@@ -1953,7 +1953,32 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     logger.info(f"⚠️ [開倉錯誤後核對失敗] {sym}: {sync_err}")
                 _prior_qty_ref = entry_prior_qty if 'entry_prior_qty' in locals() else float(s.get("qty", 0.0) or 0.0)
                 if abs(real_qty) > 0.000001 and abs(real_qty - _prior_qty_ref) > 0.000001:
-                    logger.info(f"🚨🚨 [開倉錯誤後核對] {sym} 逾時錯誤但交易所實際已有新倉位 {real_qty}（先前 {_prior_qty_ref}），並非真的沒送出！請人工確認，本地狀態尚未同步這筆。")
+                    logger.info(f"🚨🚨 [開倉錯誤後核對] {sym} 逾時錯誤但交易所實際已有新倉位 {real_qty}（先前 {_prior_qty_ref}），並非真的沒送出！機器人現在自動接管此倉位監控並同步狀態。")
+                    s["qty"] = real_qty
+                    entry_p = 0.0
+                    for p_info in positions:
+                        p_sym = p_info.get('symbol', '').split(':')[0].replace('/', '')
+                        if p_sym == sym:
+                            entry_p = float(p_info.get('entryPrice', p_info.get('avg_price', 0.0)) or 0.0)
+                            break
+                    if entry_p <= 0.0:
+                        entry_p = float(s.get("close_price", 0.0))
+                    
+                    s["avg_price"] = entry_p
+                    s["first_entry_price"] = entry_p
+                    s["last_entry_price"] = entry_p
+                    s["last_entry_direction"] = "buy" if real_qty > 0 else "sell"
+                    s["restored_from_exchange"] = True
+                    s["open_time"] = time.time()
+                    s["entry_count"] = max(s.get("entry_count", 0) + 1, 1)
+                    s["is_breakeven_locked"] = False
+                    s["highest_profit_pct"] = 0.0
+                    
+                    # 隨即設定交易所退出掛單
+                    try:
+                        await _replace_exchange_exit_orders(sym)
+                    except Exception as se:
+                        logger.info(f"🚨 [交易所退出單掛單失敗] {sym}: {se}")
                 else:
                     s["order_fail_cooldown_until"] = time.time() + 60
                     logger.info(f"⏳ [開倉錯誤冷卻] {sym} 確認交易所端真的沒有新倉位，暫停 60 秒後才會再考慮進場，避免重複撞同一個逾時問題")

@@ -268,7 +268,7 @@ def update_trailing_stop(sym, current_price, is_long):
         # 若門檻 < soft_floor(0.15%)，啟動瞬間 SL 高於現價，立刻誤砍！
         # soft_floor = ROUND_TRIP_FEE_PCT + 0.0005 = 0.15%，因此最低安全門檻 = 0.15%，
         # 0.20% 留有 0.05% 緩衝，已實測確認不會誤砍。
-        if 0.0020 <= _hp_soft < breakeven_threshold:
+        if 0.0020 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
             # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
@@ -344,7 +344,7 @@ def update_trailing_stop(sym, current_price, is_long):
         # 空單對稱版，啟動門檻與動態回吐容忍度同理（見多單那側的說明）。
         _hp_soft = s["highest_profit_pct"]
         # 空單對稱版：Soft Trailing 啟動同樣維持 0.20%，理由同多單側。
-        if 0.0020 <= _hp_soft < breakeven_threshold:
+        if 0.0020 <= _hp_soft:
             _soft_macd_now, _soft_macd_prev = _macd_vals(s)
             _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
             # 除了開錯方向(動能反轉/衰退)之外，其他交易等利潤更高再移動停利平倉
