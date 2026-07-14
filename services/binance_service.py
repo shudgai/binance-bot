@@ -1355,25 +1355,121 @@ def get_klines(symbol: str, interval: str, limit: int):
     _kline_cache[cache_key] = (now, result)
     return result
 
-def get_1h_volatility(symbol: str):
+def _ema_series(values, period):
+    """Small dependency-free EMA helper used by the market radar."""
+    values = np.asarray(values, dtype=float)
+    if values.size == 0:
+        return values
+    alpha = 2.0 / (period + 1.0)
+    result = np.empty(values.size, dtype=float)
+    result[0] = values[0]
+    for idx in range(1, values.size):
+        result[idx] = alpha * values[idx] + (1.0 - alpha) * result[idx - 1]
+    return result
+
+
+def calculate_entry_readiness(klines):
+    """Score how closely 15m market structure matches the live Route-A entry gates."""
+    if not klines or len(klines) < 55:
+        return {"score": 0.0, "direction": "none", "long_score": 0.0, "short_score": 0.0}
+
+    # Binance includes the currently forming candle at the end; selection, like entry,
+    # must use only completed candles to avoid ranking a temporary intrabar move.
+    completed = klines[:-1]
+    closes = np.asarray([float(k[4]) for k in completed], dtype=float)
+    opens = np.asarray([float(k[1]) for k in completed], dtype=float)
+    if closes.size < 54 or np.any(closes <= 0):
+        return {"score": 0.0, "direction": "none", "long_score": 0.0, "short_score": 0.0}
+
+    ema20 = _ema_series(closes, 20)[-1]
+    ema50 = _ema_series(closes, 50)[-1]
+    ema12_series = _ema_series(closes, 12)
+    ema26_series = _ema_series(closes, 26)
+    macd_series = ema12_series - ema26_series
+    signal_series = _ema_series(macd_series, 9)
+    hist = float(macd_series[-1] - signal_series[-1])
+    prev_hist = float(macd_series[-2] - signal_series[-2])
+
+    deltas = np.diff(closes[-15:])
+    avg_gain = float(np.mean(np.clip(deltas, 0, None)))
+    avg_loss = float(np.mean(np.clip(-deltas, 0, None)))
+    if avg_loss <= 1e-12:
+        rsi = 99.0 if avg_gain > 0 else 50.0
+    else:
+        rsi = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+
+    bb_window = closes[-20:]
+    bb_mid = float(np.mean(bb_window))
+    bb_std = float(np.std(bb_window))
+    bb_low, bb_up = bb_mid - 2.0 * bb_std, bb_mid + 2.0 * bb_std
+    band_width = max(bb_up - bb_low, 1e-12)
+    band_position = (float(closes[-1]) - bb_low) / band_width
+    sma200 = float(np.mean(closes[-200:])) if closes.size >= 200 else 0.0
+
+    last_bullish = bool(closes[-1] > opens[-1])
+    last_bearish = bool(closes[-1] < opens[-1])
+    macd_long = hist > 0 and (prev_hist <= 0 or hist >= prev_hist * 0.85)
+    macd_short = hist < 0 and (prev_hist >= 0 or abs(hist) >= abs(prev_hist) * 0.85)
+    sma_long = sma200 <= 0 or closes[-1] >= sma200 * 0.995
+    sma_short = sma200 <= 0 or closes[-1] <= sma200 * 1.005
+
+    # Same families of checks as Route A. A weighted score is used instead of
+    # duplicating hard trade decisions here; final entry validation remains authoritative.
+    long_score = (
+        0.25 * bool(closes[-1] > ema20 and closes[-1] > ema50)
+        + 0.25 * bool(macd_long)
+        + 0.15 * bool(25.0 < rsi <= 68.0)
+        + 0.15 * last_bullish
+        + 0.10 * bool(band_position <= 0.85)
+        + 0.10 * bool(sma_long)
+    )
+    short_score = (
+        0.25 * bool(closes[-1] < ema20 and closes[-1] < ema50)
+        + 0.25 * bool(macd_short)
+        + 0.15 * bool(40.0 <= rsi < 75.0)
+        + 0.15 * last_bearish
+        + 0.10 * bool(band_position >= 0.15)
+        + 0.10 * bool(sma_short)
+    )
+    direction = "long" if long_score >= short_score else "short"
+    score = max(long_score, short_score)
+    return {
+        "score": round(float(score), 4),
+        "direction": direction if score >= 0.5 else "none",
+        "long_score": round(float(long_score), 4),
+        "short_score": round(float(short_score), 4),
+        "rsi": round(float(rsi), 2),
+        "band_position": round(float(band_position), 4),
+    }
+
+
+def get_1h_market_features(symbol: str):
     try:
-        klines = market_client.futures_klines(symbol=symbol, interval='15m', limit=4)
+        # One request supplies both 1h movement and the EMA/MACD/RSI/SMA readiness
+        # inputs, avoiding an additional API call per radar candidate.
+        klines = market_client.futures_klines(symbol=symbol, interval='15m', limit=205)
         if not klines:
-            return symbol, 0
-        highs = [float(k[2]) for k in klines]
-        lows = [float(k[3]) for k in klines]
-        vols = [float(k[7]) for k in klines] 
+            return symbol, 0.0, calculate_entry_readiness([])
+        recent = klines[-5:-1] if len(klines) >= 5 else klines[:-1]
+        highs = [float(k[2]) for k in recent]
+        lows = [float(k[3]) for k in recent]
+        vols = [float(k[7]) for k in recent]
 
         h = max(highs)
         l = min(lows)
         q_vol = sum(vols)
-        
+        volatility = 0.0
         if l > 0 and q_vol > 1_000_000:
             volatility = ((h - l) / l) * 100
-            return symbol, volatility
+        return symbol, volatility, calculate_entry_readiness(klines)
     except:
         pass
-    return symbol, 0
+    return symbol, 0.0, calculate_entry_readiness([])
+
+
+def get_1h_volatility(symbol: str):
+    symbol, volatility, _ = get_1h_market_features(symbol)
+    return symbol, volatility
 
 _atr_rankings_cache = {}
 
@@ -1471,7 +1567,7 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
             atr = sum(trs[-14:]) / min(len(trs), 14)
             price = float(klines[-1][4])
             atr_pct = round(atr / price * 100, 3) if price > 0 else 0.0
-            _, one_h_vol = get_1h_volatility(sym)
+            _, one_h_vol, readiness = get_1h_market_features(sym)
             ticker = ticker_map.get(sym, {})
             try:
                 change_pct = float(ticker.get("priceChangePercent", 0.0) or 0.0)
@@ -1479,11 +1575,18 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
             except (TypeError, ValueError):
                 change_pct = 0.0
                 q_vol = 0.0
-            # Score favors coins that are moving now, but does not reward runaway 1h spikes.
+            # Market quality plus live entry readiness. This keeps ATR selection aligned
+            # with the actual entry engine instead of choosing yesterday's volatile coin.
             one_h_component = min(max(one_h_vol, 0.0), 2.5) / 2.5
             atr_component = min(max(atr_pct, 0.0), 6.0) / 6.0
             volume_component = min(q_vol / 100_000_000, 1.0)
-            score = atr_component * 0.45 + one_h_component * 0.40 + volume_component * 0.15
+            readiness_component = float(readiness.get("score", 0.0) or 0.0)
+            score = (
+                atr_component * 0.25
+                + one_h_component * 0.20
+                + volume_component * 0.10
+                + readiness_component * 0.45
+            )
             ranked.append({
                 "symbol": sym,
                 "atr_pct": atr_pct,
@@ -1491,6 +1594,10 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
                 "one_h_vol_pct": round(one_h_vol, 3),
                 "change_pct": round(change_pct, 3),
                 "q_vol": q_vol,
+                "entry_readiness_score": round(readiness_component, 4),
+                "entry_direction": readiness.get("direction", "none"),
+                "entry_long_score": readiness.get("long_score", 0.0),
+                "entry_short_score": readiness.get("short_score", 0.0),
                 "momentum_score": round(score, 4),
             })
         except Exception as e:

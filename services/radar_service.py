@@ -39,6 +39,17 @@ def is_strict_radar_eligible(row: dict) -> bool:
     )
 
 
+def prioritize_entry_ready(rows):
+    """Keep market eligibility stable while ranking actionable structures first."""
+    ready = [
+        row for row in rows
+        if row.get("entry_direction", "none") in ("long", "short")
+        and float(row.get("entry_readiness_score", 0.0) or 0.0) >= 0.5
+    ]
+    waiting = [row for row in rows if row not in ready]
+    return ready + waiting
+
+
 def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:
     """
     根據 ATR%、單價、排名，AI 輔助計算當期最佳個性參數。
@@ -323,7 +334,7 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     clean_blacklist()
     # 全市場動態掃描 (無白名單限制)
     _, ranking = get_atr_ranked_coins(symbols=None, limit=50, blacklist=BLACKLIST)
-    eligible = [r for r in ranking if is_strict_radar_eligible(r)]
+    eligible = prioritize_entry_ready([r for r in ranking if is_strict_radar_eligible(r)])
     # 先取完全符合動能區間者；不足 12 檔時，從有效排名補足。
     selected_rows = list(eligible[:RADAR_SELECT_COUNT])
     selected_symbols = {r["symbol"] for r in selected_rows}
@@ -370,6 +381,8 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
             "_radar_strict_eligible": strict_now,
             "_radar_confirmations": confirmations,
             "_radar_candidate_since": first_seen,
+            "_radar_entry_readiness": float(row.get("entry_readiness_score", 0.0) or 0.0),
+            "_radar_entry_direction": row.get("entry_direction", "none"),
             "_trade_eligible": trade_eligible,
             "_trade_eligibility_reason": reason,
         })

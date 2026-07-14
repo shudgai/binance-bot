@@ -239,10 +239,12 @@ def api_radar_scan():
 def api_radar_atr_rank():
     try:
         from services.binance_service import get_atr_ranked_coins
-        from services.radar_service import BLACKLIST, is_strict_radar_eligible
-        scan_pool = [s for s in ATR_ELIGIBLE_SYMBOLS if s not in BLACKLIST]
-        _, full_ranking = get_atr_ranked_coins(scan_pool, limit=len(scan_pool))
-        strict_rows = [row for row in full_ranking if is_strict_radar_eligible(row)]
+        from services.radar_service import BLACKLIST, is_strict_radar_eligible, prioritize_entry_ready
+        # 與自動雷達使用同一個幣安全市場來源，不再讓狀態頁只掃舊白名單。
+        _, full_ranking = get_atr_ranked_coins(symbols=None, limit=50, blacklist=BLACKLIST)
+        strict_rows = prioritize_entry_ready(
+            [row for row in full_ranking if is_strict_radar_eligible(row)]
+        )
         selected = [row["symbol"] for row in strict_rows[:RADAR_SELECT_COUNT]]
         return {"success": True, "selected": selected, "ranking": full_ranking,
                 "eligible_ranking": strict_rows}
