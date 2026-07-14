@@ -406,14 +406,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             elif strength >= 18.0:
                 # ───【限價掛單機制：多單】───
                 # 當強訊號現價高於支撐區時，轉化為 pullback 限價掛單。
-                # 低波動時直接掛在更划算的布林帶下軌 (bb_lower)，普通波動掛在支撐上限。
+                # 低波動時掛在支撐區的中間點，普通波動掛在支撐上限。
                 s["force_pullback_entry"] = True
                 atr_history_v = s.get("atr_history", [])
                 atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
                 current_atr_v = s.get("current_atr", 0.0)
                 is_low_vol = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
-                s["close_price"] = bb_lower if (is_low_vol and bb_lower > 0) else support_zone_upper
-                logger.info(f"🧲 [SUPPORT_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f}，限價單掛在 {s['close_price']:.6f} ({'下軌' if is_low_vol else '支撐上限'})")
+                support_zone_middle = bb_lower + _band_width * (zone_ratio / 2.0) if _band_width > 0 else bb_lower * (1 + tol / 2.0)
+                s["close_price"] = support_zone_middle if (is_low_vol and bb_lower > 0) else support_zone_upper
+                logger.info(f"🧲 [SUPPORT_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f}，限價單掛在 {s['close_price']:.6f} ({'支撐區中間點' if is_low_vol else '支撐上限'})")
                 is_in_support_zone = True
             else:
                 distance_to_support = (cp - bb_lower) / bb_lower if bb_lower > 0 else 0
@@ -453,14 +454,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             elif strength >= 18.0:
                 # ───【限價掛單機制：空單】───
                 # 當強訊號現價低於阻力區時，轉化為 pullback 限價掛單。
-                # 低波動時直接掛在更划算的布林帶上軌 (bb_upper)，普通波動掛在阻力下限。
+                # 低波動時掛在阻力區的中間點，普通波動掛在阻力下限。
                 s["force_pullback_entry"] = True
                 atr_history_v = s.get("atr_history", [])
                 atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
                 current_atr_v = s.get("current_atr", 0.0)
                 is_low_vol = (atr_24h_avg_v > 0 and current_atr_v <= atr_24h_avg_v)
-                s["close_price"] = bb_upper if (is_low_vol and bb_upper > 0) else resistance_zone_lower
-                logger.info(f"🧲 [RESISTANCE_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f}，限價單掛在 {s['close_price']:.6f} ({'上軌' if is_low_vol else '阻力下限'})")
+                resistance_zone_middle = bb_upper - _band_width * (zone_ratio / 2.0) if _band_width > 0 else bb_upper * (1 - tol / 2.0)
+                s["close_price"] = resistance_zone_middle if (is_low_vol and bb_upper > 0) else resistance_zone_lower
+                logger.info(f"🧲 [RESISTANCE_ZONE_LIMIT_CONVERT] {sym} 強度 {strength:.1f}，現價 {cp:.6f}，限價單掛在 {s['close_price']:.6f} ({'阻力區中間點' if is_low_vol else '阻力下限'})")
                 is_in_resistance_zone = True
             else:
                 distance_to_resistance = (bb_upper - cp) / bb_upper if bb_upper > 0 else 0
