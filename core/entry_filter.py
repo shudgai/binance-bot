@@ -246,6 +246,20 @@ def has_strong_local_momentum_override(route, strength):
     return route == "a" and float(strength or 0.0) >= BTC_MOMENTUM_OVERRIDE_STRENGTH
 
 
+def is_last_closed_1m_aligned(state, side):
+    """Use the last *closed* 1m candle; the live candle is too noisy for a hard gate."""
+    candles = state.get("ohlcv", [])
+    if len(candles) < 2:
+        return True
+    last_closed = candles[-2]
+    open_price, close_price = float(last_closed[1]), float(last_closed[4])
+    if side == "buy":
+        return close_price >= open_price
+    if side == "sell":
+        return close_price <= open_price
+    return False
+
+
 def is_entry_allowed(sym, side, route="a", strength=0.0):
     s = ctx.STATES[sym]
     cp = s["close_price"]
@@ -315,19 +329,23 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
                     logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於多頭動能擴張期，拒絕小幣做空")
                     return False
 
-    # ── [2026-07-14 新增] 1m 短線順向確認 ──
-    # 確保絕對不買在下跌途中的 1m K 線，也絕對不空在反彈上漲的 1m K 線。
+    # ── [2026-07-14 修正] 1m 短線順向確認 ──
+    # 只讀倒數第二根已收線 K 棒，避免當前 K 棒在同一分鐘內翻紅/翻黑而反覆否決訊號。
+    # 單根反色只能攔截一般訊號；完整共振且 >=25 分的 Route A 不應被這個單一雜訊否決。
     # 豁免反轉與反手路由，因為這些策略本質就是摸底/接針/變盤反手。
     if route not in ("Exhaustion_Entry", "Extreme_Reversal"):
-        s_ohlcv = s.get("ohlcv", [])
-        if len(s_ohlcv) >= 1:
-            last_1m = s_ohlcv[-1]
-            o_1m, c_1m = float(last_1m[1]), float(last_1m[4])
-            if side == "buy" and c_1m < o_1m:
-                logger.info(f"🛑 [短線順向過濾] {sym} 最新 1m K 線為陰線，拒絕逆向做多")
-                return False
-            if side == "sell" and c_1m > o_1m:
-                logger.info(f"🛑 [短線順向過濾] {sym} 最新 1m K 線為陽線，拒絕逆向做空")
+        if not is_last_closed_1m_aligned(s, side):
+            if has_strong_local_momentum_override(route, strength):
+                logger.info(
+                    f"⚡ [SHORT_TERM_OVERRIDE] {sym} Route A {side} 強度 {strength:.1f}，"
+                    "略過單根已收線 1m 反色 K 棒"
+                )
+            else:
+                candle_color = "陰線" if side == "buy" else "陽線"
+                logger.info(
+                    f"🛑 [短線順向過濾] {sym} 上一根已收線 1m K 線為{candle_color}，拒絕逆向"
+                    f"{'做多' if side == 'buy' else '做空'}"
+                )
                 return False
 
     # 若幣種被標記為完全禁入場，直接拒絕（管理員策略）

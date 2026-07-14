@@ -11,10 +11,21 @@ from core.entry_filter import (
     has_strong_local_momentum_override,
     is_entry_allowed,
     is_entry_pin_safe,
+    is_last_closed_1m_aligned,
 )
 
 
 class EntryFilterTests(unittest.TestCase):
+    def test_short_term_direction_uses_closed_not_live_candle(self):
+        state = {
+            "ohlcv": [
+                [1, 100.0, 101.0, 98.0, 99.0, 1000.0],  # 已收線陰線
+                [2, 99.0, 102.0, 98.0, 101.0, 100.0],  # 未收線陽線
+            ]
+        }
+        self.assertTrue(is_last_closed_1m_aligned(state, "sell"))
+        self.assertFalse(is_last_closed_1m_aligned(state, "buy"))
+
     def test_only_very_strong_route_a_can_override_btc_1h_momentum(self):
         self.assertTrue(has_strong_local_momentum_override("a", 25.0))
         self.assertTrue(has_strong_local_momentum_override("a", 29.5))

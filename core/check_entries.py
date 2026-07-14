@@ -179,21 +179,22 @@ def detect_divergence(sym):
 
 
 def has_near_extreme_momentum_divergence(s, side, price, price_tolerance=0.0015, rsi_drop=7.0):
-    """偵測接近高低點、但 RSI 已明顯轉弱的隱性背離。"""
+    """以已收線價格與 RSI 偵測背離，避免未收線數值在同分鐘內製造假背離。"""
     candles = s.get("ohlcv", [])
     rsi_history = s.get("rsi_history", [])
     if len(candles) < 5 or len(rsi_history) < 3 or price <= 0:
         return False
-    recent_closes = [float(c[4]) for c in candles[-10:] if len(c) > 4 and float(c[4]) > 0]
+    recent_closes = [float(c[4]) for c in candles[-11:-1] if len(c) > 4 and float(c[4]) > 0]
     recent_rsi = [float(v) for v in rsi_history[-10:]]
     if not recent_closes or not recent_rsi:
         return False
-    current_rsi = float(s.get("current_rsi", recent_rsi[-1]))
+    closed_price = float(candles[-2][4])
+    current_rsi = recent_rsi[-1]
     if side == "buy":
         recent_high = max(recent_closes)
-        return price >= recent_high * (1.0 - price_tolerance) and max(recent_rsi) - current_rsi >= rsi_drop
+        return closed_price >= recent_high * (1.0 - price_tolerance) and max(recent_rsi) - current_rsi >= rsi_drop
     recent_low = min(recent_closes)
-    return price <= recent_low * (1.0 + price_tolerance) and current_rsi - min(recent_rsi) >= rsi_drop
+    return closed_price <= recent_low * (1.0 + price_tolerance) and current_rsi - min(recent_rsi) >= rsi_drop
 
 
 def check_all_divergence_logic():
@@ -247,11 +248,24 @@ def compute_indicators(sym):
             s["current_rsi"] = 99.0  # 期間內全為漲K，但不等同真正超買
         else:
             s["current_rsi"] = 50.0  # 無波動
-        if "rsi_history" not in s:
-            s["rsi_history"] = []
-        s["rsi_history"].append(s["current_rsi"])
-        if len(s["rsi_history"]) > 10:
-            s["rsi_history"].pop(0)
+        # RSI 歷史必須是一根已收線 K 棒一筆。舊邏輯每次主循環（約 10 秒）都把同一根
+        # 未收線 RSI 寫入，會把 46→62→65 這種盤中跳動誤認成跨 K 棒背離。
+        if len(closes) > RSI_PERIOD + 1:
+            closed_deltas = np.diff(closes[-(RSI_PERIOD + 2):-1])
+            closed_gains = closed_deltas[closed_deltas > 0]
+            closed_losses = -closed_deltas[closed_deltas < 0]
+            if len(closed_losses) > 0:
+                avg_gain = closed_gains.mean() if len(closed_gains) > 0 else 1e-10
+                closed_rsi = min(99.0, 100.0 - (100.0 / (1.0 + avg_gain / closed_losses.mean())))
+            elif len(closed_gains) > 0:
+                closed_rsi = 99.0
+            else:
+                closed_rsi = 50.0
+            closed_candle_ts = ohlcv[-2][0]
+            if s.get("_rsi_history_candle_ts") != closed_candle_ts:
+                s.setdefault("rsi_history", []).append(closed_rsi)
+                s["rsi_history"] = s["rsi_history"][-10:]
+                s["_rsi_history_candle_ts"] = closed_candle_ts
     s["vol_ma10"] = float(np.mean(volumes[-11:-1])) if len(volumes) >= 11 else float(np.mean(volumes[:-1]))
     s["vol_ma20"] = float(np.mean(volumes[-21:-1])) if len(volumes) >= 21 else float(np.mean(volumes[:-1]))
     # 使用「倒數第二根」（已完成 K 線）的量，避免當前未完成 K 線量偏低誤觸量能過濾
