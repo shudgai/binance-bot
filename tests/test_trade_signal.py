@@ -100,7 +100,12 @@ class TradeSignalTests(unittest.TestCase):
             prev_macd_line=-0.005, prev_macd_signal=-0.003,
         )
 
-        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+        with self.assertLogs("core.signal_engine", level="INFO") as captured:
+            self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+        self.assertIn("MACD", STATES[sym]["entry_block_reason"])
+        self.assertTrue(any("原始評分(非有效訊號)" in line for line in captured.output))
+        self.assertTrue(any("硬條件未齊" in line for line in captured.output))
 
     def test_route_a_allows_mild_macd_contraction_with_directional_candle(self):
         sym = self._setup_ema20_pullback_state(

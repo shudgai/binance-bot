@@ -1,11 +1,18 @@
 import importlib
+import io
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from services import api
 from services import system_log_service as log_service
 from services.system_log_service import add_system_log, clear_system_logs
-from services.bot_manager_service import classify_bot_log_level
+from services.bot_manager_service import (
+    bot_status,
+    classify_bot_log_level,
+    read_bot_output,
+    set_entry_diagnosis,
+)
 
 
 class SystemLogTests(unittest.TestCase):
@@ -38,6 +45,32 @@ class SystemLogTests(unittest.TestCase):
     def test_real_warning_and_error_levels_are_preserved(self):
         self.assertEqual(classify_bot_log_level("🛡️ 進入冷卻"), "warning")
         self.assertEqual(classify_bot_log_level("⚠️ API 失敗"), "danger")
+
+    def test_entry_diagnosis_is_emitted_for_parent_process(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            set_entry_diagnosis("HYPEUSDT: MACD空頭擴張未通過")
+
+        self.assertEqual(
+            output.getvalue().strip(),
+            "@@ENTRY_DIAG@@HYPEUSDT: MACD空頭擴張未通過",
+        )
+
+    def test_parent_process_receives_entry_diagnosis_marker(self):
+        class FakeProc:
+            def __init__(self):
+                self.stdout = io.StringIO("@@ENTRY_DIAG@@ETHUSDT: EMA50空頭未通過\n")
+                self.returncode = 0
+
+            def wait(self):
+                return self.returncode
+
+        original = bot_status.get("entry_diagnosis")
+        try:
+            read_bot_output(FakeProc(), "__multi__")
+            self.assertEqual(bot_status["entry_diagnosis"], "ETHUSDT: EMA50空頭未通過")
+        finally:
+            bot_status["entry_diagnosis"] = original
 
 
 if __name__ == "__main__":

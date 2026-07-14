@@ -288,6 +288,9 @@ def update_bot_status(key, value):
 
 def set_entry_diagnosis(message: str):
     bot_status["entry_diagnosis"] = message
+    # 交易邏輯在獨立子程序執行；只改該程序內的 dict，API 主程序看不到。
+    # 透過既有 stdout 控制通道同步，讓狀態頁顯示真正的最新阻擋原因。
+    print(f"@@ENTRY_DIAG@@{message}", flush=True)
 
 
 def classify_bot_log_level(line: str) -> str:
@@ -309,6 +312,8 @@ def read_bot_output(proc, sym):
         if line:
             if line.startswith("@@REGIME@@"):
                 bot_status["regime"] = line.replace("@@REGIME@@", "").strip()
+            elif line.startswith("@@ENTRY_DIAG@@"):
+                bot_status["entry_diagnosis"] = line.replace("@@ENTRY_DIAG@@", "", 1).strip()
             elif line.startswith("@@COIN_REGIME@@"):
                 parts = line.replace("@@COIN_REGIME@@", "").strip().split("@@")
                 if len(parts) >= 2:

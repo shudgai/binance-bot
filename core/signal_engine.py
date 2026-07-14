@@ -19,13 +19,17 @@ logger = logging.getLogger(__name__)
 
 def compute_signal_strength(sym):
     s = ctx.STATES[sym]
+    # 每輪重算，避免介面沿用上一輪已失效的阻擋原因。
+    s["entry_block_reason"] = ""
     if len(s["closes"]) < 20:
+        s["entry_block_reason"] = "K 線資料不足（至少需要 20 根）"
         return (None, 0, None)
 
     # --- 新增 C：動能/成交量過濾 ---
     vol_ma10 = s.get("vol_ma10", 0.0)
     current_vol = s.get("current_vol", 0.0)
     if vol_ma10 > 0 and current_vol < vol_ma10 * 0.000015:
+        s["entry_block_reason"] = "即時量能低於最低資料可信門檻"
         logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} [量能過濾] 當前量 {current_vol:.0f} < 均量 {vol_ma10:.0f} * 0.000015")
         return (None, 0, None)
 
@@ -40,6 +44,7 @@ def compute_signal_strength(sym):
         rsi_history = s.get("rsi_history", [])
         is_hooking_up = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
         if not (is_hooking_up and macd_hist_now > macd_hist_prev):
+            s["entry_block_reason"] = "RSI 極端超賣，但尚未回勾且 MACD 未改善"
             logger.debug(f"@@COIN_DEBUG@@ 🛑 {sym} [極值防禦] RSI {rsi:.1f} 尚未回勾且 MACD 未改善，拒絕接刀")
             return (None, 0, None)
 
@@ -161,7 +166,7 @@ def compute_signal_strength(sym):
     if rsi >= _reversal_rsi_high: raw_short_str = 15.0 + ((rsi - _reversal_rsi_high) / 2.0)
     if rsi <= _reversal_rsi_low: raw_long_str = 15.0 + ((_reversal_rsi_low - rsi) / 2.0)
 
-    logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 預估強度(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
+    logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 原始評分(非有效訊號)(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # 極端反轉必須同時有 RSI 回勾、MACD 改善與反轉 K，不能只靠極端值猜底/猜頂。
     rsi_history = s.get("rsi_history", [])
@@ -310,6 +315,30 @@ def compute_signal_strength(sym):
     short_base_ok = route_a_short or route_b_short
     route_tag     = "b" if (route_b_long or route_b_short) else "a"
 
+    # 原始分數只是加權觀察值；真正候選仍須通過 Route A/B 的全部硬條件。
+    # 把主要方向缺少的關卡寫進 state，讓狀態頁不再只顯示籠統的「暫無有效訊號」。
+    _long_route_a_gates = (
+        ("SMA200方向", sma200_hard_gate_long),
+        ("MACD多頭擴張", _route_a_macd_long),
+        ("多方收盤K", last_candle_long),
+        ("RSI多方區間", rsi_ok_long and rsi_direction_long),
+        ("EMA50多頭", ema50_gate_long),
+        ("EMA20距離", close_near_ema20_long),
+        ("BTC非空頭", _long_btc_ok),
+    )
+    _short_route_a_gates = (
+        ("SMA200方向", sma200_hard_gate_short),
+        ("MACD空頭擴張", _route_a_macd_short),
+        ("空方收盤K", last_candle_short or is_relaxed),
+        ("RSI空方區間", rsi_ok_short and rsi_direction_short),
+        ("EMA50空頭", ema50_gate_short),
+        ("EMA20距離", close_near_ema20_short),
+        ("BTC非多頭", _short_btc_ok),
+    )
+    _preferred_side = "多單" if raw_long_str >= raw_short_str else "空單"
+    _preferred_gates = _long_route_a_gates if _preferred_side == "多單" else _short_route_a_gates
+    _missing_preferred_gates = [name for name, passed in _preferred_gates if not passed]
+
     if long_base_ok or short_base_ok:
         long_str = 0.0
         short_str = 0.0
@@ -333,10 +362,12 @@ def compute_signal_strength(sym):
         if long_str >= short_str and long_base_ok:
             if long_str >= min_entry_strength:
                 logger.info(f"@@COIN_DEBUG@@ ✅ {sym} Route {route_tag.upper()} 做多訊號 | Strength: {long_str:.1f}")
+                s["entry_block_reason"] = ""
                 return ("buy", long_str, route_tag)
         elif short_base_ok:
             if short_str >= min_entry_strength:
                 logger.info(f"@@COIN_DEBUG@@ ✅ {sym} Route {route_tag.upper()} 做空訊號 | Strength: {short_str:.1f}")
+                s["entry_block_reason"] = ""
                 return ("sell", short_str, route_tag)
 
     # --- Route C: 量能衰竭進場策略 (Exhaustion Entry) ---
@@ -409,10 +440,19 @@ def compute_signal_strength(sym):
         # 轉換為小寫 side
         side_lower = side.lower()
         logger.info(f"@@COIN_DEBUG@@ 🛡️ {sym} 通過 StrategyEngine 過濾門檻 ({side_lower}) | Strength: {strength:.1f}")
+        s["entry_block_reason"] = ""
         return (side_lower, strength, "StrategyEngine_Gate")
 
     # 最終拒絕原因日誌
-    logger.debug(f"@@COIN_DEBUG@@ ❌ {sym} 無有效訊號 | LongScore:{raw_long_str:.1f} ShortScore:{raw_short_str:.1f}")
+    _missing_text = "、".join(_missing_preferred_gates) if _missing_preferred_gates else "替代路徑條件"
+    s["entry_block_reason"] = (
+        f"{_preferred_side}原始評分 {max(raw_long_str, raw_short_str):.1f}，"
+        f"但硬條件未齊：{_missing_text}"
+    )
+    logger.info(
+        f"@@COIN_DEBUG@@ ⛔ {sym} 未形成有效進場 | {s['entry_block_reason']} "
+        f"| L/S原始評分:{raw_long_str:.1f}/{raw_short_str:.1f}"
+    )
     return (None, 0, None)
 
 

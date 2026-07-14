@@ -527,7 +527,8 @@ async def check_entries():
         # 原本的計算邏輯
         side_strength = compute_signal_strength(sym)
         if side_strength is None or side_strength[0] is None:
-            set_entry_diagnosis(f"{sym}: 暫無有效訊號")
+            block_reason = s.get("entry_block_reason") or "暫無有效訊號"
+            set_entry_diagnosis(f"{sym}: {block_reason}")
             continue
         side, strength, route = side_strength
 
