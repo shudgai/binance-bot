@@ -144,13 +144,12 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 ATR_ELIGIBLE_SYMBOLS = [
-    # 中大型、流動性較好的動能池；排除超低價與容易事件暴衝的幣。
-    # DOGEUSDT/SOLUSDT 加入候選：兩者均有完整策略設定且流動性充足。
-    "XRPUSDT", "ADAUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT",
-    "BCHUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT",
-    "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
-    "SUIUSDT", "INJUSDT", "RENDERUSDT",
-    "DOGEUSDT", "SOLUSDT",
+    # 2026-07-14 更新：與 COIN_PROFILE_CONFIG 同步，只保留24h量>0.5億的真實加密幣
+    # ATR篩選門檻不變（MIN_ATR_PCT=2%、MAX_ATR_PCT=6%、1H量0.30%~2.8%）
+    "BTCUSDT", "ETHUSDT", "BNBUSDT",
+    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
+    "UNIUSDT", "AAVEUSDT",
+    "HYPEUSDT", "WLDUSDT",
 ]
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
 # 選幣數擴大到 12：新倉條件變嚴後，需要更多候選給 3 個倉位槽篩選。
@@ -197,7 +196,35 @@ API_RATE_LIMIT = 3.0
 last_bot_restart = 0.0
 BOT_RESTART_COOLDOWN = 300.0  
 
-BLACKLIST = {"WLDUSDT": float('inf'), "OGNUSDT": float('inf')}
+# 永久黑名單：只排除幣安 Futures 上架的「非加密幣」合約（股票/ETF/商品）
+# TUSDT（Threshold Network）、KITEUSDT（KiteAI）等為真實加密幣，不列入。
+# 用 float('inf') 代表永不解除。
+BLACKLIST = {
+    "OGNUSDT":    float('inf'),  # 問題幣
+    # --- 股票/ETF/商品型合約（幣安近期上架的非加密幣衍生品）---
+    "SKHYNIXUSDT":float('inf'),  # SK Hynix 半導體股票
+    "KORUUSDT":   float('inf'),  # iShares MSCI Korea ETF
+    "SNDKUSDT":   float('inf'),  # SanDisk 股票
+    "SOXLUSDT":   float('inf'),  # Direxion 半導體 3x ETF
+    "XAUUSDT":    float('inf'),  # 黃金現貨
+    "XAGUSDT":    float('inf'),  # 白銀現貨
+    "MUSDT":      float('inf'),  # Micron Technology 股票
+    "CLUSDT":     float('inf'),  # WTI 原油
+    "SPCXUSDT":   float('inf'),  # SPCX ETF
+    "LABUSDT":    float('inf'),  # LABU 生技 ETF
+    "DRAMUSDT":   float('inf'),  # DRAM 記憶體指數
+    "BZUSDT":     float('inf'),  # Brent 原油
+    "EWYUSDT":    float('inf'),  # iShares MSCI Korea ETF
+    "MRVLUSDT":   float('inf'),  # Marvell Technology 股票
+    "MSTRUUSDT":  float('inf'),  # MicroStrategy 股票
+    "NVDAAUSDT":  float('inf'),  # NVIDIA 股票
+    "INTCUSDT":   float('inf'),  # Intel 股票
+    "PAXGUSDT":   float('inf'),  # PAX Gold（黃金代幣）
+    "QQQUUSDT":   float('inf'),  # QQQ ETF
+    "BILLUSDT":   float('inf'),  # 異常超高漲幅幣，排除
+    "ZBTUUSDT":   float('inf'),  # 異常超高漲幅幣，排除
+    "TRIAUSDT":   float('inf'),  # 異常超高漲幅幣，排除
+}
 
 def clean_blacklist():
     global BLACKLIST
@@ -328,12 +355,38 @@ def _follow_source_radar_switch(force_start=False):
 from services.binance_service import get_dynamic_top_15_coins
 
 def auto_radar_switch(force_start=False, restart_on_change=True):
-    """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。"""
+    """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 12 個幣種，並更新配置。
+    掃描全市場，但只保留真實加密幣（排除股票型/ETF/商品型合約）。
+    """
     status_before_scan = get_bot_status()
-    # 使用與儀表板 ATR Rank 相同的排名，不再走另一套全市場函式。
     clean_blacklist()
-    # 全市場動態掃描 (無白名單限制)
-    _, ranking = get_atr_ranked_coins(symbols=None, limit=50, blacklist=BLACKLIST)
+    # 全市場動態掃描 (limit=80 確保足夠候選)
+    _, ranking = get_atr_ranked_coins(symbols=None, limit=80, blacklist=BLACKLIST)
+
+    # ── 加密幣過濾：排除股票/ETF/商品型合約 ──
+    # 只用明確的關鍵字排除，避免誤傷真實加密幣（如 KITEUSDT、TUSDT 等）
+    _NON_CRYPTO_KEYWORDS = [
+        'SKHYNIX','KORU','SNDK','SOXL','XAU','XAG','SPCX','LABU',
+        'DRAM','EWY','MRVL','MSTR','NVDA','INTC','PAXG','QQQ',
+        'MSFT','GOOGL','AMZN','AAPL','TSLA','NFLX',
+    ]
+    def _is_crypto(sym: str) -> bool:
+        # 排除已知股票/ETF/商品關鍵字
+        if any(kw in sym for kw in _NON_CRYPTO_KEYWORDS):
+            return False
+        # 排除包含底線的衍生合約（如 BTC_DOM）
+        if '_' in sym:
+            return False
+        # 排除穩定幣
+        base = sym.replace('USDT', '')
+        if base in ('BUSD','USDC','DAI','TUSD','FDUSD','PYUSD'):
+            return False
+        # 排除槓桿代幣
+        if any(base.endswith(s) for s in ('BULL','BEAR','UP','DOWN','3L','3S','2L','2S')):
+            return False
+        return True
+
+    ranking = [r for r in ranking if _is_crypto(r['symbol'])]
     eligible = prioritize_entry_ready([r for r in ranking if is_strict_radar_eligible(r)])
     # 先取完全符合動能區間者；不足 12 檔時，從有效排名補足。
     selected_rows = list(eligible[:RADAR_SELECT_COUNT])

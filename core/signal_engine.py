@@ -197,10 +197,10 @@ def compute_signal_strength(sym):
 
     is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
 
-    # Gate 0: SMA200 方向守衛。均線附近常因微小價差反覆切換方向，保留
-    # 0.5% 中性緩衝帶；超出緩衝的真正逆勢單仍禁止。
-    sma200_hard_gate_long  = sma200 <= 0 or close >= sma200 * 0.995
-    sma200_hard_gate_short = sma200 <= 0 or close <= sma200 * 1.005
+    # Gate 0: SMA200 方向守衛。放寬至 2% 緩衝帶，避免正常回調時被過早擋掉。
+    # 真正的深度逆勢（現價低於 SMA200 超過 2%）仍然禁止做多。
+    sma200_hard_gate_long  = sma200 <= 0 or close >= sma200 * 0.980
+    sma200_hard_gate_short = sma200 <= 0 or close <= sma200 * 1.020
 
     # [2026-07-14 修正C] 空單不再職予寬鬆模式豆免：實測所有幣種淨損益都是負的（除
     # DOGE/BCH/XRP），空單在 BTC 偵多目環境中役率極低。移除空單的 is_relaxed
@@ -252,24 +252,18 @@ def compute_signal_strength(sym):
     _route_a_macd_short = _macd_confirmed_short or _macd_stable_short or _macd_turn_short
 
     # ── Route A: 標準順勢進場 ──────────────────────────────────────────────
-    # 多單：在寬鬆模式下仍需要 K 線方向確認（last_candle_long），不可完全豁免
-    # 另外要求 BTC 大盤不是空頭（避免逆大盤做多）
-    _btc_trend = ctx.MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
-    _long_btc_ok = _btc_trend != "BEAR"  # 多單：大盤不能是明確空頭
+    # BTC 4H 大盤過濾已移至 entry_filter.py 的 MACRO_BLOCK（含豁免條件）統一處理。
+    # signal_engine 只評估幣種自身技術面，避免雙重過濾導致訊號無法生成。
     route_a_long = (
         sma200_hard_gate_long and
         _route_a_macd_long and
-        last_candle_long and       # 多單必須要有收盤確認，不因寬鬆模式豁免
+        last_candle_long and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
-        close_near_ema20_long and
-        _long_btc_ok               # 多單：大盤方向確認
+        close_near_ema20_long
     )
 
-    # [2026-07-14 修正C] 空單加入 BTC 大盤過濾：BTC 4H 多頭禁止做空，與多單對稱。
-    # 實測所有幣種在強卥幣幣 +BTC徨年環境下空單完全不利，加入跟多單對稱的大盤小幣。
-    _short_btc_ok = _btc_trend != "BULL"  # 空單：大盤不能是明確多頭
     route_a_short = (
         sma200_hard_gate_short and
         _route_a_macd_short and
@@ -277,9 +271,13 @@ def compute_signal_strength(sym):
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and
-        close_near_ema20_short and
-        _short_btc_ok              # 空單：大盤方向確認（與多單對稱）
+        close_near_ema20_short
     )
+
+    # BTC 方向僅保留用於 debug/log，不直接 gate 訊號
+    _btc_trend = ctx.MARKET_WIND.get("btc_trend_4h", "NEUTRAL")
+    _long_btc_ok  = _btc_trend != "BEAR"
+    _short_btc_ok = _btc_trend != "BULL"
 
     # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────
     near_ema20_pullback = ema20 > 0 and abs(close - ema20) / ema20 <= 0.015
@@ -289,14 +287,14 @@ def compute_signal_strength(sym):
     route_b_long = (
         sma200_hard_gate_long and
         ema50_gate_long and
-        ema20_above_ema50 and       # EMA20 > EMA50 確保多頭結構
+        ema20_above_ema50 and
         near_ema20_pullback and
         _macd_confirmed_long and
-        _rsi_extreme_long and       # RSI <= 40 才算真正超賣
+        _rsi_extreme_long and
         rsi_direction_long and
         rsi_ok_long and
-        last_two_candles_long and   # 多單 Route B 必須 2 根確認，不豁免
-        _long_btc_ok                # 大盤不能是空頭
+        last_two_candles_long
+        # BTC 大盤過濾由 entry_filter 統一處理
     )
 
     route_b_short = (

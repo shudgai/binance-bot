@@ -83,11 +83,10 @@ def is_valid_candle(sym, side):
         pin_threshold = max(pin_threshold, profile["pin_threshold"] + 0.5)
         enabled = False
 
-    # [2026-07-14 修正A] 收緊插針過濾：
-    # 為了防止買在天花板或賣在地板（開錯方向），將插針門檻強制收緊至最大 1.2x。
-    # 只要上影線/下影線大於實體的 1.2 倍，代表受到反壓，拒絕開倉。
-    pin_threshold = 1.2
-    logger.info(f"@@COIN_DEBUG@@ 🔧 {sym} 插針門檻收緊至 {pin_threshold:.1f} [修正防套]")
+    # [2026-07-14 放寬A] 插針門檻從 1.2 放寬至 1.8，減少過度攔截合法訊號。
+    # 上/下影線超過實體 1.8 倍才視為插針假突破，拒絕開倉。
+    pin_threshold = 1.8
+    logger.info(f"@@COIN_DEBUG@@ 🔧 {sym} 插針門檻放寬至 {pin_threshold:.1f}")
 
     if side == 'buy':
         if body <= 0:
@@ -238,7 +237,7 @@ def is_entry_pin_safe(sym, side):
     return True
 
 
-BTC_MOMENTUM_OVERRIDE_STRENGTH = 25.0
+BTC_MOMENTUM_OVERRIDE_STRENGTH = 18.0  # 放寬：原25，降至18，讓更多幣種自身強訊號可突破BTC MACD封鎖
 
 
 def has_strong_local_momentum_override(route, strength):
@@ -335,9 +334,10 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # 豁免反轉與反手路由，因為這些策略本質就是摸底/接針/變盤反手。
     if route not in ("Exhaustion_Entry", "Extreme_Reversal"):
         if not is_last_closed_1m_aligned(s, side):
-            if has_strong_local_momentum_override(route, strength):
+            # 放寬：豁免強度從 25 降至 18（與 BTC_MOMENTUM_OVERRIDE_STRENGTH 對齊）
+            if has_strong_local_momentum_override(route, strength) or strength >= 18.0:
                 logger.info(
-                    f"⚡ [SHORT_TERM_OVERRIDE] {sym} Route A {side} 強度 {strength:.1f}，"
+                    f"⚡ [SHORT_TERM_OVERRIDE] {sym} Route A {side} 強度 {strength:.1f} >= 18，"
                     "略過單根已收線 1m 反色 K 棒"
                 )
             else:
@@ -677,13 +677,13 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     ema20 = s.get("ema20", 0.0)
     if ema20 > 0:
         ema_dev = (cp - ema20) / ema20  # 正 = 在 EMA 上方，負 = 下方
-        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許 4%，強訊號(≥24)允許 3%，普通路由 1.5%
+        # 門檻：Extreme_Reversal/Exhaustion_Entry 允許 4%，強訊號(≥24)允許 3%，普通路由 2.5%（原1.5%，已放寬）
         if route in ("Extreme_Reversal", "Exhaustion_Entry"):
             _ema_hard_limit = 0.04
         elif strength >= 24.0:
-            _ema_hard_limit = 0.03   # 極強訊號豁免：動能幣偏離 1.5% 是正常範圍
+            _ema_hard_limit = 0.03   # 極強訊號豁免：動能幣偏離高達 3% 仍允許
         else:
-            _ema_hard_limit = 0.015
+            _ema_hard_limit = 0.025  # 放寬：原 1.5%，改為 2.5%，減少過熱誤判
         if side == "buy" and ema_dev > _ema_hard_limit:
             logger.info(f"🛑 {sym} 觸發 [EMA過熱過濾] 多單但現價超過 EMA20 {ema_dev*100:.1f}% (> {_ema_hard_limit*100:.1f}%)，過熱噴發，等回測")
             return False
@@ -1001,11 +1001,14 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         current_close_dc = s.get("close_price", s["ohlcv"][-1][4])
 
         if side == "buy" and current_close_dc < prev_close_dc:
-            # 多單：無論強度，必須當前K收盤高於前根（不允許在下跌K線開多）
-            logger.info(f"🛑 [Direction_Safety] {sym} 多單訊號但當前收盤 ({current_close_dc:.4f}) < 前收 ({prev_close_dc:.4f})，K線仍在下跌，拒絕做多")
-            return False
-        elif side == "sell" and current_close_dc > prev_close_dc and strength < 20.0:
-            logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 20.0)，拒絕進場")
+            # 放寬：強度 >= 18 可豁免在下跌K線開多（原本完全封鎖無論強度）
+            if strength >= 18.0:
+                logger.info(f"⚡ [Direction_Safety] {sym} 多單在下跌K線，但強度 {strength:.1f} >= 18，豁免進場")
+            else:
+                logger.info(f"🛑 [Direction_Safety] {sym} 多單訊號但當前收盤 ({current_close_dc:.4f}) < 前收 ({prev_close_dc:.4f})，強度 {strength:.1f} < 18，K線仍在下跌，拒絕做多")
+                return False
+        elif side == "sell" and current_close_dc > prev_close_dc and strength < 18.0:  # 放寬：原 20.0 → 18.0
+            logger.info(f"🛑 [Direction_Safety] {sym} 空單訊號但當前收盤 ({current_close_dc:.4f}) > 前收 ({prev_close_dc:.4f})，動能不足 (strength={strength:.1f} < 18.0)，拒絕進場")
             return False
 
     return True
