@@ -326,7 +326,6 @@ def compute_signal_strength(sym):
         ("RSI多方區間", rsi_ok_long and rsi_direction_long),
         ("EMA50多頭", ema50_gate_long),
         ("EMA20距離", close_near_ema20_long),
-        ("BTC非空頭", _long_btc_ok),
     )
     _short_route_a_gates = (
         ("SMA200方向", sma200_hard_gate_short),
@@ -335,7 +334,6 @@ def compute_signal_strength(sym):
         ("RSI空方區間", rsi_ok_short and rsi_direction_short),
         ("EMA50空頭", ema50_gate_short),
         ("EMA20距離", close_near_ema20_short),
-        ("BTC非多頭", _short_btc_ok),
     )
     _preferred_side = "多單" if raw_long_str >= raw_short_str else "空單"
     _preferred_gates = _long_route_a_gates if _preferred_side == "多單" else _short_route_a_gates
@@ -400,7 +398,7 @@ def compute_signal_strength(sym):
                 pa_ok = price_rebound and has_lower_wick and crossed_midpoint
                 bounce_ok = (c1[4] > c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
-                trend_ok = (_exh_btc_4h != "BEAR")
+                trend_ok = True
 
                 if trend_ok and support_ok and (pa_ok or bounce_ok):
                     logger.info(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
@@ -421,8 +419,8 @@ def compute_signal_strength(sym):
                 pa_ok = price_rebound and has_upper_wick and crossed_midpoint
                 bounce_ok = (c1[4] < c1[1]) and (c1[5] > c2[5] * 1.2) and crossed_midpoint
 
-                # 嚴格版：BTC 4H 必須明確偏空或至少中性
-                trend_ok = (_exh_btc_4h != "BULL")
+                # 嚴格版：BTC 4H 必須明確偏空或至少中性 (已註銷：短線以 1m 為主，不看 4H 宏觀面)
+                trend_ok = True
 
                 # 新增：MACD 確認（柱狀圖必須已翻負或 RSI 偏高）
                 _exh_rsi = s.get("current_rsi", 50.0)
@@ -482,18 +480,8 @@ async def is_reversal_still_valid(sym, pending_side):
             logger.info(f"🚫 [Reversal_SMA200_Block] {sym} 反手做空被拒：價格({current_price:.4f}) 在 SMA200({sma200:.4f}) 之上，大趨勢多頭，禁止反手做空。")
             return False
 
-    # 1. 大盤方向過濾：BTC 雙熊不允許做多反手；BTC 4H 多頭不允許做空反手
-    btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
-    btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
-    rsi = s.get("current_rsi", 50.0)
-    if pending_side == "buy" and btc_4h == "BEAR" and btc_1h == "BEAR":
-        if rsi >= 32:
-            logger.info(f"🔴 [Reversal_MacroBlock] {sym} BTC 雙熊，做多反手需 RSI<32，目前 {rsi:.1f}")
-            return False
-    if pending_side == "sell" and btc_4h == "BULL":
-        if rsi <= 73.0:
-            logger.info(f"🔵 [Reversal_BullBlock] {sym} BTC 4H 多頭，做空反手需 RSI>73，目前 {rsi:.1f}")
-            return False
+    # 1. 大盤方向過濾 (已註銷：短線以 1m 為主，不看 4H 宏觀面)
+
 
     # 2. 價格位置確認（防接刀 / 防地板空）
     if pending_side == "buy":
