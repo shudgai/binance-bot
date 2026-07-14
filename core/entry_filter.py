@@ -275,13 +275,11 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         logger.info(f"@@COIN_DEBUG@@ ⚡ [反手豁免] {sym} 來自強勢反手，跳過空間/趨勢/大盤過濾")
         return True
 
-    # ── [2026-07-14 修正B] BTC 短期衝擊過濾器 ──
-    # 當大盤 BTC 過去 15 分鐘急拉或急砸時，小幣極易因為跟隨大盤而開錯方向。
+    # ── [2026-07-14 修正B] BTC 短期衝擊過濾器 (已改為僅作參考，不攔截) ──
     btc_state = ctx.STATES.get("BTCUSDT")
     if btc_state and "ohlcv" in btc_state and len(btc_state["ohlcv"]) >= 3:
         btc_ohlcv = btc_state["ohlcv"]
         btc_closes = [float(x[4]) for x in btc_ohlcv[-3:]]
-        btc_opens = [float(x[1]) for x in btc_ohlcv[-3:]]
         
         # 檢測大盤是否在急跌 (跌幅 > 0.45%)。
         btc_drop_pct = (btc_closes[-1] - btc_closes[-3]) / btc_closes[-3]
@@ -298,35 +296,15 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         
         if side == "buy":
             if btc_dumping:
-                logger.info(f"🛑 [BTC 衝擊過濾] 大盤急跌中 (跌幅: {btc_drop_pct*100:.2f}%)，拒絕小幣做多")
-                return False
-            # [2026-07-14 新增] 大盤 1H MACD 負向擴張時禁做多
+                logger.info(f"⚠️ [BTC 衝擊參考] 大盤急跌中 (跌幅: {btc_drop_pct*100:.2f}%)，但允許小幣獨立做多")
             if btc_macd_hist < 0 and not btc_climbing:
-                if has_strong_local_momentum_override(route, strength):
-                    logger.info(
-                        f"⚡ [BTC_MOMENTUM_OVERRIDE] {sym} Route A 多單強度 {strength:.1f} "
-                        f">= {BTC_MOMENTUM_OVERRIDE_STRENGTH:.0f}，幣種自身完整共振，"
-                        "略過 BTC 1H 空頭 MACD 單一阻擋"
-                    )
-                else:
-                    logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於空頭動能擴張期，拒絕小幣做多")
-                    return False
+                logger.info(f"⚠️ [大盤共振參考] BTC 1H MACD 處於空頭動能擴張期，但允許小幣獨立做多")
             
         if side == "sell":
             if btc_pumping:
-                logger.info(f"🛑 [BTC 衝擊過濾] 大盤急拉中 (漲幅: {btc_pump_pct*100:.2f}%)，拒絕小幣做空")
-                return False
-            # [2026-07-14 新增] 大盤 1H MACD 正向擴張時禁做空
+                logger.info(f"⚠️ [BTC 衝擊參考] 大盤急拉中 (漲幅: {btc_pump_pct*100:.2f}%)，但允許小幣獨立做空")
             if btc_macd_hist > 0 and btc_climbing:
-                if has_strong_local_momentum_override(route, strength):
-                    logger.info(
-                        f"⚡ [BTC_MOMENTUM_OVERRIDE] {sym} Route A 空單強度 {strength:.1f} "
-                        f">= {BTC_MOMENTUM_OVERRIDE_STRENGTH:.0f}，幣種自身完整共振，"
-                        "略過 BTC 1H 多頭 MACD 單一阻擋"
-                    )
-                else:
-                    logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於多頭動能擴張期，拒絕小幣做空")
-                    return False
+                logger.info(f"⚠️ [大盤共振參考] BTC 1H MACD 處於多頭動能擴張期，但允許小幣獨立做空")
 
     # ── [2026-07-14 修正] 1m 短線順向確認 ──
     # 只讀倒數第二根已收線 K 棒，避免當前 K 棒在同一分鐘內翻紅/翻黑而反覆否決訊號。
