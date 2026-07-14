@@ -259,7 +259,6 @@ def compute_signal_strength(sym):
     # BTC 4H 大盤過濾已移至 entry_filter.py 的 MACRO_BLOCK（含豁免條件）統一處理。
     # signal_engine 只評估幣種自身技術面，避免雙重過濾導致訊號無法生成。
     route_a_long = (
-        sma200_hard_gate_long and
         _route_a_macd_long and
         (last_candle_long or is_low_vol_signal) and
         rsi_ok_long and
@@ -269,7 +268,6 @@ def compute_signal_strength(sym):
     )
 
     route_a_short = (
-        sma200_hard_gate_short and
         _route_a_macd_short and
         (last_candle_short or is_relaxed or is_low_vol_signal) and
         rsi_ok_short and
@@ -289,7 +287,6 @@ def compute_signal_strength(sym):
     ema20_below_ema50   = ema20 > 0 and ema50 > 0 and ema20 < ema50
 
     route_b_long = (
-        sma200_hard_gate_long and
         ema50_gate_long and
         ema20_above_ema50 and
         near_ema20_pullback and
@@ -297,12 +294,11 @@ def compute_signal_strength(sym):
         _rsi_extreme_long and
         rsi_direction_long and
         rsi_ok_long and
-        last_two_candles_long
+        last_candle_long
         # BTC 大盤過濾由 entry_filter 統一處理
     )
 
     route_b_short = (
-        sma200_hard_gate_short and
         ema50_gate_short and
         ema20_below_ema50 and
         near_ema20_pullback and
@@ -310,7 +306,7 @@ def compute_signal_strength(sym):
         _rsi_extreme_short and
         rsi_direction_short and
         rsi_ok_short and
-        (last_two_candles_short or is_relaxed)
+        (last_candle_short or is_relaxed)
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -320,7 +316,6 @@ def compute_signal_strength(sym):
     # 原始分數只是加權觀察值；真正候選仍須通過 Route A/B 的全部硬條件。
     # 把主要方向缺少的關卡寫進 state，讓狀態頁不再只顯示籠統的「暫無有效訊號」。
     _long_route_a_gates = (
-        ("SMA200方向", sma200_hard_gate_long),
         ("MACD多頭擴張", _route_a_macd_long),
         ("多方收盤K", last_candle_long),
         ("RSI多方區間", rsi_ok_long and rsi_direction_long),
@@ -328,7 +323,6 @@ def compute_signal_strength(sym):
         ("EMA20距離", close_near_ema20_long),
     )
     _short_route_a_gates = (
-        ("SMA200方向", sma200_hard_gate_short),
         ("MACD空頭擴張", _route_a_macd_short),
         ("空方收盤K", last_candle_short or is_relaxed),
         ("RSI空方區間", rsi_ok_short and rsi_direction_short),

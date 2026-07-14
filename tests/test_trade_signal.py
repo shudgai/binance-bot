@@ -240,6 +240,8 @@ class TradeSignalTests(unittest.TestCase):
         ctx.ALL_SYMBOLS[:] = [sym]
         s = STATES[sym]
         reset_coin_state(sym)
+        from core.symbol_profile import SYMBOL_PROFILES
+        SYMBOL_PROFILES[sym] = {"_trade_eligible": True}
         base_candles = [[0, 100.0, 100.3, 99.7, 100.0, vol_ma20] for _ in range(17)]
         ohlcv = base_candles + [
             [0, 101.0, 101.5, 99.0, 100.5, vol_ma20],
