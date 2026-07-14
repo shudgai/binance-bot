@@ -290,6 +290,19 @@ def set_entry_diagnosis(message: str):
     bot_status["entry_diagnosis"] = message
 
 
+def classify_bot_log_level(line: str) -> str:
+    """Map meaningful bot events to the status-page severity."""
+    if any(k in line for k in ("❌", "🛑", "⚠️", "停損", "REJECT", "Error", "error")):
+        return "danger"
+    if any(k in line for k in ("✅", "🚀", "⚡", "開倉", "平倉", "獲利")):
+        return "success"
+    # 🔄 means a routine refresh, not a warning. Keep actual defensive/cooldown
+    # events highlighted without making every K-line update look unhealthy.
+    if any(k in line for k in ("🛡️", "📊", "冷卻")):
+        return "warning"
+    return "info"
+
+
 def read_bot_output(proc, sym):
     for line in iter(proc.stdout.readline, ''):
         line = line.strip()
@@ -332,13 +345,7 @@ def read_bot_output(proc, sym):
                 if any(line.startswith(p) for p in _skip_prefixes):
                     pass  # 靜默丟棄，不送 web log
                 else:
-                    level = "info"
-                    if any(k in line for k in ("❌", "🛑", "⚠️", "停損", "REJECT", "Error", "error")):
-                        level = "danger"
-                    elif any(k in line for k in ("✅", "🚀", "⚡", "開倉", "平倉", "獲利")):
-                        level = "success"
-                    elif any(k in line for k in ("🛡️", "📊", "🔄", "冷卻")):
-                        level = "warning"
+                    level = classify_bot_log_level(line)
                     add_system_log(f"[{sym}] {line}", level)
     proc.stdout.close()
     proc.wait()

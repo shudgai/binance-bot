@@ -10,7 +10,6 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from services.system_log_service import FileBackedSystemLogHandler, attach_to_root_logger
 
 load_dotenv()
 
@@ -33,10 +32,8 @@ _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name
 logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _file_handler])
 logger = logging.getLogger(__name__)
 
-_system_log_handler = FileBackedSystemLogHandler()
-_system_log_handler.setFormatter(logging.Formatter("%(message)s"))
-logger.addHandler(_system_log_handler)
-attach_to_root_logger(logging.getLogger())
+# 系統狀態頁只由 bot_manager_service 解析 stdout 後寫入。這裡若再掛一個
+# FileBackedSystemLogHandler，同一訊息會由主程序與管理程序各寫一次。
 
 # ── Single-instance lock ──────────────────────────────────────
 LOCK_FILE = "/tmp/binance_bot_32f2e2ed.lock"

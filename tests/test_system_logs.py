@@ -5,6 +5,7 @@ from unittest.mock import patch
 from services import api
 from services import system_log_service as log_service
 from services.system_log_service import add_system_log, clear_system_logs
+from services.bot_manager_service import classify_bot_log_level
 
 
 class SystemLogTests(unittest.TestCase):
@@ -30,6 +31,13 @@ class SystemLogTests(unittest.TestCase):
         reloaded = importlib.reload(log_service)
 
         self.assertEqual(reloaded.get_system_logs()[-1]["text"], "persisted log")
+
+    def test_routine_kline_refresh_is_info(self):
+        self.assertEqual(classify_bot_log_level("🔄 [KLines] 已更新市場行情資料"), "info")
+
+    def test_real_warning_and_error_levels_are_preserved(self):
+        self.assertEqual(classify_bot_log_level("🛡️ 進入冷卻"), "warning")
+        self.assertEqual(classify_bot_log_level("⚠️ API 失敗"), "danger")
 
 
 if __name__ == "__main__":
