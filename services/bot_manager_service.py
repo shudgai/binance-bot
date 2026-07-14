@@ -22,6 +22,7 @@ bot_status = {
     "coin_regimes": {},    # { symbol: regime }
     "trade_amount": 150.0,
     "entry_diagnosis": "等待訊號",
+    "entry_diagnoses": {},  # {symbol: {message, updated_at}}
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
@@ -40,6 +41,45 @@ def _strategy_label(balance=None):
     from core.balance import get_dynamic_max_slots
 
     return f"Top 12 Radar / {get_dynamic_max_slots(balance)} Slots"
+
+
+def _record_entry_diagnosis(message: str, now: float | None = None):
+    """Keep the latest diagnosis per symbol instead of one global last-writer value."""
+    message = str(message or "").strip()
+    symbol, separator, _ = message.partition(":")
+    if not separator or not symbol.endswith("USDT"):
+        bot_status["entry_diagnosis"] = message or "等待訊號"
+        return
+    bot_status.setdefault("entry_diagnoses", {})[symbol] = {
+        "message": message,
+        "updated_at": float(time.time() if now is None else now),
+    }
+
+
+def _summarize_entry_diagnosis(trade_eligibility, now: float | None = None):
+    """Prefer current actionable reasons over a later symbol's warm-up message."""
+    now = float(time.time() if now is None else now)
+    diagnoses = bot_status.get("entry_diagnoses", {})
+    eligible_symbols = [
+        sym for sym, info in (trade_eligibility or {}).items()
+        if bool((info or {}).get("eligible"))
+    ]
+    recent = []
+    actionable = []
+    for sym in eligible_symbols:
+        record = diagnoses.get(sym) or {}
+        message = str(record.get("message") or "").strip()
+        updated_at = float(record.get("updated_at", 0.0) or 0.0)
+        if not message or now - updated_at > 180.0:
+            continue
+        recent.append(message)
+        if "K 線資料不足" not in message and "指標載入中" not in message:
+            actionable.append(message)
+
+    selected = actionable or recent
+    if selected:
+        return " ｜ ".join(selected[:3])
+    return bot_status.get("entry_diagnosis") or "等待訊號"
 
 
 def normalize_symbol(sym):
@@ -260,6 +300,9 @@ def get_bot_status():
             }
             for sym in actual_symbols
         }
+        bot_status["entry_diagnosis"] = _summarize_entry_diagnosis(
+            bot_status["trade_eligibility"]
+        )
     except Exception:
         pass
 
@@ -313,7 +356,9 @@ def read_bot_output(proc, sym):
             if line.startswith("@@REGIME@@"):
                 bot_status["regime"] = line.replace("@@REGIME@@", "").strip()
             elif line.startswith("@@ENTRY_DIAG@@"):
-                bot_status["entry_diagnosis"] = line.replace("@@ENTRY_DIAG@@", "", 1).strip()
+                _record_entry_diagnosis(
+                    line.replace("@@ENTRY_DIAG@@", "", 1).strip()
+                )
             elif line.startswith("@@COIN_REGIME@@"):
                 parts = line.replace("@@COIN_REGIME@@", "").strip().split("@@")
                 if len(parts) >= 2:

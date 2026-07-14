@@ -8,6 +8,7 @@ from services import api
 from services import system_log_service as log_service
 from services.system_log_service import add_system_log, clear_system_logs
 from services.bot_manager_service import (
+    _summarize_entry_diagnosis,
     bot_status,
     classify_bot_log_level,
     read_bot_output,
@@ -66,11 +67,41 @@ class SystemLogTests(unittest.TestCase):
                 return self.returncode
 
         original = bot_status.get("entry_diagnosis")
+        original_map = dict(bot_status.get("entry_diagnoses", {}))
         try:
             read_bot_output(FakeProc(), "__multi__")
-            self.assertEqual(bot_status["entry_diagnosis"], "ETHUSDT: EMA50空頭未通過")
+            self.assertEqual(
+                bot_status["entry_diagnoses"]["ETHUSDT"]["message"],
+                "ETHUSDT: EMA50空頭未通過",
+            )
         finally:
             bot_status["entry_diagnosis"] = original
+            bot_status["entry_diagnoses"] = original_map
+
+    def test_status_summary_prefers_actionable_reason_over_warmup(self):
+        original_map = dict(bot_status.get("entry_diagnoses", {}))
+        try:
+            bot_status["entry_diagnoses"] = {
+                "ETHUSDT": {
+                    "message": "ETHUSDT: MACD空頭擴張、EMA50空頭未通過",
+                    "updated_at": 100.0,
+                },
+                "TAOUSDT": {
+                    "message": "TAOUSDT: K 線資料不足（至少需要 20 根）",
+                    "updated_at": 101.0,
+                },
+            }
+            eligibility = {
+                "ETHUSDT": {"eligible": True},
+                "TAOUSDT": {"eligible": True},
+            }
+
+            summary = _summarize_entry_diagnosis(eligibility, now=102.0)
+
+            self.assertIn("ETHUSDT", summary)
+            self.assertNotIn("K 線資料不足", summary)
+        finally:
+            bot_status["entry_diagnoses"] = original_map
 
 
 if __name__ == "__main__":
