@@ -521,6 +521,7 @@ async def check_entries():
 
         # A. 數據完整性檢查
         if sma200_15m == 0 or vol_ma20 == 0:
+            set_entry_diagnosis(f"{sym}: 指標載入中 (SMA200: {sma200_15m}, VolMA20: {vol_ma20})")
             continue
 
         # Exhaustion_Entry 與 Extreme_Reversal 是反轉策略，不受一般動能與 RSI 限制

@@ -262,21 +262,51 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
         btc_closes = [float(x[4]) for x in btc_ohlcv[-3:]]
         btc_opens = [float(x[1]) for x in btc_ohlcv[-3:]]
         
-        # 檢測大盤是否在急跌 (跌幅 > 0.3% 或連續 2 根陰線)
+        # 檢測大盤是否在急跌 (跌幅 > 0.45%)。
         btc_drop_pct = (btc_closes[-1] - btc_closes[-3]) / btc_closes[-3]
-        btc_dumping = btc_drop_pct < -0.003 or (btc_closes[-1] < btc_opens[-1] and btc_closes[-2] < btc_opens[-2])
+        btc_dumping = btc_drop_pct < -0.0045
         
-        # 檢測大盤是否在急拉 (漲幅 > 0.3% 或連續 2 根陽線)
+        # 檢測大盤是否在急拉 (漲幅 > 0.45%)。
         btc_pump_pct = (btc_closes[-1] - btc_closes[-3]) / btc_closes[-3]
-        btc_pumping = btc_pump_pct > 0.003 or (btc_closes[-1] > btc_opens[-1] and btc_closes[-2] > btc_opens[-2])
+        btc_pumping = btc_pump_pct > 0.0045
         
-        if side == "buy" and btc_dumping:
-            logger.info(f"🛑 [BTC 衝擊過濾] 大盤急跌中 (跌幅: {btc_drop_pct*100:.2f}%)，拒絕小幣做多")
-            return False
+        # 取得大盤 1H MACD 與歷史動能
+        btc_macd_hist = btc_state.get("macd_hist", 0.0)
+        btc_prev_macd_hist = btc_state.get("prev_macd_hist", 0.0)
+        btc_climbing = btc_macd_hist > btc_prev_macd_hist # 大盤動能向上
+        
+        if side == "buy":
+            if btc_dumping:
+                logger.info(f"🛑 [BTC 衝擊過濾] 大盤急跌中 (跌幅: {btc_drop_pct*100:.2f}%)，拒絕小幣做多")
+                return False
+            # [2026-07-14 新增] 大盤 1H MACD 負向擴張時禁做多
+            if btc_macd_hist < 0 and not btc_climbing:
+                logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於空頭動能擴張期，拒絕小幣做多")
+                return False
             
-        if side == "sell" and btc_pumping:
-            logger.info(f"🛑 [BTC 衝擊過濾] 大盤急拉中 (漲幅: {btc_pump_pct*100:.2f}%)，拒絕小幣做空")
-            return False
+        if side == "sell":
+            if btc_pumping:
+                logger.info(f"🛑 [BTC 衝擊過濾] 大盤急拉中 (漲幅: {btc_pump_pct*100:.2f}%)，拒絕小幣做空")
+                return False
+            # [2026-07-14 新增] 大盤 1H MACD 正向擴張時禁做空
+            if btc_macd_hist > 0 and btc_climbing:
+                logger.info(f"🛑 [大盤共振過濾] BTC 1H MACD 處於多頭動能擴張期，拒絕小幣做空")
+                return False
+
+    # ── [2026-07-14 新增] 1m 短線順向確認 ──
+    # 確保絕對不買在下跌途中的 1m K 線，也絕對不空在反彈上漲的 1m K 線。
+    # 豁免反轉與反手路由，因為這些策略本質就是摸底/接針/變盤反手。
+    if route not in ("Exhaustion_Entry", "Extreme_Reversal"):
+        s_ohlcv = s.get("ohlcv", [])
+        if len(s_ohlcv) >= 1:
+            last_1m = s_ohlcv[-1]
+            o_1m, c_1m = float(last_1m[1]), float(last_1m[4])
+            if side == "buy" and c_1m < o_1m:
+                logger.info(f"🛑 [短線順向過濾] {sym} 最新 1m K 線為陰線，拒絕逆向做多")
+                return False
+            if side == "sell" and c_1m > o_1m:
+                logger.info(f"🛑 [短線順向過濾] {sym} 最新 1m K 線為陽線，拒絕逆向做空")
+                return False
 
     # 若幣種被標記為完全禁入場，直接拒絕（管理員策略）
     if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):
