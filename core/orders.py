@@ -1199,17 +1199,8 @@ async def check_paper_pending_order(sym):
 
 
 def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None):
-    if not entry_mode or entry_mode == "auto":
-        if entry_route == "Automatic_Reverse":
-            return "market" if signal_strength is None or signal_strength >= ENTRY_ORDER_MODE_AUTO_STRONG else "chase"
-        if signal_strength is None:
-            return "pullback"
-        if signal_strength >= ENTRY_ORDER_MODE_AUTO_MARKET:
-            return "market"
-        if signal_strength >= ENTRY_ORDER_MODE_AUTO_STRONG:
-            return "chase"
-        return "pullback"
-    return entry_mode
+    # 用戶要求：開倉不使用市價或追價，強制一律使用 pullback 限價掛單等待回踩。
+    return "pullback"
 
 
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
@@ -1623,33 +1614,40 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     limit_price = round_step(limit_price, tick_size)
                     logger.info(f"📌 [追價掛單] {sym} 掛對手價 {limit_price:.6f} 確保成交")
                 elif actual_entry_mode == 'pullback':
-                    atr = s.get("current_atr", 0.0)
-                    if atr <= 0:
-                        atr = price * 0.015
-                    # 高波動幣（ATR > 0.8%）用 1.5 倍回踩深度，確保買在更低點
-                    _atr_pct = atr / price if price > 0 else 0.015
-                    _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
+                    # 如果是由 entry_filter 觸發的 SUPPORT_ZONE_LIMIT_CONVERT 或 RESISTANCE_ZONE_LIMIT_CONVERT，
+                    # 則直接以當時覆寫的 price (即支撐位上限或阻力位下限) 作為掛單價，保證掛在完美的精準阻力/支撐區上。
+                    _is_zone_convert = s.get("force_pullback_entry", False)
                     
-                    if side == 'buy':
-                        target_pb = price - atr * _pb_mult
-                        if len(s.get("ohlcv", [])) >= 2:
-                            recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
-                            # 買在更划算價位：取回踩價與近期K線低點中較低者，且不超過 3x ATR 最大回踩深度
-                            limit_price = min(target_pb, recent_low)
-                            limit_price = max(limit_price, price - atr * (_pb_mult * 3))
-                        else:
-                            limit_price = target_pb
+                    if _is_zone_convert and price > 0:
+                        limit_price = price
+                        _atr_pct = s.get("current_atr", 0.0) / price if price > 0 else 0.015
+                        _pb_mult = 0.0
+                        logger.info(f"📌 [邊界精準限價單] {sym} 觸發阻力/支撐精算轉換，直接掛單在臨界價 {limit_price:.6f}")
                     else:
-                        target_pb = price + atr * _pb_mult
-                        if len(s.get("ohlcv", [])) >= 2:
-                            recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
-                            # 賣在更划算價位：取回踩價與近期K線高點中較高者，且不超過 3x ATR 最大回踩深度
-                            limit_price = max(target_pb, recent_high)
-                            limit_price = min(limit_price, price + atr * (_pb_mult * 3))
+                        atr = s.get("current_atr", 0.0)
+                        if atr <= 0:
+                            atr = price * 0.015
+                        _atr_pct = atr / price if price > 0 else 0.015
+                        _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.6 if _atr_pct > 0.008 else 1.2)
+                        
+                        if side == 'buy':
+                            target_pb = price - atr * _pb_mult
+                            if len(s.get("ohlcv", [])) >= 2:
+                                recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
+                                limit_price = min(target_pb, recent_low * 0.997)
+                                limit_price = max(limit_price, price - atr * (_pb_mult * 3.5))
+                            else:
+                                limit_price = target_pb
                         else:
-                            limit_price = target_pb
+                            target_pb = price + atr * _pb_mult
+                            if len(s.get("ohlcv", [])) >= 2:
+                                recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
+                                limit_price = max(target_pb, recent_high * 1.003)
+                                limit_price = min(limit_price, price + atr * (_pb_mult * 3.5))
+                            else:
+                                limit_price = target_pb
                     limit_price = round_step(limit_price, tick_size)
-                    logger.info(f"📌 [回踩掛單] {sym} 掛單價 {limit_price:.6f} (信號價: {price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
+                    logger.info(f"📌 [回踩限價掛單] {sym} 限價掛單價 {limit_price:.6f} (信號市價: {price:.6f}, ATR%:{_atr_pct*100:.2f}%, 追低乘數:{_pb_mult:.2f})")
                 else:
                     if side == 'buy':
                         limit_price = bid1
