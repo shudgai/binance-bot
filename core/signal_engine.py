@@ -236,15 +236,19 @@ def compute_signal_strength(sym):
     _macd_direction_short = macd_hist < 0 and prev_macd_hist < 0
     _macd_confirmed_long  = _macd_direction_long and macd_hist > prev_macd_hist
     _macd_confirmed_short = _macd_direction_short and macd_hist < prev_macd_hist
-    # 容許同方向動能小幅整理：只要仍保有前一讀數 85% 以上，且已有同向
-    # 收盤 K 棒，就視為趨勢仍有效。明顯收斂仍拒絕，避免追進衰竭段。
+    # 當前是否為低波動模式
+    atr_24h_avg = s.get("atr_24h_avg", 0.0)
+    current_atr = s.get("current_atr", 0.0)
+    is_low_vol_signal = (atr_24h_avg > 0 and current_atr <= atr_24h_avg)
+    _macd_stability_threshold = 0.70 if is_low_vol_signal else 0.85
+
     _macd_stable_long = (
-        _macd_direction_long and last_candle_long
-        and macd_hist >= prev_macd_hist * 0.85
+        _macd_direction_long and (last_candle_long or is_low_vol_signal)
+        and macd_hist >= prev_macd_hist * _macd_stability_threshold
     )
     _macd_stable_short = (
-        _macd_direction_short and last_candle_short
-        and abs(macd_hist) >= abs(prev_macd_hist) * 0.85
+        _macd_direction_short and (last_candle_short or is_low_vol_signal)
+        and abs(macd_hist) >= abs(prev_macd_hist) * _macd_stability_threshold
     )
     _macd_turn_long = long_macd_cross and rsi >= 48.0
     _macd_turn_short = short_macd_cross and rsi <= 52.0
@@ -257,7 +261,7 @@ def compute_signal_strength(sym):
     route_a_long = (
         sma200_hard_gate_long and
         _route_a_macd_long and
-        last_candle_long and
+        (last_candle_long or is_low_vol_signal) and
         rsi_ok_long and
         rsi_direction_long and
         ema50_gate_long and
@@ -267,7 +271,7 @@ def compute_signal_strength(sym):
     route_a_short = (
         sma200_hard_gate_short and
         _route_a_macd_short and
-        (last_candle_short or is_relaxed) and
+        (last_candle_short or is_relaxed or is_low_vol_signal) and
         rsi_ok_short and
         rsi_direction_short and
         ema50_gate_short and

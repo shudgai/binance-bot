@@ -493,60 +493,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             logger.info(f"✅ [RESISTANCE_ZONE] {sym} 賣出價在阻力區 [{resistance_zone_lower:.6f} ~ {bb_upper:.6f}]，有阻力，允許進場")
 
     # =========================================================================
-    # 🔴 STAGE 0: MACRO CIRCUIT BREAKER (宏觀熔斷機制)
-    # BTC 4H + 1H 雙熊 → 封鎖做多；BTC 4H 多頭 → 封鎖做空
+    # 🔴 STAGE 0: MACRO & STAGE 0.1: BULL DEFENSE (已註銷：短線以 1m 為主，不看宏觀面)
     # =========================================================================
-    btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
-    btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
-    bear_defense_mode = (btc_4h == "BEAR" and btc_1h == "BEAR")
-    if bear_defense_mode and side == 'buy':
-        current_rsi_macro = s.get("current_rsi", 50.0)
-        divergence_confirmed = (s.get("divergence", "none") == "bullish")
-        extreme_oversold    = (current_rsi_macro < 32.0)
-        # 使用者要求整合 7dceb33（門檻 24）與今天的放寬（門檻 18）成綜合版，統一訂在
-        # 20，跟本檔/check_entries.py 其他「強訊號豁免」門檻（20）對齊，不要太難開倉
-        # 也不要完全沒有品質把關。
-        _MACRO_OVERRIDE_STRENGTH = 20.0
-        ultra_strong        = (strength >= _MACRO_OVERRIDE_STRENGTH)  # 幣種自身訊號夠強，走自己的行情
-        if not extreme_oversold and not divergence_confirmed and not ultra_strong:
-            logger.info(f"🔴 [MACRO_BLOCK] {sym} 熊市防禦模式：BTC 4H+1H 雙熊，封鎖做多，允許做空。"
-                  f"(RSI: {current_rsi_macro:.1f} >= 32 且 無底背離 且 強度 {strength:.1f} < {_MACRO_OVERRIDE_STRENGTH:.0f})")
-            return False
-        if ultra_strong:
-            reason = f"幣種強訊號 {strength:.1f} ≥ {_MACRO_OVERRIDE_STRENGTH:.0f}，走自己行情"
-        elif extreme_oversold:
-            reason = "極端超賣"
-        else:
-            reason = "底背離確認"
-        logger.info(f"⚡ [MACRO_ALLOW] {sym} 熊市防禦模式下通過特赦：{reason}！(RSI: {current_rsi_macro:.1f}, Div: {s.get('divergence', 'none')})")
-    # 熊市防禦模式下，做空方向完全放行（不封鎖）
 
-    # =========================================================================
-    # 🔵 STAGE 0.1: BULL DEFENSE MODE (牛市防禦模式)
-    # BTC 4H 多頭 → 封鎖所有做空訊號（不需要 1H 也是 BULL，避免 1H 整理時防護失效）
-    # 豁免：RSI > 73 極端超買 / Exhaustion 路由且 RSI > 70
-    # 曾經放寬過一個「強度夠高、RSI 50~65 中段區間」也放行空單的分支，數據回測發現
-    # 空單勝率因此明顯拖累整體表現（62.5% vs 多單 78.4%，空單平均還是淨虧損），因為
-    # BTC 持續 4H 多頭時，中段 RSI 的逆勢空單經常被主趨勢碾過去。移除該分支，只保留
-    # RSI 真的極端超買時才豁免，其餘情況維持封鎖。
-    # =========================================================================
-    bull_defense_mode = (btc_4h == "BULL")
-    if bull_defense_mode and side == 'sell':
-        # relaxed 模式原本會整個跳過這道防護（完全不檢查 RSI），但上面的註解本身就
-        # 記載了回測證據：BTC 確認 4H 多頭時，逆勢空單勝率只有 62.5%（多單 78.4%），
-        # 平均還是淨虧損——relaxed 模式的「寬鬆」應該是指訊號強度/量能這類門檻放寬，
-        # 不該連這種已經有回測證據支持的方向性防禦都一起跳過。實測 2026/7/9 09:08~
-        # 09:42 BCH/BNB/ADA/DOGE 四筆逆勢空單都是靠這個 bypass 進場，全部小虧收場。
-        # 改成 relaxed 跟 strict 用同一套 RSI 極端超買/反轉路線判斷，不再無條件放行。
-        current_rsi_macro = s.get("current_rsi", 50.0)
-        is_reversal_route  = route in ("Extreme_Reversal", "Exhaustion_Entry")
-        if current_rsi_macro > 73.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但RSI極端超買 {current_rsi_macro:.1f}>73，豁免允許空單")
-        elif is_reversal_route and current_rsi_macro > 70.0:
-            logger.info(f"⚡ [BULL_EXEMPT] {sym} BTC 4H多頭但{route}且RSI {current_rsi_macro:.1f}>70，豁免允許空單")
-        else:
-            logger.info(f"🔵 [BULL_DEFENSE] {sym} BTC 4H多頭，封鎖做空訊號 (RSI:{current_rsi_macro:.1f}, Route:{route}, Strength:{strength:.1f})")
-            return False
 
     # =========================================================================
     # 🛑 STAGE 1: HARD GATES (硬門檻 - 不通過直接攔截)
@@ -722,36 +671,9 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     if is_trend:
         pass  # is_trend 已由上方統一的 EMA 距離過濾處理，不需重複
 
-    # --- [15m EMA 趨勢過濾] ---
-    if is_trend:
-        if strength >= 10.0:
-            pass  # 強勢 Override，跳過 15m EMA 過濾
-        else:
-            ema20_15m = s.get("ema20_15m", 0.0)
-            if ema20_15m > 0:
-                if side == 'buy' and cp < ema20_15m:
-                    logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做多，但 15m EMA 向下 (現價 {cp:.4f} < 15m_EMA20 {ema20_15m:.4f})")
-                    return False
-                if side == 'sell' and cp > ema20_15m:
-                    logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [15m EMA過濾] 5m 趨勢做空，但 15m EMA 向上 (現價 {cp:.4f} > 15m_EMA20 {ema20_15m:.4f})")
-                    return False
+    # --- [15m EMA 趨勢過濾] (已註銷：短線以 1m 為主，不看 15m 大時框趨勢)
+    # --- [BTC 4H 趨勢過濾] (已註銷：短線以 1m 為主，不看 4H 宏觀面)
 
-    # --- [BTC 4H 趨勢過濾] 硬性方向限制，避免逆勢開倉 ---
-    btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
-    if is_trend and btc_4h is not None:
-        _btc4h_override = 20.0  # 需要非常強的訊號才能逆勢進場（改自 14.0）
-        if side == 'buy' and btc_4h == "BEAR":
-            if strength >= _btc4h_override:
-                logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} [4H逆勢覆蓋] 熊市但訊號強度 {strength:.1f} >= {_btc4h_override}，允許做多")
-            else:
-                logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} [4H大盤過濾] BTC 4H 熊市，禁止做多 (強度 {strength:.1f} < {_btc4h_override})")
-                return False
-        if side == 'sell' and btc_4h == "BULL":
-            if strength >= _btc4h_override:
-                logger.info(f"@@COIN_DEBUG@@ ⚡ {sym} [4H逆勢覆蓋] 牛市但訊號強度 {strength:.1f} >= {_btc4h_override}，允許做空")
-            else:
-                logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} [4H大盤過濾] BTC 4H 牛市，禁止做空 (強度 {strength:.1f} < {_btc4h_override})")
-                return False
 
     _short_history_exempt = route in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
     if len(s["ohlcv"]) < 20 and not _short_history_exempt:
