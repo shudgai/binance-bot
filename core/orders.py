@@ -1630,11 +1630,16 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         _atr_pct = atr / price if price > 0 else 0.015
                         _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.6 if _atr_pct > 0.008 else 1.2)
                         
+                        # 動態計算價格緩衝：極強信號(>=22)下沉 0.05% 確保吃單；普通信號下沉 0.1% (原 0.3% 太遠無法成交)
+                        _sig_str = signal_strength or 0.0
+                        _offset_ratio = 0.9995 if _sig_str >= 22.0 else 0.999
+                        _opp_offset_ratio = 1.0005 if _sig_str >= 22.0 else 1.001
+
                         if side == 'buy':
                             target_pb = price - atr * _pb_mult
                             if len(s.get("ohlcv", [])) >= 2:
                                 recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
-                                limit_price = min(target_pb, recent_low * 0.997)
+                                limit_price = min(target_pb, recent_low * _offset_ratio)
                                 limit_price = max(limit_price, price - atr * (_pb_mult * 3.5))
                             else:
                                 limit_price = target_pb
@@ -1642,7 +1647,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                             target_pb = price + atr * _pb_mult
                             if len(s.get("ohlcv", [])) >= 2:
                                 recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
-                                limit_price = max(target_pb, recent_high * 1.003)
+                                limit_price = max(target_pb, recent_high * _opp_offset_ratio)
                                 limit_price = min(limit_price, price + atr * (_pb_mult * 3.5))
                             else:
                                 limit_price = target_pb
