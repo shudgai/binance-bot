@@ -165,6 +165,28 @@ class ExchangeCalibrationTests(unittest.TestCase):
         self.assertEqual(ctx.STATES[self.sym]["last_entry_direction"], "buy")
         self.assertTrue(ctx.STATES[self.sym]["restored_from_exchange"])
 
+    def test_live_position_calibration_does_not_overwrite_qty_while_closing(self):
+        state = ctx.STATES[self.sym]
+        state["qty"] = -2.0
+        state["avg_price"] = 100.0
+        state["_is_closing"] = True
+
+        exchange = AsyncMock()
+        exchange.fetch_positions.return_value = [{
+            "symbol": "XRP/USDT:USDT",
+            "contracts": 1.0,
+            "side": "short",
+            "entryPrice": 100.0,
+            "info": {"positionAmt": "-1.0"},
+        }]
+
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.orders._ensure_exchange_exit_orders", new=AsyncMock()) as ensure_orders:
+            asyncio.run(calibrate_with_exchange(exchange))
+
+        self.assertEqual(state["qty"], -2.0)
+        ensure_orders.assert_not_awaited()
+
     def test_restored_short_keeps_a_valid_hard_stop_reference(self):
         exchange = AsyncMock()
         exchange.fetch_positions.return_value = [{

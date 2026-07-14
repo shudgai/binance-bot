@@ -1,5 +1,10 @@
+from unittest.mock import patch
+
 from core.config import DEFAULT_SYMBOLS
-from services.bot_manager_service import DEFAULT_SYMBOLS as MANAGER_DEFAULT_SYMBOLS
+from services.bot_manager_service import (
+    DEFAULT_SYMBOLS as MANAGER_DEFAULT_SYMBOLS,
+    _restore_truncated_radar_pool,
+)
 from services.radar_service import (
     ATR_ELIGIBLE_SYMBOLS,
     CORE_SYMBOLS,
@@ -35,3 +40,27 @@ def test_atr_pool_excludes_event_and_unapproved_coins():
     assert "WLFIUSDT" not in ATR_ELIGIBLE_SYMBOLS
     assert "TRUMPUSDT" not in ATR_ELIGIBLE_SYMBOLS
     assert "ONDOUSDT" not in ATR_ELIGIBLE_SYMBOLS
+
+
+def test_startup_restores_truncated_pool_from_ranked_radar_profiles():
+    profiles = {
+        f"COIN{i}USDT": {
+            "_radar_rank": i,
+            "_radar_atr_pct": 3.0,
+            "_trade_eligible": i != 12,
+        }
+        for i in range(1, 13)
+    }
+    with patch("services.bot_manager_service.load_symbol_profiles", return_value=profiles), \
+         patch("services.bot_manager_service.add_system_log"):
+        restored = _restore_truncated_radar_pool(["XRPUSDT", "LABUSDT"])
+
+    assert len(restored) == 12
+    assert restored[0] == "COIN1USDT"
+    assert restored[-1] == "COIN12USDT"
+
+
+def test_startup_keeps_a_normal_sized_pool_unchanged():
+    current = [f"COIN{i}USDT" for i in range(1, 9)]
+    with patch("services.bot_manager_service.load_symbol_profiles", return_value={}):
+        assert _restore_truncated_radar_pool(current) == current

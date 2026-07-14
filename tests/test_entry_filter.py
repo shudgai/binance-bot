@@ -229,11 +229,12 @@ class EntryFilterTests(unittest.TestCase):
         reset_coin_state(sym)
         ctx.MARKET_WIND.update({"allow_long": True, "allow_short": True, "btc_trend_4h": None, "btc_trend_1h": None})
         s.update({
-            "close_price": 100.2, "bb_low": 100.0, "bb_up": 110.0,
+            "close_price": 103.3, "bb_low": 100.0, "bb_up": 110.0,
             "current_vol": 1200.0, "vol_ma20": 1000.0,
             "current_atr": 0.5, "atr_history": [0.5] * 20,
-            "current_rsi": 42.0, "ema20_15m": 101.0, "ema50_15m": 100.0,
-            "mtf_filter": False, "ohlcv": [[0, 100, 101, 99, 100.2, 1200]] * 21,
+            "current_rsi": 41.9, "ema20_15m": 101.0, "ema50_15m": 100.0,
+            "macd_line": -0.1, "macd_signal": 0.0,
+            "mtf_filter": False, "ohlcv": [[0, 100, 104, 99, 103.3, 1200]] * 21,
         })
         self.assertFalse(is_entry_allowed(sym, "sell", route="a", strength=30.2))
 

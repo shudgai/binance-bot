@@ -4,6 +4,7 @@ import os
 import json
 import time
 import numpy as np
+from datetime import datetime, timezone
 
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
@@ -23,6 +24,51 @@ logger = logging.getLogger(__name__)
 
 _PENDING_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pending_signals_cache.json")
 _PENDING_MAX_AGE_SEC = 1200  # 20 分鐘內存檔才還原，太舊的訊號還原也沒意義，讓它自然作廢
+_TRADE_HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
+_LOSS_HISTORY_CACHE_MTIME = None
+_LOSS_HISTORY_CACHE = {}
+
+
+def _load_history_loss_times():
+    """Return latest losing close time by (symbol, side), surviving bot restarts."""
+    global _LOSS_HISTORY_CACHE_MTIME, _LOSS_HISTORY_CACHE
+    try:
+        mtime = os.path.getmtime(_TRADE_HISTORY_PATH)
+        if mtime == _LOSS_HISTORY_CACHE_MTIME:
+            return _LOSS_HISTORY_CACHE
+        with open(_TRADE_HISTORY_PATH, "r", encoding="utf-8") as fh:
+            history = json.load(fh)
+        result = {}
+        for trade in history if isinstance(history, list) else []:
+            if float(trade.get("profit_pct", 0.0) or 0.0) >= -0.001:
+                continue
+            entry = float(trade.get("actual_entry", 0.0) or 0.0)
+            exit_price = float(trade.get("actual_exit", 0.0) or 0.0)
+            if entry <= 0 or exit_price <= 0 or entry == exit_price:
+                continue
+            # 虧損交易可由價差反推方向：出場低於進場是多單，反之是空單。
+            side = "buy" if exit_price < entry else "sell"
+            timestamp = trade.get("timestamp")
+            try:
+                closed_at = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc
+                ).timestamp()
+            except (TypeError, ValueError):
+                continue
+            symbol = str(trade.get("symbol", "")).replace(":", "").upper()
+            key = (symbol, side)
+            result[key] = max(result.get(key, 0.0), closed_at)
+        _LOSS_HISTORY_CACHE_MTIME = mtime
+        _LOSS_HISTORY_CACHE = result
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    return _LOSS_HISTORY_CACHE
+
+
+def get_last_same_side_loss_time(sym, side, state_time=0.0):
+    history_time = _load_history_loss_times().get((sym.upper(), side), 0.0)
+    return max(float(state_time or 0.0), float(history_time or 0.0))
+
 
 
 def save_pending_signals():
@@ -685,8 +731,11 @@ async def check_entries():
                 "loss_reentry_cooldown_sec", DEFAULT_LOSS_REENTRY_COOLDOWN_SEC
             ) or 0.0
         )
-        _same_side_loss_time = float(
-            s.get("last_loss_time_long" if side == "buy" else "last_loss_time_short", 0.0) or 0.0
+        _state_loss_time = s.get(
+            "last_loss_time_long" if side == "buy" else "last_loss_time_short", 0.0
+        )
+        _same_side_loss_time = get_last_same_side_loss_time(
+            sym, side, _state_loss_time
         )
         if (
             route != "Automatic_Reverse"
@@ -781,9 +830,8 @@ async def check_entries():
         # 邊緣訊號進場後常常原地打轉、最高獲利很小就打平/小虧出場，要求拉回一點，
         # 犧牲一些開倉次數換單筆品質，改成 1.4/1.1/1.2（介於原始與寬鬆之間）。
         atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-        # [2026-07-14 修正E] base_rr_thresh 從 1.4 降至 1.2：
-        # 分批停利門溻已降至 0.20%，前半倉更快落袋下來，預期 R:R 需求可略降。
-        # 0.2% 峰值對應的止損最多 0.15%，崇實際 R:R ~1.3 不需要 1.4 門溻。
+        # base_rr_thresh 維持 1.2，搭配強訊號分級門檻；停利改為全倉管理後，
+        # 此處只負責進場品質，不再假設有前半倉先行落袋。
         base_rr_thresh = s.get("min_rr", 1.2)
 
         # 使用者反映現在幾乎完全開不了倉：實測訊號強度大多落在 15~26，strength>20 才給

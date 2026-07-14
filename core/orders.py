@@ -799,7 +799,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 決定出場，不是隨便一點點獲利就賣——不加進白名單的話，這裡的 0.35% 固定門檻會蓋掉
     # 它自己已經做過的判斷，等於它的 0.15% 設定形同虛設，永遠要等到 0.35% 才放行。
     # （[Opportunity_Rotation] 機會成本輪替功能已依使用者要求移除，不會再產生這個 reason。）
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Partial_Take_Profit]"]
+    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -812,6 +812,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         logger.info(f"⚠️ [平倉風控] {sym} 無法取得有效數量 ({qty:.6f})")
         return
     qty = sanitized_qty
+    # 從送單到查成交、手續費期間會有多個 await。剩餘數量必須以本次平倉開始時
+    # 的本地數量為基準，不能讀取可能被其他背景流程更新過的 s["qty"]。
+    position_qty_before_close = float(s["qty"])
 
     if PAPER_TRADING:
         # 紙上交易沒有真實委託簿，成交價就是模擬假設的理論價，不會有滑價落差。
@@ -835,7 +838,10 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # +0.31%，追價這 11 秒內價格繼續反著走，最後市價成交時已經變成 -0.16%，
         # 「不再等待」的出場反而等了最久、虧最多。這類理由直接用市價出場搶時效，
         # 不要為了多鎖一點點價差去冒繼續等待的風險。
-        _urgent_exit_reasons = ("Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak")
+        _urgent_exit_reasons = (
+            "Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak",
+            "Peak_Volume_Contraction",
+        )
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:
             if profit_pct > 0 and not is_stop_loss and not _is_urgent_exit:
@@ -957,7 +963,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     except Exception as _e:
         logger.info(f"[每日熔斷追蹤失敗] {_e}")
 
-    remaining = abs(s["qty"]) - qty
+    remaining = abs(position_qty_before_close) - qty
     if remaining < 0.01:
         if remaining > 0.000001:
             logger.info(f"🧹 [塵埃清理] {sym} 剩餘 {remaining:.6f} 視為已清")
@@ -969,7 +975,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         reset_coin_state(sym)
     else:
         prec = await get_contract_precision(sym)
-        raw_qty = (abs(s["qty"]) - qty) * (1 if s["qty"] > 0 else -1)
+        raw_qty = remaining * (1 if position_qty_before_close > 0 else -1)
         s["qty"] = round_step(raw_qty, prec["step_size"])
 
         qty_to_remove = qty

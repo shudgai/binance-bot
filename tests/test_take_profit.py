@@ -476,7 +476,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_small_profit_takes_half_before_it_can_fully_give_back(self):
+    def test_small_profit_does_not_take_a_partial_exit(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -496,9 +496,41 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
+                mock_close.assert_not_called()
+
+        asyncio.run(run_check())
+
+    def test_peak_volume_contraction_closes_the_entire_position(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "SOLUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        candles = []
+        for i in range(20):
+            candles.append([i * 300000, 100.0, 100.2, 99.8, 100.0, 1000.0])
+        candles.append([20 * 300000, 100.0, 100.2, 99.4, 99.5, 500.0])
+        candles.append([21 * 300000, 99.5, 99.6, 99.45, 99.5, 50.0])
+        s.update({
+            "qty": -2.0, "avg_price": 100.0, "close_price": 99.5,
+            "open_time": time.time() - 900, "last_entry_time": time.time() - 900,
+            "last_entry_price": 100.0, "current_atr": 0.2,
+            "atr_history": [0.2] * 20, "current_rsi": 45.0,
+            "macd_line": -0.02, "macd_signal": -0.01,
+            "prev_macd_line": -0.015, "prev_macd_signal": -0.01,
+            "current_vol": 50.0, "vol_ma20": 1000.0,
+            "ohlcv": candles, "pnl_history": [],
+            "highest_profit_pct": 0.0055,
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as mock_close:
+                await check_exits(sym)
+                mock_close.assert_not_called()
+                await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Partial_Take_Profit]")
-                self.assertAlmostEqual(mock_close.await_args.args[2], 1.0)
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Peak_Volume_Contraction]")
+                self.assertAlmostEqual(mock_close.await_args.args[2], 2.0)
 
         asyncio.run(run_check())
 
@@ -680,7 +712,6 @@ class TakeProfitTests(unittest.TestCase):
         self.assertEqual(s["qty"], 1.0)
         self.assertFalse(mock_exchange.create_order.called)
 
-
     def test_high_point_stagnation_exit(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
@@ -714,12 +745,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock(side_effect=side_effect_close)) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Partial_Take_Profit]")
-                
-                # 第二次呼叫：已分批停利，此時應觸發 Stagnation_Timeout
-                await check_exits(sym)
-                self.assertEqual(mock_close.call_count, 2)
-                self.assertEqual(mock_close.call_args_list[1].kwargs["reason"], "[Stagnation_Timeout]")
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Stagnation_Timeout]")
 
         asyncio.run(run_check())
 

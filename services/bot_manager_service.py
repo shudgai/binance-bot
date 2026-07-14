@@ -9,7 +9,7 @@ from services.system_log_service import add_system_log
 # 模擬交易機器人狀態 (支援多幣種多進程)
 bot_status = {
     "is_running": False,
-    "strategy": "Top 12 Radar / 3 Slots",
+    "strategy": "Top 12 Radar / 4 Slots",
     "balance_quote": 150.0,
     "active_orders": 0,
     "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
@@ -33,6 +33,13 @@ DEFAULT_SYMBOLS = [
     "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
     "SUIUSDT", "INJUSDT", "RENDERUSDT",
 ]
+
+
+def _strategy_label(balance=None):
+    """Keep the status-page slot count aligned with the trading engine."""
+    from core.balance import get_dynamic_max_slots
+
+    return f"Top 12 Radar / {get_dynamic_max_slots(balance)} Slots"
 
 
 def normalize_symbol(sym):
@@ -98,6 +105,37 @@ def load_symbol_profiles():
         return {}
     except Exception:
         return {}
+
+
+def _restore_truncated_radar_pool(symbols):
+    """Top-12 雷達仍保存完整 profiles 時，避免短暫重啟狀態把正式監控池縮成少數幣。
+
+    profiles 會保存雷達排名與交易資格；symbols 偶爾只剩冷卻候補/最後監控幣。
+    啟動時若 profiles 至少有 8 檔、但 symbols 少於 8 檔，依雷達排名恢復最多 12 檔。
+    """
+    symbols = normalize_symbol_list(symbols)
+    profiles = load_symbol_profiles()
+    ranked = [
+        sym for sym, profile in sorted(
+            profiles.items(),
+            key=lambda item: float((item[1] or {}).get("_radar_rank", 9999) or 9999),
+        )
+        if isinstance(profile, dict)
+        and float(profile.get("_radar_atr_pct", 0.0) or 0.0) > 0
+    ]
+    ranked = _filter_disabled_symbols(normalize_symbol_list(ranked, max_count=12))
+    if len(symbols) < 8 and len(ranked) >= 8:
+        restored = list(ranked)
+        for sym in symbols:
+            if sym not in restored and len(restored) < 12:
+                restored.append(sym)
+        add_system_log(
+            f"♻️ [啟動幣池修復] symbols 僅 {len(symbols)} 檔，"
+            f"由雷達 profiles 恢復為 {len(restored)} 檔",
+            "warning",
+        )
+        return restored
+    return symbols
 
 
 def load_disabled_symbols():
@@ -199,6 +237,9 @@ def get_bot_status():
             bot_status["trade_amount"] = compounded_amount
         except Exception:
             pass
+
+    # 槽位數由本金級距動態決定，狀態頁不可再使用寫死的舊值。
+    bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))
 
     # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
     try:
@@ -391,6 +432,7 @@ def start_bot(symbols=None, trade_amt: float = None):
         symbols = list(DEFAULT_SYMBOLS)
 
     symbols = normalize_symbol_list(symbols)
+    symbols = _restore_truncated_radar_pool(symbols)
     # 保留有持倉的幣種，避免被換掉
     open_syms = _get_open_position_symbols()
     for s in open_syms:
@@ -540,7 +582,7 @@ def set_bot_symbol(symbols):
     bot_status["active_symbols"] = symbols
 
     amt = bot_status.get("trade_amount", 150.0)
-    bot_status["strategy"] = f"Top 12 Radar ({amt})"
+    bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))
     add_system_log(f"🎯 自動交易監聽目標切換為: {', '.join(symbols)}", "info")
 
     return symbols
@@ -557,7 +599,7 @@ def set_bot_amount(amount: float):
     if amount < 0 or amount > 1000:
         raise ValueError("單次交易數量必須限制在 0 至 1000 之間")
     bot_status["trade_amount"] = amount
-    bot_status["strategy"] = f"Top 12 Radar ({amount})"
+    bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))
     add_system_log(f"⚙️ 自動交易單次數量設定為: {amount}", "info")
     
     if bot_status.get("is_running"):

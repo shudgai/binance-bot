@@ -327,7 +327,20 @@ async def calibrate_with_exchange(exchange):
                         logger.info(f"⚠️ [持倉救回寫檔失敗] {sym}: {se}")
 
             if sym in ctx.STATES:
-                current_qty = ctx.STATES[sym].get("qty", 0.0)
+                state = ctx.STATES[sym]
+                current_qty = state.get("qty", 0.0)
+
+                # close_position() 下單後、尚未完成本地結算前，交易所數量已經會先變小。
+                # 若校準協程此時把 real_qty 寫回 state，平倉流程稍後又再扣一次成交數量，
+                # 部分平倉就會被誤記成全部平倉（BCH 0.558 -> 交易所 0.279 -> 本地 0）。
+                # 平倉鎖涵蓋整個下單與本地結算區間；這段期間以平倉流程為唯一寫入者，
+                # 下一輪校準再以交易所結果核對即可。
+                if state.get("_is_closing"):
+                    logger.info(
+                        f"⏳ [CALIBRATION] {sym} 機器人正在平倉中，"
+                        f"本輪跳過持倉數量覆寫（內部 {current_qty} / 交易所 {real_qty}）"
+                    )
+                    continue
 
                 if abs(real_qty - current_qty) > (abs(current_qty) * 0.001) and abs(real_qty) > 0:
                     logger.info(f"⚖️ [CALIBRATION] 校準 {sym}: 內部 {current_qty} -> 交易所 {real_qty}")
@@ -407,6 +420,8 @@ async def calibrate_with_exchange(exchange):
         from core.orders import _ensure_exchange_exit_orders, _cancel_exchange_exit_order_id
         for sym in live_position_symbols:
             if sym not in ctx.STATES:
+                continue
+            if ctx.STATES[sym].get("_is_closing"):
                 continue
             try:
                 await _ensure_exchange_exit_orders(sym)

@@ -179,10 +179,8 @@ def update_trailing_stop(sym, current_price, is_long):
     safe_atr = min(atr_val, atr_avg * 3) if atr_avg > 0 else atr_val
 
     trailing_activation_atr = s.get("trailing_activation_atr", 0.0)
-    # [2026-07-14 再校準] 門檻再降至 0.35%(高彈) / 0.25%(一般)：
-    # 峰值中位數 0.28%，之前改的 0.6%/0.4% 對大多數 0.2-0.3% 峰值交易
-    # 仍然觸發不到。降至 0.25% 能覆蓋分批停利 50% 的實際成本，
-    # 且峰值有 0.25%+ 才啟動保本鎖，避免在雜訊區間就被跟出。
+    # 0.35%(高彈) / 0.25%(一般) 開始建立全倉保護線；實際獲利出場仍由
+    # 高點量縮全平或 trailing 穿越決定，不再拆分倉位。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
     breakeven_threshold = 0.0035 if is_high_beta else 0.0025
@@ -596,32 +594,6 @@ async def check_exits(sym):
 
         logger.info(f"⚠️ [防插針豁免] {sym} 瞬時爆發量 (Ratio: {vol_ratio:.2f}x)，視為真崩盤，取消盲區保護！")
 
-    # ── 分批停利：先落袋一半，剩餘部位繼續交給 trailing 捕捉趨勢。
-    # 最近真實交易的常見峰值只有 0.3%~0.4%，舊門檻 0.6%/1.0%（另加 3 ATR）
-    # 幾乎永遠碰不到，等於沒有分批停利。一般幣達 0.30%、高彈性幣達 0.40%
-    # 即落袋一半；都已明顯覆蓋單次平倉費用，剩餘半倉仍可捕捉大行情。
-    if not s.get("has_partial_closed", False) and not s.get("partial_tp_pending", False):
-        profile_type = str(s.get("profile_type", ""))
-        # [2026-07-14 再校準] 分批停利門溻從 0.6%/0.4% 再降至 0.3%/0.2%：
-        # 峰值中位數 0.28%，0.4% 對於多數 0.2-0.3% 峰值交易仍觸發不到。
-        # 降至 0.20%(一般) / 0.30%(高彈)，一般幣峰值 > 0.20% 就先落袋 50%。
-        # 剩余 50% 繼續讓 Trailing 追，若峰值繼續擴大仍可捕到大行情。
-        partial_trigger = 0.003 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.002
-        if profit_pct >= partial_trigger:
-            before_qty = abs(s["qty"])
-            s["partial_tp_pending"] = True
-            try:
-                cs = "sell" if is_long else "buy"
-                await close_position(sym, cs, before_qty * 0.5, p, avg, reason="[Partial_Take_Profit]", is_stop_loss=False)
-                if abs(s.get("qty", 0.0)) < before_qty - 1e-8:
-                    s["has_partial_closed"] = True
-                    from core.peak_store import save_partial_take_profit
-                    save_partial_take_profit(sym)
-                    logger.info(f"💰 [分批停利] {sym} 已落袋 50%，剩餘部位繼續追蹤趨勢")
-                    return
-            finally:
-                s["partial_tp_pending"] = False
-
     # ══ 峰值更新（最優先，必須在所有出場機制之前執行）══
     # 含 K 線盤中尖峰（HIGH/LOW），讓 1 秒內的暴漲/暴跌也能被保本/PeakLock 捕捉
     # ⚠️ 舊版本此更新在 update_trailing_stop(line~642) 才跑，保本/PeakLock 全讀舊值
@@ -650,6 +622,41 @@ async def check_exits(sym):
         # 只記得 0.25%，鎖利鎖在遠低於真正高點的地方）。
         from core.peak_store import save_peak
         save_peak(sym, s["highest_profit_pct"])
+
+    # ── 獲利高點量縮：不再分批，確認趨勢在高獲利區失去量能後一次全平。
+    # 僅使用「上一根已收完」K 棒的成交量，避免新 K 棒剛開始時因累積量很小而誤判。
+    # 目前獲利須仍保留峰值 85% 且至少 0.40%，避免已大幅回吐後才用量縮理由出場。
+    _completed = _ohlcv_early[:-1] if len(_ohlcv_early) >= 2 else []
+    _peak_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    _peak_volume_contracting = False
+    _completed_vol_ratio = 1.0
+    if len(_completed) >= 6:
+        _latest_completed_vol = float(_completed[-1][5] or 0.0)
+        _baseline_volumes = [float(c[5] or 0.0) for c in _completed[-21:-1] if float(c[5] or 0.0) > 0]
+        _baseline_vol = float(np.mean(_baseline_volumes)) if _baseline_volumes else 0.0
+        _completed_vol_ratio = _latest_completed_vol / _baseline_vol if _baseline_vol > 0 else 1.0
+        _peak_volume_contracting = (
+            _peak_profit >= 0.005
+            and profit_pct >= max(0.004, _peak_profit * 0.85)
+            and _completed_vol_ratio <= 0.65
+        )
+
+    s["peak_volume_contraction_count"] = (
+        int(s.get("peak_volume_contraction_count", 0)) + 1
+        if _peak_volume_contracting else 0
+    )
+    if s["peak_volume_contraction_count"] >= 2:
+        cs = "sell" if is_long else "buy"
+        logger.info(
+            f"💰 [高點量縮全平] {sym} 峰值 {_peak_profit*100:.2f}%、"
+            f"目前 {profit_pct*100:.2f}%、已完成K棒量比 {_completed_vol_ratio:.2f}x，"
+            f"連續確認量能衰退，一次平倉 {abs(s['qty'])}"
+        )
+        await close_position(
+            sym, cs, abs(s["qty"]), p, avg,
+            reason="[Peak_Volume_Contraction]", is_stop_loss=False,
+        )
+        return
 
     # --- [新增] 執行動態移動停損更新 ---
     # 這會根據當前價格更新 s["trailing_stop_price"]
