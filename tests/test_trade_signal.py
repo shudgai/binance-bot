@@ -69,6 +69,20 @@ class TradeSignalTests(unittest.TestCase):
         side, _, route = compute_signal_strength(sym)
         self.assertEqual((side, route), ("buy", "MA25_Pullback"))
 
+    def test_golden_cross_above_ma99_does_not_require_ma25_above_ma99_yet(self):
+        sym = self._setup_ma_signal_state(ma99=100.1)
+        side, _, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("buy", "MA_Cross"))
+
+    def test_death_cross_below_ma99_does_not_require_ma25_below_ma99_yet(self):
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=99.0, signal_low=98.8,
+            ma7=99.7, ma25=100.0, ma99=99.5,
+            prev_ma7=100.2, prev_ma25=100.0,
+        )
+        side, _, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("sell", "MA_Cross"))
+
     def test_flat_intertwined_ma_is_blocked(self):
         sym = self._setup_ma_signal_state(
             signal_open=100.0, signal_close=100.0, signal_volume=900.0,

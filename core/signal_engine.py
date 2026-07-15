@@ -36,8 +36,12 @@ def compute_signal_strength(sym):
 
     long_stack = ma7 > ma25 > ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
     short_stack = ma7 < ma25 < ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
-    cross_long = golden_cross and long_stack and above_ma99 and candle_close > candle_open and volume_ratio >= 1.0
-    cross_short = death_cross and short_stack and below_ma99 and candle_close < candle_open and volume_ratio >= 1.0
+    # 交叉是趨勢的起點：此時 MA25 常尚未越過 MA99。交叉路線只要求價格位於
+    # MA99 正確一側與兩條短中均線斜率同向；回調/突破仍要求完整三均線排列。
+    cross_long = (golden_cross and above_ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
+                  and candle_close > candle_open and volume_ratio >= 1.0)
+    cross_short = (death_cross and below_ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
+                   and candle_close < candle_open and volume_ratio >= 1.0)
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
     pullback_long = (long_spreading and long_stack and above_ma99 and candle_low <= ma25 * (1 + touch_tolerance)

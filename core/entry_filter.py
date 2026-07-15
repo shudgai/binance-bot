@@ -47,7 +47,7 @@ def btc_macro_entry_guard(sym, side):
     return True, f"BTC 1H+4H 方向混合 ({trend_1h}+{trend_4h})，個幣強量放行", "MIXED"
 
 
-def is_ma_direction_aligned(state, side):
+def is_ma_direction_aligned(state, side, route=None):
     """Require a completed-candle three-MA trend stack and non-adverse MA slopes."""
     candles = state.get("ohlcv", [])
     if len(candles) < 2:
@@ -60,6 +60,13 @@ def is_ma_direction_aligned(state, side):
     prev_ma25 = float(state.get("prev_ma25", ma25) or ma25)
     if min(closed_price, ma7, ma25, ma99) <= 0:
         return False
+    normalized_route = str(route or "").lower()
+    if side == "buy" and normalized_route == "ma_cross":
+        return (closed_price > ma99 and prev_ma7 <= prev_ma25 and ma7 > ma25
+                and ma7 > prev_ma7 and ma25 >= prev_ma25)
+    if side == "sell" and normalized_route == "ma_cross":
+        return (closed_price < ma99 and prev_ma7 >= prev_ma25 and ma7 < ma25
+                and ma7 < prev_ma7 and ma25 <= prev_ma25)
     if side == "buy":
         return closed_price > ma99 and ma7 > ma25 > ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
     if side == "sell":
@@ -141,7 +148,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
     ma99 = float(s.get("ma99", 0.0) or 0.0)
     if min(closed_price, ma7, ma25, ma99) <= 0:
         return False
-    if not is_ma_direction_aligned(s, side):
+    if not is_ma_direction_aligned(s, side, route):
         logger.info(f"🛑 [MA_DIRECTION] {sym} 未通過 MA7/MA25/MA99 完整排列與斜率確認")
         return False
 

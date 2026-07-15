@@ -24,8 +24,8 @@ class EntryFilterTests(unittest.TestCase):
         else:
             ma7, ma25, ma99, price = 99.0, 100.0, 101.0, 98.5
             closed = [1, 99.5, 99.7, 98.4, price, volume]
-        prev_ma7 = 100.5 if side == "buy" else 99.5
-        prev_ma25 = 99.9 if side == "buy" else 100.1
+        prev_ma7 = 99.8 if side == "buy" else 100.2
+        prev_ma25 = 100.0
         STATES[sym].update({
             "status": "ACTIVE", "ma7": ma7, "ma25": ma25, "ma99": ma99,
             "prev_ma7": prev_ma7, "prev_ma25": prev_ma25,
@@ -61,10 +61,15 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ma99"] = 102.0
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
-    def test_price_on_correct_ma99_side_but_incomplete_stack_is_rejected(self):
+    def test_cross_on_correct_ma99_side_allows_incomplete_long_stack(self):
         sym = self._state("buy")
         STATES[sym]["ma99"] = 100.5
-        self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
+        self.assertTrue(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
+
+    def test_pullback_still_rejects_incomplete_long_stack(self):
+        sym = self._state("buy")
+        STATES[sym]["ma99"] = 100.5
+        self.assertFalse(is_entry_allowed(sym, "buy", route="MA25_Pullback", strength=25.0))
 
     def test_adverse_ma25_slope_is_rejected(self):
         sym = self._state("buy")

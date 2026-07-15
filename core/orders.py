@@ -1222,7 +1222,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         if not macro_ok:
             logger.info(f"🛑 [Final_BTC_Macro_Guard] {sym} {side}：{macro_reason}")
             return
-        if not is_ma_direction_aligned(s, side):
+        if not is_ma_direction_aligned(s, side, entry_route):
             logger.info(f"🛑 [Final_MA_Direction_Guard] {sym} {side} 未通過 MA7/MA25/MA99 完整排列與斜率，拒絕送單")
             return
     if s.get("_is_closing", False):

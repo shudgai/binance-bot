@@ -770,7 +770,7 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
 
     if route in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
         from core.entry_filter import is_ma_direction_aligned
-        if not is_ma_direction_aligned(s, side):
+        if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
         ma7 = float(s.get("ma7", 0.0) or 0.0)
         ma25 = float(s.get("ma25", 0.0) or 0.0)
