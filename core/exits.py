@@ -525,17 +525,7 @@ async def check_exits(sym):
                 reason="[MA_Wrong_Direction_Confirmed]", is_stop_loss=True,
             )
             return
-        opposite_cross = ma7 > 0 and ma25 > 0 and ma_candle_ts and (
-            (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
-            (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
-        )
-        if opposite_cross and s.get("ma_exit_last_candle_ts") != ma_candle_ts:
-            s["ma_exit_last_candle_ts"] = ma_candle_ts
-            cs = "sell" if is_long else "buy"
-            reason = "[MA7_MA25_Death_Cross]" if is_long else "[MA7_MA25_Golden_Cross]"
-            logger.info(f"🎯 [MA_Wave_End] {sym} {reason} | MA7={ma7:.6f}, MA25={ma25:.6f}")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
-            return
+
 
         peak_lock_hit, peak_lock_price = update_ma_peak_lock(sym, p, is_long)
         if peak_lock_hit:
@@ -559,7 +549,36 @@ async def check_exits(sym):
             cs = "sell" if is_long else "buy"
             logger.info(f"🛡️ [MA_Disaster_Stop] {sym} 觸及 {MA_DISASTER_STOP_PCT*100:.1f}% 災難止損")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MA_Disaster_Stop]", is_stop_loss=True)
-        return
+            return
+
+        # MA lifecycle exit: a completed-candle MA7 break or opposite MA7/25 cross exits after 2 consecutive confirmations.
+        closed_price = float(s.get("ohlcv", [])[-2][4]) if len(s.get("ohlcv", [])) >= 2 else 0.0
+        if ma7 > 0 and ma25 > 0 and closed_price > 0 and ma_candle_ts:
+            cross_invalid = (
+                (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
+                (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
+            )
+            ma7_broken = (is_long and closed_price < ma7) or (not is_long and closed_price > ma7)
+
+            if s.get("ma_exit_last_candle_ts") != ma_candle_ts:
+                s["ma_exit_last_candle_ts"] = ma_candle_ts
+                if cross_invalid or ma7_broken:
+                    s["ma_exit_invalid_count"] = s.get("ma_exit_invalid_count", 0) + 1
+                else:
+                    s["ma_exit_invalid_count"] = 0
+
+            if s.get("ma_exit_invalid_count", 0) >= 2:
+                cs = "sell" if is_long else "buy"
+                if cross_invalid:
+                    reason = "[MA7_MA25_Death_Cross]" if is_long else "[MA7_MA25_Golden_Cross]"
+                else:
+                    reason = "[MA7_Closed_Break]"
+                logger.info(
+                    f"🎯 [MA_Lifecycle_Exit] {sym} {reason} | closed={closed_price:.6f}, "
+                    f"MA7={ma7:.6f}, MA25={ma25:.6f}, confirms={s.get('ma_exit_invalid_count', 0)}"
+                )
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
+                return
 
     # --- [新增] 動態退出管理器 (Dynamic Exit Manager) ---
     if "dynamic_exit_manager" not in s:
@@ -573,38 +592,6 @@ async def check_exits(sym):
         logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
         return
-
-    # MA lifecycle exit: a completed-candle MA7 break or opposite MA7/25 cross exits immediately.
-    ma7 = float(s.get("ma7", 0.0) or 0.0)
-    ma25 = float(s.get("ma25", 0.0) or 0.0)
-    prev_ma7 = float(s.get("prev_ma7", ma7) or ma7)
-    prev_ma25 = float(s.get("prev_ma25", ma25) or ma25)
-    ma_candle_ts = int(s.get("ma_candle_ts", 0) or 0)
-    closed_price = float(s.get("ohlcv", [])[-2][4]) if len(s.get("ohlcv", [])) >= 2 else 0.0
-
-    if ma7 > 0 and ma25 > 0 and closed_price > 0 and ma_candle_ts:
-        cross_invalid = (
-            (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
-            (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
-        )
-        ma7_broken = (is_long and closed_price < ma7) or (not is_long and closed_price > ma7)
-
-        if s.get("ma_exit_last_candle_ts") != ma_candle_ts:
-            s["ma_exit_invalid_count"] = 1 if ma7_broken else 0
-            s["ma_exit_last_candle_ts"] = ma_candle_ts
-
-        if cross_invalid or ma7_broken:
-            cs = "sell" if is_long else "buy"
-            if cross_invalid:
-                reason = "[MA7_MA25_Death_Cross]" if is_long else "[MA7_MA25_Golden_Cross]"
-            else:
-                reason = "[MA7_Closed_Break]"
-            logger.info(
-                f"🎯 [MA_Lifecycle_Exit] {sym} {reason} | closed={closed_price:.6f}, "
-                f"MA7={ma7:.6f}, MA25={ma25:.6f}, confirms={s.get('ma_exit_invalid_count', 0)}"
-            )
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
-            return
 
     # --- [新增] 極速止損 (Fast-Exit Guard / Instant Trap) ---
     # 檢查開倉後 60 秒內的「瞬間陷阱」

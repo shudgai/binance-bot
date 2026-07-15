@@ -595,7 +595,12 @@ async def check_entries():
     candidates = validated_candidates
     if not candidates:
         return
-    candidates.sort(key=lambda x: (-float(ctx.STATES[x[0]].get("_entry_quality_score", 0.0)), -x[2], x[0]))
+    candidates.sort(key=lambda x: (
+        1 if x[3] == "MA_Breakout" else 0,
+        -float(ctx.STATES[x[0]].get("_entry_quality_score", 0.0)),
+        -x[2],
+        x[0]
+    ))
 
     # The former range lane is removed: all three capital slots now belong to this MA strategy.
     inflight_symbols = {info.get("sym") for info in ctx.PENDING_LIMIT_ORDERS.values() if info.get("sym")}
