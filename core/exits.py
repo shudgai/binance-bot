@@ -20,6 +20,75 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_WRONG_DIRECTION_PCT = 0.006
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
+MA_PEAK_LOCK_ARM_PCT = 0.008
+MA_PEAK_LOCK_MID_PCT = 0.015
+MA_PEAK_LOCK_HIGH_PCT = 0.030
+MA_PEAK_LOCK_MIN_ATR_GAP = 0.25
+
+
+def _ma_peak_keep_ratio(peak_profit):
+    if peak_profit >= MA_PEAK_LOCK_HIGH_PCT:
+        return 0.85
+    if peak_profit >= MA_PEAK_LOCK_MID_PCT:
+        return 0.80
+    return 0.75
+
+
+def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_confirmation=False):
+    """Track an MA-wave peak and return whether its ratcheting profit lock was crossed."""
+    s = ctx.STATES[sym]
+    avg = float(s.get("avg_price", 0.0) or 0.0)
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    if avg <= 0 or current_price <= 0 or atr <= 0:
+        return False, 0.0
+
+    profit = (current_price - avg) / avg if is_long else (avg - current_price) / avg
+    confirmed_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    if require_confirmation and profit > confirmed_peak:
+        candidate = float(s.get("realtime_peak_candidate_profit", 0.0) or 0.0)
+        candidate_time = float(s.get("realtime_peak_candidate_time", 0.0) or 0.0)
+        now = float(event_time if event_time is not None else time.time())
+        tolerance = max(0.0005, min(0.002, (atr / avg) * 0.25))
+        if candidate > confirmed_peak and 0 <= now - candidate_time <= 1.0 and abs(profit - candidate) <= tolerance:
+            confirmed_peak = max(candidate, profit)
+            s["realtime_peak_candidate_profit"] = 0.0
+            s["realtime_peak_candidate_price"] = 0.0
+            s["realtime_peak_candidate_time"] = 0.0
+        else:
+            s["realtime_peak_candidate_profit"] = profit
+            s["realtime_peak_candidate_price"] = current_price
+            s["realtime_peak_candidate_time"] = now
+    else:
+        confirmed_peak = max(confirmed_peak, profit)
+
+    if confirmed_peak > float(s.get("highest_profit_pct", 0.0) or 0.0):
+        s["highest_profit_pct"] = confirmed_peak
+    if confirmed_peak > float(s.get("ma_peak_saved_pct", 0.0) or 0.0):
+        from core.peak_store import save_peak
+        save_peak(sym, confirmed_peak)
+        s["ma_peak_saved_pct"] = confirmed_peak
+
+    if confirmed_peak < MA_PEAK_LOCK_ARM_PCT:
+        return False, float(s.get("ma_peak_lock_price", 0.0) or 0.0)
+
+    fee_floor = ROUND_TRIP_FEE_PCT + 0.0005
+    locked_profit = max(fee_floor, confirmed_peak * _ma_peak_keep_ratio(confirmed_peak))
+    if is_long:
+        peak_price = avg * (1.0 + confirmed_peak)
+        proposed = min(avg * (1.0 + locked_profit), peak_price - atr * MA_PEAK_LOCK_MIN_ATR_GAP)
+        proposed = max(proposed, avg * (1.0 + fee_floor))
+        lock_price = max(float(s.get("ma_peak_lock_price", 0.0) or 0.0), proposed)
+        crossed = current_price <= lock_price
+    else:
+        peak_price = avg * (1.0 - confirmed_peak)
+        proposed = max(avg * (1.0 - locked_profit), peak_price + atr * MA_PEAK_LOCK_MIN_ATR_GAP)
+        proposed = min(proposed, avg * (1.0 - fee_floor))
+        previous = float(s.get("ma_peak_lock_price", 0.0) or 0.0)
+        lock_price = min(previous if previous > 0 else float("inf"), proposed)
+        crossed = current_price >= lock_price
+    s["ma_peak_lock_armed"] = True
+    s["ma_peak_lock_price"] = lock_price
+    return crossed, lock_price
 
 
 class FastReversalGuard:
@@ -421,7 +490,7 @@ async def check_exits(sym):
         s["highest_profit_pct"] = profit_pct
     current_atr = s.get("current_atr", 0.0)
 
-    # MA 波段正常停利仍只看反向交叉；但持倉初期若兩根已收線 K 棒確認開錯方向，立即止損。
+    # MA 波段以高點回吐鎖利或反向交叉結束；持倉初期若兩根已收線 K 棒確認開錯方向，立即止損。
     route = str(s.get("entry_reason", "") or "").lower()
     if route in MA_ENTRY_ROUTES:
         ma7 = float(s.get("ma7", 0.0) or 0.0)
@@ -466,6 +535,20 @@ async def check_exits(sym):
             reason = "[MA7_MA25_Death_Cross]" if is_long else "[MA7_MA25_Golden_Cross]"
             logger.info(f"🎯 [MA_Wave_End] {sym} {reason} | MA7={ma7:.6f}, MA25={ma25:.6f}")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
+            return
+
+        peak_lock_hit, peak_lock_price = update_ma_peak_lock(sym, p, is_long)
+        if peak_lock_hit:
+            cs = "sell" if is_long else "buy"
+            peak_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
+            logger.info(
+                f"💰 [MA_Peak_Lock] {sym} 峰值 {peak_profit*100:.2f}% 回吐至 "
+                f"鎖利價 {peak_lock_price:.6f}，結束本段波段"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[MA_Peak_Lock]", is_stop_loss=False,
+            )
             return
 
         disaster_hit = (

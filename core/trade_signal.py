@@ -88,8 +88,23 @@ async def update_trade_signal(sym, trade):
         _is_long = s["qty"] > 0
         rt_profit = (price - avg_p) / avg_p if _is_long else (avg_p - price) / avg_p
 
-        # MA 波段倉位不使用即時保本或移動停利；價格狀態已更新，退場交由已收線反向交叉。
+        # MA 波段使用專用高點鎖利；下方較緊的通用 TrailTP 仍不套用。
         if str(s.get("entry_reason", "") or "").lower() in {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}:
+            from core.exits import update_ma_peak_lock
+            peak_hit, peak_lock_price = update_ma_peak_lock(
+                sym, price, _is_long, event_time=ts_value, require_confirmation=True
+            )
+            if peak_hit and not s.get("_is_closing", False):
+                from core.orders import close_position
+                close_side = "sell" if _is_long else "buy"
+                logger.info(
+                    f"⚡ [Realtime_MA_Peak_Lock] {sym} 即時價格 {price:.6f} "
+                    f"穿越高點鎖利 {peak_lock_price:.6f}，結束本段波段"
+                )
+                await close_position(
+                    sym, close_side, abs(s["qty"]), price, avg_p,
+                    reason="[MA_Peak_Lock]", is_stop_loss=False,
+                )
             return
 
         # 單一公開成交不能立刻抬高移動停利；新峰值需由下一筆相近成交確認。

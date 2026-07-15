@@ -180,7 +180,7 @@ async def _replace_exchange_exit_orders(sym):
 
     if is_ma_route:
         s["exchange_take_profit_order_id"] = None
-        logger.info(f"🎯 [MA波段掛單] {sym} 不掛固定停利，等待 MA7/MA25 反向交叉")
+        logger.info(f"🎯 [MA波段掛單] {sym} 不掛固定價停利，使用高點鎖利或等待 MA7/MA25 反向交叉")
         return
 
     tp_order = await exchange_futures.create_order(
@@ -278,7 +278,7 @@ async def _ensure_exchange_exit_orders(sym):
         is_ma_route or bool(s.get("exchange_take_profit_order_id"))
     )
     if exits_complete:
-        label = "1.5% 災難止損存在、無固定停利" if is_ma_route else "止損/停利單皆存在且數量正確"
+        label = "1.5% 災難止損存在、高點鎖利由即時行情管理" if is_ma_route else "止損/停利單皆存在且數量正確"
         logger.info(f"✅ [交易所退出單確認] {sym} Algo {label}")
         return
 

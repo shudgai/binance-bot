@@ -41,6 +41,9 @@ def build_symbol_state(sym):
         "_direction_guard_cooldown_signal_candle_ts": 0,
         "ma_exit_invalid_count": 0,
         "ma_exit_last_candle_ts": 0,
+        "ma_peak_lock_armed": False,
+        "ma_peak_lock_price": 0.0,
+        "ma_peak_saved_pct": 0.0,
         "macd_line": 0.0,
         "macd_signal": 0.0,
         "macd_hist": 0.0,
@@ -417,6 +420,9 @@ def reset_coin_state(sym):
     s["early_direction_invalid_count"] = 0
     s["ma_exit_invalid_count"] = 0
     s["ma_exit_last_candle_ts"] = 0
+    s["ma_peak_lock_armed"] = False
+    s["ma_peak_lock_price"] = 0.0
+    s["ma_peak_saved_pct"] = 0.0
     s["stop_loss"] = 0.0
     s["pending_side"] = None
     s["pending_time"] = 0

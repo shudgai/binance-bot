@@ -7,7 +7,7 @@ import numpy as np
 
 from core import ctx
 from core.check_entries import compute_indicators
-from core.exits import check_exits
+from core.exits import _ma_peak_keep_ratio, check_exits
 from core.state_manager import build_symbol_state
 
 
@@ -152,6 +152,77 @@ class MALifecycleTests(unittest.TestCase):
 
         asyncio.run(run())
 
+
+
+    def test_ma_peak_lock_uses_tighter_tiers_as_profit_grows(self):
+        self.assertEqual(_ma_peak_keep_ratio(0.010), 0.75)
+        self.assertEqual(_ma_peak_keep_ratio(0.020), 0.80)
+        self.assertEqual(_ma_peak_keep_ratio(0.030), 0.85)
+
+    def test_ma_peak_lock_does_not_arm_below_point_eight_percent(self):
+        state = self._position_state(closed_price=100.6)
+        state["close_price"] = 100.7
+        state["highest_profit_pct"] = 0.007
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                close_mock.assert_not_called()
+                self.assertFalse(state["ma_peak_lock_armed"])
+
+        asyncio.run(run())
+
+    def test_ma_long_peak_lock_uses_mid_tier_twenty_percent_giveback(self):
+        state = self._position_state(closed_price=101.5)
+        state["close_price"] = 101.5
+        state["highest_profit_pct"] = 0.02
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                close_mock.assert_called_once()
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Peak_Lock]")
+                self.assertAlmostEqual(state["ma_peak_lock_price"], 101.60, places=6)
+
+        asyncio.run(run())
+
+    def test_ma_short_peak_lock_is_symmetric(self):
+        state = self._position_state(closed_price=98.6, ma7=99.0, ma25=100.0)
+        state.update({
+            "qty": -1.0, "close_price": 98.6, "highest_profit_pct": 0.02,
+            "prev_ma7": 99.1, "prev_ma25": 100.0,
+        })
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                close_mock.assert_called_once()
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Peak_Lock]")
+                self.assertAlmostEqual(state["ma_peak_lock_price"], 98.40, places=6)
+
+        asyncio.run(run())
+
+
+    def test_ma_peak_lock_ratchets_up_without_exiting_above_lock(self):
+        state = self._position_state(closed_price=101.7)
+        state.update({"close_price": 101.7, "highest_profit_pct": 0.02})
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                first_lock = state["ma_peak_lock_price"]
+                close_mock.assert_not_called()
+                state["close_price"] = 103.0
+                await check_exits(self.sym)
+                close_mock.assert_not_called()
+                self.assertGreater(state["ma_peak_lock_price"], first_lock)
+                self.assertAlmostEqual(state["ma_peak_lock_price"], 102.55, places=6)
+
+        asyncio.run(run())
 
 
 if __name__ == "__main__":

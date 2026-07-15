@@ -31,7 +31,7 @@ def test_realtime_trade_crossing_trailing_stop_closes_immediately():
     assert close.await_args.kwargs["is_stop_loss"] is False
 
 
-def test_ma_wave_position_ignores_realtime_trailing_cross():
+def test_ma_wave_position_uses_dedicated_realtime_peak_lock():
     sym = "LINKUSDT"
     init_states([sym])
     reset_coin_state(sym)
@@ -47,8 +47,9 @@ def test_ma_wave_position_ignores_realtime_trailing_cross():
     with patch("core.orders.close_position", AsyncMock()) as close:
         asyncio.run(update_trade_signal(sym, {"price": 100.4, "amount": 1.0}))
 
-    close.assert_not_awaited()
-    assert state["trailing_stop_price"] == 100.5
+    close.assert_awaited_once()
+    assert close.await_args.kwargs["reason"] == "[MA_Peak_Lock]"
+    assert state["ma_peak_lock_armed"] is True
 
 
 def test_realtime_trade_does_not_close_before_soft_activation():
