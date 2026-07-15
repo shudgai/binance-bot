@@ -596,7 +596,6 @@ async def check_entries():
     if not candidates:
         return
     candidates.sort(key=lambda x: (
-        1 if x[3] == "MA_Breakout" else 0,
         -float(ctx.STATES[x[0]].get("_entry_quality_score", 0.0)),
         -x[2],
         x[0]
