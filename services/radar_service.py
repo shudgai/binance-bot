@@ -40,14 +40,16 @@ def is_strict_radar_eligible(row: dict) -> bool:
 
 
 def prioritize_entry_ready(rows):
-    """Keep market eligibility stable while ranking actionable structures first."""
-    ready = [
-        row for row in rows
-        if row.get("entry_direction", "none") in ("long", "short")
-        and float(row.get("entry_readiness_score", 0.0) or 0.0) >= 0.5
-    ]
-    waiting = [row for row in rows if row not in ready]
-    return ready + waiting
+    """Rank safe markets by MA setup proximity before general momentum."""
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.get("entry_direction", "none") in ("long", "short"),
+            float(row.get("entry_readiness_score", 0.0) or 0.0),
+            float(row.get("momentum_score", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
 
 
 def _compute_dynamic_profile(symbol: str, atr_pct: float, price: float, rank: int, total: int) -> dict:

@@ -1365,102 +1365,91 @@ def get_klines(symbol: str, interval: str, limit: int):
     _kline_cache[cache_key] = (now, result)
     return result
 
-def _ema_series(values, period):
-    """Small dependency-free EMA helper used by the market radar."""
-    values = np.asarray(values, dtype=float)
-    if values.size == 0:
-        return values
-    alpha = 2.0 / (period + 1.0)
-    result = np.empty(values.size, dtype=float)
-    result[0] = values[0]
-    for idx in range(1, values.size):
-        result[idx] = alpha * values[idx] + (1.0 - alpha) * result[idx - 1]
-    return result
-
-
 def calculate_entry_readiness(klines):
-    """Score how closely 15m market structure matches the live Route-A entry gates."""
-    if not klines or len(klines) < 55:
-        return {"score": 0.0, "direction": "none", "long_score": 0.0, "short_score": 0.0}
+    """Score proximity to the closed-candle MA7/25/99 entry setups."""
+    empty = {"score": 0.0, "direction": "none", "long_score": 0.0, "short_score": 0.0}
+    if not klines or len(klines) < 101:
+        return empty
 
-    # Binance includes the currently forming candle at the end; selection, like entry,
-    # must use only completed candles to avoid ranking a temporary intrabar move.
     completed = klines[:-1]
     closes = np.asarray([float(k[4]) for k in completed], dtype=float)
-    opens = np.asarray([float(k[1]) for k in completed], dtype=float)
-    if closes.size < 54 or np.any(closes <= 0):
-        return {"score": 0.0, "direction": "none", "long_score": 0.0, "short_score": 0.0}
+    highs = np.asarray([float(k[2]) for k in completed], dtype=float)
+    lows = np.asarray([float(k[3]) for k in completed], dtype=float)
+    volumes = np.asarray([float(k[5]) for k in completed], dtype=float)
+    if closes.size < 100 or np.any(closes <= 0):
+        return empty
 
-    ema20 = _ema_series(closes, 20)[-1]
-    ema50 = _ema_series(closes, 50)[-1]
-    ema12_series = _ema_series(closes, 12)
-    ema26_series = _ema_series(closes, 26)
-    macd_series = ema12_series - ema26_series
-    signal_series = _ema_series(macd_series, 9)
-    hist = float(macd_series[-1] - signal_series[-1])
-    prev_hist = float(macd_series[-2] - signal_series[-2])
+    price = float(closes[-1])
+    ma7, ma25, ma99 = (float(np.mean(closes[-period:])) for period in (7, 25, 99))
+    prev_ma7 = float(np.mean(closes[-8:-1]))
+    prev_ma25 = float(np.mean(closes[-26:-1]))
+    gap = ma7 - ma25
+    prev_gap = prev_ma7 - prev_ma25
+    gap_pct = abs(gap) / price
+    true_ranges = np.maximum(
+        highs[-14:] - lows[-14:],
+        np.maximum(abs(highs[-14:] - closes[-15:-1]), abs(lows[-14:] - closes[-15:-1])),
+    )
+    atr = max(float(np.mean(true_ranges)), price * 0.001)
+    vol_ma20 = max(float(np.mean(volumes[-21:-1])), 1e-12)
+    volume_ratio = float(volumes[-1] / vol_ma20)
+    prior_high = float(np.max(highs[-21:-1]))
+    prior_low = float(np.min(lows[-21:-1]))
 
-    deltas = np.diff(closes[-15:])
-    avg_gain = float(np.mean(np.clip(deltas, 0, None)))
-    avg_loss = float(np.mean(np.clip(-deltas, 0, None)))
-    if avg_loss <= 1e-12:
-        rsi = 99.0 if avg_gain > 0 else 50.0
-    else:
-        rsi = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+    golden_cross = prev_ma7 <= prev_ma25 and ma7 > ma25
+    death_cross = prev_ma7 >= prev_ma25 and ma7 < ma25
+    near_cross = gap_pct <= max(0.0015, atr / price * 0.35)
+    long_approaching = ma7 <= ma25 and ma7 > prev_ma7 and gap > prev_gap
+    short_approaching = ma7 >= ma25 and ma7 < prev_ma7 and gap < prev_gap
+    long_spreading = ma7 > ma25 and ma7 > prev_ma7 and gap > max(prev_gap, 0.0)
+    short_spreading = ma7 < ma25 and ma7 < prev_ma7 and gap < min(prev_gap, 0.0)
+    near_ma25 = abs(price - ma25) <= atr * 0.8
+    near_high = prior_high - atr * 0.5 <= price <= prior_high + atr * 0.2
+    near_low = prior_low - atr * 0.2 <= price <= prior_low + atr * 0.5
+    volume_ready = min(volume_ratio / 0.8, 1.0)
 
-    bb_window = closes[-20:]
-    bb_mid = float(np.mean(bb_window))
-    bb_std = float(np.std(bb_window))
-    bb_low, bb_up = bb_mid - 2.0 * bb_std, bb_mid + 2.0 * bb_std
-    band_width = max(bb_up - bb_low, 1e-12)
-    band_position = (float(closes[-1]) - bb_low) / band_width
-    sma200 = float(np.mean(closes[-200:])) if closes.size >= 200 else 0.0
-
-    last_bullish = bool(closes[-1] > opens[-1])
-    last_bearish = bool(closes[-1] < opens[-1])
-    macd_long = hist > 0 and (prev_hist <= 0 or hist >= prev_hist * 0.85)
-    macd_short = hist < 0 and (prev_hist >= 0 or abs(hist) >= abs(prev_hist) * 0.85)
-    sma_long = sma200 <= 0 or closes[-1] >= sma200 * 0.995
-    sma_short = sma200 <= 0 or closes[-1] <= sma200 * 1.005
-
-    # Same families of checks as Route A. A weighted score is used instead of
-    # duplicating hard trade decisions here; final entry validation remains authoritative.
     long_score = (
-        0.25 * bool(closes[-1] > ema20 and closes[-1] > ema50)
-        + 0.25 * bool(macd_long)
-        + 0.15 * bool(25.0 < rsi <= 68.0)
-        + 0.15 * last_bullish
-        + 0.10 * bool(band_position <= 0.85)
-        + 0.10 * bool(sma_long)
+        0.25 * bool(price > ma99)
+        + 0.20 * bool(ma7 > ma25 or (near_cross and long_approaching))
+        + 0.15 * bool(golden_cross or long_spreading or (near_cross and long_approaching))
+        + 0.20 * bool(near_ma25 and price >= ma25)
+        + 0.10 * bool(near_high)
+        + 0.10 * volume_ready
     )
     short_score = (
-        0.25 * bool(closes[-1] < ema20 and closes[-1] < ema50)
-        + 0.25 * bool(macd_short)
-        + 0.15 * bool(40.0 <= rsi < 75.0)
-        + 0.15 * last_bearish
-        + 0.10 * bool(band_position >= 0.15)
-        + 0.10 * bool(sma_short)
+        0.25 * bool(price < ma99)
+        + 0.20 * bool(ma7 < ma25 or (near_cross and short_approaching))
+        + 0.15 * bool(death_cross or short_spreading or (near_cross and short_approaching))
+        + 0.20 * bool(near_ma25 and price <= ma25)
+        + 0.10 * bool(near_low)
+        + 0.10 * volume_ready
     )
     direction = "long" if long_score >= short_score else "short"
     score = max(long_score, short_score)
+    setup = (
+        "cross" if golden_cross or death_cross
+        else "ma25_pullback" if near_ma25
+        else "breakout" if near_high or near_low
+        else "trend_wait"
+    )
     return {
         "score": round(float(score), 4),
         "direction": direction if score >= 0.5 else "none",
         "long_score": round(float(long_score), 4),
         "short_score": round(float(short_score), 4),
-        "rsi": round(float(rsi), 2),
-        "band_position": round(float(band_position), 4),
+        "setup": setup,
+        "volume_ratio": round(volume_ratio, 3),
+        "ma_gap_pct": round(gap_pct, 5),
     }
 
 
 def get_1h_market_features(symbol: str):
     try:
-        # One request supplies both 1h movement and the EMA/MACD/RSI/SMA readiness
-        # inputs, avoiding an additional API call per radar candidate.
-        klines = market_client.futures_klines(symbol=symbol, interval='15m', limit=205)
+        # One 5m request supplies both the last-hour movement and MA7/25/99 readiness.
+        klines = market_client.futures_klines(symbol=symbol, interval='5m', limit=105)
         if not klines:
             return symbol, 0.0, calculate_entry_readiness([])
-        recent = klines[-5:-1] if len(klines) >= 5 else klines[:-1]
+        recent = klines[-13:-1] if len(klines) >= 13 else klines[:-1]
         highs = [float(k[2]) for k in recent]
         lows = [float(k[3]) for k in recent]
         vols = [float(k[7]) for k in recent]
@@ -1608,6 +1597,8 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
                 "entry_direction": readiness.get("direction", "none"),
                 "entry_long_score": readiness.get("long_score", 0.0),
                 "entry_short_score": readiness.get("short_score", 0.0),
+                "entry_setup": readiness.get("setup", "trend_wait"),
+                "entry_volume_ratio": readiness.get("volume_ratio", 0.0),
                 "momentum_score": round(score, 4),
             })
         except Exception as e:

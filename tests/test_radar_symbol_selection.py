@@ -69,7 +69,7 @@ def test_startup_keeps_a_normal_sized_pool_unchanged():
         assert _restore_truncated_radar_pool(current) == current
 
 
-def _make_15m_klines(closes):
+def _make_5m_klines(closes):
     rows = []
     for idx, close in enumerate(closes):
         open_price = close - 0.08 if idx == len(closes) - 2 else close - 0.01
@@ -78,17 +78,19 @@ def _make_15m_klines(closes):
 
 
 def test_atr_readiness_prefers_structure_aligned_with_entry_gates():
-    # Gentle uptrend with pullbacks keeps RSI out of the extreme zone while EMA/MACD
-    # and the completed candle remain suitable for a Route-A long.
+    # A gentle aligned uptrend near MA25 should rank as an actionable MA long setup.
     closes = [100 + idx * 0.005 + np.sin(idx / 2.0) * 0.10 for idx in range(206)]
-    readiness = calculate_entry_readiness(_make_15m_klines(closes))
+    readiness = calculate_entry_readiness(_make_5m_klines(closes))
 
     assert readiness["direction"] == "long"
     assert readiness["score"] >= 0.75
+    assert readiness["setup"] in ("ma25_pullback", "breakout", "trend_wait")
+    assert "rsi" not in readiness
+    assert "band_position" not in readiness
 
 
 def test_atr_readiness_rejects_insufficient_history():
-    readiness = calculate_entry_readiness(_make_15m_klines([100.0] * 20))
+    readiness = calculate_entry_readiness(_make_5m_klines([100.0] * 20))
 
     assert readiness["direction"] == "none"
     assert readiness["score"] == 0.0
@@ -98,8 +100,9 @@ def test_atr_selection_prioritizes_entry_ready_rows_without_dropping_waiting_row
     rows = [
         {"symbol": "WAITUSDT", "entry_direction": "none", "entry_readiness_score": 0.45},
         {"symbol": "READYUSDT", "entry_direction": "long", "entry_readiness_score": 0.65},
+        {"symbol": "BESTUSDT", "entry_direction": "short", "entry_readiness_score": 0.85},
     ]
 
     prioritized = prioritize_entry_ready(rows)
 
-    assert [row["symbol"] for row in prioritized] == ["READYUSDT", "WAITUSDT"]
+    assert [row["symbol"] for row in prioritized] == ["BESTUSDT", "READYUSDT", "WAITUSDT"]

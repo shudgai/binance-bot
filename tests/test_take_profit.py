@@ -105,7 +105,8 @@ class TakeProfitTests(unittest.TestCase):
         s = STATES[sym]
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
-                  "trailing_stop_price": 0.0, "trailing_highest": 0.0})
+                  "trailing_stop_price": 0.0, "trailing_highest": 0.0,
+                  "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7, "profit_lock_atr": 0.0})
         update_trailing_stop(sym, 100.48, True)  # 峰值 0.48%
         first_stop = s["trailing_stop_price"]
         # 停利線應緊貼峰值（容忍度收緊為 0.08%），這裡驗證它在 0.09% 內。
