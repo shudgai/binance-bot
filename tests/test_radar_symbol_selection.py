@@ -20,12 +20,12 @@ from services.binance_service import calculate_entry_readiness
 
 
 EXPECTED_SYMBOLS = [
-    "XRPUSDT", "ADAUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT",
-    "BCHUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT",
-    "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
-    "SUIUSDT", "INJUSDT", "RENDERUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT",
+    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
+    "UNIUSDT", "AAVEUSDT",
+    "HYPEUSDT", "WLDUSDT",
 ]
-EXPECTED_ATR_SYMBOLS = EXPECTED_SYMBOLS + ["DOGEUSDT", "SOLUSDT"]
+EXPECTED_ATR_SYMBOLS = EXPECTED_SYMBOLS
 
 
 def test_atr_sources_use_the_approved_dynamic_pool():

@@ -20,7 +20,7 @@ from core.state_manager import build_symbol_state, update_states, reset_coin_sta
 from core.peak_store import load_peak, save_peak, clear_peak, load_partial_take_profit
 from core.balance import fetch_real_balance, get_dynamic_max_slots
 from core.market_data import (update_market_wind, initialize_atr_history, fetch_all_klines,
-    fetch_all_sma200, fetch_all_ema50_1h, fetch_all_ema_15m, load_open_positions)
+    fetch_all_ema50_1h, fetch_all_ema_15m, load_open_positions)
 from core.symbol_profile import (filter_valid_symbols, apply_symbol_profile, SYMBOL_PROFILES,
     update_all_dynamic_personalities)
 from core.trade_signal import update_trade_signal
@@ -530,7 +530,6 @@ async def main_loop(exchange):
     except (asyncio.TimeoutError, Exception) as e:
         logger.info(f"⏳ [初始化] ATR 歷史預熱超時或失敗 ({e})，將在運行中慢慢加熱")
 
-    await fetch_all_sma200(exchange_market_data)
     await fetch_all_ema50_1h(exchange_market_data)
     await fetch_all_ema_15m(exchange_market_data)
 
@@ -611,6 +610,8 @@ async def main_loop(exchange):
 
                     strategy = StrategyFactory.create_strategy(sym)
                     tasks.append(safe_execute(strategy.check_exit, sym))
+                    if hasattr(strategy, 'run'):
+                        tasks.append(safe_execute(strategy.run, sym))
 
             # 執行所有指標與出場檢查 (併發)
             if tasks:
@@ -747,10 +748,9 @@ async def periodic_htf_update(exchange):
     while True:
         await asyncio.sleep(900)
         await wait_for_api_cooldown()
-        await fetch_all_sma200(exchange)
         await fetch_all_ema50_1h(exchange)
         await fetch_all_ema_15m(exchange)
-        logger.info("🔄 [HTF] 已更新所有幣種 15m SMA200 與 1H EMA50 以及 15m EMA20 & EMA50")
+        logger.info("🔄 [HTF] 已更新所有幣種 1H EMA50 以及 15m EMA20 & EMA50")
 
 
 async def periodic_momentum_swap():
@@ -833,12 +833,30 @@ async def periodic_status_log():
         await asyncio.sleep(60)
         try:
             cache_data = {}
+            grid_states = []
             for sym in ctx.STATES:
                 cache_data[sym] = ctx.STATES[sym]["atr_history"][-1000:]
+                state = ctx.STATES[sym]
+                if state.get("grid_initialized") and "grids" in state:
+                    grids = state["grids"]
+                    from core.symbol_profile import SYMBOL_PROFILES
+                    config = SYMBOL_PROFILES.get(sym, {})
+                    grid_states.append({
+                        "symbol": sym,
+                        "upper": config.get("grid_upper", 0),
+                        "lower": config.get("grid_lower", 0),
+                        "total_grids": len(grids),
+                        "pending_grids": sum(1 for g in grids if g.get("status") == "pending"),
+                        "arbitrage_count": state.get("grid_arbitrage_count", sum(1 for g in grids if g.get("status") == "filled") // 2)
+                    })
+            if grid_states:
+                import json as _json
+                print(f"@@GRID_STATE@@{_json.dumps(grid_states)}", flush=True)
+
             with open(os.path.join(_data_dir, "atr_history_cache.json"), "w") as f:
                 json.dump(cache_data, f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error in periodic_status_log: {e}", exc_info=True)
 
 
 async def push_paper_live_state():

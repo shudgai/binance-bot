@@ -19,6 +19,9 @@ class TradeSignalTests(unittest.TestCase):
             prev_macd_line=-0.006, prev_macd_signal=-0.002,
         )
         STATES[sym]["rsi_history"] = [26.0, 28.0]
+        # Extreme_Reversal (buy) needs MA99 in uptrend to pass ma99_trend_long
+        STATES[sym]["ma99"] = 99.5
+        STATES[sym]["prev_ma99"] = 99.0
         # ohlcv[-2] is the latest fully closed candle; make it a confirmed reversal candle.
         STATES[sym]["ohlcv"][-2] = [0, 99.8, 100.6, 99.5, 100.4, 1200]
 
@@ -40,6 +43,7 @@ class TradeSignalTests(unittest.TestCase):
             "current_rsi": rsi,
             "rsi_extreme_low": 20, "rsi_extreme_high": 75,
             "ema20": 100.5, "ema50": 101.0,
+            "ma7": 100.5, "ma25": 101.0,
             "sma200_15m": 105.0,
             "bb_low": 90.0, "bb_up": 110.0,
             "macd_line": macd_line, "macd_signal": macd_signal,
@@ -191,6 +195,10 @@ class TradeSignalTests(unittest.TestCase):
             "close_price": 100.0,
             "ema20": 99.8,
             "ema50": 99.5,
+            "ma7": 99.8,
+            "ma25": 99.5,
+            # MA99 向上 (多頭趨勢) - 讓 ma99_trend_long 通過
+            "ma99": 99.8, "prev_ma99": 99.5,
             "sma200_15m": 100.4,
             "ohlcv": [[0, 99.8, 100.2, 99.7, 100.0, 1000]] * 3,
         })
@@ -256,6 +264,8 @@ class TradeSignalTests(unittest.TestCase):
             "current_rsi": 62.0,
             "rsi_extreme_low": 20, "rsi_extreme_high": 75,
             "ema20": 100.5, "ema50": 101.0, "ema50_1h": 105.0,
+            "ma7": 100.5, "ma25": 101.0,
+            "ma99": 100.5, "prev_ma99": 101.0,  # MA99 向下 = 空頭趨勢 (+3 空單度)
             "sma200_15m": 105.0,
             "bb_low": 90.0, "bb_up": 110.0,
             "macd_line": -0.006, "macd_signal": -0.003,

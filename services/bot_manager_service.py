@@ -29,10 +29,10 @@ bot_processes = {}  # {symbol: subprocess.Popen}
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
-    "XRPUSDT", "ADAUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT",
-    "BCHUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "ATOMUSDT",
-    "HBARUSDT", "XLMUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT",
-    "SUIUSDT", "INJUSDT", "RENDERUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT",
+    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
+    "UNIUSDT", "AAVEUSDT",
+    "HYPEUSDT", "WLDUSDT",
 ]
 
 
@@ -385,6 +385,12 @@ def read_bot_output(proc, sym):
                 try:
                     import json as _json
                     bot_status["trend_bias"] = _json.loads(line.replace("@@TREND_BIAS@@", "").strip())
+                except Exception:
+                    pass
+            elif line.startswith("@@GRID_STATE@@"):
+                try:
+                    import json as _json
+                    bot_status["grid_states"] = _json.loads(line.replace("@@GRID_STATE@@", "").strip())
                 except Exception:
                     pass
             elif line.startswith("@@COIN_DEBUG@@"):

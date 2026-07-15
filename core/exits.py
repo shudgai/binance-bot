@@ -503,6 +503,34 @@ async def check_exits(sym):
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
         return
 
+    # ── MA7 & MA25 Trend Reversal Exit ──
+    ma7 = s.get("ma7", 0.0)
+    ma25 = s.get("ma25", 0.0)
+    prev_ma7 = s.get("prev_ma7", ma7)
+    prev_ma25 = s.get("prev_ma25", ma25)
+
+    if ma7 > 0 and ma25 > 0:
+        if is_long:
+            # Check for death cross (MA7 crossing below MA25) or price breaking below MA7 support
+            death_cross = prev_ma7 >= prev_ma25 and ma7 < ma25
+            price_break_support = p < ma7  # 若價格跌破黃線 (MA7)
+            if death_cross or price_break_support:
+                cs = 'sell'
+                reason = "[MA7_MA25_Death_Cross]" if death_cross else "[MA7_Support_Broken]"
+                logger.info(f"🎯 [MA7_MA25_Exit] {sym} 觸發 MA7/MA25 趨勢反轉或支撐跌破 ({reason})，現價: {p:.4f}, MA7: {ma7:.4f}, MA25: {ma25:.4f}")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=True)
+                return
+        else:
+            # Check for golden cross (MA7 crossing above MA25) or price breaking above MA7 resistance
+            golden_cross = prev_ma7 <= prev_ma25 and ma7 > ma25
+            price_break_resistance = p > ma7  # 若價格突破黃線 (MA7)
+            if golden_cross or price_break_resistance:
+                cs = 'buy'
+                reason = "[MA7_MA25_Golden_Cross]" if golden_cross else "[MA7_Resistance_Broken]"
+                logger.info(f"🎯 [MA7_MA25_Exit] {sym} 觸發 MA7/MA25 趨勢反轉或壓力突破 ({reason})，現價: {p:.4f}, MA7: {ma7:.4f}, MA25: {ma25:.4f}")
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=True)
+                return
+
     # --- [新增] 極速止損 (Fast-Exit Guard / Instant Trap) ---
     # 檢查開倉後 60 秒內的「瞬間陷阱」
     hold_sec = time.time() - s.get("open_time", time.time())

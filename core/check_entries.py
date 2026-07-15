@@ -571,7 +571,7 @@ async def check_entries():
         # --- 2. 多重共振過濾區塊 (Multi-Confluence Entry Filter) ---
         cp = s["close_price"]
         ema50_1h = s.get("ema50_1h", 0)
-        sma200_15m = s.get("sma200_15m", 0)
+
         rsi = s.get("current_rsi", 50)
         macd_hist = s.get("macd_hist", 0.0)
         vol_ma20 = s.get("vol_ma20", 0.0)
@@ -581,8 +581,8 @@ async def check_entries():
         s["_entry_liquidity_usdt"] = vol_ma20 * cp * 288
 
         # A. 數據完整性檢查
-        if sma200_15m == 0 or vol_ma20 == 0:
-            set_entry_diagnosis(f"{sym}: 指標載入中 (SMA200: {sma200_15m}, VolMA20: {vol_ma20})")
+        if vol_ma20 == 0:
+            set_entry_diagnosis(f"{sym}: 指標載入中 (VolMA20: {vol_ma20})")
             continue
 
         # Exhaustion_Entry 與 Extreme_Reversal 是反轉策略，不受一般動能與 RSI 限制
@@ -811,33 +811,6 @@ async def check_entries():
             if divergence_type == "bullish" and side == "sell":
                 logger.info(f"@@COIN_DEBUG@@ 🛑 [Divergence_Block] {sym} 底背離阻擋做空 → 訊號取消")
                 continue
-
-        # --- 1H 多重時間週期 (Multi-Timeframe) 過濾 ---
-        if s.get("mtf_filter", True):
-            # 門檻整合 7dceb33 與今天的修正成綜合版，統一訂在 20（跟 entry_filter.py
-            # 的 _MACRO_OVERRIDE_STRENGTH、方向集中度豁免門檻對齊），不要太難開倉。
-            #
-            # Route B（EMA20 回測彈跳，core/signal_engine.py route_b_long/short）本身
-            # 只看 5m 的 EMA20/50 關係，完全不含任何 1H/15m 大週期的判斷——這道 1H 過濾
-            # 正是為了補上 Route B 缺的大週期確認，是它最需要的安全網。但實測 Route B
-            # 的強度分數常常整輪多個不相干幣種同時落在 26~32 的相近區間（明顯是被 BTC/
-            # 大盤動能帶動的共同分數，不是各幣種自己的進場品質），導致這道安全網幾乎每次
-            # 都被強度跳過：實測 TRUMPUSDT(RSI 71.7)/DOTUSDT(RSI 64.3)/ADAUSDT(RSI 42.9，
-            # 完全不算超買) 在同一小時內全部用這個 Override 跳過 1H 趨勢確認去追空，結果
-            # 6 戰 6 敗。改成 Route B 一律不給強度豁免、必須真的通過 1H 趨勢確認；Route A
-            # 本身條件更完整（含 5m RSI 方向/EMA50 gate 等更多重確認），繼續保留強度豁免。
-            _countertrend_route = route in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
-            if _countertrend_route:
-                logger.info(f"↩️ [反轉策略] {sym} {route} 使用專用反轉確認，不套用順勢方向限制")
-            else:
-                ema50_1h = s.get("ema50_1h", 0.0)
-                if ema50_1h > 0:
-                    if side == "buy" and p < ema50_1h:
-                        logger.info(f"📉 [1H 過濾] {sym} 1H 趨勢向下 (現價 {p:.4f} < EMA50 {ema50_1h:.4f})，忽略買入訊號")
-                        continue
-                    if side == "sell" and p > ema50_1h:
-                        logger.info(f"📈 [1H 過濾] {sym} 1H 趨勢向上 (現價 {p:.4f} > EMA50 {ema50_1h:.4f})，忽略賣出訊號")
-                        continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
         # 使用者先前要求增加開倉次數，門檻從 1.5/1.2/1.3 下修到 1.3/1.0/1.1；後來發現

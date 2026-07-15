@@ -645,9 +645,7 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
     # --- MTF 1H & 15m 趨勢過濾 (放寬為軟性警告) ---
     if s.get("mtf_filter", True):
         ema50_1h = s.get("ema50_1h", 0)
-        sma200_15m = s.get("sma200_15m", 0)
         _countertrend_route = route in ("Extreme_Reversal", "Exhaustion_Entry", "Automatic_Reverse")
-
         if ema50_1h > 0:
             if side == 'buy' and cp <= ema50_1h and not _countertrend_route:
                 logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向下 (EMA50 {ema50_1h:.4f})，一般訊號不得以強度覆蓋，拒絕做多")
@@ -656,9 +654,6 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             if side == 'sell' and not _countertrend_route:
                 if cp >= ema50_1h:
                     logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 1H大趨勢向上 (EMA50 {ema50_1h:.4f})，一般訊號不得以強度覆蓋，拒絕做空")
-                    return False
-                if sma200_15m > 0 and cp >= sma200_15m:
-                    logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [Filter:Trend_Mismatch] 15m趨勢向上 (SMA200 {sma200_15m:.4f})，拒絕一般做空訊號")
                     return False
 
     # --- 盤整/低波動過濾 (Choppiness) ---
@@ -786,20 +781,8 @@ def is_entry_allowed(sym, side, route="a", strength=0.0):
             logger.info(f"@@COIN_DEBUG@@ 🛑 {sym} 觸發 [同向虧損冷卻] 過去 4 小時內曾發生同向({side})虧損平倉，冷卻剩餘 {remaining_mins:.1f} 分鐘，攔截進場")
             return False
 
-        # 2. 判斷是否為「逆勢轉折交易」
-        sma200_15m = s.get("sma200_15m", 0)
         current_close = s.get("close_price", s["ohlcv"][-1][4]) if len(s.get("ohlcv", [])) >= 1 else 0.0
-        is_counter_trend = False
-
-        if route == "Extreme_Reversal":
-            is_counter_trend = True
-        else:
-            if side == "sell":
-                if sma200_15m > 0 and current_close > sma200_15m:
-                    is_counter_trend = True
-            else:  # buy
-                if sma200_15m > 0 and current_close < sma200_15m:
-                    is_counter_trend = True
+        is_counter_trend = (route == "Extreme_Reversal")
 
         # 以下兩道「嚴格空間防禦」僅針對「逆勢轉折交易」開啟
         if is_counter_trend:

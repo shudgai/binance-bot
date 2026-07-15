@@ -713,7 +713,12 @@ def _compute_raw_realized_pnl_by_symbol() -> dict:
                 trades = client.futures_account_trades(symbol=sym, limit=1000)
                 sym_total = 0.0
                 for t in trades:
-                    sym_total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
+                    fee = float(t.get("commission", 0.0) or 0.0)
+                    if fee == 0.0:
+                        qty = float(t.get("qty", 0.0) or 0.0)
+                        price = float(t.get("price", 0.0) or 0.0)
+                        fee = qty * price * 0.0005
+                    sym_total += float(t.get("realizedPnl", 0.0) or 0.0) - fee
                 result[sym] = sym_total
             except Exception as e:
                 _note_binance_ban(e)
@@ -794,7 +799,12 @@ def _compute_realized_pnl_since(start_ms: int) -> dict:
                     break
                 raise RuntimeError(f"查詢 {sym} baseline 後成交失敗: {e}")
             for t in trades:
-                total += float(t.get("realizedPnl", 0.0) or 0.0) - float(t.get("commission", 0.0) or 0.0)
+                fee = float(t.get("commission", 0.0) or 0.0)
+                if fee == 0.0:
+                    qty = float(t.get("qty", 0.0) or 0.0)
+                    price = float(t.get("price", 0.0) or 0.0)
+                    fee = qty * price * 0.0005
+                total += float(t.get("realizedPnl", 0.0) or 0.0) - fee
             if len(trades) < 1000:
                 break
             ids = [int(t.get("id")) for t in trades if t.get("id") is not None]
@@ -1606,3 +1616,44 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
     _atr_rankings_cache[cache_key] = (now, ranked)
     selected = [r["symbol"] for r in ranked[:limit]]
     return selected, ranked
+
+
+def get_grid_ranked_coins(top_n=5):
+    try:
+        tickers = market_client.futures_ticker()
+        valid = []
+        
+        _NON_CRYPTO_KEYWORDS = [
+            'SKHYNIX','KORU','SNDK','SOXL','XAU','XAG','SPCX','LABU',
+            'DRAM','EWY','MRVL','MSTR','NVDA','INTC','PAXG','QQQ',
+            'MSFT','GOOGL','AMZN','AAPL','TSLA','NFLX',
+        ]
+        
+        for t in tickers:
+            sym = t['symbol']
+            if not sym.endswith('USDT'): continue
+            if sym in ('BTCUSDT', 'ETHUSDT'): continue # Keep for trend mostly, or allow it
+            
+            if any(kw in sym for kw in _NON_CRYPTO_KEYWORDS): continue
+            if '_' in sym: continue
+            base = sym.replace('USDT', '')
+            if base in ('BUSD','USDC','DAI','TUSD','FDUSD','PYUSD'): continue
+            if any(base.endswith(s) for s in ('BULL','BEAR','UP','DOWN','3L','3S','2L','2S')): continue
+            
+            vol = float(t.get('quoteVolume', 0))
+            if vol < 10000000: continue
+            high = float(t.get('highPrice', 1))
+            low = float(t.get('lowPrice', 1))
+            if low <= 0: continue
+            range_pct = (high - low) / low
+            if 0.015 < range_pct < 0.15: # Perfect for grid
+                valid.append({
+                    "symbol": sym,
+                    "range_pct": range_pct,
+                    "high": high,
+                    "low": low
+                })
+        valid.sort(key=lambda x: x['range_pct'])
+        return valid[:top_n]
+    except Exception as e:
+        return []

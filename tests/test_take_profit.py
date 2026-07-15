@@ -14,7 +14,7 @@ from core.exits import update_trailing_stop, check_exits
 class TakeProfitTests(unittest.TestCase):
     def test_static_profile_is_applied_when_radar_profile_is_missing(self):
         from core.symbol_profile import apply_symbol_profile
-        sym = "INJUSDT"
+        sym = "HYPEUSDT"
         init_states([sym])
         s = STATES[sym]
         reset_coin_state(sym)
@@ -58,8 +58,8 @@ class TakeProfitTests(unittest.TestCase):
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 99.0, "trailing_highest": 100.0})
-        # [2026-07-14 再校準] breakeven_threshold 已改為 0.25%，故測試價格用 100.23% 落在 0.2%~0.25% 軟停利區間
-        update_trailing_stop(sym, 100.23, True)
+        # [2026-07-14 再校準] soft_trailing 啟動門檻拉高至 0.45%，故測試價格用 100.48% 落在軟停利區間
+        update_trailing_stop(sym, 100.48, True)
         self.assertGreater(s["trailing_stop_price"], 100.0)
         self.assertTrue(s["soft_trailing_armed"])
 
@@ -80,49 +80,45 @@ class TakeProfitTests(unittest.TestCase):
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.25,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
-        update_trailing_stop(sym, 100.34, True)  # 峰值 0.34%，落在 0.3%-0.6% 軟停利區間
+        update_trailing_stop(sym, 100.48, True)  # 峰值 0.48%，落在軟停利區間
         self.assertGreater(s["trailing_stop_price"], s["avg_price"])
         self.assertAlmostEqual(s["soft_trailing_profit_floor"], 100.15, places=6)
 
     def test_soft_trailing_activates_early_without_instant_spurious_close(self):
-        # 使用者要求「每個利潤都要能入袋」，啟動門檻從 0.3% 下修到 0.2%。門檻不能
-        # 低於來回費用緩衝本身（0.15%），否則門檻剛觸發那一刻算出來的停利線會直接
-        # 高於現價，還沒真的回撤就先被自己的門檻誤觸出場。這裡驗證峰值剛好卡在新
-        # 門檻 0.20% 時，停利線嚴格低於當下價格（不會瞬間誤砍）。
+        # 使用者要求「每個利潤都要能入袋」，啟動門檻從 0.3% 下修到 0.2%，後續拉高至 0.45%。
+        # 門檻不能低於來回費用緩衝本身（0.15%）。這裡驗證峰值剛好卡在新門檻 0.45% 時，停利線嚴格低於當下價格（不會瞬間誤砍）。
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
-        current_price = 100.20  # 峰值剛好 0.20%，新門檻的邊界
+        current_price = 100.45  # 峰值剛好 0.45%，新門檻的邊界
         update_trailing_stop(sym, current_price, True)
         self.assertTrue(s.get("soft_trailing_armed", False))
         self.assertLess(s["trailing_stop_price"], current_price)
 
     def test_soft_trailing_locks_in_small_profit_and_follows_new_highs_tightly(self):
-        # 使用者要求「碰到小獲利就先入袋，不要冒風險等它變大，但利潤往上就跟上」：
-        # 回吐容忍度從 0.2% 收緊到 0.05%，價格一創新高，停利線幾乎貼著峰值一起往上。
+        # 回吐容忍度收緊，價格一創新高，停利線幾乎貼著峰值一起往上。
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0})
-        update_trailing_stop(sym, 100.30, True)  # 峰值 0.30%
+        update_trailing_stop(sym, 100.48, True)  # 峰值 0.48%
         first_stop = s["trailing_stop_price"]
         # 停利線應緊貼峰值（容忍度收緊為 0.08%），這裡驗證它在 0.09% 內。
-        self.assertGreater(first_stop, 100.30 * (1 - 0.0009))
-        update_trailing_stop(sym, 100.50, True)  # 價格創新高到 0.50%
+        self.assertGreater(first_stop, 100.48 * (1 - 0.0009))
+        update_trailing_stop(sym, 100.68, True)  # 價格創新高到 0.68%
         second_stop = s["trailing_stop_price"]
-        # 停利線必須跟著新高一起往上移動（棘輪只升不降）。
+        # 停利線必須跟著新高一起往上移動（棘輪只升停降）。
         self.assertGreater(second_stop, first_stop)
-        self.assertGreater(second_stop, 100.50 * (1 - 0.0009))
+        self.assertGreater(second_stop, 100.68 * (1 - 0.0009))
 
     def test_soft_trailing_widens_tolerance_while_macd_momentum_still_climbing(self):
-        # 使用者加碼要求：「動能一直往上就回吐容忍度要加寬，利潤到高處盤整時容忍度
-        # 再收緊」。MACD 柱狀圖還在往有利方向擴張時（真的在噴出），停利線應該放寬到
-        # 0.15%，不要一根雜訊就洗出場；柱狀圖不再擴張（盤整/停滯）時應收緊回 0.05%。
+        # MACD 柱狀圖還在往有利方向擴張時（真的在噴出），停利線應該放寬，不要一根雜訊就洗出場；
+        # 柱狀圖不再擴張（盤整/停滯）時應收緊。
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -130,24 +126,20 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0,
                   "macd_line": 0.02, "macd_signal": 0.01,       # macd_hist = 0.01
-                  "prev_macd_line": 0.005, "prev_macd_signal": 0.005})  # prev_hist = 0.0 -> 攜張中
-        # [2026-07-14 再校準] 價格使用 100.24 落在 0.2%~0.25% 軟停利區間。
-        # 容忍度 0.15% 時，停利線會退到 soft_floor (100.15)。
-        update_trailing_stop(sym, 100.24, True)
+                  "prev_macd_line": 0.005, "prev_macd_signal": 0.005})  # prev_hist = 0.0 -> 擴張中
+        update_trailing_stop(sym, 100.48, True)
         widened_stop = s["trailing_stop_price"]
-        self.assertLessEqual(widened_stop, 100.15 + 1e-6)
+        self.assertAlmostEqual(widened_stop, 100.33, places=2)
 
         reset_coin_state(sym)
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
                   "trailing_stop_price": 0.0, "trailing_highest": 0.0,
                   "macd_line": 0.01, "macd_signal": 0.005,      # macd_hist = 0.005
                   "prev_macd_line": 0.02, "prev_macd_signal": 0.01})   # prev_hist = 0.01 -> 動能停滯
-        # 同樣使用 100.24 測試。此時動能停滯，容忍度收緊為 0.08%，
-        # 算出的停利線是 100.24 * (1 - 0.0008) = 100.16，大於 soft_floor (100.15)。
-        update_trailing_stop(sym, 100.24, True)
+        update_trailing_stop(sym, 100.48, True)
         tightened_stop = s["trailing_stop_price"]
-        self.assertGreater(tightened_stop, 100.15)
-        self.assertAlmostEqual(tightened_stop, 100.16, places=2)
+        self.assertGreater(tightened_stop, 100.35)
+        self.assertAlmostEqual(tightened_stop, 100.40, places=2)
 
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成

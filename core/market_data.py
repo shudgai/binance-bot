@@ -208,28 +208,7 @@ async def fetch_all_klines(exchange):
         await asyncio.sleep(KLINE_BATCH_PAUSE_SEC)
 
 
-async def fetch_sma200_15m(exchange, sym):
-    from core import ctx
-    try:
-        async with ctx.request_semaphore:
-            ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=200)
-        closes = np.array([x[4] for x in ohlcv])
-        return float(np.mean(closes))
-    except Exception as e:
-        logger.info(f"⚠️ [SMA200獲取失敗] {sym}: {e}")
-        return 0.0
 
-
-async def fetch_all_sma200(exchange):
-    from core import ctx
-    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
-    for sym in symbols:
-        try:
-            val = await fetch_sma200_15m(exchange, sym)
-            ctx.STATES[sym]["sma200_15m"] = val
-        except Exception as e:
-            logger.info(f"⚠️ [SMA200獲取異常] {sym}: {e}")
-        await asyncio.sleep(0.1)  # 每次請求間隔 100ms 避免瞬間沖高權重
 
 
 async def fetch_ema_15m(exchange, sym):

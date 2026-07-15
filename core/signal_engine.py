@@ -58,9 +58,17 @@ def compute_signal_strength(sym):
     prev_close = s["prev_close"] if s["prev_close"] is not None else close
     ema20 = s.get("ema20", 0.0)
     ema50 = s.get("ema50", 0.0)
+    ma7 = s.get("ma7", 0.0)
+    ma25 = s.get("ma25", 0.0)
+    ma99 = s.get("ma99", 0.0)
+    prev_ma99 = s.get("prev_ma99", 0.0)
 
-    trend_long = ema20 > 0 and close > ema20
-    trend_short = ema20 > 0 and close < ema20
+    trend_long = ma7 > 0 and ma25 > 0 and ma7 > ma25
+    trend_short = ma7 > 0 and ma25 > 0 and ma7 < ma25
+
+    # 紫線 (MA99) 作為趨勢濾網：若紫線整體呈現向下，則短線只做空、不買入做多；若整體呈現向上，則只做多、不買入做空。
+    ma99_trend_long = ma99 <= 0 or prev_ma99 <= 0 or ma99 >= prev_ma99
+    ma99_trend_short = ma99 <= 0 or prev_ma99 <= 0 or ma99 <= prev_ma99
 
     profile = get_entry_strictness_profile()
 
@@ -119,26 +127,21 @@ def compute_signal_strength(sym):
     last_candle_long  = check_candle_strength(s["ohlcv"], _is_bullish_candle, score_threshold=0.5)
     last_candle_short = check_candle_strength(s["ohlcv"], _is_bearish_candle, score_threshold=0.5)
 
-    # 加分判斷：兩根已收盤 K 線都同向，給予額外強度
-    last_two_candles_long  = check_candle_strength(s["ohlcv"], _is_bullish_candle, score_threshold=1.0)
-    last_two_candles_short = check_candle_strength(s["ohlcv"], _is_bearish_candle, score_threshold=1.0)
-
     # --- [新增] 分數與門檻 Debug 資訊 ---
     # 這裡的門檻可以根據需求調整，預設與之前邏輯對齊
     MIN_STRENGTH_THRESHOLD = 15.0 
 
-    ema50 = s.get("ema50", 0.0)
-    trend_confluence_long  = ema50 == 0.0 or close > ema50
-    trend_confluence_short = ema50 == 0.0 or close < ema50
+    # For MA7 & MA25 trend confluence
+    trend_confluence_long  = trend_long
+    trend_confluence_short = trend_short
 
-    sma200 = s.get("sma200_15m", 0)
-    is_above_sma200 = sma200 > 0 and close > sma200 * 0.999
-    is_below_sma200 = sma200 > 0 and close < sma200 * 1.001
-    sma200_neutral   = sma200 == 0
+    ma99_direction_up = ma99 > 0 and prev_ma99 > 0 and ma99 > prev_ma99
+    ma99_direction_down = ma99 > 0 and prev_ma99 > 0 and ma99 < prev_ma99
+    ma99_neutral = ma99 == 0
 
-    # 修改：收緊 EMA20 距離限制 (從 4% 縮小到 1.5%)，防止乖離過大時追價
-    close_near_ema20_long  = ema20 <= 0 or close <= ema20 * 1.015
-    close_near_ema20_short = ema20 <= 0 or close >= ema20 * 0.985
+    # 修改：收緊 MA7 距離限制 (從 4% 縮小到 1.5%)，防止乖離過大時追價，MA7 作為即時支撐與壓力
+    close_near_ma7_long  = ma7 <= 0 or close <= ma7 * 1.015
+    close_near_ma7_short = ma7 <= 0 or close >= ma7 * 0.985
     is_in_bb_zone_long  = s.get("bb_low", 0) > 0 and close <= s["bb_low"] * 1.01
     is_in_bb_zone_short = s.get("bb_up",  0) > 0 and close >= s["bb_up"]  * 0.99
     
@@ -150,63 +153,55 @@ def compute_signal_strength(sym):
 
     # 預先計算供 Log 顯示的預估強度
     l_ts = 0; s_ts = 0
-    if is_above_sma200: l_ts += 4; s_ts -= 3
-    elif is_below_sma200 and not sma200_neutral: l_ts -= 3; s_ts += 4
+    if ma99_direction_up: l_ts += 4; s_ts -= 3
+    elif ma99_direction_down: l_ts -= 3; s_ts += 4
     if trend_confluence_long and (long_macd_cross or macd_hist > 0): l_ts += 5
     if trend_confluence_short and (short_macd_cross or macd_hist < 0): s_ts += 5
     if trend_confluence_short and (long_macd_cross or macd_hist > 0): l_ts -= 5
     if trend_confluence_long and (short_macd_cross or macd_hist < 0): s_ts -= 5
-    if last_two_candles_long: l_ts += 3
-    if last_two_candles_short: s_ts += 3
 
-    raw_long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100) + l_ts + (5.0 if long_macd_cross else 0.0)
-    raw_short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100) + s_ts + (5.0 if short_macd_cross else 0.0)
+    raw_long_str = 12.0 + ((close - ma7) / max(ma7, 1e-8) * 100) + l_ts + (5.0 if long_macd_cross else 0.0)
+    raw_short_str = 12.0 + ((ma7 - close) / max(ma7, 1e-8) * 100) + s_ts + (5.0 if short_macd_cross else 0.0)
     _reversal_rsi_low = 30.0
     _reversal_rsi_high = 70.0
     if rsi >= _reversal_rsi_high: raw_short_str = 15.0 + ((rsi - _reversal_rsi_high) / 2.0)
     if rsi <= _reversal_rsi_low: raw_long_str = 15.0 + ((_reversal_rsi_low - rsi) / 2.0)
 
-    logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 原始評分(非有效訊號)(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | SMA200長線(L/S): {is_above_sma200}/{is_below_sma200} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | 連2根(L/S): {last_two_candles_long}/{last_two_candles_short} | EMA20距離(L/S): {close_near_ema20_long}/{close_near_ema20_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | EMA50確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
+    logger.info(f"@@COIN_DEBUG@@ 🔍 {sym} 條件檢測 | 原始評分(非有效訊號)(L/S): {raw_long_str:.1f}/{raw_short_str:.1f} | RSI動能(L>48/S<52): {rsi > 48.0}/{rsi < 52.0} | MA99趨勢(L/S): {ma99_direction_up}/{ma99_direction_down} | MACD多頭/空頭: {macd_hist > 0}/{macd_hist < 0} | 收盤價確認(L/S): {last_candle_long}/{last_candle_short} | MA7距離(L/S): {close_near_ma7_long}/{close_near_ma7_short} | BB區(L/S): {is_in_bb_zone_long}/{is_in_bb_zone_short} | MA25確認(L/S): {trend_confluence_long}/{trend_confluence_short}")
 
     # 極端反轉必須同時有 RSI 回勾、MACD 改善與反轉 K，不能只靠極端值猜底/猜頂。
     rsi_history = s.get("rsi_history", [])
     if rsi >= _reversal_rsi_high:
         rsi_hook = len(rsi_history) >= 2 and rsi_history[-1] < rsi_history[-2]
         if rsi_hook and macd_hist < prev_macd_hist and last_candle_short:
-            strength = 15.0 + ((rsi - _reversal_rsi_high) / 2.0)
-            return ("sell", strength, "Extreme_Reversal")
-        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入反轉觀察區，但回勾/MACD/K線三確認未齊，暫不做空")
+            if ma99_trend_short:
+                strength = 15.0 + ((rsi - _reversal_rsi_high) / 2.0)
+                return ("sell", strength, "Extreme_Reversal")
+            else:
+                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入反轉觀察區，但與 MA99 趨勢逆勢，拒絕做空")
+        else:
+            logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入反轉觀察區，但回勾/MACD/K線三確認未齊，暫不做空")
 
     if rsi <= _reversal_rsi_low:
         rsi_hook = len(rsi_history) >= 2 and rsi_history[-1] > rsi_history[-2]
         if rsi_hook and macd_hist > prev_macd_hist and last_candle_long:
-            strength = 15.0 + ((_reversal_rsi_low - rsi) / 2.0)
-            return ("buy", strength, "Extreme_Reversal")
-        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入止跌觀察區，但回勾/MACD/K線三確認未齊，暫不做多")
+            if ma99_trend_long:
+                strength = 15.0 + ((_reversal_rsi_low - rsi) / 2.0)
+                return ("buy", strength, "Extreme_Reversal")
+            else:
+                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入止跌觀察區，但與 MA99 趨勢逆勢，拒絕做多")
+        else:
+            logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} RSI {rsi:.1f} 進入止跌觀察區，但回勾/MACD/K線三確認未齊，暫不做多")
 
     # --- Route A/B 主要進場邏輯 ---
-    # 這段原本存在，2026-07-11 被外部工具的一次提交（新增 StrategyEngine 之後）誤刪，
-    # 導致上面算好的 raw_long_str/raw_short_str 只用來印 debug log，從未真正 return
-    # 訊號——不管強度分數多高，實際上只有 RSI 極端反轉或 StrategyEngine 能觸發進場，
-    # 這正是「強度都有 20+ 卻完全開不了倉」的根本原因。現從 commit 48cff79 復原。
     rsi_ok_long  = rsi < profile.get("rsi_long_ceiling", 75.0) and (rsi > profile.get("rsi_long_floor", 25.0) or (rsi >= max(profile.get("rsi_long_floor", 25.0) - 7.0, 20.0) and (long_macd_cross or macd_hist > 0)))
     rsi_ok_short = rsi > profile.get("rsi_short_floor", 25.0) and (rsi < profile.get("rsi_short_ceiling", 68.0) or (rsi <= profile.get("rsi_short_ceiling", 68.0) + 7.0 and (short_macd_cross or macd_hist < 0)))
 
-    sma200_bonus_long  = 3.0 if is_above_sma200 else (-2.0 if (not sma200_neutral and is_below_sma200) else 0.0)
-    sma200_bonus_short = 3.0 if is_below_sma200 else (-2.0 if (not sma200_neutral and is_above_sma200) else 0.0)
+    # MA99 趨勢方向加/減分：MA99 向上加多單分、MA99 向下加空單分
+    ma99_bonus_long  = 3.0 if ma99_direction_up else (-2.0 if (not ma99_neutral and ma99_direction_down) else 0.0)
+    ma99_bonus_short = 3.0 if ma99_direction_down else (-2.0 if (not ma99_neutral and ma99_direction_up) else 0.0)
 
     is_relaxed = profile.get("min_signal_strength", 10.0) <= 10.0
-
-    # Gate 0: SMA200 方向守衛。放寬至 2% 緩衝帶，避免正常回調時被過早擋掉。
-    # 真正的深度逆勢（現價低於 SMA200 超過 2%）仍然禁止做多。
-    sma200_hard_gate_long  = sma200 <= 0 or close >= sma200 * 0.980
-    sma200_hard_gate_short = sma200 <= 0 or close <= sma200 * 1.020
-
-    # [2026-07-14 修正C] 空單不再職予寬鬆模式豆免：實測所有幣種淨損益都是負的（除
-    # DOGE/BCH/XRP），空單在 BTC 偵多目環境中役率極低。移除空單的 is_relaxed
-    # 豆免，讓空單和多單都需要真實 EMA50 方向確認才能進場。
-    ema50_gate_long  = ema50 <= 0 or close > ema50   # 多單不豆免
-    ema50_gate_short = ema50 <= 0 or close < ema50   # [2026-07-14] 空單同樣不豆免
 
     # Gate 2: RSI 方向區間
     rsi_direction_long  = rsi > 25.0
@@ -260,20 +255,20 @@ def compute_signal_strength(sym):
     # signal_engine 只評估幣種自身技術面，避免雙重過濾導致訊號無法生成。
     route_a_long = (
         _route_a_macd_long and
-        (last_candle_long or is_low_vol_signal) and
         rsi_ok_long and
         rsi_direction_long and
-        ema50_gate_long and
-        close_near_ema20_long
+        trend_long and
+        close_near_ma7_long and
+        ma99_trend_long
     )
 
     route_a_short = (
         _route_a_macd_short and
-        (last_candle_short or is_relaxed or is_low_vol_signal) and
         rsi_ok_short and
         rsi_direction_short and
-        ema50_gate_short and
-        close_near_ema20_short
+        trend_short and
+        close_near_ma7_short and
+        ma99_trend_short
     )
 
     # BTC 方向僅保留用於 debug/log，不直接 gate 訊號
@@ -281,32 +276,32 @@ def compute_signal_strength(sym):
     _long_btc_ok  = _btc_trend != "BEAR"
     _short_btc_ok = _btc_trend != "BULL"
 
-    # ── Route B: EMA20 回測彈跳 ─────────────────────────────────────────────
-    near_ema20_pullback = ema20 > 0 and abs(close - ema20) / ema20 <= 0.015
-    ema20_above_ema50   = ema20 > 0 and ema50 > 0 and ema20 > ema50
-    ema20_below_ema50   = ema20 > 0 and ema50 > 0 and ema20 < ema50
+    # ── Route B: MA7 回測彈跳 ─────────────────────────────────────────────
+    near_ma7_pullback = ma7 > 0 and abs(close - ma7) / ma7 <= 0.015
+    ma7_above_ma25   = ma7 > 0 and ma25 > 0 and ma7 > ma25
+    ma7_below_ma25   = ma7 > 0 and ma25 > 0 and ma7 < ma25
 
     route_b_long = (
-        ema50_gate_long and
-        ema20_above_ema50 and
-        near_ema20_pullback and
+        trend_long and
+        ma7_above_ma25 and
+        near_ma7_pullback and
         _macd_confirmed_long and
         _rsi_extreme_long and
         rsi_direction_long and
         rsi_ok_long and
-        last_candle_long
+        ma99_trend_long
         # BTC 大盤過濾由 entry_filter 統一處理
     )
 
     route_b_short = (
-        ema50_gate_short and
-        ema20_below_ema50 and
-        near_ema20_pullback and
+        trend_short and
+        ma7_below_ma25 and
+        near_ma7_pullback and
         _macd_confirmed_short and
         _rsi_extreme_short and
         rsi_direction_short and
         rsi_ok_short and
-        (last_candle_short or is_relaxed)
+        ma99_trend_short
     )
 
     long_base_ok  = route_a_long or route_b_long
@@ -319,15 +314,15 @@ def compute_signal_strength(sym):
         ("MACD多頭擴張", _route_a_macd_long),
         ("多方收盤K", last_candle_long),
         ("RSI多方區間", rsi_ok_long and rsi_direction_long),
-        ("EMA50多頭", ema50_gate_long),
-        ("EMA20距離", close_near_ema20_long),
+        ("MA25多頭(MA7>MA25)", trend_long),
+        ("MA7距離", close_near_ma7_long),
     )
     _short_route_a_gates = (
         ("MACD空頭擴張", _route_a_macd_short),
         ("空方收盤K", last_candle_short or is_relaxed),
         ("RSI空方區間", rsi_ok_short and rsi_direction_short),
-        ("EMA50空頭", ema50_gate_short),
-        ("EMA20距離", close_near_ema20_short),
+        ("MA25空頭(MA7<MA25)", trend_short),
+        ("MA7距離", close_near_ma7_short),
     )
     _preferred_side = "多單" if raw_long_str >= raw_short_str else "空單"
     _preferred_gates = _long_route_a_gates if _preferred_side == "多單" else _short_route_a_gates
@@ -340,18 +335,16 @@ def compute_signal_strength(sym):
         min_entry_strength = profile.get("min_entry_strength", 10.0)
 
         if long_base_ok:
-            long_str = 12.0 + ((close - ema20) / max(ema20, 1e-8) * 100)
+            long_str = 12.0 + ((close - ma7) / max(ma7, 1e-8) * 100)
             if long_macd_cross:       long_str += 5.0
             if route_tag == "b":      long_str += 1.0
-            if last_two_candles_long: long_str += 2.0
-            long_str += l_ts + sma200_bonus_long
+            long_str += l_ts + ma99_bonus_long
 
         if short_base_ok:
-            short_str = 12.0 + ((ema20 - close) / max(ema20, 1e-8) * 100)
+            short_str = 12.0 + ((ma7 - close) / max(ma7, 1e-8) * 100)
             if short_macd_cross:       short_str += 5.0
             if route_tag == "b":       short_str += 1.0
-            if last_two_candles_short: short_str += 2.0
-            short_str += s_ts + sma200_bonus_short
+            short_str += s_ts + ma99_bonus_short
 
         if long_str >= short_str and long_base_ok:
             if long_str >= min_entry_strength:
@@ -381,9 +374,8 @@ def compute_signal_strength(sym):
             # 多單：抓回檔底部
             if c2[4] < c2[1] and c2_vol_low:
                 bb_low_v = s.get("bb_low", 0)
-                is_near_sma = (sma200 > 0) and (abs(c1[3] - sma200) / sma200 < 0.005)
                 is_near_low = (recent_low_50 > 0) and (c1[3] <= recent_low_50 * 1.005)
-                support_ok = (bb_low_v > 0 and c1[3] <= bb_low_v * 1.005) or is_near_sma or is_near_low
+                support_ok = (bb_low_v > 0 and c1[3] <= bb_low_v * 1.005) or is_near_low
 
                 c2_mid = (c2[1] + c2[4]) / 2
                 price_rebound = c1[4] > c2[4]
@@ -394,16 +386,15 @@ def compute_signal_strength(sym):
 
                 trend_ok = True
 
-                if trend_ok and support_ok and (pa_ok or bounce_ok):
+                if trend_ok and support_ok and (pa_ok or bounce_ok) and ma99_trend_long:
                     logger.info(f"🌟 [量能衰竭] {sym} 觸發多單低接條件！(Support:{support_ok}, PA:{pa_ok}, Bounce:{bounce_ok})")
                     return ("buy", 15.0, "Exhaustion_Entry")
 
             # 空單：抓反彈頂部 - 要求更嚴格的確認，避免開錯方向
             if c2[4] > c2[1] and c2_vol_low:
                 bb_up_v = s.get("bb_up", 0)
-                is_near_sma_res = (sma200 > 0) and (abs(c1[2] - sma200) / sma200 < 0.005)
                 is_near_high = (recent_high_50 > 0) and (c1[2] >= recent_high_50 * 0.995)
-                resistance_ok = (bb_up_v > 0 and c1[2] >= bb_up_v * 0.995) or is_near_sma_res or is_near_high
+                resistance_ok = (bb_up_v > 0 and c1[2] >= bb_up_v * 0.995) or is_near_high
 
                 c2_mid = (c2[1] + c2[4]) / 2
                 price_rebound = c1[4] < c2[4]
@@ -422,7 +413,7 @@ def compute_signal_strength(sym):
                 _exh_macd_confirm = _exh_macd < 0 or _exh_rsi >= 60.0
 
                 # 嚴格版：只有 PA 確認（插針反轉）才夠資格，單純量縮陰線不夠
-                if trend_ok and resistance_ok and _exh_macd_confirm and pa_ok:
+                if trend_ok and resistance_ok and _exh_macd_confirm and pa_ok and ma99_trend_short:
                     logger.info(f"🌟 [量能衰竭] {sym} 觸發空單高空條件！(Resistance:{resistance_ok}, PA:{pa_ok}, MACD_Confirm:{_exh_macd_confirm})")
                     return ("sell", 15.0, "Exhaustion_Entry")
 
@@ -463,16 +454,7 @@ async def is_reversal_still_valid(sym, pending_side):
     prev_candle = s["ohlcv"][-2]
     prev_close = prev_candle[4]
 
-    # 0. SMA 200 硬性守衛：反手單也必須遵守大趨勢方向，不可繞過
-    sma200 = s.get("sma200_15m", 0)
     current_price = s["close_price"]
-    if sma200 > 0:
-        if pending_side == "buy" and current_price < sma200:
-            logger.info(f"🚫 [Reversal_SMA200_Block] {sym} 反手做多被拒：價格({current_price:.4f}) 在 SMA200({sma200:.4f}) 之下，大趨勢空頭，禁止反手做多。")
-            return False
-        if pending_side == "sell" and current_price > sma200:
-            logger.info(f"🚫 [Reversal_SMA200_Block] {sym} 反手做空被拒：價格({current_price:.4f}) 在 SMA200({sma200:.4f}) 之上，大趨勢多頭，禁止反手做空。")
-            return False
 
     # 1. 大盤方向過濾 (已註銷：短線以 1m 為主，不看 4H 宏觀面)
 

@@ -5,12 +5,14 @@ try:
     from core.strategy.speculative_strategy import SpeculativeRiskStrategy
 except ImportError:
     SpeculativeRiskStrategy = None
+from core.strategy.grid_strategy import GridStrategy
 from core.config import COIN_PROFILE_CONFIG
 
 class StrategyFactory:
     @staticmethod
     def create_strategy(symbol: str) -> BaseStrategy:
-        profile = COIN_PROFILE_CONFIG.get(symbol, {})
+        from core.symbol_profile import SYMBOL_PROFILES
+        profile = SYMBOL_PROFILES.get(symbol, {})
         profile_type = profile.get("profile_type", "Core_Trend")
         
         if profile_type == "Core_Trend":
@@ -21,6 +23,8 @@ class StrategyFactory:
             if SpeculativeRiskStrategy is not None:
                 return SpeculativeRiskStrategy(symbol)
             return CoreTrendStrategy(symbol)
+        elif profile_type == "Grid_Trading":
+            return GridStrategy(symbol)
         else:
             # Default to Core Trend
             return CoreTrendStrategy(symbol)

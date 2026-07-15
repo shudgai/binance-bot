@@ -804,6 +804,33 @@
                 </div>
             </div>
 
+            <!-- Grid Status Panel -->
+            <div class="card" style="padding: 12px; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:12px; font-weight:800; letter-spacing:1px; color:#2563eb; text-transform:uppercase;">🕸️ 網格運行狀態</span>
+                    <span style="font-size:10px; color:var(--text-muted);">{{ gridStatus.length > 0 ? '自動掛單套利中' : '掃描盤整幣中...' }}</span>
+                </div>
+                
+                <div v-if="gridStatus.length === 0" style="text-align:center; padding: 10px; font-size:11px; color:var(--text-muted);">
+                    目前沒有適合的網格幣種，雷達持續偵測中...
+                </div>
+
+                <div v-for="g in gridStatus" :key="g.symbol" style="background:var(--card-bg); border-radius:8px; padding:10px; border:1px solid var(--border-color); margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:13px; font-weight:800; color:#1d4ed8;">{{ g.symbol.replace('USDT','') }}</span>
+                        <span style="font-size:11px; font-weight:700; color:var(--success);">已套利 {{ g.arbitrage_count }} 次</span>
+                    </div>
+                    <div style="font-size:11px; display:flex; justify-content:space-between; margin-bottom:4px; font-family:'JetBrains Mono'; color:var(--text-main);">
+                        <span>下限: {{ g.lower.toFixed(4) }}</span>
+                        <span>上限: {{ g.upper.toFixed(4) }}</span>
+                    </div>
+                    <div style="font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                        <span>總網格數: {{ g.total_grids }} 格</span>
+                        <span>等待中: {{ g.pending_grids }} 單</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- Trade amount -->
             <div class="card">
                 <div class="amount-row" style="margin-bottom:0;">
@@ -919,6 +946,7 @@ createApp({
         const logs = ref([]);
         const backendLogs = ref([]);
         const slStates = ref({});
+        const gridStatus = ref([]);
         const trendBias = ref({});
         const activeTab = ref('chart');  // mobile tab: 'chart' | 'trade' | 'history' | 'settings'
         const consoleRef = ref(null);
@@ -2057,6 +2085,16 @@ createApp({
             } catch(e) {}
         };
 
+        const fetchGridStatus = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/grid-status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    gridStatus.value = data.grids || [];
+                }
+            } catch (e) {}
+        };
+
         const fetchTrendBias = async () => {
             try {
                 const res = await fetch(`${API_BASE}/trend-bias`);
@@ -2106,6 +2144,10 @@ createApp({
             fetchExchangeRate();
             fetchBotStatus();
             fetchPosition();
+            fetchOpenOrders();
+            fetchSlStates();
+            fetchTrendBias();
+            fetchGridStatus();
             fetchAllPositions();
             fetchTrades();
             fetchOpenOrders();
@@ -2124,6 +2166,7 @@ createApp({
             klineInterval        = setInterval(loadKlines, 60000);
             openOrdersInterval   = setInterval(fetchOpenOrders, 10000);
             slInterval           = setInterval(fetchSlStates, 3000);
+            gridInterval         = setInterval(fetchGridStatus, 5000);
             pricesInterval        = setInterval(fetchPricesBatch, 15000);
             trendBiasInterval     = setInterval(fetchTrendBias, 10000);
             fetchSlStates();
@@ -2241,7 +2284,7 @@ createApp({
             tempTradeAmount, updateTradeAmount,
             selectedTf, timeframes, changeTf,
             volumeBars, latestVolumeStr, volumeUnit, high24h, low24h,
-            allPositions, getPositionInfo, openOrders, slStates, trendBias,
+            allPositions, getPositionInfo, openOrders, slStates, trendBias, gridStatus,
             showLogs, showLogFullscreen,
             radarRanking, radarSelected,
             showAllTradesModal, allTradesHistory, fetchAllTradesHistory,

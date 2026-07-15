@@ -289,6 +289,12 @@ def api_get_all_positions():
         add_system_log(f"🚨 [持倉查詢失敗] /api/positions: {e}", "danger")
         return {}
 
+@app.get("/api/grid-status")
+def api_get_grid_status():
+    from services.bot_manager_service import get_bot_status
+    grids = get_bot_status().get("grid_states", [])
+    return {"status": "success", "grids": grids}
+
 @app.get("/api/position/{symbol}")
 def api_get_position(symbol: str):
     symbol_upper = symbol.upper()
@@ -395,6 +401,13 @@ def _attach_round_trip_fees(trades):
         symbol = str(trade.get("symbol", ""))
         qty = abs(float(trade.get("qty", 0.0) or 0.0))
         fee = float(trade.get("fee", 0.0) or 0.0)
+        
+        # Testnet fallback: if fee is exactly 0, simulate 0.05% fee so user sees realistic net profit
+        if fee == 0.0:
+            price = float(trade.get("price", 0.0) or 0.0)
+            fee = qty * price * 0.0005
+            trade["fee"] = fee
+
         if not trade.get("is_close"):
             direction = "long" if trade.get("isBuyer") else "short"
             lots.setdefault((symbol, direction), []).append([qty, fee])
