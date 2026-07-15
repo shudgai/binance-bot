@@ -20,10 +20,10 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_WRONG_DIRECTION_PCT = 0.006
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
-MA_PEAK_LOCK_ARM_PCT = 0.008
+MA_PEAK_LOCK_ARM_PCT = 0.005
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
-MA_PEAK_LOCK_MIN_ATR_GAP = 0.25
+MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
 
 
 def _ma_peak_keep_ratio(peak_profit):
@@ -31,7 +31,7 @@ def _ma_peak_keep_ratio(peak_profit):
         return 0.85
     if peak_profit >= MA_PEAK_LOCK_MID_PCT:
         return 0.80
-    return 0.75
+    return 0.60
 
 
 def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_confirmation=False):

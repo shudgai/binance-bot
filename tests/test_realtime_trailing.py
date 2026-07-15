@@ -38,8 +38,8 @@ def test_ma_wave_position_uses_dedicated_realtime_peak_lock():
     state = STATES[sym]
     state.update({
         "qty": 1.0, "avg_price": 100.0, "entry_reason": "MA_Breakout",
-        "current_atr": 0.1, "highest_profit_pct": 0.01,
-        "trailing_highest": 101.0, "trailing_stop_price": 100.5,
+        "current_atr": 0.1, "highest_profit_pct": 0.015,
+        "trailing_highest": 101.5, "trailing_stop_price": 100.5,
         "stop_loss": 100.5, "trade_price_history": [100.6],
         "trade_qty_history": [1.0],
     })

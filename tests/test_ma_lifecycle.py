@@ -155,14 +155,14 @@ class MALifecycleTests(unittest.TestCase):
 
 
     def test_ma_peak_lock_uses_tighter_tiers_as_profit_grows(self):
-        self.assertEqual(_ma_peak_keep_ratio(0.010), 0.75)
+        self.assertEqual(_ma_peak_keep_ratio(0.010), 0.60)
         self.assertEqual(_ma_peak_keep_ratio(0.020), 0.80)
         self.assertEqual(_ma_peak_keep_ratio(0.030), 0.85)
 
-    def test_ma_peak_lock_does_not_arm_below_point_eight_percent(self):
+    def test_ma_peak_lock_does_not_arm_below_point_five_percent(self):
         state = self._position_state(closed_price=100.6)
-        state["close_price"] = 100.7
-        state["highest_profit_pct"] = 0.007
+        state["close_price"] = 100.3
+        state["highest_profit_pct"] = 0.003
 
         async def run():
             close_mock = AsyncMock()
