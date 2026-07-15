@@ -16,6 +16,11 @@ from core.calc import profit_pct as _profit_pct
 
 logger = logging.getLogger(__name__)
 
+MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
+MA_DISASTER_STOP_PCT = 0.015
+MA_WRONG_DIRECTION_PCT = 0.006
+MA_WRONG_DIRECTION_WINDOW_SEC = 1800
+
 
 class FastReversalGuard:
     def __init__(self, max_immediate_deviation=0.005): # 0.5% 立即背離就砍
@@ -415,6 +420,63 @@ async def check_exits(sym):
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
     current_atr = s.get("current_atr", 0.0)
+
+    # MA 波段正常停利仍只看反向交叉；但持倉初期若兩根已收線 K 棒確認開錯方向，立即止損。
+    route = str(s.get("entry_reason", "") or "").lower()
+    if route in MA_ENTRY_ROUTES:
+        ma7 = float(s.get("ma7", 0.0) or 0.0)
+        ma25 = float(s.get("ma25", 0.0) or 0.0)
+        prev_ma7 = float(s.get("prev_ma7", ma7) or ma7)
+        prev_ma25 = float(s.get("prev_ma25", ma25) or ma25)
+        ma_candle_ts = int(s.get("ma_candle_ts", 0) or 0)
+        candles = s.get("ohlcv", [])
+        hold_sec = max(0.0, time.time() - float(s.get("open_time", time.time()) or time.time()))
+        wrong_direction_confirmed = False
+        if len(candles) >= 3 and hold_sec <= MA_WRONG_DIRECTION_WINDOW_SEC and profit_pct <= -MA_WRONG_DIRECTION_PCT:
+            previous_closed, latest_closed = candles[-3], candles[-2]
+            open_ms = int(float(s.get("open_time", 0.0) or 0.0) * 1000)
+            both_closed_after_entry = int(latest_closed[0]) >= open_ms > 0
+            if is_long:
+                two_opposite = float(previous_closed[4]) < float(previous_closed[1]) and float(latest_closed[4]) < float(latest_closed[1])
+            else:
+                two_opposite = float(previous_closed[4]) > float(previous_closed[1]) and float(latest_closed[4]) > float(latest_closed[1])
+            avg_reversal_volume = (float(previous_closed[5]) + float(latest_closed[5])) / 2.0
+            reversal_vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+            volume_confirmed = reversal_vol_ma20 > 0 and avg_reversal_volume >= reversal_vol_ma20 * 0.8
+            wrong_direction_confirmed = both_closed_after_entry and two_opposite and volume_confirmed
+
+        if wrong_direction_confirmed:
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"🛑 [MA_Wrong_Direction_Confirmed] {sym} 持倉 {hold_sec:.0f} 秒，"
+                f"連續兩根反向收線且逆勢 {abs(profit_pct)*100:.2f}%，立即平倉"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[MA_Wrong_Direction_Confirmed]", is_stop_loss=True,
+            )
+            return
+        opposite_cross = ma7 > 0 and ma25 > 0 and ma_candle_ts and (
+            (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
+            (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
+        )
+        if opposite_cross and s.get("ma_exit_last_candle_ts") != ma_candle_ts:
+            s["ma_exit_last_candle_ts"] = ma_candle_ts
+            cs = "sell" if is_long else "buy"
+            reason = "[MA7_MA25_Death_Cross]" if is_long else "[MA7_MA25_Golden_Cross]"
+            logger.info(f"🎯 [MA_Wave_End] {sym} {reason} | MA7={ma7:.6f}, MA25={ma25:.6f}")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
+            return
+
+        disaster_hit = (
+            (is_long and p <= avg * (1.0 - MA_DISASTER_STOP_PCT)) or
+            (not is_long and p >= avg * (1.0 + MA_DISASTER_STOP_PCT))
+        )
+        if disaster_hit:
+            cs = "sell" if is_long else "buy"
+            logger.info(f"🛡️ [MA_Disaster_Stop] {sym} 觸及 {MA_DISASTER_STOP_PCT*100:.1f}% 災難止損")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MA_Disaster_Stop]", is_stop_loss=True)
+        return
 
     # --- [新增] 動態退出管理器 (Dynamic Exit Manager) ---
     if "dynamic_exit_manager" not in s:

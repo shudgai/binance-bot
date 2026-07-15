@@ -25,6 +25,9 @@ from services.ai_manager import ai_engine
 
 logger = logging.getLogger(__name__)
 
+MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
+MA_DISASTER_STOP_PCT = 0.015
+
 
 def should_block_order_flow(side, bids, asks, threshold, paper_trading):
     if side == "buy":
@@ -113,6 +116,9 @@ async def _replace_exchange_exit_orders(sym):
 
     hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
     route = str(s.get("entry_reason", "a") or "a").lower()
+    is_ma_route = route in MA_ENTRY_ROUTES
+    if is_ma_route:
+        hard_sl_pct = MA_DISASTER_STOP_PCT
     # Exchange-side disaster stop is anchored to market structure at entry.
     # Breakouts use MA7; pullback/trend entries use the more stable MA25.
     hard_stop = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
@@ -120,9 +126,9 @@ async def _replace_exchange_exit_orders(sym):
     atr = float(s.get("entry_atr", s.get("current_atr", 0.0)) or 0.0)
     structure_buffer = max(atr * 0.20, avg * 0.001)
     stop_price = hard_stop
-    if is_long and 0 < ma_anchor < avg:
+    if not is_ma_route and is_long and 0 < ma_anchor < avg:
         stop_price = max(hard_stop, ma_anchor - structure_buffer)
-    elif not is_long and ma_anchor > avg:
+    elif not is_ma_route and not is_long and ma_anchor > avg:
         stop_price = min(hard_stop, ma_anchor + structure_buffer)
     stop_price = round_step(stop_price, prec["tick_size"])
     stop_dist = (avg - stop_price) if is_long else (stop_price - avg)
@@ -134,7 +140,7 @@ async def _replace_exchange_exit_orders(sym):
     # 確保停損價格不會大於停利價格 (在 RR 比例強制執行前先做初步檢查)
     # 如果 hard_sl_pct 導致的 stop_dist 大於 tp_dist，則強制縮減 stop_dist 或擴大 tp_dist
     current_tp_dist = (take_profit_price - avg) if is_long else (avg - take_profit_price)
-    if stop_dist > current_tp_dist:
+    if not is_ma_route and stop_dist > current_tp_dist:
         logger.info(f"⚠️ [SL_GT_TP_Guard] {sym} 偵測到停損距離 ({stop_dist:.4f}) 大於停利距離 ({current_tp_dist:.4f})。正在自動校正...")
         # 優先縮減停損距離，確保其在合理的範圍內，同時保留 RR 比例檢查
         # 這裡簡單處理：將 stop_dist 設為 tp_dist 的 0.8 倍，確保停損距離較小
@@ -147,11 +153,15 @@ async def _replace_exchange_exit_orders(sym):
     stop_price, take_profit_price = _enforce_bracket_rr(
         avg, stop_price, take_profit_price, is_long, prec["tick_size"], min_rr=bracket_min_rr
     )
-    if take_profit_price != _original_tp:
+    if not is_ma_route and take_profit_price != _original_tp:
         logger.info(
             f"⚠️ [Bracket_RR_Guard] {sym} 最終掛單盈虧比不足，"
             f"停利由 {_original_tp} 校正為 {take_profit_price}（最低 R:R={bracket_min_rr}）"
         )
+
+    # MA 波段固定使用 1.5% 災難止損；不可再被 TP/RR 或均線錨點縮窄。
+    if is_ma_route:
+        stop_price = round_step(hard_stop, prec["tick_size"])
 
     # 防禦性保底：進場已經會把數量夾在 MARKET_LOT_SIZE 上限之內（見 execute_order），
     # 這裡理論上不該再超過，但攤平救援等會改變 qty 的路徑萬一漏夾，用同一個上限保底，
@@ -167,6 +177,11 @@ async def _replace_exchange_exit_orders(sym):
     )
     s["exchange_stop_order_id"] = stop_order["id"]
     logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {qty})")
+
+    if is_ma_route:
+        s["exchange_take_profit_order_id"] = None
+        logger.info(f"🎯 [MA波段掛單] {sym} 不掛固定停利，等待 MA7/MA25 反向交叉")
+        return
 
     tp_order = await exchange_futures.create_order(
         sym, type="TAKE_PROFIT_MARKET", side=close_side, amount=qty,
@@ -193,6 +208,7 @@ async def _fetch_open_exchange_exit_orders(sym):
                 "reduceOnly": order.get("reduceOnly", info.get("reduceOnly", False)),
                 "algoStatus": str(order.get("status", "")).upper(),
                 "createTime": order.get("timestamp") or info.get("time") or 0,
+                "triggerPrice": order.get("stopPrice") or info.get("stopPrice") or 0,
             })
         return normalized
 
@@ -213,6 +229,11 @@ async def _ensure_exchange_exit_orders(sym):
         return
 
     close_side = "SELL" if s["qty"] > 0 else "BUY"
+    route = str(s.get("entry_reason", "") or "").lower()
+    is_ma_route = route in MA_ENTRY_ROUTES
+    expected_ma_stop = float(s["avg_price"]) * (
+        1.0 - MA_DISASTER_STOP_PCT if s["qty"] > 0 else 1.0 + MA_DISASTER_STOP_PCT
+    )
     candidates = {"stop": [], "take_profit": []}
     all_exit_orders = []
     for order in open_orders or []:
@@ -230,6 +251,12 @@ async def _ensure_exchange_exit_orders(sym):
         if not side_matches or not qty_matches:
             continue
         key = "stop" if order_type in ("STOP_MARKET", "STOP") else "take_profit"
+        if is_ma_route and key == "take_profit":
+            continue
+        if is_ma_route and key == "stop":
+            trigger_price = float(order.get("triggerPrice") or order.get("stopPrice") or 0.0)
+            if trigger_price <= 0 or abs(trigger_price - expected_ma_stop) / float(s["avg_price"]) > 0.001:
+                continue
         candidates[key].append(order)
 
     chosen = {}
@@ -247,11 +274,15 @@ async def _ensure_exchange_exit_orders(sym):
 
     s["exchange_stop_order_id"] = chosen.get("stop", {}).get("algoId")
     s["exchange_take_profit_order_id"] = chosen.get("take_profit", {}).get("algoId")
-    if s.get("exchange_stop_order_id") and s.get("exchange_take_profit_order_id"):
-        logger.info(f"✅ [交易所退出單確認] {sym} Algo 止損/停利單皆存在且數量正確")
+    exits_complete = bool(s.get("exchange_stop_order_id")) and (
+        is_ma_route or bool(s.get("exchange_take_profit_order_id"))
+    )
+    if exits_complete:
+        label = "1.5% 災難止損存在、無固定停利" if is_ma_route else "止損/停利單皆存在且數量正確"
+        logger.info(f"✅ [交易所退出單確認] {sym} Algo {label}")
         return
 
-    logger.info(f"🛡️ [交易所退出單修復] {sym} 缺少止損或停利單，重新建立 bracket")
+    logger.info(f"🛡️ [交易所退出單修復] {sym} 退出掛單不符合目前波段規則，重新建立")
     await _replace_exchange_exit_orders(sym)
 
 
@@ -338,11 +369,8 @@ def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=Tr
         else (signal_price - order_price) / signal_price
     )
 
-    from core.config import ENTRY_STRICTNESS_MODE
-    if ENTRY_STRICTNESS_MODE == "relaxed":
-        max_chase_pct = 0.008  # 寬鬆模式下放寬至 0.8%
-    else:
-        max_chase_pct = 0.0015
+    # 首次 MA 進場不因全域 relaxed 模式放寬：避免突破後才追在短線高/低點。
+    max_chase_pct = 0.0015
 
     if adverse_chase > max_chase_pct:
         return False, f"signal chase {adverse_chase*100:.3f}% > {max_chase_pct*100:.2f}%"
@@ -798,7 +826,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 決定出場，不是隨便一點點獲利就賣——不加進白名單的話，這裡的 0.35% 固定門檻會蓋掉
     # 它自己已經做過的判斷，等於它的 0.15% 設定形同虛設，永遠要等到 0.35% 才放行。
     # （[Opportunity_Rotation] 機會成本輪替功能已依使用者要求移除，不會再產生這個 reason。）
-    allowed_exit_reasons = ["[MA7_Closed_Break]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1188,6 +1216,15 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🛑 [InvalidEntrySide] {sym} 收到無效開倉方向 {side!r}，拒絕下單")
         return
     s = ctx.STATES[sym]
+    if not is_rescue_dca and str(entry_route or "").lower() in MA_ENTRY_ROUTES:
+        from core.entry_filter import btc_macro_entry_guard, is_ma_direction_aligned
+        macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
+        if not macro_ok:
+            logger.info(f"🛑 [Final_BTC_Macro_Guard] {sym} {side}：{macro_reason}")
+            return
+        if not is_ma_direction_aligned(s, side):
+            logger.info(f"🛑 [Final_MA_Direction_Guard] {sym} {side} 未通過 MA7/MA25/MA99 完整排列與斜率，拒絕送單")
+            return
     if s.get("_is_closing", False):
         logger.info(f"🛑 [CloseInProgress] {sym} 正在平倉，拒絕新的 {side} 進場單")
         return
@@ -1688,6 +1725,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if not chase_ok:
                 logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉最終委託取消：{chase_reason}")
                 return
+
+            if not is_rescue_dca and str(entry_route or "").lower() in MA_ENTRY_ROUTES:
+                from core.check_entries import _entry_structure_quality
+                structure_ok, structure_reason, _ = _entry_structure_quality(
+                    sym, side, entry_route, final_order_price
+                )
+                if not structure_ok:
+                    logger.info(f"🛑 [Final_Structure_Price_Guard] {sym} 最終委託價不合格：{structure_reason}")
+                    return
+                from core.entry_filter import btc_macro_entry_guard
+                final_macro_ok, final_macro_reason, _ = btc_macro_entry_guard(sym, side)
+                if not final_macro_ok:
+                    logger.info(f"🛑 [Final_BTC_Macro_Guard] {sym} 送單前方向已變化：{final_macro_reason}")
+                    return
 
             exchange_direction_ok, exchange_direction_reason = await _entry_exchange_direction_guard(sym, side)
             if not exchange_direction_ok:

@@ -619,6 +619,9 @@ def get_all_prices():
             return _last_prices
         raise e
 
+_account_balance_cache = (0.0, None)
+
+
 def get_account_balance_usdt() -> float | None:
     """即時查詢合約帳戶 USDT 餘額，給 API 進程自己直接查，不依賴 main.py 進程內快取的 REAL_BALANCE
     （main.py 和 API 是兩個獨立進程，各自的模組全域變數互不相通）。"""
@@ -756,6 +759,20 @@ def _load_pnl_baseline_by_symbol() -> dict:
         pass
     return {}
 
+def _get_pnl_baseline_start_ms() -> int:
+    """Use saved set_at, or legacy reset-file mtime when the file is an empty object."""
+    try:
+        import json as _json
+        with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        set_at = float(data.get("set_at", 0.0) or 0.0) if isinstance(data, dict) else 0.0
+        if set_at <= 0:
+            set_at = os.path.getmtime(PNL_BASELINE_PATH)
+        return int(set_at * 1000)
+    except Exception:
+        return 0
+
+
 def _save_pnl_baseline_by_symbol(baseline_by_symbol: dict) -> None:
     try:
         import json as _json
@@ -821,13 +838,7 @@ def _compute_realized_pnl_since(start_ms: int) -> dict:
 
 def get_realized_pnl_trades_since_baseline() -> list:
     """回傳 baseline 後的幣安原始成交，供歷史筆記本用同一資料源精確加總。"""
-    try:
-        import json as _json
-        with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
-            baseline_data = _json.load(f)
-        start_ms = int(float(baseline_data.get("set_at", 0.0) or 0.0) * 1000)
-    except Exception:
-        return []
+    start_ms = _get_pnl_baseline_start_ms()
     if start_ms <= 0:
         return []
 
@@ -867,13 +878,7 @@ def get_realized_pnl_trades_since_baseline() -> list:
 def get_total_realized_pnl_usdt() -> float:
     """回傳 baseline 設定時間之後的已實現損益，含所有成交手續費。"""
     global _total_pnl_cache
-    try:
-        import json as _json
-        with open(PNL_BASELINE_PATH, "r", encoding="utf-8") as f:
-            baseline_data = _json.load(f)
-        start_ms = int(float(baseline_data.get("set_at", 0.0) or 0.0) * 1000)
-    except Exception:
-        start_ms = 0
+    start_ms = _get_pnl_baseline_start_ms()
     if start_ms <= 0:
         return 0.0
 

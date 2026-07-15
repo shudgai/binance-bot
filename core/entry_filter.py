@@ -9,6 +9,62 @@ from core.state_manager import is_symbol_locked
 logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = ("MA_Cross", "MA_Breakout", "MA25_Pullback")
+BTC_MACRO_MAX_AGE_SEC = 180.0
+BTC_MIXED_MIN_VOLUME_RATIO = 0.80
+
+
+def btc_macro_entry_guard(sym, side):
+    """Gate altcoin entries with fresh, completed-candle BTC 1H and 4H trends."""
+    normalized = str(sym or "").upper().replace(":", "").replace(chr(47), "")
+    if normalized == "BTCUSDT":
+        return True, "BTC uses its own MA structure", "SELF"
+    if side not in ("buy", "sell"):
+        return False, "invalid entry side", "INVALID"
+
+    wind = ctx.MARKET_WIND
+    trend_1h = str(wind.get("btc_trend_1h", "NEUTRAL") or "NEUTRAL").upper()
+    trend_4h = str(wind.get("btc_trend_4h", "NEUTRAL") or "NEUTRAL").upper()
+    updated_at = float(wind.get("btc_macro_updated_at", 0.0) or 0.0)
+    if updated_at <= 0 or time.time() - updated_at > BTC_MACRO_MAX_AGE_SEC:
+        return False, "BTC 1H+4H 已收線方向資料缺失或超過 3 分鐘", "STALE"
+
+    if trend_1h == trend_4h == "BULL":
+        if side == "sell":
+            return False, "BTC 1H+4H 雙多，禁止山寨幣開空", "BULL"
+        return True, "BTC 1H+4H 雙多，同向做多", "BULL"
+    if trend_1h == trend_4h == "BEAR":
+        if side == "buy":
+            return False, "BTC 1H+4H 雙空，禁止山寨幣開多", "BEAR"
+        return True, "BTC 1H+4H 雙空，同向做空", "BEAR"
+
+    state = ctx.STATES.get(sym, {})
+    candles = state.get("ohlcv", [])
+    vol_ma20 = float(state.get("vol_ma20", 0.0) or 0.0)
+    closed_volume = float(candles[-2][5]) if len(candles) >= 2 else 0.0
+    volume_ratio = closed_volume / vol_ma20 if vol_ma20 > 0 else 0.0
+    if volume_ratio < BTC_MIXED_MIN_VOLUME_RATIO:
+        return False, f"BTC 1H+4H 方向混合 ({trend_1h}+{trend_4h})，個幣量能 {volume_ratio:.2f}x 不足", "MIXED"
+    return True, f"BTC 1H+4H 方向混合 ({trend_1h}+{trend_4h})，個幣強量放行", "MIXED"
+
+
+def is_ma_direction_aligned(state, side):
+    """Require a completed-candle three-MA trend stack and non-adverse MA slopes."""
+    candles = state.get("ohlcv", [])
+    if len(candles) < 2:
+        return False
+    closed_price = float(candles[-2][4])
+    ma7 = float(state.get("ma7", 0.0) or 0.0)
+    ma25 = float(state.get("ma25", 0.0) or 0.0)
+    ma99 = float(state.get("ma99", 0.0) or 0.0)
+    prev_ma7 = float(state.get("prev_ma7", ma7) or ma7)
+    prev_ma25 = float(state.get("prev_ma25", ma25) or ma25)
+    if min(closed_price, ma7, ma25, ma99) <= 0:
+        return False
+    if side == "buy":
+        return closed_price > ma99 and ma7 > ma25 > ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
+    if side == "sell":
+        return closed_price < ma99 and ma7 < ma25 < ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
+    return False
 
 
 def is_last_closed_1m_aligned(state, side):
@@ -85,9 +141,8 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
     ma99 = float(s.get("ma99", 0.0) or 0.0)
     if min(closed_price, ma7, ma25, ma99) <= 0:
         return False
-    if side == "buy" and not (closed_price > ma99 and ma7 > ma25):
-        return False
-    if side == "sell" and not (closed_price < ma99 and ma7 < ma25):
+    if not is_ma_direction_aligned(s, side):
+        logger.info(f"🛑 [MA_DIRECTION] {sym} 未通過 MA7/MA25/MA99 完整排列與斜率確認")
         return False
 
     s["entry_reason"] = route

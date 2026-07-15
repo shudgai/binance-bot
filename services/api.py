@@ -161,8 +161,10 @@ def api_get_bot_status():
         status["balance_quote"] = get_paper_balance()
         status["session_start_balance"] = get_session_start_balance()
     else:
-        # 實盤餘額的取得可放在 binance_service，為簡化先保留原本邏輯(這部分會用到 binance_service，為快速先這樣)
-        pass 
+        from services.binance_service import get_account_balance_usdt
+        account_balance = get_account_balance_usdt()
+        if account_balance is not None:
+            status["account_balance_usdt"] = account_balance
     return status
 
 @app.post("/api/bot-status/toggle")
@@ -842,6 +844,8 @@ def api_history_summary():
                 entry = daily.setdefault(date_key, {"trades": 0, "pnl": 0.0, "fee": 0.0})
                 realized = float(t.get("realizedPnl", 0.0) or 0.0)
                 fee = float(t.get("commission", 0.0) or 0.0)
+                if fee == 0.0:
+                    fee = float(t.get("qty", 0.0) or 0.0) * float(t.get("price", 0.0) or 0.0) * 0.0005
                 entry["pnl"] += realized - fee
                 entry["fee"] += fee
                 if realized != 0.0:
@@ -881,7 +885,26 @@ def api_history_download(date: str):
                 state = json.load(f)
             trades = state.get("trades", [])
         else:
-            trades = _get_real_trades()
+            # 摘要與下載必須使用同一份 Binance baseline 後成交資料。
+            from services.binance_service import get_realized_pnl_trades_since_baseline
+            trades = []
+            for raw in get_realized_pnl_trades_since_baseline():
+                realized = float(raw.get("realizedPnl", 0.0) or 0.0)
+                fee = float(raw.get("commission", 0.0) or 0.0)
+                if fee == 0.0:
+                    fee = float(raw.get("qty", 0.0) or 0.0) * float(raw.get("price", 0.0) or 0.0) * 0.0005
+                raw_side = str(raw.get("side", "") or "").upper()
+                is_buyer = (raw_side == "BUY") if raw_side else bool(raw.get("buyer", False))
+                trades.append({
+                    "symbol": str(raw.get("symbol", "")).replace("USDT", ":USDT"),
+                    "price": float(raw.get("price", 0.0) or 0.0),
+                    "qty": float(raw.get("qty", 0.0) or 0.0),
+                    "time": int(raw.get("time", 0) or 0),
+                    "isBuyer": is_buyer,
+                    "is_close": realized != 0.0,
+                    "realized_pnl": realized,
+                    "fee": fee,
+                })
 
         tz = pytz.timezone('Asia/Taipei')
         filtered = [t for t in trades if datetime.datetime.fromtimestamp(t["time"] / 1000, tz=tz).strftime("%Y-%m-%d") == date]

@@ -31,6 +31,26 @@ def test_realtime_trade_crossing_trailing_stop_closes_immediately():
     assert close.await_args.kwargs["is_stop_loss"] is False
 
 
+def test_ma_wave_position_ignores_realtime_trailing_cross():
+    sym = "LINKUSDT"
+    init_states([sym])
+    reset_coin_state(sym)
+    state = STATES[sym]
+    state.update({
+        "qty": 1.0, "avg_price": 100.0, "entry_reason": "MA_Breakout",
+        "current_atr": 0.1, "highest_profit_pct": 0.01,
+        "trailing_highest": 101.0, "trailing_stop_price": 100.5,
+        "stop_loss": 100.5, "trade_price_history": [100.6],
+        "trade_qty_history": [1.0],
+    })
+
+    with patch("core.orders.close_position", AsyncMock()) as close:
+        asyncio.run(update_trade_signal(sym, {"price": 100.4, "amount": 1.0}))
+
+    close.assert_not_awaited()
+    assert state["trailing_stop_price"] == 100.5
+
+
 def test_realtime_trade_does_not_close_before_soft_activation():
     sym = "XRPUSDT"
     init_states([sym])

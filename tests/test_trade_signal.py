@@ -1,6 +1,7 @@
 import unittest
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -8,7 +9,7 @@ from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.signal_engine import compute_signal_strength
-from core.check_entries import check_entries
+from core.check_entries import check_entries, _entry_structure_quality, _ma_candidate_quality
 
 
 class TradeSignalTests(unittest.TestCase):
@@ -46,7 +47,7 @@ class TradeSignalTests(unittest.TestCase):
     def test_confirmed_death_cross_opens_short_below_ma99(self):
         sym = self._setup_ma_signal_state(
             signal_open=100.0, signal_close=99.0, signal_low=98.8,
-            ma7=99.7, ma25=100.0, ma99=99.5,
+            ma7=99.7, ma25=100.0, ma99=101.0,
             prev_ma7=100.2, prev_ma25=100.0,
         )
         side, strength, route = compute_signal_strength(sym)
@@ -81,11 +82,17 @@ class TradeSignalTests(unittest.TestCase):
         sym = self._setup_ma_signal_state(
             signal_open=100.0, signal_close=99.0, signal_low=98.8,
             signal_volume=vol_ma20 * 1.5, vol_ma20=vol_ma20,
-            ma7=99.7, ma25=100.0, ma99=99.5,
+            ma7=99.7, ma25=100.0, ma99=101.0,
             prev_ma7=100.2, prev_ma25=100.0,
         )
         ctx.ALL_SYMBOLS[:] = [sym]
+        ctx.MARKET_WIND.update({
+            "btc_trend_1h": "BEAR", "btc_trend_4h": "BEAR",
+            "btc_macro_updated_at": time.time(),
+        })
         s = STATES[sym]
+        for candle in s["ohlcv"][:-2]:
+            candle[3] = 98.0
         from core.symbol_profile import SYMBOL_PROFILES
         SYMBOL_PROFILES[sym] = {"_trade_eligible": True}
         s.update({
@@ -96,6 +103,22 @@ class TradeSignalTests(unittest.TestCase):
             "qty": 0.0, "pending_side": None,
         })
         return sym
+
+    def test_long_entry_too_close_to_resistance_is_rejected(self):
+        sym = self._setup_ma_signal_state(signal_close=100.45)
+        state = STATES[sym]
+        state["current_atr"] = 0.2
+        ok, reason, _ = _entry_structure_quality(sym, "buy", "MA_Cross", 100.45)
+        self.assertFalse(ok)
+        self.assertIn("阻力", reason)
+
+    def test_long_entry_with_resistance_room_is_allowed(self):
+        sym = self._setup_ma_signal_state(signal_close=99.0)
+        state = STATES[sym]
+        state["current_atr"] = 0.2
+        ok, _, score = _entry_structure_quality(sym, "buy", "MA25_Pullback", 99.0)
+        self.assertTrue(ok)
+        self.assertGreater(score, 0.0)
 
     def test_marginal_liquidity_discounts_allocation(self):
         # 使用者要求：流動性檢查現有的門檻是二選一（過 1,000,000 全額進場、沒過整筆

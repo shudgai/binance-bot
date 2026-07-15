@@ -10,7 +10,7 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state, repair_invalid_states, get_open_position_count
 from core import ctx
 from core import exchange_client
-from core.orders import execute_order, _enforce_bracket_rr, _pending_entry_setup_valid
+from core.orders import execute_order, _enforce_bracket_rr, _pending_entry_setup_valid, _entry_signal_chase_guard
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -119,6 +119,15 @@ class EntryRiskTests(unittest.TestCase):
 
         self.assertEqual(s["entry_count"], 1)
 
+
+    def test_first_short_entry_rejects_velvet_style_low_price_chase(self):
+        allowed, reason = _entry_signal_chase_guard("sell", 0.5324, 0.5304)
+        self.assertFalse(allowed)
+        self.assertIn("signal chase", reason)
+
+    def test_pullback_to_better_price_is_not_adverse_chase(self):
+        allowed, _ = _entry_signal_chase_guard("buy", 100.0, 99.0)
+        self.assertTrue(allowed)
 
     def test_long_bracket_enforces_minimum_reward_over_risk(self):
         stop, take_profit = _enforce_bracket_rr(100.0, 97.0, 102.0, True, 0.1, min_rr=1.5)

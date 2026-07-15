@@ -16,7 +16,7 @@ from core.balance import is_daily_loss_halted
 import core.balance as _bal
 from core.state_manager import get_open_position_count, reset_coin_state
 from core.signal_engine import compute_signal_strength, _load_disabled_symbols
-from core.entry_filter import is_entry_allowed
+from core.entry_filter import btc_macro_entry_guard, is_entry_allowed
 from services.bot_manager_service import set_entry_diagnosis
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,68 @@ logger = logging.getLogger(__name__)
 _TRADE_HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 _LOSS_HISTORY_CACHE_MTIME = None
 _LOSS_HISTORY_CACHE = {}
+
+
+def _entry_structure_quality(sym, side, route, price):
+    """Validate entry against the nearest 20-candle support/resistance and score its room."""
+    s = ctx.STATES.get(sym, {})
+    candles = s.get("ohlcv", [])
+    price = float(price or 0.0)
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    prior = candles[-22:-2] if len(candles) >= 22 else candles[:-2]
+    if price <= 0 or atr <= 0 or len(prior) < 10:
+        return False, "支撐/阻力或 ATR 資料不足", 0.0
+
+    resistance = max(float(c[2]) for c in prior)
+    support = min(float(c[3]) for c in prior)
+    min_room = max(price * 0.006, atr * 1.2)
+    max_breakout_extension = max(price * 0.0015, atr * 0.75)
+    s["_entry_support"] = support
+    s["_entry_resistance"] = resistance
+
+    if side == "buy":
+        if price <= resistance:
+            room = resistance - price
+            valid = room >= min_room
+            reason = f"多單距上方阻力僅 {room/price*100:.2f}%" if not valid else "long_room_ok"
+            score = min(room / min_room, 3.0) * 3.0
+        else:
+            extension = price - resistance
+            valid = extension <= max_breakout_extension
+            reason = f"多單突破後延伸 {extension/price*100:.2f}% 過遠" if not valid else "long_breakout_ok"
+            score = max(0.0, 8.0 - extension / max_breakout_extension * 4.0)
+    else:
+        if price >= support:
+            room = price - support
+            valid = room >= min_room
+            reason = f"空單距下方支撐僅 {room/price*100:.2f}%" if not valid else "short_room_ok"
+            score = min(room / min_room, 3.0) * 3.0
+        else:
+            extension = support - price
+            valid = extension <= max_breakout_extension
+            reason = f"空單跌破後延伸 {extension/price*100:.2f}% 過遠" if not valid else "short_breakout_ok"
+            score = max(0.0, 8.0 - extension / max_breakout_extension * 4.0)
+
+    s["_entry_structure_score"] = round(score, 4)
+    return valid, reason, score
+
+
+def _ma_candidate_quality(sym, side, strength, route, price):
+    s = ctx.STATES[sym]
+    structure_ok, structure_reason, structure_score = _entry_structure_quality(sym, side, route, price)
+    if not structure_ok:
+        return False, structure_reason, 0.0
+    candles = s.get("ohlcv", [])
+    closed_volume = float(candles[-2][5]) if len(candles) >= 2 else 0.0
+    vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+    volume_ratio = closed_volume / vol_ma20 if vol_ma20 > 0 else 0.0
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    ma_gap = abs(float(s.get("ma7", 0.0) or 0.0) - float(s.get("ma25", 0.0) or 0.0))
+    gap_score = min(ma_gap / atr, 2.0) * 3.0 if atr > 0 else 0.0
+    volume_score = min(volume_ratio, 2.5) * 3.0
+    route_bonus = {"MA25_Pullback": 4.0, "MA_Cross": 3.0, "MA_Breakout": 2.0}.get(route, 0.0)
+    quality = float(strength) + structure_score + gap_score + volume_score + route_bonus
+    return True, "ok", round(quality, 4)
 
 
 async def _funding_rate_guard(sym, side):
@@ -233,6 +295,14 @@ async def check_entries():
             continue
         side, strength, route = side_strength
 
+        macro_ok, macro_reason, macro_mode = btc_macro_entry_guard(sym, side)
+        s["_btc_macro_mode"] = macro_mode
+        if not macro_ok:
+            s["entry_block_reason"] = macro_reason
+            set_entry_diagnosis(f"{sym}: {macro_reason}")
+            logger.info(f"🛑 [BTC_Macro_Guard] {sym} {side}：{macro_reason}")
+            continue
+
         funding_ok, funding_reason = await _funding_rate_guard(sym, side)
         if not funding_ok:
             s["entry_block_reason"] = funding_reason
@@ -258,6 +328,8 @@ async def check_entries():
         # 打平出場。盤整期間拉高門檻，減少這種訊號品質不足以撐過盤整雜訊的進場。
         if ctx.MARKET_WIND.get("is_ranging"):
             min_sig += 5.0
+        if macro_mode == "MIXED":
+            min_sig += 3.0
         if strength < min_sig:
             set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
@@ -510,22 +582,26 @@ async def check_entries():
         if cooldown > 0 and loss_time > 0 and time.time() - loss_time < cooldown:
             logger.info(f"🛑 [Final_Entry_Guard] {sym} 同方向虧損冷卻仍有效")
             continue
+        quality_ok, quality_reason, quality_score = _ma_candidate_quality(sym, side, strength, route, price)
+        if not quality_ok:
+            logger.info(f"🛑 [Entry_Structure_Guard] {sym} {quality_reason}，放棄進場")
+            continue
+        s["_entry_quality_score"] = quality_score
         validated_candidates.append((sym, side, strength, route))
 
     candidates = validated_candidates
     if not candidates:
         return
-    candidates.sort(key=lambda x: -x[2])
+    candidates.sort(key=lambda x: (-float(ctx.STATES[x[0]].get("_entry_quality_score", 0.0)), -x[2], x[0]))
 
     # The former range lane is removed: all three capital slots now belong to this MA strategy.
     inflight_symbols = {info.get("sym") for info in ctx.PENDING_LIMIT_ORDERS.values() if info.get("sym")}
     inflight_symbols.update(sym for sym, st in ctx.STATES.items() if st.get("is_ordering") and abs(st.get("qty", 0.0)) <= 0.000001)
     ma_capacity = max(0, 3 - open_count - len(inflight_symbols))
-    candidates = candidates[:ma_capacity]
-    remaining_slots = len(candidates)
-    if not candidates:
+    remaining_slots = ma_capacity
+    if remaining_slots <= 0:
         return
-    logger.info(f"📊 [訊號排行] {' | '.join(f'{sym}:{side}({strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
+    logger.info(f"📊 [品質排行] {' | '.join(f'{sym}:{side}(品質={ctx.STATES[sym].get('_entry_quality_score', 0.0):.2f}, 訊號={strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
     # 資金分配比例（raw_ratio）原本用「本輪全部候選訊號」的強度總和當分母，但槽位數
     # 有限（remaining_slots），本輪候選常常遠多於實際會被派發的數量——實測同一輪出現
@@ -538,6 +614,8 @@ async def check_entries():
     total_weight = sum(strength for _, _, strength, _ in _weight_pool)
 
     for sym, side, strength, route in candidates:
+        if remaining_slots <= 0:
+            break
         s = ctx.STATES[sym]
         has_pos = abs(s["qty"]) > 0.000001
 
@@ -674,6 +752,10 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
     if current_price <= 0 or reference_price <= 0:
         return False, "invalid price"
 
+    macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
+    if not macro_ok:
+        return False, macro_reason
+
     atr = float(s.get("current_atr", 0.0) or 0.0)
     adverse_limit = max(reference_price * 0.0025, atr * 0.5)
     adverse_move = reference_price - current_price if side == "buy" else current_price - reference_price
@@ -687,6 +769,9 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
         return False, "non-MA route disabled"
 
     if route in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
+        from core.entry_filter import is_ma_direction_aligned
+        if not is_ma_direction_aligned(s, side):
+            return False, "MA7/MA25/MA99 完整排列或斜率已失效"
         ma7 = float(s.get("ma7", 0.0) or 0.0)
         ma25 = float(s.get("ma25", 0.0) or 0.0)
         ma99 = float(s.get("ma99", 0.0) or 0.0)

@@ -12,6 +12,9 @@ MARKET_WIND = {
     "eth_change_15m": 0.0,
     "btc_adx_15m": 0.0,
     "is_ranging": False,
+    "btc_trend_1h": "NEUTRAL",
+    "btc_trend_4h": "NEUTRAL",
+    "btc_macro_updated_at": 0.0,
 }
 PENDING_LIMIT_ORDERS = {}
 WATCH_TASKS = {}

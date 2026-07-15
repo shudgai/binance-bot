@@ -373,10 +373,15 @@ async def calibrate_with_exchange(exchange):
                         # 恢復 entry_reason：跟 open_time 同樣的道理，這個欄位只存在
                         # ctx.STATES 記憶體內，重啟後如果不還原，平倉時查得到的進場原因
                         # 就永遠是 UNKNOWN，沒辦法追查當初為什麼進場。
-                        from core.entry_reason_store import load_entry_reason
+                        from core.entry_reason_store import load_entry_reason, save_entry_reason
                         _stored_entry_reason = load_entry_reason(sym)
                         if _stored_entry_reason:
                             ctx.STATES[sym]["entry_reason"] = _stored_entry_reason
+                        else:
+                            # 目前系統只有 MA 趨勢策略；舊持倉若缺少歷史路線，
+                            # 以 MA_Restored 接管，避免重啟後誤套已停用的中途停利。
+                            ctx.STATES[sym]["entry_reason"] = "MA_Restored"
+                            save_entry_reason(sym, "MA_Restored")
 
 
                         # ── 重啟峰值保護 ──

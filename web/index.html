@@ -1233,7 +1233,7 @@ createApp({
         };
 
         const formatQuoteBalance = () => {
-            const b = bot.value.balance_quote || 0;
+            const b = bot.value.account_balance_usdt ?? bot.value.balance_quote ?? 0;
             const q = getQuoteAsset();
             return b.toLocaleString(undefined, { minimumFractionDigits: q === 'BNB' ? 4 : 2, maximumFractionDigits: q === 'BNB' ? 4 : 2 }) + ' ' + q;
         };

@@ -88,6 +88,10 @@ async def update_trade_signal(sym, trade):
         _is_long = s["qty"] > 0
         rt_profit = (price - avg_p) / avg_p if _is_long else (avg_p - price) / avg_p
 
+        # MA 波段倉位不使用即時保本或移動停利；價格狀態已更新，退場交由已收線反向交叉。
+        if str(s.get("entry_reason", "") or "").lower() in {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}:
+            return
+
         # 單一公開成交不能立刻抬高移動停利；新峰值需由下一筆相近成交確認。
         confirmed_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
         if rt_profit > confirmed_peak:

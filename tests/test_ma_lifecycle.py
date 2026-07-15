@@ -57,6 +57,7 @@ class MALifecycleTests(unittest.TestCase):
             "current_vol": 100.0,
             "vol_ma20": 100.0,
             "open_time": time.time(),
+            "entry_reason": "MA_Cross",
             "ma7": ma7,
             "ma25": ma25,
             "prev_ma7": ma7 + 0.1,
@@ -70,15 +71,72 @@ class MALifecycleTests(unittest.TestCase):
         })
         return state
 
-    def test_ma7_break_exits_on_first_closed_candle(self):
+    def test_ma7_break_does_not_exit_before_opposite_cross(self):
         self._position_state(closed_price=99.5)
 
         async def run():
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
+                close_mock.assert_not_called()
+
+        asyncio.run(run())
+
+    def test_confirmed_wrong_direction_exits_before_disaster_stop(self):
+        state = self._position_state(closed_price=99.2)
+        opened = time.time() - 700
+        opened_ms = int(opened * 1000)
+        state.update({
+            "open_time": opened,
+            "close_price": 99.3,
+            "ohlcv": [
+                [opened_ms, 100.0, 100.1, 99.6, 99.7, 100.0],
+                [opened_ms + 300000, 99.7, 99.8, 99.1, 99.2, 100.0],
+                [opened_ms + 600000, 99.2, 99.4, 99.1, 99.3, 1.0],
+            ],
+        })
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
                 close_mock.assert_called_once()
-                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Closed_Break]")
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Wrong_Direction_Confirmed]")
+
+        asyncio.run(run())
+
+    def test_single_reverse_candle_does_not_confirm_wrong_direction(self):
+        state = self._position_state(closed_price=99.2)
+        opened = time.time() - 700
+        opened_ms = int(opened * 1000)
+        state.update({
+            "open_time": opened,
+            "close_price": 99.3,
+            "ohlcv": [
+                [opened_ms, 99.5, 100.1, 99.4, 99.8, 100.0],
+                [opened_ms + 300000, 99.8, 99.9, 99.1, 99.2, 100.0],
+                [opened_ms + 600000, 99.2, 99.4, 99.1, 99.3, 1.0],
+            ],
+        })
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                close_mock.assert_not_called()
+
+        asyncio.run(run())
+
+    def test_disaster_stop_remains_as_last_resort(self):
+        state = self._position_state(closed_price=99.5)
+        state["close_price"] = 98.4
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                close_mock.assert_called_once()
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Disaster_Stop]")
 
         asyncio.run(run())
 

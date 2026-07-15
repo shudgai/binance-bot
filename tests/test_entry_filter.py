@@ -1,8 +1,11 @@
 import unittest
+import time
 
+from core import ctx
 from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.entry_filter import (
+    btc_macro_entry_guard,
     has_strong_local_momentum_override,
     is_entry_allowed,
     is_entry_pin_safe,
@@ -21,8 +24,11 @@ class EntryFilterTests(unittest.TestCase):
         else:
             ma7, ma25, ma99, price = 99.0, 100.0, 101.0, 98.5
             closed = [1, 99.5, 99.7, 98.4, price, volume]
+        prev_ma7 = 100.5 if side == "buy" else 99.5
+        prev_ma25 = 99.9 if side == "buy" else 100.1
         STATES[sym].update({
             "status": "ACTIVE", "ma7": ma7, "ma25": ma25, "ma99": ma99,
+            "prev_ma7": prev_ma7, "prev_ma25": prev_ma25,
             "close_price": price, "vol_ma20": 1000.0, "current_atr": 0.5,
             "ohlcv": [[0, 100.0, 100.2, 99.8, 100.0, 1000.0], closed,
                       [2, price, price, price, price, 1.0]],
@@ -55,6 +61,16 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ma99"] = 102.0
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
+    def test_price_on_correct_ma99_side_but_incomplete_stack_is_rejected(self):
+        sym = self._state("buy")
+        STATES[sym]["ma99"] = 100.5
+        self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
+
+    def test_adverse_ma25_slope_is_rejected(self):
+        sym = self._state("buy")
+        STATES[sym]["prev_ma25"] = 100.2
+        self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
+
     def test_insufficient_closed_volume_is_rejected(self):
         sym = self._state("buy", volume=500.0)
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
@@ -63,6 +79,57 @@ class EntryFilterTests(unittest.TestCase):
         sym = self._state("buy")
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy"))
+
+
+    def test_btc_dual_bull_allows_alt_long_and_blocks_alt_short(self):
+        sym = self._state("buy")
+        original = dict(ctx.MARKET_WIND)
+        try:
+            ctx.MARKET_WIND.update({"btc_trend_1h": "BULL", "btc_trend_4h": "BULL", "btc_macro_updated_at": time.time()})
+            self.assertTrue(btc_macro_entry_guard(sym, "buy")[0])
+            allowed, reason, mode = btc_macro_entry_guard(sym, "sell")
+            self.assertFalse(allowed)
+            self.assertEqual(mode, "BULL")
+            self.assertIn("禁止", reason)
+        finally:
+            ctx.MARKET_WIND.clear()
+            ctx.MARKET_WIND.update(original)
+
+    def test_btc_dual_bear_allows_alt_short_and_blocks_alt_long(self):
+        sym = self._state("sell")
+        original = dict(ctx.MARKET_WIND)
+        try:
+            ctx.MARKET_WIND.update({"btc_trend_1h": "BEAR", "btc_trend_4h": "BEAR", "btc_macro_updated_at": time.time()})
+            self.assertTrue(btc_macro_entry_guard(sym, "sell")[0])
+            self.assertFalse(btc_macro_entry_guard(sym, "buy")[0])
+        finally:
+            ctx.MARKET_WIND.clear()
+            ctx.MARKET_WIND.update(original)
+
+    def test_btc_mixed_direction_requires_point_eight_rvol(self):
+        sym = self._state("buy", volume=700.0)
+        original = dict(ctx.MARKET_WIND)
+        try:
+            ctx.MARKET_WIND.update({"btc_trend_1h": "BULL", "btc_trend_4h": "NEUTRAL", "btc_macro_updated_at": time.time()})
+            self.assertFalse(btc_macro_entry_guard(sym, "buy")[0])
+            STATES[sym]["ohlcv"][-2][5] = 900.0
+            allowed, _, mode = btc_macro_entry_guard(sym, "buy")
+            self.assertTrue(allowed)
+            self.assertEqual(mode, "MIXED")
+        finally:
+            ctx.MARKET_WIND.clear()
+            ctx.MARKET_WIND.update(original)
+
+    def test_stale_btc_macro_blocks_alt_but_not_btc_itself(self):
+        sym = self._state("buy")
+        original = dict(ctx.MARKET_WIND)
+        try:
+            ctx.MARKET_WIND["btc_macro_updated_at"] = time.time() - 181.0
+            self.assertFalse(btc_macro_entry_guard(sym, "buy")[0])
+            self.assertTrue(btc_macro_entry_guard("BTCUSDT", "buy")[0])
+        finally:
+            ctx.MARKET_WIND.clear()
+            ctx.MARKET_WIND.update(original)
 
 
 if __name__ == "__main__":

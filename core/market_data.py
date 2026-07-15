@@ -35,8 +35,9 @@ async def update_market_wind(exchange):
         # 中間地帶視為 NEUTRAL（不觸發多頭/空頭防禦，回歸個別幣種自己的訊號判斷）。
         _TREND_BUFFER_PCT = 0.0015
 
-        if len(btc_ohlcv_1h) >= 20:
-            btc_closes_1h = [x[4] for x in btc_ohlcv_1h]
+        if len(btc_ohlcv_1h) >= 21:
+            # 最後一根可能仍在形成；大盤方向只使用已收線 K 棒，避免盤中反覆翻向。
+            btc_closes_1h = [x[4] for x in btc_ohlcv_1h[:-1]]
             alpha = 2 / 21
             ema = btc_closes_1h[0]
             for val in btc_closes_1h[1:]: ema = alpha * val + (1 - alpha) * ema
@@ -70,8 +71,8 @@ async def update_market_wind(exchange):
             global_market_wind["btc_adx_15m"] = 0.0
             global_market_wind["is_ranging"] = False
 
-        if len(btc_ohlcv_4h) >= 20:
-            btc_closes_4h = [x[4] for x in btc_ohlcv_4h]
+        if len(btc_ohlcv_4h) >= 21:
+            btc_closes_4h = [x[4] for x in btc_ohlcv_4h[:-1]]
             alpha_4h = 2 / 21
             ema_4h = btc_closes_4h[0]
             for val in btc_closes_4h[1:]: ema_4h = alpha_4h * val + (1 - alpha_4h) * ema_4h
@@ -85,6 +86,8 @@ async def update_market_wind(exchange):
                 global_market_wind["btc_trend_4h"] = "NEUTRAL"
         else:
             global_market_wind["btc_trend_4h"] = "NEUTRAL"
+
+        global_market_wind["btc_macro_updated_at"] = time.time()
 
         if len(btc_ohlcv) >= 20:
             btc_closes = np.array([x[4] for x in btc_ohlcv])

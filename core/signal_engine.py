@@ -34,13 +34,15 @@ def compute_signal_strength(sym):
     short_spreading = ma7 < ma25 and ma7 < prev_ma7 and gap < min(prev_gap, 0.0)
     above_ma99, below_ma99 = candle_close > ma99, candle_close < ma99
 
-    cross_long = golden_cross and above_ma99 and candle_close > candle_open and volume_ratio >= 1.0
-    cross_short = death_cross and below_ma99 and candle_close < candle_open and volume_ratio >= 1.0
+    long_stack = ma7 > ma25 > ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
+    short_stack = ma7 < ma25 < ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
+    cross_long = golden_cross and long_stack and above_ma99 and candle_close > candle_open and volume_ratio >= 1.0
+    cross_short = death_cross and short_stack and below_ma99 and candle_close < candle_open and volume_ratio >= 1.0
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
-    pullback_long = (long_spreading and above_ma99 and candle_low <= ma25 * (1 + touch_tolerance)
+    pullback_long = (long_spreading and long_stack and above_ma99 and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and candle_close > candle_open and volume_ratio >= 0.8)
-    pullback_short = (short_spreading and below_ma99 and candle_high >= ma25 * (1 - touch_tolerance)
+    pullback_short = (short_spreading and short_stack and below_ma99 and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and candle_close < candle_open and volume_ratio >= 0.8)
 
     completed = candles[:-1]
@@ -49,9 +51,9 @@ def compute_signal_strength(sym):
         prior = completed[-21:-1]
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
-        breakout_long = (long_spreading and above_ma99 and candle_close > prior_high
+        breakout_long = (long_spreading and long_stack and above_ma99 and candle_close > prior_high
                          and candle_close > candle_open and volume_ratio >= 1.2)
-        breakout_short = (short_spreading and below_ma99 and candle_close < prior_low
+        breakout_short = (short_spreading and short_stack and below_ma99 and candle_close < prior_low
                           and candle_close < candle_open and volume_ratio >= 1.2)
 
     if cross_long or cross_short:
