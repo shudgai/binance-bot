@@ -65,19 +65,3 @@ def atr_from_ohlcv(ohlcv: list) -> float:
         h, l, pc = ohlcv[i][2], ohlcv[i][3], ohlcv[i - 1][4]
         tr_list.append(max(h - l, abs(h - pc), abs(l - pc)))
     return float(np.mean(tr_list[-14:]))
-
-
-def signal_strength(rsi: float, macd_hist: float, prev_macd_hist: float,
-                    volume_ratio: float, adx: float, atr_ratio: float) -> float:
-    score = 0.0
-    if rsi > 70 or rsi < 30:
-        score += 15
-    if macd_hist > 0 and macd_hist > prev_macd_hist:
-        score += 20
-    elif macd_hist < 0 and macd_hist < prev_macd_hist:
-        score += 20
-    if volume_ratio > 1.5:
-        score += 15 * min(volume_ratio / 3, 2)
-    if adx > 25:
-        score += 10
-    return score

@@ -7,12 +7,11 @@ import numpy as np
 from core import ctx
 from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRESHOLD,
     PROTECTED_PROFIT_FLOOR, MOMENTUM_EXIT_ATR_THRESHOLD, MOMENTUM_EXIT_MIN_PROFIT_PCT,
-    TREND_PERSISTENCE_WINDOW, PRICE_MOVEMENT_THRESHOLD,
-    COIN_PROFILE_CONFIG, DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
+    COIN_PROFILE_CONFIG,
     SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER,
     HIGH_POINT_STAGNATION_MIN_PROFIT, HIGH_POINT_STAGNATION_TIME, ROUND_TRIP_FEE_PCT)
-from core.indicators import _get_atr, _macd_vals, calculate_ema, calculate_macd
-from core.symbol_profile import get_effective_exit_setting, has_strong_momentum, get_dynamic_atr_multiplier
+from core.indicators import _get_atr
+from core.symbol_profile import get_effective_exit_setting, get_dynamic_atr_multiplier
 from core.calc import profit_pct as _profit_pct
 
 logger = logging.getLogger(__name__)
@@ -258,26 +257,13 @@ def update_trailing_stop(sym, current_price, is_long):
         # 後續再加碼：「動能一直往上就回吐容忍度加寬，利潤到高處盤整時容忍度再收緊」。
         # 啟動門檻 0.20%（低於來回費用緩衝 0.15% 會導致門檻剛觸發那一刻停利線就高於
         # 現價、瞬間誤砍，實測驗證過 0.20% 有安全空間）。回吐容忍度不再是固定值，改
-        # 用 MACD 動能方向動態切換：柱狀圖還在往有利方向擴張（趨勢仍在推進）就放寬到
-        # 0.15%，給真正在噴出的走勢一點呼吸空間，不要一根雜訊就洗出場；柱狀圖不再擴張
-        # （動能停滯/盤整，代表這波可能要見頂了）就收緊到 0.05%，盡快把已經到手的獲利
-        # 鎖住，不賭它會繼續漲。
+        # 回吐容忍度依 ATR 波動環境調整，避免依賴已移除的 MACD 交易規則。
         # Soft Trailing 啟動門檻拉高至 0.45%，給予利潤足夠的奔跑與震盪空間
         if 0.0045 <= _hp_soft:
-            _soft_macd_now, _soft_macd_prev = _macd_vals(s)
-            _soft_momentum_climbing = _soft_macd_now > _soft_macd_prev
-            
-            # 低波動防護：當前波動小於平均 ATR 時，放寬回吐容忍度，防止雜訊抖動出場
             atr_history_v = s.get("atr_history", [])
             atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
-            is_low_vol_exit = (atr_val <= atr_24h_avg_v)
-
-            if not _soft_momentum_climbing:
-                # 盤整/轉向時收緊，但低波動時仍需 0.16% 緩衝防洗，普通波動 0.08%
-                _soft_tolerance = 0.0016 if is_low_vol_exit else 0.0008
-            else:
-                # 動能推進中放寬：低波動 0.25% 緩衝，普通波動 0.15%
-                _soft_tolerance = 0.0025 if is_low_vol_exit else 0.0015
+            is_low_vol_exit = atr_val <= atr_24h_avg_v if atr_24h_avg_v > 0 else False
+            _soft_tolerance = 0.0020 if is_low_vol_exit else 0.0012
                 
             # 保本低限：進場價 + 雙邊費用 + 0.05% 安全微利
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
@@ -348,18 +334,10 @@ def update_trailing_stop(sym, current_price, is_long):
 
         # 空單對稱版：Soft Trailing 啟動門檻拉高至 0.45%
         if 0.0045 <= _hp_soft:
-            _soft_macd_now, _soft_macd_prev = _macd_vals(s)
-            _soft_momentum_climbing = _soft_macd_now < _soft_macd_prev
-            
-            # 低波動防護：當前波動小於平均 ATR 時，放寬回吐容忍度，防止雜訊抖動出場
             atr_history_v = s.get("atr_history", [])
             atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
-            is_low_vol_exit = (atr_val <= atr_24h_avg_v)
-
-            if not _soft_momentum_climbing:
-                _soft_tolerance = 0.0016 if is_low_vol_exit else 0.0008
-            else:
-                _soft_tolerance = 0.0025 if is_low_vol_exit else 0.0015
+            is_low_vol_exit = atr_val <= atr_24h_avg_v if atr_24h_avg_v > 0 else False
+            _soft_tolerance = 0.0020 if is_low_vol_exit else 0.0012
 
             # 保本高限：進場價 - 雙邊費用 - 0.05% 安全微利
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
@@ -419,58 +397,6 @@ def update_trailing_stop(sym, current_price, is_long):
     return False, s["trailing_stop_price"]
 
 
-def detect_market_regime(sym, current_price, avg_price, is_long):
-    s = ctx.STATES[sym]
-    if len(s["ohlcv"]) < 20 or avg_price <= 0:
-        return "HOLD", "資料不足"
-
-    recent_candles = s["ohlcv"][-20:]
-    highs = np.array([x[2] for x in recent_candles])
-    lows = np.array([x[3] for x in recent_candles])
-    closes = np.array([x[4] for x in recent_candles])
-    recent_high = float(np.max(highs))
-    recent_low = float(np.min(lows))
-    range_width_pct = (recent_high - recent_low) / recent_low if recent_low > 0 else 0
-
-    atr_val = _get_atr(s, current_price)
-    atr_pct = atr_val / current_price if current_price > 0 else 0
-
-    reversal_settings = DEFAULT_REVERSAL_SETTINGS.copy()
-    reversal_settings.update(SYMBOL_REVERSAL_SETTINGS.get(sym, {}))
-    trade_signal = s.get("trade_signal_strength", 0.0)
-    reversal_threshold = reversal_settings["trade_signal_threshold"]
-    prev_close = s.get("prev_close")
-    if trade_signal >= reversal_threshold and prev_close:
-        price_move_pct = (current_price - prev_close) / max(prev_close, 1e-8)
-        if (is_long and price_move_pct < -max(reversal_settings["min_reverse_pct"], atr_pct * 1.2)) or \
-           (not is_long and price_move_pct > max(reversal_settings["min_reverse_pct"], atr_pct * 1.2)):
-            return "BREAKOUT_REVERSAL", f"即時大額成交異常 {s['trade_signal_reason']}"
-
-    volume_surge = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
-    if prev_close:
-        price_jump = (prev_close - current_price) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2) if is_long else \
-                     (current_price - prev_close) / max(prev_close, 1e-8) > max(reversal_settings["price_jump_pct"], atr_pct * 1.2)
-    else:
-        price_jump = False
-    if volume_surge and price_jump:
-        return "BREAKOUT_REVERSAL", "放量突發且價格急速變動"
-
-    is_ranging = range_width_pct < 0.025 and atr_pct < 0.015
-    if is_ranging:
-        profit_pct = _profit_pct(current_price, avg_price, is_long)
-        if profit_pct >= 0.010:
-            return "RANGE_PROFIT_TAKE", f"盤整區間內已獲利 {profit_pct * 100:.2f}%"
-
-    return "HOLD", "未達出場條件"
-
-
-def check_trend_persistence(sym):
-    s = ctx.STATES[sym]
-    if not s.get("ohlcv") or len(s["ohlcv"]) < 2:
-        return True
-    return True
-
-
 async def check_exits(sym):
     from core.orders import close_position, execute_order
     s = ctx.STATES[sym]
@@ -503,33 +429,37 @@ async def check_exits(sym):
         await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
         return
 
-    # ── MA7 & MA25 Trend Reversal Exit ──
-    ma7 = s.get("ma7", 0.0)
-    ma25 = s.get("ma25", 0.0)
-    prev_ma7 = s.get("prev_ma7", ma7)
-    prev_ma25 = s.get("prev_ma25", ma25)
+    # MA lifecycle exit: a completed-candle MA7 break or opposite MA7/25 cross exits immediately.
+    ma7 = float(s.get("ma7", 0.0) or 0.0)
+    ma25 = float(s.get("ma25", 0.0) or 0.0)
+    prev_ma7 = float(s.get("prev_ma7", ma7) or ma7)
+    prev_ma25 = float(s.get("prev_ma25", ma25) or ma25)
+    ma_candle_ts = int(s.get("ma_candle_ts", 0) or 0)
+    closed_price = float(s.get("ohlcv", [])[-2][4]) if len(s.get("ohlcv", [])) >= 2 else 0.0
 
-    if ma7 > 0 and ma25 > 0:
-        if is_long:
-            # Check for death cross (MA7 crossing below MA25) or price breaking below MA7 support
-            death_cross = prev_ma7 >= prev_ma25 and ma7 < ma25
-            price_break_support = p < ma7  # 若價格跌破黃線 (MA7)
-            if death_cross or price_break_support:
-                cs = 'sell'
-                reason = "[MA7_MA25_Death_Cross]" if death_cross else "[MA7_Support_Broken]"
-                logger.info(f"🎯 [MA7_MA25_Exit] {sym} 觸發 MA7/MA25 趨勢反轉或支撐跌破 ({reason})，現價: {p:.4f}, MA7: {ma7:.4f}, MA25: {ma25:.4f}")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=True)
-                return
-        else:
-            # Check for golden cross (MA7 crossing above MA25) or price breaking above MA7 resistance
-            golden_cross = prev_ma7 <= prev_ma25 and ma7 > ma25
-            price_break_resistance = p > ma7  # 若價格突破黃線 (MA7)
-            if golden_cross or price_break_resistance:
-                cs = 'buy'
-                reason = "[MA7_MA25_Golden_Cross]" if golden_cross else "[MA7_Resistance_Broken]"
-                logger.info(f"🎯 [MA7_MA25_Exit] {sym} 觸發 MA7/MA25 趨勢反轉或壓力突破 ({reason})，現價: {p:.4f}, MA7: {ma7:.4f}, MA25: {ma25:.4f}")
-                await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=True)
-                return
+    if ma7 > 0 and ma25 > 0 and closed_price > 0 and ma_candle_ts:
+        cross_invalid = (
+            (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
+            (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
+        )
+        ma7_broken = (is_long and closed_price < ma7) or (not is_long and closed_price > ma7)
+
+        if s.get("ma_exit_last_candle_ts") != ma_candle_ts:
+            s["ma_exit_invalid_count"] = 1 if ma7_broken else 0
+            s["ma_exit_last_candle_ts"] = ma_candle_ts
+
+        if cross_invalid or ma7_broken:
+            cs = "sell" if is_long else "buy"
+            if cross_invalid:
+                reason = "[MA7_MA25_Death_Cross]" if is_long else "[MA7_MA25_Golden_Cross]"
+            else:
+                reason = "[MA7_Closed_Break]"
+            logger.info(
+                f"🎯 [MA_Lifecycle_Exit] {sym} {reason} | closed={closed_price:.6f}, "
+                f"MA7={ma7:.6f}, MA25={ma25:.6f}, confirms={s.get('ma_exit_invalid_count', 0)}"
+            )
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
+            return
 
     # --- [新增] 極速止損 (Fast-Exit Guard / Instant Trap) ---
     # 檢查開倉後 60 秒內的「瞬間陷阱」
@@ -554,46 +484,6 @@ async def check_exits(sym):
     # 用 ATR 倍數而非固定百分比衡量「急速」，高低價幣都適用同一套標準。
     _time_since_entry = time.time() - s.get("last_entry_time", 0)
     _ref_price = s.get("last_entry_price", avg) or avg
-    # 早期方向失效：不像 2 ATR 急殺，只在進場 1~10 分鐘內，價格至少逆向
-    # 1.0 ATR（且至少 0.25%），並由 MACD、RSI、K 線三者共同確認反方向。
-    # 舊門檻 1.25 ATR 實際常等到 -0.44%~-0.79% 才退出；在三重反向確認成立時
-    # 不必再多承受 0.25 ATR。仍要求連續兩輪，避免一個 tick 的雜訊誤砍。
-    # 連續兩輪成立才退出，避免單一 tick 雜訊；退出後只建立反向候選，仍須通過完整閘門。
-    if 60 <= hold_sec <= 600 and current_atr > 0 and avg > 0:
-        _early_adverse_atr = ((avg - p) if is_long else (p - avg)) / current_atr
-        _early_adverse_pct = max(0.0, -profit_pct)
-        _macd_opposite = (
-            (is_long and s.get("macd_line", 0.0) < s.get("macd_signal", 0.0)) or
-            (not is_long and s.get("macd_line", 0.0) > s.get("macd_signal", 0.0))
-        )
-        _rsi_opposite = (
-            (is_long and s.get("current_rsi", 50.0) <= 45.0) or
-            (not is_long and s.get("current_rsi", 50.0) >= 55.0)
-        )
-        _candles = s.get("ohlcv", [])
-        _candle_opposite = False
-        if len(_candles) >= 2:
-            _prev_c = float(_candles[-2][4])
-            _cur_c = float(s.get("close_price", _candles[-1][4]) or _candles[-1][4])
-            _candle_opposite = (_cur_c < _prev_c) if is_long else (_cur_c > _prev_c)
-        _early_invalid = (
-            _early_adverse_atr >= 1.0 and _early_adverse_pct >= 0.0025
-            and _macd_opposite and _rsi_opposite and _candle_opposite
-        )
-        s["early_direction_invalid_count"] = (
-            int(s.get("early_direction_invalid_count", 0)) + 1 if _early_invalid else 0
-        )
-        # [2026-07-14 修正] 恢復為連續 2 輪確認：1 輪確認太敏感易受雜訊誤判導致快速停損。
-        if s["early_direction_invalid_count"] >= 2:
-            cs = "sell" if is_long else "buy"
-            rev_side = "sell" if is_long else "buy"
-            logger.info(f"🧭 [Early_Direction_Invalid] {sym} 開倉 {hold_sec:.0f}s 後逆向 {_early_adverse_atr:.2f}x ATR \n且 MACD/RSI/K線連續確認反向，退出並重新評估 {rev_side}")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Early_Direction_Invalid]", is_stop_loss=True)
-            s["pending_reverse"] = rev_side
-            s["pending_reverse_time"] = time.time()
-            s["pending_reverse_after_rescue"] = True
-            return
-
     if _time_since_entry < 180 and current_atr > 0 and _ref_price > 0:
         _adverse_atr_mult = (_ref_price - p) / current_atr if is_long else (p - _ref_price) / current_atr
         # 門檻原本是 1.2x，實際上線後對 ETH/SOL 這類主流大幣太敏感，短暫回檔（現貨
@@ -603,18 +493,8 @@ async def check_exits(sym):
         _rapid_volume_confirmed = vol_ratio > 3.0 if hold_sec < 60 else True
         if profit_pct < -0.005 and _adverse_atr_mult >= 3.5 and _rapid_volume_confirmed:
             cs = 'sell' if is_long else 'buy'
-            logger.info(f"⚡ [急速逆勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR (虧損: {profit_pct*100:.2f}%)，提早出場評估反手")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Reversal]", is_stop_loss=True)
-            # 僅建立 5 分鐘有效的候選反手；check_entries 執行前會再次檢查
-            # COOLDOWN、大盤方向、價格位置與 MACD，不在退出路徑重複判斷。
-            last_reverse = s.get("last_reverse_time", 0)
-            if time.time() - last_reverse > 1800:
-                rev_side = "buy" if not is_long else "sell"
-                s["pending_reverse"] = rev_side
-                s["pending_reverse_time"] = time.time()
-                s["last_reverse_time"] = time.time()
-                s["pending_reverse_after_rescue"] = True
-                logger.info(f"🔄 [Rapid_Reverse] {sym} 急速逆勢出場後設置反手 → {rev_side}")
+            logger.info(f"⚡ [急速不利走勢] {sym} 距上次進場僅 {_time_since_entry:.0f} 秒，價格已逆勢達 {_adverse_atr_mult:.2f}x ATR (虧損: {profit_pct*100:.2f}%)，提早風控出場")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Rapid_Adverse_Move]", is_stop_loss=True)
             return
 
     hold_sec = time.time() - s["open_time"] if s["open_time"] > 0 else 0
@@ -739,7 +619,7 @@ async def check_exits(sym):
                 return
 
     # 小幅峰值回吐到負報酬時，不另設超窄 Peak_Giveback 停損；
-    # 真正失效交由下方 Rapid_Reversal、ATR 與 Hard_Stop 管理。
+    # 真正失效交由下方 Rapid_Adverse_Move、ATR 與 Hard_Stop 管理。
 
     _entry_atr = s.get("entry_atr", s.get("current_atr", avg * 0.003))
     # Specifically handle BCH and XLM with higher ATR multipliers to account for their higher volatility
@@ -760,18 +640,13 @@ async def check_exits(sym):
     # 必須放在 Rescue DCA 判斷之前：虧損不夠攤平價差門檻的停滯倉位，DCA 那段每個 tick
     # 都會嘗試攤平又被自己的價差保護擋下（RescueDCAIneffective），但那個分支呼叫完
     # execute_order 後一律 return，導致這裡永遠排不到、卡在無效重試裡出不來。
-    _st_macd_hist_now = s.get("macd_hist", 0.0)
-    _st_is_strong = (
-        (is_long and s.get("current_rsi", 50.0) > 55 and _st_macd_hist_now > 0) or
-        (not is_long and s.get("current_rsi", 50.0) < 45 and _st_macd_hist_now < 0)
-    )
     _st_entry_layers = len(s.get("entries", []))
     # 優先使用配置文件中的 stagnation_base_limit，若無則依據進入層數與動能強度計算預設值
     custom_limit = COIN_PROFILE_CONFIG.get(sym, {}).get("stagnation_base_limit")
     if custom_limit:
         _st_base_limit = custom_limit
     else:
-        _st_base_limit = (5400 if _st_entry_layers <= 1 else 7200) if _st_is_strong else (2400 if _st_entry_layers <= 1 else 5400)
+        _st_base_limit = 3600 if _st_entry_layers <= 1 else 5400
     # 使用者反映 LTCUSDT/LINKUSDT 兩筆都曾經有過 +0.3% 左右的峰值，中間一直在小賺小賠
     # 之間原地震盪，停滯超時觸發那一刻剛好卡在小賠，整段持倉的峰值就這樣浪費掉。
     # 兩個調整：(1) 基礎等待時間全面拉長 1.5 倍，給單子更多時間發展；(2) 曾經有過
@@ -790,8 +665,6 @@ async def check_exits(sym):
     # 時間拖很久」的單子也一樣——與其耗著等一個已經不再發展的小獲利，不如先落袋，把
     # 倉位空出來讓新訊號進場。虧損那邊維持停損標記；獲利那邊改標記一般平倉，不算停損。
     if hold_sec > _st_time_decay_limit:
-        _sd_macd_h, _sd_prev_macd_h = _macd_vals(s)
-        _sd_trending_favorably = (_sd_macd_h > _sd_prev_macd_h) if is_long else (_sd_macd_h < _sd_prev_macd_h)
         
         # 檢查是否在「獲利區間」且「沒創新高」
         # 這裡加入針對獲利單的 Peak Stagnation 檢查：
@@ -828,7 +701,7 @@ async def check_exits(sym):
         else:
             is_stagnant_peak = False
         
-        if not _sd_trending_favorably:
+        if True:
             # 情況 A：虧損或持平的單子，動能沒轉好 -> 停滯超時強制平倉
             if profit_pct <= 0:
                 cs = 'sell' if is_long else 'buy'
@@ -848,58 +721,10 @@ async def check_exits(sym):
             # 則不執行任何操作，讓它繼續跑
             logger.info(f"ℹ️ [停滯過濾] {sym} 獲利 {profit_pct*100:.2f}% 中，動能未擴張但仍處於發展期，繼續持倉")
 
-    bb_upper = s.get('bb_up', 0)
-    bb_lower = s.get('bb_low', 0)
-    vol_ma20 = s.get('vol_ma20', 0)
-    current_vol = s.get('current_vol', 0)
-
-    if not s.get("debug_start_time"):
-        s["debug_start_time"] = time.time()
-
-    if time.time() - s["debug_start_time"] < 600:
-        if time.time() - s.get('last_debug_pressure_time', 0) > 60:
-            logger.info(f" [DEBUG_PRESSURE] {sym}: Upper={bb_upper:.4f}, Lower={bb_lower:.4f}, Vol_MA={vol_ma20:.2f}")
-            s['last_debug_pressure_time'] = time.time()
-
-    is_breakout_up = (not is_long and bb_upper > 0 and p > bb_upper and current_vol > (vol_ma20 * 1.5))
-    is_breakout_down = (is_long and bb_lower > 0 and p < bb_lower and current_vol > (vol_ma20 * 1.5))
-
-    if is_breakout_up or is_breakout_down:
-        last_reverse = s.get('last_reverse_time', 0)
-        hold_sec = time.time() - s.get("open_time", time.time())
-        if (time.time() - last_reverse > 1800 and hold_sec > 300
-                and not s.get("pending_reverse_trigger")):
-            new_direction = "buy" if is_breakout_up else "sell"
-            s["pending_reverse_trigger"] = {
-                "side": new_direction,
-                "time": s["ohlcv"][-1][0] if s["ohlcv"] else 0,
-                "strength": 18.0,
-                "source": "BB_Breakout",
-            }
-            logger.info(f"⚠️ [REVERSE_PENDING] {sym} BB 突破偵測 → 等待下一根 K 收盤確認再反手 ({new_direction})")
+    # 舊布林突破反手路線已刪除。
 
     atr_val = _get_atr(s, p)
     profit_atr_mult = (p - avg) / atr_val if is_long else (avg - p) / atr_val
-
-    if profit_atr_mult > MOMENTUM_EXIT_ATR_THRESHOLD and profit_pct >= MOMENTUM_EXIT_MIN_PROFIT_PCT:
-        macd_hist = s.get("macd_hist", 0.0)
-        prev_macd_hist = s.get("prev_macd_hist", 0.0)
-        rsi = s.get("current_rsi", 50.0)
-        prev_rsi = s.get("prev_rsi", rsi)
-
-        momentum_failing = False
-        if is_long:
-            if macd_hist < prev_macd_hist or rsi <= prev_rsi:
-                momentum_failing = True
-        else:
-            if macd_hist > prev_macd_hist or rsi >= prev_rsi:
-                momentum_failing = True
-
-        if momentum_failing:
-            logger.info(f"✅ [Momentum_Exit] {sym} 獲利達標 ({MOMENTUM_EXIT_ATR_THRESHOLD:.1f} ATR) 且動能衰竭，早期獲利平倉！")
-            cs = "sell" if is_long else "buy"
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Momentum_Exit]")
-            return
 
     # ── 無峰值早期停損 (NoPeak_EarlyStop) ──
     # [2026-07-14 新增] 針對 7/14 凌晨 DOGE/HYPE/LINK/AVAX 等空單模式：
@@ -978,20 +803,6 @@ async def _attempt_forced_rescue(sym, s, is_long, p):
     try:
         cs = 'buy' if is_long else 'sell'
         
-        # 接刀防呆保護：當 MACD 擴張或 RSI 急速惡化時，不進行攤平，而是照原停損計畫出場
-        macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
-        prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
-        rsi_now = s.get("current_rsi", 50.0)
-        rsi_prev = s.get("prev_rsi", rsi_now)
-        
-        is_falling_knife = (is_long and macd_hist < 0 and macd_hist < prev_macd_hist) or \
-                            (not is_long and macd_hist > 0 and macd_hist > prev_macd_hist) or \
-                            (is_long and rsi_now < rsi_prev) or \
-                            (not is_long and rsi_now > rsi_prev)
-        if is_falling_knife:
-            logger.info(f"🔪 [接刀保護] {sym} 即將停損，但走勢仍在急殺/急拉中（RSI:{rsi_prev:.1f}→{rsi_now:.1f}），不適合攤平，照計畫出場")
-            return False
-
         from core.orders import execute_order
         logger.info(f"🚑 [緊急攤平救援] {sym} 觸發攤平機制，新下單 0.2x 倉位以拉低成本均價，並觀察 60 秒...")
         await execute_order(sym, cs, p, allocation_pct=0.20, is_rescue_dca=True)

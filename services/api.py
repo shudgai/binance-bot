@@ -289,12 +289,6 @@ def api_get_all_positions():
         add_system_log(f"🚨 [持倉查詢失敗] /api/positions: {e}", "danger")
         return {}
 
-@app.get("/api/grid-status")
-def api_get_grid_status():
-    from services.bot_manager_service import get_bot_status
-    grids = get_bot_status().get("grid_states", [])
-    return {"status": "success", "grids": grids}
-
 @app.get("/api/position/{symbol}")
 def api_get_position(symbol: str):
     symbol_upper = symbol.upper()

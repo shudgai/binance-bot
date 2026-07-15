@@ -24,7 +24,7 @@ from core.market_data import (update_market_wind, initialize_atr_history, fetch_
 from core.symbol_profile import (filter_valid_symbols, apply_symbol_profile, SYMBOL_PROFILES,
     update_all_dynamic_personalities)
 from core.trade_signal import update_trade_signal
-from core.check_entries import compute_indicators, check_all_divergence_logic
+from core.check_entries import compute_indicators
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +309,8 @@ async def calibrate_with_exchange(exchange):
                     logger.info(f"⚠️ [發現未監控持倉] 交易所內 {sym} 仍有實盤倉位，自動加回監控清單並在介面顯示！")
                     ctx.ALL_SYMBOLS.append(sym)
                     ctx.STATES[sym] = build_symbol_state(sym)
-                    apply_symbol_profile(sym, SYMBOL_PROFILES.get(sym, {}))
+                    import core.symbol_profile as _symbol_profile
+                    apply_symbol_profile(sym, _symbol_profile.SYMBOL_PROFILES.get(sym, {}))
                     # 這裡只更新了 main.py 這個進程自己記憶體裡的 ALL_SYMBOLS，
                     # 但網頁「監控幣種」清單是 API 那個獨立進程從 bot_symbols.json
                     # 讀出來的，兩個進程不共用記憶體——不寫回檔案，介面永遠看不到
@@ -514,12 +515,6 @@ async def main_loop(exchange):
     # _calc_sl_tp 在 ATR 還是 0 時也有預設回退值），所以把校準提到 ATR 暖機之前，
     # 讓「偵測並補掛缺少的止損/停利單」盡量在程序剛起來的第一時間就發生，縮短
     # 倉位沒有交易所端保護的空窗期。
-    try:
-        from core.check_entries import load_pending_signals
-        load_pending_signals()
-    except Exception as e:
-        logger.info(f"⚠️ [Pending快取] 還原失敗: {e}")
-
     logger.info("🔍 [INIT] 正在啟動時校準倉位...")
     await calibrate_with_exchange(exchange)
     await fetch_real_balance()
@@ -616,12 +611,6 @@ async def main_loop(exchange):
             # 執行所有指標與出場檢查 (併發)
             if tasks:
                 await asyncio.gather(*tasks)
-
-            # --- 背離自動掃描 ---
-            if current_time % 300 < MAIN_LOOP_INTERVAL_SEC:
-                div_list = check_all_divergence_logic()
-                for msg in div_list:
-                    logger.info(f"🌟 [自動背離掃描] {msg}")
 
             # --- 狀態更新區塊 ---
             try:
@@ -833,25 +822,8 @@ async def periodic_status_log():
         await asyncio.sleep(60)
         try:
             cache_data = {}
-            grid_states = []
             for sym in ctx.STATES:
                 cache_data[sym] = ctx.STATES[sym]["atr_history"][-1000:]
-                state = ctx.STATES[sym]
-                if state.get("grid_initialized") and "grids" in state:
-                    grids = state["grids"]
-                    from core.symbol_profile import SYMBOL_PROFILES
-                    config = SYMBOL_PROFILES.get(sym, {})
-                    grid_states.append({
-                        "symbol": sym,
-                        "upper": config.get("grid_upper", 0),
-                        "lower": config.get("grid_lower", 0),
-                        "total_grids": len(grids),
-                        "pending_grids": sum(1 for g in grids if g.get("status") == "pending"),
-                        "arbitrage_count": state.get("grid_arbitrage_count", sum(1 for g in grids if g.get("status") == "filled") // 2)
-                    })
-            if grid_states:
-                import json as _json
-                print(f"@@GRID_STATE@@{_json.dumps(grid_states)}", flush=True)
 
             with open(os.path.join(_data_dir, "atr_history_cache.json"), "w") as f:
                 json.dump(cache_data, f)

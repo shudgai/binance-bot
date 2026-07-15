@@ -116,31 +116,6 @@ class TakeProfitTests(unittest.TestCase):
         self.assertGreater(second_stop, first_stop)
         self.assertGreater(second_stop, 100.68 * (1 - 0.0009))
 
-    def test_soft_trailing_widens_tolerance_while_macd_momentum_still_climbing(self):
-        # MACD 柱狀圖還在往有利方向擴張時（真的在噴出），停利線應該放寬，不要一根雜訊就洗出場；
-        # 柱狀圖不再擴張（盤整/停滯）時應收緊。
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
-                  "trailing_stop_price": 0.0, "trailing_highest": 0.0,
-                  "macd_line": 0.02, "macd_signal": 0.01,       # macd_hist = 0.01
-                  "prev_macd_line": 0.005, "prev_macd_signal": 0.005})  # prev_hist = 0.0 -> 擴張中
-        update_trailing_stop(sym, 100.48, True)
-        widened_stop = s["trailing_stop_price"]
-        self.assertAlmostEqual(widened_stop, 100.33, places=2)
-
-        reset_coin_state(sym)
-        s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
-                  "trailing_stop_price": 0.0, "trailing_highest": 0.0,
-                  "macd_line": 0.01, "macd_signal": 0.005,      # macd_hist = 0.005
-                  "prev_macd_line": 0.02, "prev_macd_signal": 0.01})   # prev_hist = 0.01 -> 動能停滯
-        update_trailing_stop(sym, 100.48, True)
-        tightened_stop = s["trailing_stop_price"]
-        self.assertGreater(tightened_stop, 100.35)
-        self.assertAlmostEqual(tightened_stop, 100.40, places=2)
-
     def test_short_breakeven_lock_actually_engages(self):
         # trailing_stop_price 預設是 0.0（不是缺項）。空單保本鎖若誤把 0.0 當成
         # 「已存在的停損價」去跟新算出的保本價取 min()，會恆等於 0.0、鎖不上——
@@ -209,40 +184,6 @@ class TakeProfitTests(unittest.TestCase):
             "trailing_highest": 100.2,
             "macd_line": -0.01, "macd_signal": 0.0,
             "prev_macd_line": -0.005, "prev_macd_signal": 0.0,
-            "current_rsi": 45.0, "prev_rsi": 47.0,
-            "current_vol": 1000.0, "vol_ma20": 1000.0,
-            "pnl_history": [],
-            "ohlcv": [],
-        })
-
-        async def run_check():
-            with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                await check_exits(sym)
-                for call in mock_close.await_args_list:
-                    self.assertNotEqual(call.kwargs.get("reason"), "[Peak_Giveback]")
-
-        asyncio.run(run_check())
-
-    def test_peak_giveback_does_not_fire_when_momentum_recovers(self):
-        # 同樣曾有峰值、現在轉虧，但 MACD 動能已經在往有利方向改善（不是持續惡化）
-        # ——這種情況不該被 Peak_Giveback 提早停損，要繼續給它機會。
-        from unittest.mock import patch, AsyncMock
-        sym = "XRPUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s.update({
-            "qty": 1.0, "avg_price": 100.0, "close_price": 99.5,
-            "open_time": time.time() - 300,
-            "last_entry_time": time.time() - 300,
-            "last_entry_price": 100.0,
-            "current_atr": 0.3,
-            "atr_history": [0.3] * 10,
-            "highest_profit_pct": 0.0025,
-            "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7,
-            "trailing_highest": 100.25,
-            "macd_line": -0.005, "macd_signal": 0.0,
-            "prev_macd_line": -0.01, "prev_macd_signal": 0.0,
             "current_rsi": 45.0, "prev_rsi": 47.0,
             "current_vol": 1000.0, "vol_ma20": 1000.0,
             "pnl_history": [],
@@ -407,64 +348,7 @@ class TakeProfitTests(unittest.TestCase):
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Rapid_Reversal]")
-                self.assertEqual(s.get("pending_reverse"), "sell")
-
-        asyncio.run(run_check())
-
-    def test_confirmed_early_short_invalidation_exits_and_rechecks_long(self):
-        from unittest.mock import patch, AsyncMock
-        sym = "INJUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s.update({
-            "qty": -33.9, "avg_price": 4.825, "close_price": 4.852,
-            "open_time": time.time() - 480, "last_entry_time": time.time() - 480,
-            "last_entry_price": 4.825, "current_atr": 0.01814,
-            "atr_history": [0.01814] * 20, "current_rsi": 59.8,
-            "macd_line": -0.0130, "macd_signal": -0.0135,
-            "current_vol": 1000.0, "vol_ma20": 1000.0,
-            "ohlcv": [[0, 4.82, 4.84, 4.81, 4.825, 1000], [1, 4.825, 4.86, 4.82, 4.852, 1100]],
-            "pnl_history": [],
-        })
-
-        async def run_check():
-            with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                await check_exits(sym)
-                mock_close.assert_not_called()
-                await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
-                self.assertEqual(s.get("pending_reverse"), "buy")
-
-        asyncio.run(run_check())
-
-    def test_confirmed_early_invalidation_exits_at_one_atr(self):
-        from unittest.mock import patch, AsyncMock
-        sym = "INJUSDT"
-        init_states([sym])
-        s = STATES[sym]
-        reset_coin_state(sym)
-        s.update({
-            "qty": -10.0, "avg_price": 100.0, "close_price": 100.30,
-            "open_time": time.time() - 300, "last_entry_time": time.time() - 300,
-            "last_entry_price": 100.0, "current_atr": 0.28,
-            "atr_history": [0.28] * 20, "current_rsi": 58.0,
-            "macd_line": 0.01, "macd_signal": 0.0,
-            "current_vol": 1000.0, "vol_ma20": 1000.0,
-            "ohlcv": [[0, 100.0, 100.1, 99.9, 100.0, 1000],
-                      [1, 100.0, 100.4, 99.9, 100.3, 1100]],
-            "pnl_history": [],
-        })
-
-        async def run_check():
-            with patch("core.orders.close_position", AsyncMock()) as mock_close:
-                await check_exits(sym)
-                mock_close.assert_not_called()
-                await check_exits(sym)
-                mock_close.assert_called_once()
-                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Early_Direction_Invalid]")
+                self.assertEqual(mock_close.await_args.kwargs["reason"], "[Rapid_Adverse_Move]")
 
         asyncio.run(run_check())
 

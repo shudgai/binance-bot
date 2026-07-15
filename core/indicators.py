@@ -125,13 +125,6 @@ def _get_atr(s, p):
     return atr if atr > 0 else (p * 0.01)
 
 
-def _macd_vals(s):
-    """從 state 取出 macd_hist 與 prev_macd_hist。"""
-    macd_hist = s.get("macd_line", 0.0) - s.get("macd_signal", 0.0)
-    prev_macd_hist = s.get("prev_macd_line", 0.0) - s.get("prev_macd_signal", 0.0)
-    return macd_hist, prev_macd_hist
-
-
 def _calc_sl_tp(sym, side, s, p, route="a"):
     """計算 ATR、SL 距離、TP 距離、預期盈虧比。"""
     from core.symbol_profile import get_effective_exit_setting, get_dynamic_atr_multiplier
@@ -140,12 +133,6 @@ def _calc_sl_tp(sym, side, s, p, route="a"):
     sl_raw = get_effective_exit_setting(sym, "sl_atr_multiplier", s.get("sl_atr_multiplier", SL_ATR_MULTIPLIER), side == "buy")
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
-
-    # Layer-S: 動態反手止損 (Dynamic Reverse SL)
-    if route == "Automatic_Reverse":
-        old_sl_mult = sl_mult
-        sl_mult *= 1.25
-        logger.info(f"@@COIN_DEBUG@@ 🛡️ {sym} 反手進場，擴大止損空間 (sl_mult: {old_sl_mult:.2f} -> {sl_mult:.2f})")
 
     # Layer-A: Low-Volatility Mode Switch
     _atr_hist_sl = s.get("atr_history", [])

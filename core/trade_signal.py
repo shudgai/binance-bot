@@ -21,6 +21,19 @@ async def update_trade_signal(sym, trade):
     else:
         ts_value = time.time()
 
+    # watch_trades 在重連時可能補送舊成交；行情事件必須單調，且不能早於本筆進場。
+    last_market_ts = float(s.get("last_market_trade_time", 0.0) or 0.0)
+    open_time = float(s.get("open_time", 0.0) or 0.0)
+    if (last_market_ts and ts_value < last_market_ts) or (
+        abs(s.get("qty", 0.0)) > 0.000001 and open_time and ts_value < open_time
+    ):
+        logger.info(
+            f"⚠️ [Stale_Trade_Tick] {sym} 忽略亂序/進場前成交 "
+            f"event={ts_value:.3f} last={last_market_ts:.3f} open={open_time:.3f}"
+        )
+        return
+    s["last_market_trade_time"] = ts_value
+
     s["last_trade_price"] = price
     s["close_price"] = price
     s["last_ohlcv_update"] = time.time()
@@ -67,35 +80,63 @@ async def update_trade_signal(sym, trade):
             s["trade_signal_reason"] = ""
 
     # ── 即時高點追蹤 + 保本鎖定（不等 25 秒主循環）──
-    if abs(s.get("qty", 0)) > 0.000001 and s.get("avg_price", 0) > 0:
+    if (
+        abs(s.get("qty", 0)) > 0.000001
+        and s.get("avg_price", 0) > 0
+    ):
         avg_p = s["avg_price"]
         _is_long = s["qty"] > 0
         rt_profit = (price - avg_p) / avg_p if _is_long else (avg_p - price) / avg_p
 
-        if _is_long:
-            if price > s.get("trailing_highest", 0):
-                s["trailing_highest"] = price
-        else:
-            if price < s.get("trailing_lowest", float("inf")):
-                s["trailing_lowest"] = price
-
-        if rt_profit > s.get("highest_profit_pct", 0.0):
-            s["highest_profit_pct"] = rt_profit
-            save_peak(sym, rt_profit)
+        # 單一公開成交不能立刻抬高移動停利；新峰值需由下一筆相近成交確認。
+        confirmed_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
+        if rt_profit > confirmed_peak:
+            candidate_profit = float(s.get("realtime_peak_candidate_profit", 0.0) or 0.0)
+            candidate_time = float(s.get("realtime_peak_candidate_time", 0.0) or 0.0)
+            atr_pct = float(s.get("current_atr", 0.0) or 0.0) / max(avg_p, 1e-8)
+            confirm_tolerance = max(0.0005, min(0.002, atr_pct * 0.25))
+            candidate_is_near = (
+                candidate_profit > confirmed_peak
+                and 0 <= ts_value - candidate_time <= 1.0
+                and abs(rt_profit - candidate_profit) <= confirm_tolerance
+            )
+            if candidate_is_near:
+                confirmed_peak = max(candidate_profit, rt_profit)
+                confirmed_price = float(s.get("realtime_peak_candidate_price", price) or price)
+                if (_is_long and price > confirmed_price) or (not _is_long and price < confirmed_price):
+                    confirmed_price = price
+                s["highest_profit_pct"] = confirmed_peak
+                if _is_long:
+                    s["trailing_highest"] = max(s.get("trailing_highest", avg_p), confirmed_price)
+                else:
+                    s["trailing_lowest"] = min(s.get("trailing_lowest", avg_p), confirmed_price)
+                save_peak(sym, confirmed_peak)
+                s["realtime_peak_candidate_price"] = 0.0
+                s["realtime_peak_candidate_profit"] = 0.0
+                s["realtime_peak_candidate_time"] = 0.0
+            else:
+                s["realtime_peak_candidate_price"] = price
+                s["realtime_peak_candidate_profit"] = rt_profit
+                s["realtime_peak_candidate_time"] = ts_value
+        elif s.get("realtime_peak_candidate_profit", 0.0) > confirmed_peak:
+            # 候選峰值沒有第二筆相近成交支持，回落後立即作廢。
+            s["realtime_peak_candidate_price"] = 0.0
+            s["realtime_peak_candidate_profit"] = 0.0
+            s["realtime_peak_candidate_time"] = 0.0
 
         # 0.6% 以下保留發展空間；達 0.6% 才即時鎖定成本與摩擦緩衝。
-        if rt_profit >= 0.006 and not s.get("is_breakeven_locked", False):
+        if confirmed_peak >= 0.006 and not s.get("is_breakeven_locked", False):
             _buf = 0.001
             _be = avg_p * (1 + _buf) if _is_long else avg_p * (1 - _buf)
             _sl_now = s.get("stop_loss", 0)
             if _is_long and (_sl_now == 0 or _be > _sl_now):
                 s["stop_loss"] = _be
                 s["is_breakeven_locked"] = True
-                logger.info(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
+                logger.info(f"⚡ [即時保本] {sym} 即時確認達到 {confirmed_peak*100:.2f}%，SL 鎖定 {_be:.4f}")
             elif not _is_long and (_sl_now == 0 or _be < _sl_now):
                 s["stop_loss"] = _be
                 s["is_breakeven_locked"] = True
-                logger.info(f"⚡ [即時保本] {sym} 即時達到 {rt_profit*100:.2f}%，SL 鎖定 {_be:.4f}")
+                logger.info(f"⚡ [即時保本] {sym} 即時確認達到 {confirmed_peak*100:.2f}%，SL 鎖定 {_be:.4f}")
 
         # ── TrailTP 即時同步至 stop_loss（每個 trade tick 執行）──
         _atr_rt = s.get("current_atr", 0.0)

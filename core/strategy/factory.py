@@ -5,7 +5,6 @@ try:
     from core.strategy.speculative_strategy import SpeculativeRiskStrategy
 except ImportError:
     SpeculativeRiskStrategy = None
-from core.strategy.grid_strategy import GridStrategy
 from core.config import COIN_PROFILE_CONFIG
 
 class StrategyFactory:
@@ -23,8 +22,6 @@ class StrategyFactory:
             if SpeculativeRiskStrategy is not None:
                 return SpeculativeRiskStrategy(symbol)
             return CoreTrendStrategy(symbol)
-        elif profile_type == "Grid_Trading":
-            return GridStrategy(symbol)
         else:
             # Default to Core Trend
             return CoreTrendStrategy(symbol)

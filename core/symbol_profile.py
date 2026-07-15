@@ -6,7 +6,6 @@ import numpy as np
 from core.config import (
     COIN_PROFILE_CONFIG, DEFAULT_SYMBOLS, CONFIG_FILE, PERSONALITY_TEMPLATES,
     SYMBOL_EXIT_OVERRIDES as _DEFAULT_SYMBOL_EXIT_OVERRIDES,
-    SYMBOL_REVERSAL_SETTINGS as _DEFAULT_SYMBOL_REVERSAL_SETTINGS,
 )
 import core.config as _config
 
@@ -14,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 # These are mutable module-level vars that get overridden by load_symbol_config
 SYMBOL_EXIT_OVERRIDES = dict(_DEFAULT_SYMBOL_EXIT_OVERRIDES)
-SYMBOL_REVERSAL_SETTINGS = dict(_DEFAULT_SYMBOL_REVERSAL_SETTINGS)
 SYMBOL_PROFILES = {}
 
 
@@ -45,14 +43,13 @@ def normalize_symbol_list(symbols, max_count=23):
 
 
 def load_symbol_config():
-    global SYMBOL_EXIT_OVERRIDES, SYMBOL_REVERSAL_SETTINGS
+    global SYMBOL_EXIT_OVERRIDES
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         symbols = []
         profiles = {}
         exit_overrides = {}
-        reversal_settings = {}
         if isinstance(data, dict):
             symbols = normalize_symbol_list(data.get("symbols", []))
             raw_profiles = data.get("profiles", {})
@@ -65,12 +62,8 @@ def load_symbol_config():
                     overrides = profile_copy.get("exit_overrides")
                     if isinstance(overrides, dict):
                         exit_overrides[normalized] = overrides
-                    settings = profile_copy.get("reversal_settings")
-                    if isinstance(settings, dict):
-                        reversal_settings[normalized] = settings
                     profiles[normalized] = profile_copy
         SYMBOL_EXIT_OVERRIDES = exit_overrides
-        SYMBOL_REVERSAL_SETTINGS = reversal_settings
 
         try:
             with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "strategy_config.json"), "r") as f:
@@ -165,22 +158,9 @@ def get_symbol_exit_override(sym):
 
 def should_require_strong_exit(overrides):
     return bool(
-        overrides.get("require_strong_momentum")
-        or overrides.get("volume_threshold") is not None
+        overrides.get("volume_threshold") is not None
         or overrides.get("momentum_threshold") is not None
     )
-
-
-def has_strong_momentum(sym, is_long):
-    from core import ctx
-    s = ctx.STATES[sym]
-    if s.get("vol_ma20", 0.0) <= 0 or len(s.get("closes", [])) < 4:
-        return False
-    volume_ratio = s["current_vol"] / max(s["vol_ma20"], 1e-8)
-    recent_return = (s["closes"][-1] - s["closes"][-4]) / max(abs(s["closes"][-4]), 1e-8)
-    if is_long:
-        return volume_ratio > 1.2 and s["close_price"] > s.get("bb_mid", 0.0) and s["current_rsi"] > 52 and s.get("macd_hist", 0.0) > 0 and recent_return > 0.005
-    return volume_ratio > 1.2 and s["close_price"] < s.get("bb_mid", 0.0) and s["current_rsi"] < 48 and s.get("macd_hist", 0.0) < 0 and recent_return < -0.005
 
 
 def is_strong_exit_condition(sym, is_long):
@@ -188,8 +168,6 @@ def is_strong_exit_condition(sym, is_long):
     overrides = get_symbol_exit_override(sym)
     if not overrides:
         return False
-    if overrides.get("require_strong_momentum"):
-        return has_strong_momentum(sym, is_long)
     volume_threshold = overrides.get("volume_threshold")
     momentum_threshold = overrides.get("momentum_threshold")
     s = ctx.STATES[sym]

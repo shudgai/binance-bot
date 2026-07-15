@@ -30,6 +30,17 @@ def build_symbol_state(sym):
         "current_rsi": 50.0,
         "ema20": 0.0,
         "ema50": 0.0,
+        "ma7": 0.0,
+        "ma25": 0.0,
+        "ma99": 0.0,
+        "prev_ma7": 0.0,
+        "prev_ma25": 0.0,
+        "prev_ma99": 0.0,
+        "ma_candle_ts": 0,
+        "ma_signal_candle_ts": 0,
+        "_direction_guard_cooldown_signal_candle_ts": 0,
+        "ma_exit_invalid_count": 0,
+        "ma_exit_last_candle_ts": 0,
         "macd_line": 0.0,
         "macd_signal": 0.0,
         "macd_hist": 0.0,
@@ -41,6 +52,9 @@ def build_symbol_state(sym):
         "vol_ma10": 0.0,
         "vol_ma20": 0.0,
         "current_vol": 0.0,
+        "funding_rate": None,
+        "funding_rate_updated_at": 0.0,
+        "_expected_funding_cost_pct": 0.0,
         "trailing_highest": 0.0,
         "trailing_lowest": float('inf'),
         "highest_profit_pct": 0.0,
@@ -57,6 +71,10 @@ def build_symbol_state(sym):
         "last_trade_qty": 0.0,
         "last_trade_side": "",
         "last_trade_time": 0.0,
+        "last_market_trade_time": 0.0,
+        "realtime_peak_candidate_price": 0.0,
+        "realtime_peak_candidate_profit": 0.0,
+        "realtime_peak_candidate_time": 0.0,
         "trade_qty_history": [],
         "trade_price_history": [],
         "trade_signal_strength": 0.0,
@@ -383,6 +401,9 @@ def reset_coin_state(sym):
     s["trailing_highest"] = 0.0
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
+    s["realtime_peak_candidate_price"] = 0.0
+    s["realtime_peak_candidate_profit"] = 0.0
+    s["realtime_peak_candidate_time"] = 0.0
     clear_peak(sym)
     clear_entry_time(sym)
     clear_entry_reason(sym)
@@ -394,6 +415,8 @@ def reset_coin_state(sym):
     s["soft_trailing_armed"] = False
     s["soft_trailing_profit_floor"] = 0.0
     s["early_direction_invalid_count"] = 0
+    s["ma_exit_invalid_count"] = 0
+    s["ma_exit_last_candle_ts"] = 0
     s["stop_loss"] = 0.0
     s["pending_side"] = None
     s["pending_time"] = 0
@@ -457,7 +480,7 @@ def get_open_position_count():
     repair_invalid_states()
     return sum(
         1 for s in ctx.STATES.values()
-        if abs(s["qty"]) > 0.000001 or s.get("is_ordering")
+        if abs(float(s.get("qty", 0.0) or 0.0)) > 0.000001 or s.get("is_ordering")
     )
 
 def get_open_symbols():

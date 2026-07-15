@@ -10,8 +10,7 @@ from core.peak_store import clear_peak
 
 from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
-    DEFAULT_REVERSAL_SETTINGS, SYMBOL_REVERSAL_SETTINGS,
-    ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
+ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
     ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER)
 from core.exchange_client import exchange_futures, exchange_market_data, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
@@ -113,12 +112,20 @@ async def _replace_exchange_exit_orders(sym):
     is_long = s["qty"] > 0
 
     hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
-    # 計算初步的停損價格
-    stop_price = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
+    route = str(s.get("entry_reason", "a") or "a").lower()
+    # Exchange-side disaster stop is anchored to market structure at entry.
+    # Breakouts use MA7; pullback/trend entries use the more stable MA25.
+    hard_stop = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
+    ma_anchor = float(s.get("ma7" if route in ("breakout", "ma_breakout", "ma_cross") else "ma25", 0.0) or 0.0)
+    atr = float(s.get("entry_atr", s.get("current_atr", 0.0)) or 0.0)
+    structure_buffer = max(atr * 0.20, avg * 0.001)
+    stop_price = hard_stop
+    if is_long and 0 < ma_anchor < avg:
+        stop_price = max(hard_stop, ma_anchor - structure_buffer)
+    elif not is_long and ma_anchor > avg:
+        stop_price = min(hard_stop, ma_anchor + structure_buffer)
     stop_price = round_step(stop_price, prec["tick_size"])
     stop_dist = (avg - stop_price) if is_long else (stop_price - avg)
-
-    route = s.get("entry_reason", "a")
     _, _, tp_dist, _ = _calc_sl_tp(sym, "buy" if is_long else "sell", s, avg, route)
     take_profit_price = avg + tp_dist if is_long else avg - tp_dist
     take_profit_price = round_step(take_profit_price, prec["tick_size"])
@@ -136,13 +143,14 @@ async def _replace_exchange_exit_orders(sym):
         stop_price = round_step(stop_price, prec["tick_size"])
         stop_dist = new_stop_dist
 
+    bracket_min_rr = EXIT_RR_MULTIPLIER
     stop_price, take_profit_price = _enforce_bracket_rr(
-        avg, stop_price, take_profit_price, is_long, prec["tick_size"]
+        avg, stop_price, take_profit_price, is_long, prec["tick_size"], min_rr=bracket_min_rr
     )
     if take_profit_price != _original_tp:
         logger.info(
             f"⚠️ [Bracket_RR_Guard] {sym} 最終掛單盈虧比不足，"
-            f"停利由 {_original_tp} 校正為 {take_profit_price}（最低 R:R={EXIT_RR_MULTIPLIER}）"
+            f"停利由 {_original_tp} 校正為 {take_profit_price}（最低 R:R={bracket_min_rr}）"
         )
 
     # 防禦性保底：進場已經會把數量夾在 MARKET_LOT_SIZE 上限之內（見 execute_order），
@@ -259,15 +267,6 @@ def _entry_direction_guard(sym, side, reference_price=None):
     adverse_move = (ref - p) if side == "buy" else (p - ref)
     if adverse_move > adverse_limit:
         return False, f"price moved adverse {adverse_move:.6f} > {adverse_limit:.6f}"
-
-    ema20 = float(s.get("ema20", 0.0) or 0.0)
-    macd_hist = float(s.get("macd_hist", 0.0) or 0.0)
-    rsi = float(s.get("current_rsi", 50.0) or 50.0)
-    if ema20 > 0:
-        if side == "buy" and p < ema20 and macd_hist < 0 and rsi < 45:
-            return False, f"below EMA20 with weak MACD/RSI ({p:.6f} < {ema20:.6f}, RSI={rsi:.1f})"
-        if side == "sell" and p > ema20 and macd_hist > 0 and rsi > 55:
-            return False, f"above EMA20 with strong MACD/RSI ({p:.6f} > {ema20:.6f}, RSI={rsi:.1f})"
 
     ohlcv = s.get("ohlcv", [])
     vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
@@ -799,7 +798,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 決定出場，不是隨便一點點獲利就賣——不加進白名單的話，這裡的 0.35% 固定門檻會蓋掉
     # 它自己已經做過的判斷，等於它的 0.15% 設定形同虛設，永遠要等到 0.35% 才放行。
     # （[Opportunity_Rotation] 機會成本輪替功能已依使用者要求移除，不會再產生這個 reason。）
-    allowed_exit_reasons = ["[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA7_Closed_Break]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -998,33 +997,6 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
             logger.info(f"⚠️ [更新交易所退出單失敗] {sym}: {ce}")
 
 
-def should_recover_from_reversal(sym, is_long):
-    s = ctx.STATES[sym]
-    if abs(s["qty"]) < 0.000001:
-        return False
-    macd_reversal = (is_long and s["prev_macd_line"] > s["prev_macd_signal"] and s["macd_line"] < s["macd_signal"]) or \
-                    (not is_long and s["prev_macd_line"] < s["prev_macd_signal"] and s["macd_line"] > s["macd_signal"])
-    if not macd_reversal or not s.get("prev_close") or len(s["ohlcv"]) < 2:
-        return False
-    current_price = s["close_price"]
-    from core.indicators import _get_atr
-    atr_val = _get_atr(s, current_price)
-    prev_bar_high = s["ohlcv"][-2][2]
-    prev_bar_low = s["ohlcv"][-2][3]
-    breakout_confirmed = False
-    if is_long:
-        breakout_confirmed = current_price < prev_bar_low and prev_bar_low - current_price > max(atr_val * 0.25, 0.001)
-    else:
-        breakout_confirmed = current_price > prev_bar_high and current_price - prev_bar_high > max(atr_val * 0.25, 0.001)
-    reversal_settings = {**DEFAULT_REVERSAL_SETTINGS, **SYMBOL_REVERSAL_SETTINGS.get(sym, {})}
-    volume_confirmed = s["current_vol"] > s["vol_ma20"] * reversal_settings["volume_multiplier"]
-    trade_signal = s.get("trade_signal_strength", 0.0)
-    trade_confirmed = trade_signal >= reversal_settings["trade_signal_threshold"]
-    if macd_reversal and breakout_confirmed and volume_confirmed and trade_confirmed:
-        return True
-    return False
-
-
 async def execute_panic_sell_all_positions():
     logger.info("🚨🚨 [緊急清倉] 開始強制平掉虧損倉位（有利潤者保留）！")
     for sym in ctx.ALL_SYMBOLS:
@@ -1199,7 +1171,12 @@ async def check_paper_pending_order(sym):
 
 
 def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None):
-    # 用戶要求：開倉不使用市價或追價，強制一律使用 pullback 限價掛單等待回踩。
+    # MA25 回調使用被動限價；已收線交叉與帶量突破使用 IOC 限價追蹤，
+    # 在限制滑點的同時避免把有效突破掛到行情後方。
+    if entry_route in ("MA_Cross", "MA_Breakout"):
+        return "chase"
+    if entry_route == "MA25_Pullback":
+        return "pullback"
     return "pullback"
 
 
@@ -1354,6 +1331,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
     # 承認這波訊號已經追不上，暫停一段時間等下一個獨立訊號，不要為了「終於通過」
     # 而追在相對高點/低點。
     _dg_cooldown_until = s.get("_direction_guard_cooldown_until", 0)
+    _current_ma_signal_ts = int(s.get("ma_signal_candle_ts", 0) or 0)
+    _cooldown_signal_ts = int(s.get("_direction_guard_cooldown_signal_candle_ts", 0) or 0)
+    if _dg_cooldown_until and _current_ma_signal_ts > _cooldown_signal_ts:
+        s["_direction_guard_cooldown_until"] = 0
+        _dg_cooldown_until = 0
+        logger.info(f"✅ [EntryDirectionGuard_新訊號] {sym} 新的收線 MA 訊號已形成，解除舊波段冷卻並重新評估")
     if time.time() < _dg_cooldown_until:
         logger.info(f"⏳ [EntryDirectionGuard_冷卻] {sym} 先前連續方向守門失敗已放棄本波訊號，剩餘 {_dg_cooldown_until - time.time():.0f} 秒冷卻中，暫不進場")
         return
@@ -1367,6 +1350,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         _DG_MAX_REJECTS = 3
         if _dg_reject_count >= _DG_MAX_REJECTS:
             s["_direction_guard_cooldown_until"] = time.time() + 300
+            s["_direction_guard_cooldown_signal_candle_ts"] = int(s.get("ma_signal_candle_ts", 0) or 0)
             s["_direction_guard_reject_count"] = 0
             logger.info(f"🚫 [EntryDirectionGuard_放棄] {sym} 連續 {_DG_MAX_REJECTS} 次方向守門失敗，放棄這波訊號，暫停 5 分鐘避免追價進場")
         return
@@ -1393,7 +1377,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             logger.info(f"🛑 [RescueDCAIneffective] {sym} 取消攤平：{rescue_reason}")
             return
 
-    if entry_route and entry_route != "Automatic_Reverse":
+    if entry_route:
         from core.check_entries import is_entry_candidate_still_valid
         still_valid, invalid_reason = is_entry_candidate_still_valid(
             sym, side, entry_route, signal_strength or 0.0, price,
@@ -1413,6 +1397,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         base_notional = 10.0
 
     balance = get_balance()
+    # Position sizing hard cap: a full hard-stop loss may consume at most 2% of strategy capital.
+    _entry_sl_pct = max(float(s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT) or HARD_STOP_LOSS_PCT), 0.01)
+    _risk_notional_cap = balance * 0.02 / _entry_sl_pct
+    if base_notional > _risk_notional_cap:
+        logger.info(f"🛡️ [Risk_2Pct_Cap] {sym} 名義倉位 {base_notional:.2f} 縮減至 {_risk_notional_cap:.2f} USDT，確保硬停損風險不超過本金 2%")
+        base_notional = _risk_notional_cap
     required_margin = base_notional / DUAL_SHOT_LEVERAGE
 
     if not PAPER_TRADING:

@@ -40,7 +40,10 @@ def _strategy_label(balance=None):
     """Keep the status-page slot count aligned with the trading engine."""
     from core.balance import get_dynamic_max_slots
 
-    return f"Top 12 Radar / {get_dynamic_max_slots(balance)} Slots"
+    slots = get_dynamic_max_slots(balance)
+    if slots == 3:
+        return "Top 12 Radar / 3 MA Trend Slots"
+    return f"Top 12 Radar / {slots} Slots"
 
 
 def _record_entry_diagnosis(message: str, now: float | None = None):
@@ -385,12 +388,6 @@ def read_bot_output(proc, sym):
                 try:
                     import json as _json
                     bot_status["trend_bias"] = _json.loads(line.replace("@@TREND_BIAS@@", "").strip())
-                except Exception:
-                    pass
-            elif line.startswith("@@GRID_STATE@@"):
-                try:
-                    import json as _json
-                    bot_status["grid_states"] = _json.loads(line.replace("@@GRID_STATE@@", "").strip())
                 except Exception:
                     pass
             elif line.startswith("@@COIN_DEBUG@@"):

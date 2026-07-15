@@ -175,7 +175,7 @@ async def fetch_all_klines(exchange):
     from core.config import MARKET_FETCH_BATCHES, KLINE_BATCH_PAUSE_SEC
     async def fetch_with_sem(sym):
         async with ctx.request_semaphore:
-            return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=100)
+            return await exchange.fetch_ohlcv(sym, TIMEFRAME, limit=120)
 
     symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
     total = len(symbols)

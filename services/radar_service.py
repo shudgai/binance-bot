@@ -4,7 +4,7 @@ import time
 import threading
 from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
-from services.binance_service import get_atr_ranked_coins, get_hot_movers as _get_hot_movers, get_grid_ranked_coins
+from services.binance_service import get_atr_ranked_coins, get_hot_movers as _get_hot_movers
 from core.ctx import CACHE
 from core.config import COIN_PROFILE_CONFIG
 
@@ -137,7 +137,7 @@ def save_symbol_config(symbols: list):
             with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
         
-        # 不要切片，因為裡面包含了 Trend(12) + Grid(1) = 13 個幣種
+        # 保留雷達選出的完整 12 幣清單。
         data["symbols"] = symbols
         with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -461,36 +461,6 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
         return get_bot_status().get("active_symbols", [])
-
-    try:
-        from services.binance_service import get_grid_ranked_coins
-        grid_coins = get_grid_ranked_coins(top_n=1)
-        if grid_coins:
-            grid_coin = grid_coins[0]
-            g_sym = grid_coin['symbol']
-            g_range = grid_coin['range_pct']
-            
-            if g_range < 0.03:
-                g_count = 5
-            elif g_range < 0.06:
-                g_count = 10
-            else:
-                g_count = 15
-                
-            profiles[g_sym] = {
-                "profile_type": "Grid_Trading",
-                "grid_upper": grid_coin['high'],
-                "grid_lower": grid_coin['low'],
-                "grid_count": g_count,
-                "capital_per_grid": 75.0 / g_count,
-                "leverage": 5
-            }
-            if g_sym not in best_symbols:
-                best_symbols.append(g_sym)
-            add_system_log(f"🕸️ [網格雷達] 選中盤整幣 {g_sym}，區間落差 {g_range*100:.2f}%，自動切為 {g_count} 格", "success")
-            
-    except Exception as e:
-        add_system_log(f"⚠️ [網格雷達] 網格掃描失敗: {e}", "warning")
 
     # 2. 將選出的 15 個幣種寫入 bot_symbols.json
     # 使用 save_symbol_config 確保配置被正確持久化
