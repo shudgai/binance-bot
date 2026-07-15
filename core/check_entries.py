@@ -38,8 +38,8 @@ def _entry_structure_quality(sym, side, route, price):
 
     resistance = max(float(c[2]) for c in prior)
     support = min(float(c[3]) for c in prior)
-    min_room = max(price * 0.006, atr * 1.2)
-    max_breakout_extension = max(price * 0.0015, atr * 0.75)
+    min_room = max(price * 0.003, atr * 0.8)
+    max_breakout_extension = max(price * 0.0035, atr * 1.2)
     s["_entry_support"] = support
     s["_entry_resistance"] = resistance
 
