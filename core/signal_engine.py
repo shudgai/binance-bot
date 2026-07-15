@@ -49,20 +49,21 @@ def compute_signal_strength(sym):
     pullback_short = (short_spreading and short_stack and below_ma99 and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and candle_close < candle_open and volume_ratio >= 0.8)
 
+    from core.config import DISABLE_MA_BREAKOUT
     completed = candles[:-1]
     breakout_long = breakout_short = False
-    if len(completed) >= 21:
+    if len(completed) >= 21 and not DISABLE_MA_BREAKOUT:
         prior = completed[-21:-1]
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
         breakout_long = (long_spreading and long_stack and above_ma99 and candle_close > prior_high
-                         and candle_close > candle_open and volume_ratio >= 1.2)
+                         and candle_close > candle_open and volume_ratio >= 1.5)
         breakout_short = (short_spreading and short_stack and below_ma99 and candle_close < prior_low
-                          and candle_close < candle_open and volume_ratio >= 1.2)
+                          and candle_close < candle_open and volume_ratio >= 1.5)
 
     if cross_long or cross_short:
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
-    elif breakout_long or breakout_short:
+    elif (breakout_long or breakout_short) and not DISABLE_MA_BREAKOUT:
         side, route = ("buy" if breakout_long else "sell"), "MA_Breakout"
     elif pullback_long or pullback_short:
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"

@@ -682,7 +682,16 @@ async def main_loop(exchange):
                     break
 
                 try:
+                    # watch_symbol_trades 的 WebSocket 已經即時把 close_price 寫進
+                    # ctx.STATES，完全不耗權重；這裡原本每 5 秒對每個持倉幣種都額外打一次
+                    # REST fetch_ticker 是重複請求，持倉一多就會把權重衝高（觸發 API限流
+                    # 警報）。改成只在 WS 太久沒有新成交(>8秒，超過一個 mini_iv 週期)時才
+                    # 用 REST 補一次價，當作 WS 斷線/延遲的保險，平常正常運作時完全不呼叫。
+                    _now_fastexit = time.time()
                     for _sym in _open_syms:
+                        _last_ws_tick = float(ctx.STATES[_sym].get("last_ohlcv_update", 0.0) or 0.0)
+                        if _now_fastexit - _last_ws_tick <= 8.0:
+                            continue
                         try:
                             _tk = await exchange_market_data.fetch_ticker(_sym)
                             if _tk and _tk.get("last"):

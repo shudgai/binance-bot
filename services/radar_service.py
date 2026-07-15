@@ -169,9 +169,9 @@ ATR_ELIGIBLE_SYMBOLS = [
     "HYPEUSDT", "WLDUSDT",
 ]
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
-# 選幣數擴大到 12：新倉條件變嚴後，需要更多候選給 3 個倉位槽篩選。
-# 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 12 檔而同時開更多單。
-RADAR_SELECT_COUNT = 12
+# 選幣數擴大到 15：新倉條件變嚴後，需要更多候選給 5 個倉位槽篩選。
+# 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 15 檔而同時開更多單。
+RADAR_SELECT_COUNT = 15
 HOT_MOVERS_COUNT   = 0
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 

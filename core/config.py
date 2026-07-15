@@ -24,14 +24,16 @@ DUAL_SHOT_MAX_SLOTS = 3
 DUAL_SHOT_LEVERAGE = 5
 DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
+DISABLE_MA_BREAKOUT = True
+
 
 # (本金上限[USDT], 該階段槽位數)，由小到大排序；本金落在哪一段的上限之內
 # 就用那一段的槽位數，超過最後一段（1000）則沿用最後一段的槽位數。
 CAPITAL_SLOT_TIERS = [
     (200, 3),
-    (400, 2),
-    (600, 3),
-    (800, 4),
+    (400, 5),
+    (600, 5),
+    (800, 5),
     (1000, 5),
 ]
 

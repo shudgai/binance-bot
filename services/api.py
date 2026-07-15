@@ -1090,6 +1090,10 @@ _open_orders_cache = {}
 
 @app.get("/api/open-orders")
 def get_open_orders(symbol: str):
+    # 紙上交易模式沒有真實掛單，查真實幣安帳戶毫無意義，只是白白燒 API 權重
+    # （這支端點前端每 10 秒左右輪詢一次，兩個子請求疊起來持續墊高權重）。
+    if is_paper_trading():
+        return {"status": "success", "data": []}
     now = time.time()
     cached = _open_orders_cache.get(symbol)
     if cached and now - cached[0] < 10:
