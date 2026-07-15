@@ -1,5 +1,12 @@
 import unittest
+import json
+import os
+import tempfile
 import time
+
+from unittest.mock import Mock, patch
+
+from services.ai_manager import AIManager
 
 from core import ctx
 from core.ctx import STATES, init_states
@@ -135,6 +142,86 @@ class EntryFilterTests(unittest.TestCase):
         finally:
             ctx.MARKET_WIND.clear()
             ctx.MARKET_WIND.update(original)
+
+
+    def test_ai_candidate_adjustment_requires_minimum_sample(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            history_path = os.path.join(tmpdir, "history.json")
+            with open(history_path, "w", encoding="utf-8") as handle:
+                json.dump([
+                    {"symbol": "XRPUSDT", "entry_reason": "MA_Cross", "profit_pct": 0.01}
+                    for _ in range(4)
+                ], handle)
+            manager = AIManager()
+            manager.history_path = history_path
+            self.assertEqual(manager.get_candidate_quality_adjustment("XRPUSDT", "MA_Cross"), 0.0)
+
+    def test_ai_candidate_adjustment_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            history_path = os.path.join(tmpdir, "history.json")
+            with open(history_path, "w", encoding="utf-8") as handle:
+                json.dump([
+                    {"symbol": "XRPUSDT", "entry_reason": "MA_Cross", "profit_pct": 0.01}
+                    for _ in range(5)
+                ], handle)
+            manager = AIManager()
+            manager.history_path = history_path
+            self.assertEqual(manager.get_candidate_quality_adjustment("XRPUSDT", "MA_Cross"), 2.0)
+
+    def test_ai_never_auto_applies_updates(self):
+        manager = AIManager()
+        diagnoses = [{"symbol": "XRPUSDT", "suggested_params": {"leverage": 3}}]
+        self.assertEqual(manager.apply_ai_updates(diagnoses), 0)
+
+    def test_ai_rejects_unknown_parameters(self):
+        manager = AIManager()
+        result = manager.validate_suggestion(
+            "XRPUSDT", {"suggested_params": {"leverage": 3, "entry_side": "sell"}}
+        )
+        self.assertEqual(result, {"leverage": 3})
+
+
+    def test_auto_review_becomes_due_after_five_new_closed_trades(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_path = os.path.join(tmpdir, "report.json")
+            with open(report_path, "w", encoding="utf-8") as handle:
+                json.dump({"analyzed_history_count": 10}, handle)
+            manager = AIManager()
+            manager.report_path = report_path
+            with patch("services.ai_manager.AI_EXTERNAL_REVIEW_ENABLED", True), \
+                 patch("services.ai_manager.AI_AUTO_REVIEW_ENABLED", True), \
+                 patch("services.ai_manager.AI_AUTO_REVIEW_EVERY_TRADES", 5):
+                self.assertFalse(manager.is_auto_review_due(14))
+                self.assertTrue(manager.is_auto_review_due(15))
+
+    def test_openai_compatible_review_is_sanitized_and_key_optional(self):
+        manager = AIManager()
+        response = Mock(status_code=200, text="ok", headers={})
+        response.json.return_value = {
+            "choices": [{"message": {"content": json.dumps({
+                "diagnoses": [
+                    {
+                        "symbol": "XRPUSDT", "confidence_score": 1.5,
+                        "observed_pattern": "pattern", "risk_flags": ["risk"],
+                        "review_note": "note", "suggested_params": {"leverage": 10},
+                    },
+                    {"symbol": "UNKNOWNUSDT", "confidence_score": 1.0},
+                ]
+            })}}]
+        }
+        with patch("services.ai_manager.AI_BASE_URL", "http://internal:8888/v1"), \
+             patch("services.ai_manager.AI_API_KEY", None), \
+             patch("services.ai_manager.requests.post", return_value=response) as post:
+            result = manager._fetch_ai_diagnosis([
+                {"symbol": "XRPUSDT", "entry_reason": "MA_Cross", "profit_pct": 0.01}
+            ])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["confidence_score"], 1.0)
+        self.assertNotIn("suggested_params", result[0])
+        kwargs = post.call_args.kwargs
+        self.assertEqual(post.call_args.args[0], "http://internal:8888/v1/chat/completions")
+        self.assertNotIn("Authorization", kwargs["headers"])
+        self.assertFalse(json.loads(kwargs["data"])["chat_template_kwargs"]["enable_thinking"])
 
 
 if __name__ == "__main__":

@@ -556,15 +556,21 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
     # --- 新增：AI 經驗摘要生成邏輯 ---
     pnl_tag = "[大賺]" if profit_pct > 0.01 else "[微利]" if profit_pct > 0.002 else "[打平]" if profit_pct > -0.002 else "[小虧]" if profit_pct > -0.01 else "[大虧]"
 
-    is_anomaly = False
-    if "Layer_1" in exit_reason or "Breakout" in exit_reason:
-        is_anomaly = True
+    anomaly_tags = []
     if friction_rate > 0.4:
-        is_anomaly = True
+        anomaly_tags.append("HIGH_FRICTION")
+    if max_profit_reached >= 0.005 and max_profit_reached - profit_pct >= 0.005:
+        anomaly_tags.append("PEAK_GIVEBACK")
+    if "MA_Wrong_Direction" in str(exit_reason):
+        anomaly_tags.append("WRONG_DIRECTION")
+    if "MA_Disaster_Stop" in str(exit_reason):
+        anomaly_tags.append("DISASTER_STOP")
+    if total_value > 0 and slippage_cost / total_value > 0.002:
+        anomaly_tags.append("HIGH_SLIPPAGE")
 
     summary = f"{pnl_tag} {symbol} 透過 {exit_reason} 出場。獲利 {profit_pct*100:.2f}%，摩擦力 {friction_rate:.2f}%。"
-    if is_anomaly:
-        summary += " (⚠️ 異常交易，需重點關注)"
+    if anomaly_tags:
+        summary += f" (⚠️ AI複盤標記：{' / '.join(anomaly_tags)})"
 
     trade_data = {
         "timestamp": (
@@ -588,7 +594,9 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "slippage": round(total_slippage, 6),
         "friction_rate": round(friction_rate, 4),
         "theoretical_profit": round((expected_exit - expected_entry)/expected_entry if expected_entry > 0 else 0.0, 4),
-        "ai_summary": summary
+        "ai_summary": summary,
+        "ai_anomaly_tags": anomaly_tags,
+        "ai_review_priority": min(100, len(anomaly_tags) * 25 + (25 if profit_pct < -0.01 else 0))
     }
     if exchange_close_id is not None:
         trade_data["exchange_close_id"] = str(exchange_close_id)
@@ -617,6 +625,10 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         with open(history_file, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=4, ensure_ascii=False)
         logger.info(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
+        try:
+            ai_engine.schedule_auto_review_if_due(len(history))
+        except Exception as ai_exc:
+            logger.warning(f"🤖 [AI 自動複盤] 排程失敗但交易紀錄已保存：{ai_exc}")
         return True
     except Exception as e:
         logger.info(f"⚠️ [AI Memory] 紀錄失敗: {e}")

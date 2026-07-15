@@ -5,15 +5,22 @@ import time
 import logging
 import asyncio
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # --- 配置 ---
-AI_API_KEY = os.getenv("OPENAI_API_KEY")
-AI_MODEL = "gpt-4o" # 推薦使用 gpt-4o 或 claude-3-5-sonnet
+AI_API_KEY = os.getenv("AI_COMPAT_API_KEY") or os.getenv("OPENAI_API_KEY")
+AI_EXTERNAL_REVIEW_ENABLED = os.getenv("AI_EXTERNAL_REVIEW_ENABLED", "false").lower() == "true"
+AI_BASE_URL = (os.getenv("AI_COMPAT_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+AI_MODEL = os.getenv("AI_COMPAT_MODEL") or os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+AI_REQUEST_TIMEOUT_SEC = float(os.getenv("AI_REQUEST_TIMEOUT_SEC", "90"))
+AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "2048"))
+AI_AUTO_REVIEW_ENABLED = os.getenv("AI_AUTO_REVIEW_ENABLED", "false").lower() == "true"
+AI_AUTO_REVIEW_EVERY_TRADES = max(1, int(os.getenv("AI_AUTO_REVIEW_EVERY_TRADES", "5")))
+AI_REPORT_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "ai_latest_report.json")
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "trade_history.json")
 BOT_SYMBOLS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
 
@@ -34,13 +41,18 @@ class AIManager:
     def __init__(self):
         self.history_path = TRADE_HISTORY_FILE
         self.config_path = BOT_SYMBOLS_FILE
+        self.report_path = AI_REPORT_FILE
+        self._history_cache_mtime = None
+        self._history_cache = []
+        self._auto_review_baseline_count = None
+        self._auto_review_task = None
 
     def _prune_raw_responses(self, raw_dir: Path, keep_days: int = 7):
         """刪除 raw responses 目錄中超過 keep_days 的檔案。"""
-        cutoff = datetime.utcnow() - timedelta(days=keep_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
         for f in raw_dir.glob('response_*.txt'):
             try:
-                mtime = datetime.utcfromtimestamp(f.stat().st_mtime)
+                mtime = datetime.fromtimestamp(f.stat().st_mtime, timezone.utc)
                 if mtime < cutoff:
                     f.unlink()
                     logger.info(f"🧹 刪除舊的 AI raw response: {f}")
@@ -48,47 +60,127 @@ class AIManager:
                 logger.warning(f"刪除舊 AI raw response 時發生錯誤: {e} (file: {f})")
 
     def _get_recent_memories(self, limit: int = 50) -> List[Dict]:
-        """讀取最近的交易經驗並過濾出重點摘要。"""
+        """讀取最近交易並依檔案 mtime 快取，避免每輪候選排序重複讀檔。"""
         if not os.path.exists(self.history_path):
+            self._history_cache_mtime = None
+            self._history_cache = []
             return []
         try:
-            with open(self.history_path, "r", encoding="utf-8") as f:
-                history = json.load(f)
-                if not isinstance(history, list): return []
-                # 取最後 N 筆記錄
-                return history[-limit:]
+            mtime = os.path.getmtime(self.history_path)
+            if self._history_cache_mtime != mtime:
+                with open(self.history_path, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                self._history_cache = history if isinstance(history, list) else []
+                self._history_cache_mtime = mtime
+            return self._history_cache[-limit:]
         except Exception as e:
             logger.error(f"讀取歷史紀錄失敗: {e}")
             return []
 
-    def _fetch_ai_diagnosis(self, memories: List[Dict]) -> Optional[Dict]:
+    def get_candidate_quality_adjustment(self, symbol: str, route: str) -> float:
+        """Return a bounded history-only ranking adjustment; never changes entry direction or guards."""
+        symbol = str(symbol or "").upper()
+        route = str(route or "").lower()
+        matching = [
+            row for row in self._get_recent_memories(limit=200)
+            if str(row.get("symbol", "")).upper() == symbol
+            and str(row.get("entry_reason", "")).lower() == route
+            and isinstance(row.get("profit_pct"), (int, float))
+        ][-20:]
+        if len(matching) < 5:
+            return 0.0
+        profits = [float(row.get("profit_pct", 0.0) or 0.0) for row in matching]
+        avg_profit = sum(profits) / len(profits)
+        win_rate = sum(1 for value in profits if value > 0.0) / len(profits)
+        if avg_profit >= 0.002 and win_rate >= 0.60:
+            adjustment = 2.0
+        elif avg_profit > 0.0 and win_rate >= 0.50:
+            adjustment = 1.0
+        elif avg_profit <= -0.002 or win_rate <= 0.30:
+            adjustment = -2.0
+        elif avg_profit < 0.0 or win_rate < 0.45:
+            adjustment = -1.0
+        else:
+            adjustment = 0.0
+        if all(value < 0.0 for value in profits[-3:]):
+            adjustment -= 0.5
+        avg_friction = sum(float(row.get("friction_rate", 0.0) or 0.0) for row in matching) / len(matching)
+        if avg_friction > 0.30:
+            adjustment -= 0.5
+        return round(max(-2.0, min(2.0, adjustment)), 2)
+
+    def build_local_analysis(self) -> Dict:
+        """Build a deterministic post-trade report without network calls or trading mutations."""
+        memories = self._get_recent_memories(limit=100)
+        grouped = {}
+        anomalies = 0
+        for row in memories:
+            route = str(row.get("entry_reason", "UNKNOWN") or "UNKNOWN")
+            bucket = grouped.setdefault(route, {"trades": 0, "wins": 0, "profit_sum": 0.0})
+            profit = float(row.get("profit_pct", 0.0) or 0.0)
+            bucket["trades"] += 1
+            bucket["wins"] += int(profit > 0.0)
+            bucket["profit_sum"] += profit
+            anomalies += int(bool(row.get("ai_anomaly_tags")))
+        routes = {}
+        for route, bucket in grouped.items():
+            count = bucket["trades"]
+            routes[route] = {
+                "trades": count,
+                "win_rate": round(bucket["wins"] / count, 4) if count else 0.0,
+                "avg_profit_pct": round(bucket["profit_sum"] / count, 6) if count else 0.0,
+            }
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "sample_count": len(memories),
+            "anomaly_count": anomalies,
+            "routes": routes,
+            "auto_apply": False,
+        }
+
+    def get_latest_report(self) -> Dict:
+        try:
+            if os.path.exists(self.report_path):
+                with open(self.report_path, "r", encoding="utf-8") as f:
+                    report = json.load(f)
+                if isinstance(report, dict):
+                    return report
+        except Exception as e:
+            logger.warning(f"讀取 AI 報告失敗: {e}")
+        return {"local_analysis": self.build_local_analysis(), "external_diagnoses": [], "auto_apply": False}
+
+    def _fetch_ai_diagnosis(self, memories: List[Dict]) -> Optional[List[Dict]]:
         """發送數據給 AI 並獲取診斷結果。"""
         if not memories:
             return None
 
-        # 讀取當前設定檔參數作為對照上下文
-        current_configs = {}
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-                    current_configs = config_data.get("profiles", {})
-            except Exception as e:
-                logger.error(f"AI 診斷讀取當前配置失敗: {e}")
-
-        # 將摘要轉化為 AI 友好的文字描述
-        prompt = "Recent trades memories: " + json.dumps(memories, ensure_ascii=False) + "\n\n"
-        prompt += "Current configs: " + json.dumps(current_configs, ensure_ascii=False) + "\n\n"
-        prompt += "Please diagnose and provide suggested parameter updates."
+        # 只傳送交易複盤需要的欄位，不傳動態幣種設定，縮短上下文並避免模型誤認為可調參。
+        review_rows = [
+            {key: row.get(key) for key in (
+                "symbol", "entry_reason", "exit_reason", "profit_pct",
+                "max_profit_reached", "market_mode", "friction_rate", "ai_anomaly_tags"
+            )}
+            for row in memories
+        ]
+        prompt = "Recent closed trades: " + json.dumps(review_rows, ensure_ascii=False) + "\n\n"
+        prompt += (
+            "Analyze only and return JSON only. Use exactly {\"diagnoses\": [...]} with at most "
+            "3 highest-priority items. Each item must contain symbol, confidence_score (0 to 1), "
+            "observed_pattern, risk_flags, and review_note. Keep observed_pattern and review_note "
+            "under 160 characters each. Do not propose orders, parameter changes, or guard bypasses."
+        )
         
         # Prepare request payload
         req_payload = {
             "model": AI_MODEL,
             "messages": [
-                {"role": "system", "content": "You are a helpful trading assistant."},
+                {"role": "system", "content": "You are a read-only trading review assistant. Never issue orders, change direction, modify risk controls, or recommend bypassing MA, BTC, support-resistance, stop, or slot guards."},
                 {"role": "user", "content": prompt}
             ],
-            "response_format": {"type": "json_object"}
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+            "max_tokens": AI_MAX_TOKENS,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
         # Ensure directory for raw responses exists
@@ -104,11 +196,14 @@ class AIManager:
         backoff_base = 1.0
         for attempt in range(1, max_attempts + 1):
             try:
+                headers = {"Content-Type": "application/json"}
+                if AI_API_KEY:
+                    headers["Authorization"] = f"Bearer {AI_API_KEY}"
                 response = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
+                    f"{AI_BASE_URL}/chat/completions",
+                    headers=headers,
                     data=json.dumps(req_payload),
-                    timeout=30
+                    timeout=AI_REQUEST_TIMEOUT_SEC
                 )
             except requests.RequestException as e:
                 logger.warning(f"AI API 請求失敗 (attempt {attempt}/{max_attempts}): {e}")
@@ -119,7 +214,7 @@ class AIManager:
                 return None
 
             # Save raw response if non-200 or content issues
-            timestamp = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
             raw_file = raw_dir / f"response_{timestamp}_attempt{attempt}_status{getattr(response,'status_code', 'na')}.txt"
             try:
                 body_text = response.text
@@ -179,12 +274,34 @@ class AIManager:
             except Exception as e:
                 raw_file.write_text(f"CONTENT_JSON_PARSE_ERROR: {e}\n\nCONTENT_TEXT:\n{content_text[:2000]}\n\nREQUEST_PAYLOAD:\n{json.dumps(req_payload, ensure_ascii=False, indent=2)}", encoding='utf-8')
                 logger.error(f"解析 AI 回傳 JSON 失敗 (attempt {attempt}): {e}；原始回傳片段已存: {raw_file}")
-                if attempt < max_attempts:
-                    time.sleep(backoff_base * (2 ** (attempt - 1)))
-                    continue
                 return None
 
-            return content.get("diagnoses", [])
+            diagnoses = content.get("diagnoses", []) if isinstance(content, dict) else []
+            if not isinstance(diagnoses, list):
+                return []
+            known_symbols = {str(row.get("symbol", "")).upper() for row in review_rows}
+            safe_diagnoses = []
+            for item in diagnoses[:3]:
+                if not isinstance(item, dict):
+                    continue
+                symbol = str(item.get("symbol", "")).upper()[:20]
+                if symbol not in known_symbols:
+                    continue
+                try:
+                    confidence = max(0.0, min(1.0, float(item.get("confidence_score", 0.0))))
+                except (TypeError, ValueError):
+                    confidence = 0.0
+                flags = item.get("risk_flags", [])
+                if not isinstance(flags, list):
+                    flags = []
+                safe_diagnoses.append({
+                    "symbol": symbol,
+                    "confidence_score": round(confidence, 4),
+                    "observed_pattern": str(item.get("observed_pattern", ""))[:160],
+                    "risk_flags": [str(flag)[:64] for flag in flags[:5]],
+                    "review_note": str(item.get("review_note", ""))[:160],
+                })
+            return safe_diagnoses
 
     def validate_suggestion(self, symbol: str, suggestion: Dict) -> Optional[Dict]:
         """安全閥門：檢查 AI 給出的建議是否在安全範圍內。"""
@@ -201,56 +318,97 @@ class AIManager:
                 else:
                     logger.warning(f"⚠️ [安全閥門] AI 給出的 {key} ({value}) 超出安全範圍 [{min_val}-{max_val}]，已拒絕修改。")
             else:
-                # 如果是未定義的參數，允許通過但記錄
-                validated_params[key] = value
+                logger.warning(f"⚠️ [安全閥門] AI 未知參數 {key} 已拒絕")
         
         return validated_params
 
-    def apply_ai_updates(self, diagnoses: List[Dict]):
-        """將通過驗證的建議寫入配置檔案。"""
-        if not diagnoses:
-            return
-
+    def _load_auto_review_baseline(self, history_count: int) -> int:
+        if self._auto_review_baseline_count is not None:
+            return self._auto_review_baseline_count
+        baseline = None
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
+            if os.path.exists(self.report_path):
+                with open(self.report_path, "r", encoding="utf-8") as handle:
+                    report = json.load(handle)
+                baseline = report.get("analyzed_history_count")
+                if baseline is None:
+                    baseline = (report.get("local_analysis") or {}).get("sample_count")
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            baseline = None
+        self._auto_review_baseline_count = int(baseline) if isinstance(baseline, (int, float)) else int(history_count)
+        return self._auto_review_baseline_count
 
-            updated_count = 0
-            for diag in diagnoses:
-                sym = diag["symbol"]
-                if sym in config.get("profiles", {}):
-                    validated = self.validate_suggestion(sym, diag)
-                    if validated:
-                        # 更新 profiles 中的數據
-                        config["profiles"][sym].update(validated)
-                        logger.info(f"✅ [AI 優化] 已更新 {sym} 參數: {validated}")
-                        updated_count += 1
-            
-            if updated_count > 0:
-                with open(self.config_path, "w", encoding="utf-8") as f:
-                    json.dump(config, f, indent=4, ensure_ascii=False)
-                logger.info(f"🚀 [AI 進化] 已成功寫入 {updated_count} 項更新至 {self.config_path}")
+    def is_auto_review_due(self, history_count: int) -> bool:
+        if not AI_EXTERNAL_REVIEW_ENABLED or not AI_AUTO_REVIEW_ENABLED:
+            return False
+        history_count = max(0, int(history_count))
+        baseline = self._load_auto_review_baseline(history_count)
+        if history_count < baseline:
+            self._auto_review_baseline_count = history_count
+            return False
+        return history_count - baseline >= AI_AUTO_REVIEW_EVERY_TRADES
 
-        except Exception as e:
-            logger.error(f"更新配置檔案失敗: {e}")
+    def schedule_auto_review_if_due(self, history_count: int) -> bool:
+        if not self.is_auto_review_due(history_count):
+            return False
+        if self._auto_review_task is not None and not self._auto_review_task.done():
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("🤖 [AI 自動複盤] 目前無執行中的事件迴圈，本次略過")
+            return False
+        history_count = int(history_count)
+        self._auto_review_baseline_count = history_count
+        self._auto_review_task = loop.create_task(
+            self.run_ai_diagnosis_cycle(), name="ai-auto-trade-review"
+        )
+
+        def _review_done(task):
+            self._auto_review_task = None
+            try:
+                task.result()
+            except Exception as exc:
+                self._auto_review_baseline_count = max(0, history_count - AI_AUTO_REVIEW_EVERY_TRADES)
+                logger.error(f"🤖 [AI 自動複盤] 執行失敗：{exc}")
+
+        self._auto_review_task.add_done_callback(_review_done)
+        logger.info(f"🤖 [AI 自動複盤] 新增 {AI_AUTO_REVIEW_EVERY_TRADES} 筆平倉交易，已排入背景分析")
+        return True
+
+    def apply_ai_updates(self, diagnoses: List[Dict]):
+        """Compatibility safety stop: AI reports are read-only and never mutate trading config."""
+        if diagnoses:
+            logger.warning("🛑 [AI 只讀模式] 已拒絕自動改寫交易參數")
+        return 0
 
     async def run_ai_diagnosis_cycle(self):
-        """主診斷循環：每隔一段時間自動執行一次分析。"""
-        logger.info("🤖 [AI 大腦] 啟動診斷週期...")
+        """Run an on-demand read-only review; never update trading configuration."""
+        logger.info("🤖 [AI 複盤] 啟動只讀診斷")
         memories = self._get_recent_memories(limit=50)
-        
-        # 使用 asyncio.to_thread 避免 requests.post 阻塞主執行緒
-        diagnoses = await asyncio.to_thread(self._fetch_ai_diagnosis, memories)
-        
-        if diagnoses:
-            for diag in diagnoses:
-                # 只有信心分數高於 0.7 的建議才執行更新
-                if diag.get("confidence_score", 0) >= 0.7:
-                    self.apply_ai_updates([diag])
-                else:
-                    logger.info(f"ℹ️ [AI 建議] {diag['symbol']} 診斷信心低 ({diag.get('confidence_score', 0)})，跳過自動更新。")
-        
-        logger.info("🤖 [AI 大腦] 診斷週期結束。")
+        total_history_count = len(self._history_cache)
+        local_analysis = self.build_local_analysis()
+        diagnoses = await asyncio.to_thread(self._fetch_ai_diagnosis, memories) if AI_EXTERNAL_REVIEW_ENABLED else []
+        report = {
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "local_analysis": local_analysis,
+            "external_diagnoses": diagnoses or [],
+            "external_ai_used": bool(AI_EXTERNAL_REVIEW_ENABLED and diagnoses),
+            "external_ai_enabled": AI_EXTERNAL_REVIEW_ENABLED,
+            "external_ai_model": AI_MODEL,
+            "analyzed_history_count": total_history_count,
+            "auto_review_enabled": AI_AUTO_REVIEW_ENABLED,
+            "auto_review_every_trades": AI_AUTO_REVIEW_EVERY_TRADES,
+            "auto_apply": False,
+        }
+        try:
+            with open(self.report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            self._auto_review_baseline_count = total_history_count
+        except Exception as e:
+            logger.warning(f"AI 報告寫入失敗: {e}")
+        logger.info("🤖 [AI 複盤] 診斷完成；交易參數未變更")
+        return report
 
 # 實例化
 ai_engine = AIManager()

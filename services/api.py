@@ -222,6 +222,16 @@ def api_reset_realized_pnl():
 def api_get_logs():
     return get_system_logs()
 
+@app.get("/api/ai-analysis")
+def api_get_ai_analysis():
+    from services.ai_manager import ai_engine
+    return ai_engine.get_latest_report()
+
+@app.post("/api/ai-analysis/run")
+async def api_run_ai_analysis():
+    from services.ai_manager import ai_engine
+    return await ai_engine.run_ai_diagnosis_cycle()
+
 @app.get("/api/sl-states")
 def api_sl_states():
     return get_bot_status().get("sl_states", {})

@@ -84,7 +84,10 @@ def _ma_candidate_quality(sym, side, strength, route, price):
     gap_score = min(ma_gap / atr, 2.0) * 3.0 if atr > 0 else 0.0
     volume_score = min(volume_ratio, 2.5) * 3.0
     route_bonus = {"MA25_Pullback": 4.0, "MA_Cross": 3.0, "MA_Breakout": 2.0}.get(route, 0.0)
-    quality = float(strength) + structure_score + gap_score + volume_score + route_bonus
+    from services.ai_manager import ai_engine
+    learning_adjustment = ai_engine.get_candidate_quality_adjustment(sym, route)
+    s["_ai_learning_adjustment"] = learning_adjustment
+    quality = float(strength) + structure_score + gap_score + volume_score + route_bonus + learning_adjustment
     return True, "ok", round(quality, 4)
 
 
