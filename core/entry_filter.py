@@ -104,7 +104,8 @@ def is_entry_volume_confirmed(sym, side):
         return False
     closed_volume = float(candles[-2][5])
     route = str(s.get("entry_reason", "") or "")
-    required = 1.0 if route == "MA_Cross" else 1.2 if route == "MA_Breakout" else 0.8
+    # 調降門檻以對齊全域放寬的 0.50x 基線與 CONFLUENCE_FAIL 的 0.40x-0.45x
+    required = 0.45 if route == "MA_Cross" else 0.6 if route == "MA_Breakout" else 0.4
     return closed_volume >= vol_ma20 * required
 
 
