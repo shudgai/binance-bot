@@ -241,8 +241,12 @@ def compute_indicators(sym):
     s["vol_ma10"] = float(np.mean(volumes[-11:-1])) if len(volumes) >= 11 else float(np.mean(volumes[:-1]))
     s["vol_ma12"] = float(np.median(volumes[-13:-1])) if len(volumes) >= 13 else float(np.median(volumes[:-1]))
     s["vol_ma20"] = float(np.mean(volumes[-21:-1])) if len(volumes) >= 21 else float(np.mean(volumes[:-1]))
-    # 使用「倒數第二根」（已完成 K 線）的量，避免當前未完成 K 線量偏低誤觸量能過濾
-    s["current_vol"] = float(volumes[-2]) if len(volumes) >= 2 else float(volumes[-1])
+    # 為了支援即時突破 (realtime_trigger)，當前未完成 K 線的量若已經爆發，也應採納。
+    # 取 max(最後一根, 倒數第二根)，避免當前剛開盤量太小，但也允許盤中爆量直接觸發。
+    if len(volumes) >= 2:
+        s["current_vol"] = max(float(volumes[-1]), float(volumes[-2]))
+    else:
+        s["current_vol"] = float(volumes[-1]) if len(volumes) > 0 else 0.0
     s["vol_surge"] = s["current_vol"] / s["vol_ma12"] if s.get("vol_ma12", 0) > 0 else 0.0
 
     # 計算 atr_pct 與 personality

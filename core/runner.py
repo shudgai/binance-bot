@@ -178,19 +178,21 @@ async def _record_external_position_close(exchange, sym, state):
     if abs(old_qty) <= 0.000001 or avg_price <= 0:
         return False
 
+    close_side = "sell" if old_qty > 0 else "buy"
+    opened_ms = int(max(
+        float(state.get("open_time", 0.0) or 0.0),
+        float(state.get("last_entry_time", 0.0) or 0.0),
+    ) * 1000)
+
     try:
-        trades = await exchange.fetch_my_trades(sym, limit=50)
+        since_ms = opened_ms if opened_ms > 0 else None
+        trades = await exchange.fetch_my_trades(sym, since=since_ms, limit=100)
     except Exception as exc:
         logger.info(f"⚠️ [ExternalClose] {sym} 無法取得手動平倉成交: {exc}")
         return False
     if not isinstance(trades, list):
         return False
 
-    close_side = "sell" if old_qty > 0 else "buy"
-    opened_ms = int(max(
-        float(state.get("open_time", 0.0) or 0.0),
-        float(state.get("last_entry_time", 0.0) or 0.0),
-    ) * 1000)
     candidates = []
     for trade in trades:
         side = str(trade.get("side") or trade.get("info", {}).get("side") or "").lower()
