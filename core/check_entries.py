@@ -411,7 +411,7 @@ async def check_entries():
         # 30，只有真的靠額外量能加分（volume_ratio>=1.8x）才拿得到豁免，一般訊號
         # 必須真的通過量能/價格確認才能進場。
         _strong_participation_strength = 30.0
-        _d_multiplier = 0.45 if strength >= _strong_participation_strength else (0.55 if _is_low_vol_ce else 0.65)
+        _d_multiplier = 0.35 if strength >= _strong_participation_strength else (0.40 if _is_low_vol_ce else 0.45)
         if volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
@@ -425,7 +425,7 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.45 if strength >= _strong_participation_strength else (0.55 if _is_low_vol_ce else 0.65)
+            _rvol_multiplier = 0.35 if strength >= _strong_participation_strength else (0.40 if _is_low_vol_ce else 0.45)
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
