@@ -538,7 +538,7 @@ async def _entry_exchange_direction_guard(sym, side):
 def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_atr, max_profit_reached=0.0,
                         expected_entry=0.0, expected_exit=0.0, actual_entry=0.0, actual_exit=0.0,
                         fees=0.0, qty=0.0, exchange_close_id=None,
-                        realized_pnl_usdt=None, timestamp_ms=None, entry_timestamp_ms=None):
+                        realized_pnl_usdt=None, timestamp_ms=None, entry_timestamp_ms=None, side=""):
     """
     將每筆交易的結果記錄到 trade_history.json 中，並生成 AI 友好的經驗摘要。
     """
@@ -593,7 +593,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "qty": round(qty, 4),
         "slippage": round(total_slippage, 6),
         "friction_rate": round(friction_rate, 4),
-        "theoretical_profit": round(((expected_exit - expected_entry)/expected_entry * (1.0 if str(s.get("side", "")).lower() == "buy" else -1.0)) if expected_entry > 0 else 0.0, 4),
+        "theoretical_profit": round(((expected_exit - expected_entry)/expected_entry * (1.0 if str(side).lower() == "buy" else -1.0)) if expected_entry > 0 else 0.0, 4),
         "ai_summary": summary,
         "ai_anomaly_tags": anomaly_tags,
         "ai_review_priority": min(100, len(anomaly_tags) * 25 + (25 if profit_pct < -0.01 else 0))
@@ -838,7 +838,15 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 決定出場，不是隨便一點點獲利就賣——不加進白名單的話，這裡的 0.35% 固定門檻會蓋掉
     # 它自己已經做過的判斷，等於它的 0.15% 設定形同虛設，永遠要等到 0.35% 才放行。
     # （[Opportunity_Rotation] 機會成本輪替功能已依使用者要求移除，不會再產生這個 reason。）
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    # [MA7_Closed_Break]/[MA_Peak_Lock] 補進白名單：這兩個是 MA_Lifecycle_Exit 家族
+    # 跟已經在白名單裡的 [MA7_MA25_Death_Cross]/[MA7_MA25_Golden_Cross] 同一組訊號，
+    # 只是「MA7 單純跌破/站上」而非「MA7/25 交叉反轉」。實測 TAOUSDT 案例：MA7 已確認
+    # 兩次收線跌破（信號正確），但當下利潤只有 0.02%~0.04%，被這裡的 0.35% 門檻連續
+    # 攔截了 4 次、每次都不放行，一直拖到價格真的轉負才被迫用 is_stop_loss=True 補放行
+    # ——本來該在轉折剛確認時就平倉了結的單子，硬生生被拖成真正的停損虧損出場。
+    # [Dynamic_TP_Tier]：分級停利目標刻意設計成低獲利檔位就先落袋（可能低於這裡的
+    # 0.35%/1.5% 固定門檻），一樣要放行，不然會重演跟 [MA7_Closed_Break] 一樣的問題。
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA_Peak_Lock]", "[Dynamic_TP_Tier]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -877,9 +885,15 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # +0.31%，追價這 11 秒內價格繼續反著走，最後市價成交時已經變成 -0.16%，
         # 「不再等待」的出場反而等了最久、虧最多。這類理由直接用市價出場搶時效，
         # 不要為了多鎖一點點價差去冒繼續等待的風險。
+        # [MA_Peak_Lock]/[MA7_Closed_Break]/[MA7_MA25_Death_Cross]/[MA7_MA25_Golden_Cross]
+        # 補進來：這幾個都是「MA 波段偵測到反轉、峰值正在回吐」性質的訊號，跟
+        # Peak_Giveback 是同一類時間敏感出場，之前漏掉沒加，實測 LINKUSDT 案例：
+        # MA_Peak_Lock 觸發時打算鎖利 +1.2%，因為走限價追價流程等了幾秒，價格加速
+        # 下殺，最後市價成交時已經變成 -0.42% 虧損——跟 HBARUSDT 一模一樣的病根。
         _urgent_exit_reasons = (
             "Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak",
-            "Peak_Volume_Contraction",
+            "Peak_Volume_Contraction", "MA_Peak_Lock", "MA7_Closed_Break",
+            "MA7_MA25_Death_Cross", "MA7_MA25_Golden_Cross",
         )
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:
@@ -992,6 +1006,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         fees=_real_fees,
         qty=qty,
         entry_timestamp_ms=int(s.get("open_time", 0.0) * 1000) if s.get("open_time", 0.0) else None,
+        side="buy" if s["qty"] > 0 else "sell",
     )
 
     from core.config import DAILY_LOSS_LIMIT_PCT
@@ -1162,6 +1177,10 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
             clear_peak(sym)
             s["first_entry_price"] = fill_price
             s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
+            s["_lin_trail_armed"] = False
+            s["_lin_trail_activation_price"] = 0.0
+            s["_lin_trail_activation_stop"] = 0.0
+            s["_dyn_tp_base_distance"] = 1.5 * float(s.get("entry_atr", 0.0) or 0.0)
         _import_update_trailing_stop()(sym, fill_price, side == 'buy')
         # 金字塔加碼（同方向、更好價位）才鎖定在首筆進場價保本；
         # 救援攤平 (Rescue DCA) 是在更差價位補倉攤低成本，鎖在首筆價格等於讓新均價毫無喘息空間，
@@ -1561,8 +1580,20 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 # 高波動幣（ATR > 0.8%）用 1.5 倍回踩深度，確保買在更低點
                 _atr_pct = atr / current_market_price if current_market_price > 0 else 0.015
                 _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
-                
-                if side == 'buy':
+
+                # 結構錨定掛單（使用者要求）：Entry_Structure_Guard 那關已經算出精確的
+                # 支撐/阻力價位存在 s["_entry_support"]/s["_entry_resistance"]，MA25_Pullback
+                # 本來就是「等回踩」的訊號，直接掛在支撐/阻力上加一點緩衝，比用 ATR 概算距離
+                # 更貼近真正的結構位置。算不到結構價位（資料不足）時才退回原本的 ATR 估算。
+                _struct_support = float(s.get("_entry_support", 0.0) or 0.0)
+                _struct_resistance = float(s.get("_entry_resistance", 0.0) or 0.0)
+                if side == 'buy' and 0 < _struct_support < current_market_price:
+                    limit_price = _struct_support * 1.0005
+                    logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
+                elif side == 'sell' and _struct_resistance > current_market_price > 0:
+                    limit_price = _struct_resistance * 0.9995
+                    logger.info(f"🎯 [結構錨定掛單] {sym} 掛在阻力位 {_struct_resistance:.6f} - 0.05% 緩衝 = {limit_price:.6f}")
+                elif side == 'buy':
                     target_pb = current_market_price - atr * _pb_mult
                     if len(s.get("ohlcv", [])) >= 2:
                         recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
@@ -1656,11 +1687,24 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     # 如果是由 entry_filter 觸發的 SUPPORT_ZONE_LIMIT_CONVERT 或 RESISTANCE_ZONE_LIMIT_CONVERT，
                     # 則直接以當時覆寫的 price (即支撐位上限或阻力位下限) 作為掛單價，保證掛在完美的精準阻力/支撐區上。
                     _is_zone_convert = s.get("force_pullback_entry", False)
-                    
-                    if _is_zone_convert and price > 0:
+
+                    # 結構錨定掛單（使用者要求）：Entry_Structure_Guard 那關已經算出精確的
+                    # 支撐/阻力價位存在 s["_entry_support"]/s["_entry_resistance"]，MA25_Pullback
+                    # 本來就是「等回踩」的訊號，直接掛在支撐/阻力上加一點緩衝，比用 ATR 概算距離
+                    # 更貼近真正的結構位置，優先於下面的舊 ATR 回踩估算使用。
+                    _struct_support = float(s.get("_entry_support", 0.0) or 0.0)
+                    _struct_resistance = float(s.get("_entry_resistance", 0.0) or 0.0)
+                    _atr_pct = s.get("current_atr", 0.0) / price if price > 0 else 0.015
+                    _pb_mult = 0.0
+
+                    if side == 'buy' and 0 < _struct_support < price:
+                        limit_price = _struct_support * 1.0005
+                        logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
+                    elif side == 'sell' and _struct_resistance > price > 0:
+                        limit_price = _struct_resistance * 0.9995
+                        logger.info(f"🎯 [結構錨定掛單] {sym} 掛在阻力位 {_struct_resistance:.6f} - 0.05% 緩衝 = {limit_price:.6f}")
+                    elif _is_zone_convert and price > 0:
                         limit_price = price
-                        _atr_pct = s.get("current_atr", 0.0) / price if price > 0 else 0.015
-                        _pb_mult = 0.0
                         logger.info(f"📌 [邊界精準限價單] {sym} 觸發阻力/支撐精算轉換，直接掛單在臨界價 {limit_price:.6f}")
                     else:
                         atr = s.get("current_atr", 0.0)
@@ -1980,6 +2024,10 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["highest_profit_pct"] = 0.0
                 s["first_entry_price"] = fill_price
                 s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
+                s["_lin_trail_armed"] = False
+                s["_lin_trail_activation_price"] = 0.0
+                s["_lin_trail_activation_stop"] = 0.0
+                s["_dyn_tp_base_distance"] = 1.5 * float(s.get("entry_atr", 0.0) or 0.0)
 
             _import_update_trailing_stop()(sym, fill_price, side == 'buy')
 

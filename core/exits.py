@@ -321,11 +321,48 @@ def update_trailing_stop(sym, current_price, is_long):
     # 等於主 Trailing 從未启動銀保來。降至 0.25%/0.40%，讓主追蹤在真實峰值範圍內問訊。
     min_trailing_profit = 0.004 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.0025
 
+    # 使用者指定的線性移動停損規則：獲利 < 1.0% 時維持固定停損 X%（hard_stop_loss_pct），
+    # 獲利 >= 1.0% 才啟動移動停損，之後現價每再往有利方向多走 0.2%，停損就跟著移動 0.1%
+    # （追回比例 0.5，連續比例計算，不用「跨過整數倍才更新」的階梯寫法，避免兩次檢查
+    # 之間的價格波動被漏掉）。加入滯後效應(hysteresis)：一旦啟動就不會因為獲利回落到
+    # 1.0% 以下而解除、也不會把停損放寬回原本更寬的固定百分比——活化當下的價格與停損
+    # 位置固定為基準，之後只能往更保護的方向推進（棘輪），最終再跟其他既有的保護機制
+    # （保本鎖、Soft Trailing、清算安全緩衝）取最保守的一個。
+    from core.config import HARD_STOP_LOSS_PCT as _HARD_SL_DEFAULT
+    _hard_sl_pct = float(s.get("hard_stop_loss_pct", _HARD_SL_DEFAULT) or _HARD_SL_DEFAULT)
+    _LIN_TRAIL_ACTIVATION_PCT = 0.010   # 1.0%
+    _LIN_TRAIL_CATCH_UP_RATIO = 0.5     # 每漲 0.2% 移動 0.1%
+
+    if not s.get("_lin_trail_armed", False) and s["highest_profit_pct"] >= _LIN_TRAIL_ACTIVATION_PCT:
+        s["_lin_trail_armed"] = True
+        s["_lin_trail_activation_price"] = (
+            avg_price * (1 + _LIN_TRAIL_ACTIVATION_PCT) if is_long
+            else avg_price * (1 - _LIN_TRAIL_ACTIVATION_PCT)
+        )
+        s["_lin_trail_activation_stop"] = (
+            avg_price * (1 - _hard_sl_pct) if is_long
+            else avg_price * (1 + _hard_sl_pct)
+        )
+
+    _linear_trail_candidate = None
+    if s.get("_lin_trail_armed", False):
+        _activation_price = s["_lin_trail_activation_price"]
+        _activation_stop = s["_lin_trail_activation_stop"]
+        _extension = (current_price - _activation_price) if is_long else (_activation_price - current_price)
+        _extension = max(_extension, 0.0)  # 只在價格持續延伸時推進，回落不會倒退活化基準
+        _linear_trail_candidate = (
+            _activation_stop + _LIN_TRAIL_CATCH_UP_RATIO * _extension if is_long
+            else _activation_stop - _LIN_TRAIL_CATCH_UP_RATIO * _extension
+        )
+
     if is_long:
         if current_price > s.get("trailing_highest", 0.0):
             s["trailing_highest"] = current_price
 
         trail_sl = s["trailing_stop_price"]
+
+        if _linear_trail_candidate is not None:
+            trail_sl = max(trail_sl, _linear_trail_candidate)
 
         # 使用者要求「碰到小獲利就先入袋，不要冒風險等它變大，但利潤往上就跟上」，
         # 後續再加碼：「動能一直往上就回吐容忍度加寬，利潤到高處盤整時容忍度再收緊」。
@@ -405,6 +442,9 @@ def update_trailing_stop(sym, current_price, is_long):
         trail_sl = s["trailing_stop_price"]
         if trail_sl == 0.0:
             trail_sl = float('inf')
+
+        if _linear_trail_candidate is not None:
+            trail_sl = min(trail_sl, _linear_trail_candidate)
 
         # 空單對稱版：Soft Trailing 啟動門檻拉高至 0.45%
         if 0.0045 <= _hp_soft:
@@ -526,6 +566,34 @@ async def check_exits(sym):
             )
             return
 
+
+        # 動態分級停利：目標距離用「進場當下 ATR」當基準（不是理論停利距離，那個
+        # 因為盈虧比下限被拉得太大，換算成%遠超這個策略真實的獲利峰值中位數
+        # 0.33%，套用下去等於永遠不會觸發）。獲利越大，本檔位要求的停利目標
+        # 也跟著放寬，讓已經證明自己是趨勢單的部位有機會繼續跑，不會在小獲利
+        # 就被這個機制提早了結；獲利還小的時候則用較低的目標，先落袋為安。
+        _dyn_tp_base = float(s.get("_dyn_tp_base_distance", 0.0) or 0.0)
+        if _dyn_tp_base > 0 and avg > 0:
+            if profit_pct >= 0.010:
+                _tp_tier_mult = 1.00
+            elif profit_pct >= 0.006:
+                _tp_tier_mult = 0.75
+            elif profit_pct >= 0.004:
+                _tp_tier_mult = 0.55
+            else:
+                _tp_tier_mult = 0.35
+            _dyn_tp_target_pct = (_dyn_tp_base * _tp_tier_mult) / avg
+            if profit_pct >= _dyn_tp_target_pct:
+                cs = "sell" if is_long else "buy"
+                logger.info(
+                    f"🎯 [Dynamic_TP_Tier] {sym} 獲利 {profit_pct*100:.2f}% 達到分級停利目標 "
+                    f"{_dyn_tp_target_pct*100:.2f}%（倍數 {_tp_tier_mult:.2f}x），獲利了結"
+                )
+                await close_position(
+                    sym, cs, abs(s["qty"]), p, avg,
+                    reason="[Dynamic_TP_Tier]", is_stop_loss=False,
+                )
+                return
 
         peak_lock_hit, peak_lock_price = update_ma_peak_lock(sym, p, is_long)
         if peak_lock_hit:

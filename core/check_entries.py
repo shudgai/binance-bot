@@ -62,7 +62,11 @@ def _entry_structure_quality(sym, side, route, price):
 
     resistance = max(float(c[2]) for c in prior)
     support = min(float(c[3]) for c in prior)
-    min_room = max(price * 0.003, atr * 0.8)
+    # 使用者要求溫和放寬：原本 0.3%/0.8xATR 太嚴，實測正確訊號(如 MA25_Pullback
+    # 強度30的ETHUSDT多單)經常因為只差一點點空間被擋下，且同一根未收線K棒每次
+    # 輪詢都重複卡在這關，等於整段時間都開不了倉。收窄到 0.15%/0.4xATR，仍會擋
+    # 真正貼在天花板/地板的訊號，但放行原本只差一點點的邊緣案例。
+    min_room = max(price * 0.0015, atr * 0.4)
     max_breakout_extension = max(price * 0.0035, atr * 1.2)
     s["_entry_support"] = support
     s["_entry_resistance"] = resistance
@@ -399,9 +403,14 @@ async def check_entries():
         _atr_avg_ce = float(np.mean(_atr_hist_ce)) if len(_atr_hist_ce) > 0 else 0.0
         _atr_cur_ce = s.get("current_atr", 0.0)
         _is_low_vol_ce = (_atr_avg_ce > 0 and _atr_cur_ce <= _atr_avg_ce)
-        # 已收盤 K 棒的量能確認。17 分以上已有方向、動能等多重共振，
-        # 量能門檻放寬至均量 45%；一般訊號仍需 55%~65%，避免無量假突破。
-        _strong_participation_strength = 17.0
+        # 已收盤 K 棒的量能確認。豁免門檻拉高到 30：MA_Cross/Breakout/Pullback 的
+        # 基礎分數固定從 25 分起跳（見 signal_engine.py），17 分的門檻等於每一筆訊號
+        # 都必然滿足，這道量能/價格確認機制形同虛設，從未真的擋過任何一筆交易。
+        # 實測 LINKUSDT 案例：量價不協同（volume_price_sync 沒過），卻因為訊號分數
+        # 固定 >=25 一定滿足這個豁免，直接放行進場，進場後價格馬上反著走。拉高到
+        # 30，只有真的靠額外量能加分（volume_ratio>=1.8x）才拿得到豁免，一般訊號
+        # 必須真的通過量能/價格確認才能進場。
+        _strong_participation_strength = 30.0
         _d_multiplier = 0.45 if strength >= _strong_participation_strength else (0.55 if _is_low_vol_ce else 0.65)
         if volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1

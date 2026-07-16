@@ -8,9 +8,31 @@ from core.config import (
 logger = logging.getLogger(__name__)
 
 
+def _restore_persisted_cooldown(sym, state):
+    """讀回重啟前寫入的冷卻/封禁狀態。mark_exit() 設的 COOLDOWN/BANNED 原本只存在
+    ctx.STATES 記憶體裡，build_symbol_state() 每次都是全新初始化成 ACTIVE，任何一次
+    重啟（不管是手動重啟還是當機自動重啟，這個機器人兩者都很常發生）都會把冷卻中
+    的幣種當成乾淨狀態，讓還在冷卻期的虧損幣種立刻又能重新進場。這裡在建立狀態時
+    補讀磁碟上的紀錄，冷卻若還沒到期就還原，已經到期的話等同沒有紀錄，維持 ACTIVE。"""
+    try:
+        from core.cooldown_store import load_cooldown
+        record = load_cooldown(sym)
+        if not record:
+            return
+        next_status_time = float(record.get("next_status_time", 0.0) or 0.0)
+        if next_status_time > time.time():
+            state["status"] = record.get("status", "ACTIVE")
+            state["next_status_time"] = next_status_time
+            state["status_reason"] = record.get("status_reason", "")
+        state["stop_count"] = int(record.get("stop_count", 0) or 0)
+        state["first_stop_time"] = float(record.get("first_stop_time", 0.0) or 0.0)
+    except Exception:
+        pass
+
+
 def build_symbol_state(sym):
     conf = COIN_PROFILE_CONFIG.get(sym, {})
-    return {
+    state = {
         "status": "ACTIVE",
         "error_strikes": 0,
         "is_banned": False,
@@ -125,6 +147,8 @@ def build_symbol_state(sym):
         "volatility_cap": conf.get("volatility_cap", 3.0),
         "last_peak_time": 0.0,
     }
+    _restore_persisted_cooldown(sym, state)
+    return state
 
 
 def repair_invalid_states():
@@ -272,6 +296,13 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
             s["stop_count"] = 1
             s["first_stop_time"] = now
 
+    from core.cooldown_store import save_cooldown
+    save_cooldown(
+        sym, s["status"], s["next_status_time"], s["status_reason"],
+        s.get("stop_count", 0), s.get("first_stop_time", 0.0),
+    )
+
+    if is_stop_loss:
         # 連續虧損汰換機制 (consecutive_losses >= 2)
         losses = s.get("consecutive_losses", 0)
         if losses >= 2:

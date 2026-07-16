@@ -168,5 +168,32 @@ def _calc_sl_tp(sym, side, s, p, route="a"):
         logger.info(f"⚠️ [R:R_Adjustment] {sym} 原本停利距離 {tp_dist:.4f} 太近 (< 風險×{EXIT_RR_MULTIPLIER})，已強制拉開至 {min_tp_dist:.4f} (保證 R:R >= {EXIT_RR_MULTIPLIER})")
         tp_dist = min_tp_dist
 
+    # Layer-D: Structure-Aware TP Convergence（使用者要求）
+    # Layer-C 為了保證 R:R 門檻會把 tp_dist 往外撐，但如果撐出來的目標已經超過
+    # 最近 20 根已收盤 K 棒的阻力/支撐，那個目標前面就有一道牆擋著、實際上不太
+    # 可能達到。收斂到「阻力/支撐 − 一點緩衝」這個真正可達的位置，讓後面算出來
+    # 的 R:R 反映現實，而不是一個穿牆而過的理論數字。若收斂後距離已經小於 TP
+    # 下限，代表這裡本來就沒有像樣的空間，保留 Layer-C 的原值，不強行收斂到
+    # 失真甚至負值的範圍（這種情況本該在進場前就被 Entry_Structure_Guard 擋掉）。
+    candles = s.get("ohlcv", [])
+    _structure_window = candles[-22:-2] if len(candles) >= 22 else candles[:-2]
+    if len(_structure_window) >= 10:
+        if side == "buy":
+            _resistance = max(float(c[2]) for c in _structure_window)
+            _room_to_resistance = _resistance - p
+            if 0 < _room_to_resistance < tp_dist:
+                _converged = _room_to_resistance - p * 0.0005
+                if _converged >= p * _TP_FLOOR_PCT:
+                    logger.info(f"🎯 [TP_Converge] {sym} 停利目標收斂至阻力內側：{tp_dist:.4f} -> {_converged:.4f} (阻力距離 {_room_to_resistance:.4f})")
+                    tp_dist = _converged
+        else:
+            _support = min(float(c[3]) for c in _structure_window)
+            _room_to_support = p - _support
+            if 0 < _room_to_support < tp_dist:
+                _converged = _room_to_support - p * 0.0005
+                if _converged >= p * _TP_FLOOR_PCT:
+                    logger.info(f"🎯 [TP_Converge] {sym} 停利目標收斂至支撐內側：{tp_dist:.4f} -> {_converged:.4f} (支撐距離 {_room_to_support:.4f})")
+                    tp_dist = _converged
+
     expected_rr = tp_dist / risk_dist if risk_dist > 0 else 0
     return atr_val, sl_dist, tp_dist, expected_rr

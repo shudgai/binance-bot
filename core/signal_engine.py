@@ -56,15 +56,27 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
     short_stack = ma7 < ma25 and ma7 < prev_ma7 and ma25 <= prev_ma25
-    
+
     # 建立即時強勢判定
     is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
 
+    # MA_Cross 沒有像 pullback/breakout 那樣的 long_spreading/short_spreading（gap
+    # 持續擴大）當作防雜訊條件，只要方向對了、哪怕 MA7/MA25 只是貼在一起原地反覆
+    # 交叉也算數。只在「gap 幾乎是零 且 兩條 MA 斜率都幾乎是零」這種最極端的平走
+    # 盤整同時出現時才擋（三個條件都要成立），門檻沿用舊版盤整過濾的數值，盡量
+    # 不影響正常有動能的交叉，只濾掉最沒意義的原地雜訊交叉。
+    ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
+    ma7_slope = abs(ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
+    ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
+    is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
+
     # 交叉路線
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
-                  and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70)
+                  and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70
+                  and not is_flat_chop)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
-                   and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30)
+                   and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30
+                   and not is_flat_chop)
     
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
@@ -95,14 +107,12 @@ def compute_signal_strength(sym, realtime_trigger=False):
     elif pullback_long or pullback_short:
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
     else:
-        ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
-        ma7_slope = abs(ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
-        ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
         if vol_surge < base_limit:
             reason = f"量能過低（Surge={vol_surge:.2f}x < {base_limit:.2f}x, 個性={personality}），暫停交易"
-        # 應使用者要求解封：拔除盤整過濾器與逆勢過濾器，允許積極搶短與提早下注
-        # elif ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005:
-        #     reason = "MA7／MA25 平走交織，屬盤整假訊號區"
+        elif is_flat_chop and (golden_cross or death_cross):
+            reason = "MA7／MA25 平走交織，屬盤整假訊號區"
+        # 應使用者要求解封：拔除逆勢過濾器，允許積極搶短與提早下注（僅保留上面的
+        # 平走盤整過濾，逆勢方向本身不再由這裡擋，仍受 entry_filter.py MA99 對齊把關）
         # elif ma7 > ma25 and not above_ma99:
         #     reason = "MA7 雖高於 MA25，但價格仍在 MA99 下方，禁止逆勢做多"
         # elif ma7 < ma25 and not below_ma99:

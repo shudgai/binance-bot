@@ -257,6 +257,7 @@ async def _record_external_position_close(exchange, sym, state):
         realized_pnl_usdt=realized_pnl,
         timestamp_ms=close_time,
         entry_timestamp_ms=opened_ms if opened_ms else None,
+        side="buy" if old_qty > 0 else "sell",
     )
     if recorded:
         clear_peak(sym)
@@ -575,6 +576,23 @@ async def main_loop(exchange):
                 await fetch_all_klines(exchange_market_data)
                 ctx.LAST_KLINES_UPDATE = current_time
                 logger.info(f"🔄 [KLines] 已更新市場行情資料")
+
+            # 1.5 監控池同步檢查 (每30秒)：main.py 記憶體裡的 ctx.ALL_SYMBOLS 才是真正
+            # 在跑的監控清單，但畫面顯示是 API 那個獨立行程從 bot_symbols.json 讀出來
+            # 的——好幾條會異動 ALL_SYMBOLS 的路徑（雷達換幣、冷卻補位等）分散在不同
+            # 檔案，不是每條都有確實存檔，導致「日誌裡在掃、畫面卻看不到」的落差
+            # （實測 1000PEPEUSDT 案例）。與其逐一堵每條路徑，這裡直接每 30 秒核對一次，
+            # 兩邊對不上就以記憶體裡實際在跑的名單為準，寫回檔案。
+            if ctx.LAST_SYMBOL_POOL_SYNC < current_time - 30:
+                ctx.LAST_SYMBOL_POOL_SYNC = current_time
+                try:
+                    from core.symbol_profile import load_symbol_pool, save_symbol_pool
+                    _persisted_pool = load_symbol_pool()
+                    if set(_persisted_pool) != set(ctx.ALL_SYMBOLS):
+                        save_symbol_pool(ctx.ALL_SYMBOLS)
+                        logger.info(f"🔄 [監控池同步] 畫面清單與實際監控池不一致，已同步為 {len(ctx.ALL_SYMBOLS)} 檔")
+                except Exception as _sync_err:
+                    logger.info(f"⚠️ [監控池同步失敗] {_sync_err}")
 
             from core.strategy.factory import StrategyFactory
 

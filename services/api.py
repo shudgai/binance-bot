@@ -549,6 +549,7 @@ def api_market_sell(symbol: str):
                         realized_pnl_usdt=realized_pnl,
                         timestamp_ms=close_time,
                         entry_timestamp_ms=open_time_ms or None,
+                        side="buy" if qty > 0 else "sell",
                     )
                 else:
                     add_system_log(f"⚠️ [手動平倉同步] {symbol_upper} 找不到交易所平倉成交，已平倉但未寫入本機歷史", "warning")

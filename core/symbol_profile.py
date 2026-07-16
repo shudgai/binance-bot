@@ -340,10 +340,41 @@ def evaluate_dynamic_personality(sym):
     rsi = s.get("current_rsi", 50.0)
     macd_hist = s.get("macd_hist", 0.0)
 
+    # 使用者要求：個性切換原本只看「絕對數值」，行情噴發到一半、已經達到絕對高位
+    # 才確認切換，太慢。這裡加一個「變化率」觸發：現在的 ATR/量能比幾個 tick 前的
+    # 自己快速放大(>1.25倍)，代表噴發剛開始加速，即使絕對值還沒到 high_volatility
+    # 的門檻，也提前判定為 aggressive，讓機器人早一點嗅到行情。
+    _vol_ratio_hist = s.setdefault("_personality_vol_ratio_history", [])
+    _vol_ratio_hist.append(volume_ratio)
+    if len(_vol_ratio_hist) > 10:
+        del _vol_ratio_hist[:-10]
+
+    _atr_hist = s.get("atr_history", [])
+    _atr_accel = False
+    if len(_atr_hist) >= 6:
+        _ref_atr = float(_atr_hist[-6])
+        _atr_accel = _ref_atr > 0 and (s["current_atr"] / _ref_atr) > 1.25
+
+    _vol_accel = False
+    if len(_vol_ratio_hist) >= 6:
+        _ref_vol_ratio = float(_vol_ratio_hist[-6])
+        _vol_accel = _ref_vol_ratio > 0 and (volume_ratio / _ref_vol_ratio) > 1.25
+
+    # 防雜訊緩衝：加速訊號要連續兩次評估都成立才真的觸發 aggressive，避免單一根
+    # 雜訊 K 棒讓個性在 calm/aggressive 之間反覆橫跳——個性切換會連動改 SL/TP 倍數、
+    # 槓桿、進場量能門檻，切太頻繁等於風控參數在持倉中途一直變動。
+    if _atr_accel or _vol_accel:
+        s["_personality_accel_streak"] = s.get("_personality_accel_streak", 0) + 1
+    else:
+        s["_personality_accel_streak"] = 0
+    _acceleration_confirmed = s["_personality_accel_streak"] >= 2
+
     quiet_market = volume_ratio < 1.15 and atr_pct < 0.008 and range_width_pct < 0.02
     high_volatility = volume_ratio > 1.9 or atr_pct > 0.02 or range_width_pct > 0.04
     strong_trend = abs(rsi - 50.0) > 12.0 or abs(macd_hist) > close * 0.0006
 
+    if _acceleration_confirmed:
+        return "aggressive"
     if quiet_market:
         return "calm"
     if high_volatility or strong_trend:
