@@ -54,25 +54,25 @@ def compute_signal_strength(sym, realtime_trigger=False):
         base_limit = thresholds.get("calm", ENTRY_SURGE_THRESHOLD + 0.3)  # 波動失控，退回極度保守模式
     breakout_limit = base_limit * 1.5
 
-    long_stack = ma7 > ma25 > ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
-    short_stack = ma7 < ma25 < ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
+    long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
+    short_stack = ma7 < ma25 and ma7 < prev_ma7 and ma25 <= prev_ma25
     
     # 建立即時強勢判定
     is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
 
     # 交叉路線
-    cross_long = (golden_cross and above_ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
+    cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70)
-    cross_short = (death_cross and below_ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
+    cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
                    and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30)
     
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
     
     # 回調路線
-    pullback_long = (long_spreading and long_stack and above_ma99 and candle_low <= ma25 * (1 + touch_tolerance)
+    pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70)
-    pullback_short = (short_spreading and short_stack and below_ma99 and candle_high >= ma25 * (1 - touch_tolerance)
+    pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30)
 
     from core.config import DISABLE_MA_BREAKOUT
@@ -83,9 +83,9 @@ def compute_signal_strength(sym, realtime_trigger=False):
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
         # 突破路線
-        breakout_long = (long_spreading and long_stack and above_ma99 and candle_close > prior_high
+        breakout_long = (long_spreading and long_stack and candle_close > prior_high
                          and (candle_close > candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi < 70)
-        breakout_short = (short_spreading and short_stack and below_ma99 and candle_close < prior_low
+        breakout_short = (short_spreading and short_stack and candle_close < prior_low
                           and (candle_close < candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi > 30)
 
     if cross_long or cross_short:
@@ -100,12 +100,13 @@ def compute_signal_strength(sym, realtime_trigger=False):
         ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
         if vol_surge < base_limit:
             reason = f"量能過低（Surge={vol_surge:.2f}x < {base_limit:.2f}x, 個性={personality}），暫停交易"
-        elif ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005:
-            reason = "MA7／MA25 平走交織，屬盤整假訊號區"
-        elif ma7 > ma25 and not above_ma99:
-            reason = "MA7 雖高於 MA25，但價格仍在 MA99 下方，禁止逆勢做多"
-        elif ma7 < ma25 and not below_ma99:
-            reason = "MA7 雖低於 MA25，但價格仍在 MA99 上方，禁止逆勢做空"
+        # 應使用者要求解封：拔除盤整過濾器與逆勢過濾器，允許積極搶短與提早下注
+        # elif ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005:
+        #     reason = "MA7／MA25 平走交織，屬盤整假訊號區"
+        # elif ma7 > ma25 and not above_ma99:
+        #     reason = "MA7 雖高於 MA25，但價格仍在 MA99 下方，禁止逆勢做多"
+        # elif ma7 < ma25 and not below_ma99:
+        #     reason = "MA7 雖低於 MA25，但價格仍在 MA99 上方，禁止逆勢做空"
         elif current_rsi >= 70 and ma7 > ma25:
             reason = f"RSI={current_rsi:.1f} 已達極端值，防超買反轉不追多"
         elif current_rsi <= 30 and ma7 < ma25:
