@@ -15,9 +15,8 @@ BTC_MIXED_MIN_VOLUME_RATIO = 0.50
 
 def btc_macro_entry_guard(sym, side):
     """Gate altcoin entries with fresh, completed-candle BTC 1H and 4H trends."""
-    normalized = str(sym or "").upper().replace(":", "").replace(chr(47), "")
-    if normalized == "BTCUSDT":
-        return True, "BTC uses its own MA structure", "SELF"
+    # 應使用者要求停用 BTC 大盤過濾，讓山寨幣（如 ETH/SOL/LTC）依賴自己的走勢獨立開倉
+    return True, "BTC大盤過濾已停用，尊重個幣獨立走勢", "DISABLED"
     if side not in ("buy", "sell"):
         return False, "invalid entry side", "INVALID"
 
