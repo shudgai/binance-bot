@@ -43,15 +43,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     # 動態量能閾值
     thresholds = {
-        "calm": ENTRY_SURGE_THRESHOLD + 0.1,      # 放寬：0.70 + 0.10 = 0.80x（原 1.00x）
-        "adaptive": ENTRY_SURGE_THRESHOLD,         # 放寬：0.70x（原 0.80x）
-        "aggressive": ENTRY_SURGE_THRESHOLD        # 不變：0.70x
+        "calm": ENTRY_SURGE_THRESHOLD,
+        "adaptive": ENTRY_SURGE_THRESHOLD,
+        "aggressive": ENTRY_SURGE_THRESHOLD
     }
-    base_limit = thresholds.get(personality, ENTRY_SURGE_THRESHOLD + 0.3)
+    base_limit = thresholds.get(personality, ENTRY_SURGE_THRESHOLD)
     if 3.0 < atr_pct <= 5.0:
         base_limit *= 0.8  # 放寬極端波動幣種的量能要求
     elif atr_pct > 5.0:
-        base_limit = thresholds.get("calm", ENTRY_SURGE_THRESHOLD + 0.3)  # 波動失控，退回極度保守模式
+        base_limit = thresholds.get("calm", ENTRY_SURGE_THRESHOLD)  # 波動失控，退回極度保守模式
     breakout_limit = base_limit * 1.5
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
