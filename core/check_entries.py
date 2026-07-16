@@ -462,8 +462,8 @@ async def check_entries():
 
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
-        if _atr_pct_5m < 0.0012:
-            logger.info(f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < 0.12%，放棄進場")
+        if _atr_pct_5m < 0.0008:
+            logger.info(f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < 0.08%，放棄進場")
             set_entry_diagnosis(f"{sym}: 即時波動不足，放棄進場")
             continue
 
