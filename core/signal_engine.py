@@ -43,9 +43,9 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     # 動態量能閾值
     thresholds = {
-        "calm": ENTRY_SURGE_THRESHOLD + 0.3,
-        "adaptive": ENTRY_SURGE_THRESHOLD + 0.1,
-        "aggressive": ENTRY_SURGE_THRESHOLD
+        "calm": ENTRY_SURGE_THRESHOLD + 0.1,      # 放寬：0.70 + 0.10 = 0.80x（原 1.00x）
+        "adaptive": ENTRY_SURGE_THRESHOLD,         # 放寬：0.70x（原 0.80x）
+        "aggressive": ENTRY_SURGE_THRESHOLD        # 不變：0.70x
     }
     base_limit = thresholds.get(personality, ENTRY_SURGE_THRESHOLD + 0.3)
     if 3.0 < atr_pct <= 5.0:
