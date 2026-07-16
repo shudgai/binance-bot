@@ -26,6 +26,30 @@ _LOSS_HISTORY_CACHE_MTIME = None
 _LOSS_HISTORY_CACHE = {}
 
 
+def _calculate_correlation(klines_a, klines_b, limit=6):
+    """Calculate Pearson correlation of closing prices between two kline arrays."""
+    if not klines_a or not klines_b or len(klines_a) < limit or len(klines_b) < limit:
+        return 0.0
+    
+    # K-lines format: [timestamp, open, high, low, close, volume]
+    try:
+        closes_a = [float(k[4]) for k in klines_a[-limit:]]
+        closes_b = [float(k[4]) for k in klines_b[-limit:]]
+        
+        # Calculate percentage returns to avoid scaling issues
+        returns_a = np.diff(closes_a) / closes_a[:-1]
+        returns_b = np.diff(closes_b) / closes_b[:-1]
+        
+        if np.std(returns_a) == 0 or np.std(returns_b) == 0:
+            return 0.0
+            
+        corr = np.corrcoef(returns_a, returns_b)[0, 1]
+        return float(corr) if not np.isnan(corr) else 0.0
+    except Exception as e:
+        logger.error(f"Error calculating correlation: {e}")
+        return 0.0
+
+
 def _entry_structure_quality(sym, side, route, price):
     """Validate entry against the nearest 20-candle support/resistance and score its room."""
     s = ctx.STATES.get(sym, {})
@@ -215,9 +239,21 @@ def compute_indicators(sym):
         else:
             s["current_rsi"] = 50.0  # 無波動
     s["vol_ma10"] = float(np.mean(volumes[-11:-1])) if len(volumes) >= 11 else float(np.mean(volumes[:-1]))
+    s["vol_ma12"] = float(np.median(volumes[-13:-1])) if len(volumes) >= 13 else float(np.median(volumes[:-1]))
     s["vol_ma20"] = float(np.mean(volumes[-21:-1])) if len(volumes) >= 21 else float(np.mean(volumes[:-1]))
     # 使用「倒數第二根」（已完成 K 線）的量，避免當前未完成 K 線量偏低誤觸量能過濾
     s["current_vol"] = float(volumes[-2]) if len(volumes) >= 2 else float(volumes[-1])
+    s["vol_surge"] = s["current_vol"] / s["vol_ma12"] if s.get("vol_ma12", 0) > 0 else 0.0
+
+    # 計算 atr_pct 與 personality
+    current_price = closes[-1] if len(closes) > 0 else 1.0
+    s["atr_pct"] = (s.get("current_atr", 0.0) / current_price) * 100 if current_price > 0 else 0.0
+    if s["atr_pct"] > 2.5:
+        s["personality"] = "aggressive"
+    elif s["atr_pct"] > 1.5:
+        s["personality"] = "adaptive"
+    else:
+        s["personality"] = "calm"
     if len(closes) >= 20:
         s["ema20"] = calculate_ema(closes, 20)
     if len(closes) >= 50:
@@ -291,7 +327,7 @@ async def check_entries():
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
         # 原本的計算邏輯
-        side_strength = compute_signal_strength(sym)
+        side_strength = compute_signal_strength(sym, realtime_trigger=True)
         if side_strength is None or side_strength[0] is None:
             block_reason = s.get("entry_block_reason") or "暫無有效訊號"
             set_entry_diagnosis(f"{sym}: {block_reason}")
@@ -686,15 +722,9 @@ async def check_entries():
 
         if not s.get("is_ordering"):
             s["is_ordering"] = True
+            s["pending_side"] = side
 
             # --- 動態權重分配 (Dynamic Position Sizing) ---
-            # 使用者指出：原本的算法只看「這個訊號佔本輪候選訊號強度總和的比例」，如果
-            # 這輪只有它一個候選（很常見），比例永遠是 100%、直接封頂 85%——導致一個強度
-            # 只有 12（偏弱）的訊號跟強度 30+ 的頂級訊號拿到一樣多的資金，跟訊號本身的
-            # 品質完全脫鉤。改成同時看「訊號自身的絕對強度」：強度越高，允許動用的資金
-            # 上限越高；弱訊號即使是本輪唯一候選，也不會自動封頂到 85%。
-            # 門檻取自實測 984 筆進場訊號的強度分布：min≈10（最弱仍通過篩選）、
-            # p90≈32（前10%頂級訊號）。
             raw_ratio = strength / total_weight if total_weight > 0 else 1.0
             _strength_floor = 10.0
             _strength_ceiling = 32.0
@@ -704,11 +734,7 @@ async def check_entries():
             absolute_alloc_pct = _min_alloc_pct + _strength_scaled * (_max_alloc_pct - _min_alloc_pct)
             allocation_pct = min(raw_ratio, absolute_alloc_pct, _max_alloc_pct)
 
-            # 流動性折扣：現有流動性檢查是二選一（過門檻 1,000,000 就全額進場、沒過就
-            # 整筆擋掉），但「剛好壓線過關」跟「流動性充裕」風險完全不同，同樣全額進場
-            # 不合理——薄的市場不管是進場追價還是將來急停損出場，滑點都會放大，甚至可能
-            # 賣不掉（KAITOUSDT 教訓）。門檻剛過（1,000,000）打 5 折，到 3 倍門檻
-            # （3,000,000）以上流動性視為充裕、不打折，中間線性插值。
+            # 流動性折扣
             _LIQ_MIN = 1_000_000
             _LIQ_COMFORT = 3_000_000
             _liq_est = s.get("_entry_liquidity_usdt")
@@ -718,6 +744,33 @@ async def check_entries():
                 if _liq_discount < 1.0:
                     allocation_pct *= _liq_discount
                     logger.info(f"⚖️ [Liquidity_Discount] {sym} 估算24H交易額 {_liq_est:,.0f} 偏薄（門檻 {_LIQ_MIN:,.0f}），倉位打折至 {_liq_discount*100:.0f}%")
+
+            # --- 同向相關性折扣 (Correlation Discount) ---
+            for other_sym in ctx.ALL_SYMBOLS:
+                if other_sym == sym:
+                    continue
+                other_state = ctx.STATES.get(other_sym, {})
+                other_qty = float(other_state.get("qty", 0.0))
+                
+                # 判定 other_sym 的持倉方向（實體倉位 或 正在下單中）
+                other_side = None
+                if other_qty > 0.000001:
+                    other_side = "buy"
+                elif other_qty < -0.000001:
+                    other_side = "sell"
+                elif other_state.get("is_ordering"):
+                    other_side = other_state.get("pending_side")
+                    
+                if other_side == side:
+                    klines_curr = s.get("ohlcv", [])
+                    klines_other = other_state.get("ohlcv", [])
+                    if len(klines_curr) >= 6 and len(klines_other) >= 6:
+                        corr = _calculate_correlation(klines_curr, klines_other, limit=6)
+                        if corr > 0.8:
+                            allocation_pct *= 0.7
+                            logger.info(f"⚖️ [Correlation_Discount] {sym} 與現有同向倉位 ({other_sym}) 走勢高度相關 (corr={corr:.2f})，為避免風險集中，倉位打 7 折")
+                            break # 套用一次即可
+
 
             weight_label = f"{allocation_pct*100:.1f}%"
             logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%, 絕對強度換算上限 {absolute_alloc_pct*100:.1f}%)，實際分配資金為: {weight_label}")

@@ -776,7 +776,23 @@ async def periodic_momentum_swap():
                         or ctx.STATES.get(sym, {}).get("is_ordering", False)
                         or ctx.STATES.get(sym, {}).get("pending_side")
                     ]
-                    new_pool = list(dict.fromkeys(list(selected) + protected))
+                    
+                    # 動態汰換機制 (Defensive Eviction)
+                    evicted = []
+                    selected_list = list(selected)
+                    for sym in list(selected_list):
+                        if sym in protected:
+                            continue
+                        state = ctx.STATES.get(sym, {})
+                        age = time.time() - state.get("first_seen_time", 0)
+                        if age > 1800 and state.get("personality") == "calm" and state.get("vol_surge", 0.0) < 0.5:
+                            selected_list.remove(sym)
+                            evicted.append(sym)
+                    
+                    if evicted:
+                        logger.info(f"🗑️ [動態汰換] 剔除無效監控幣種 (Calm + 低量能): {', '.join(evicted)}")
+
+                    new_pool = list(dict.fromkeys(selected_list + protected))
                     profiles = load_symbol_profiles()
                     old_pool = list(ctx.ALL_SYMBOLS)
                     for sym in new_pool:

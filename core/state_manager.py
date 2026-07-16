@@ -16,6 +16,7 @@ def build_symbol_state(sym):
         "is_banned": False,
         "sync_required": False,
         "last_exit_time": 0,
+        "first_seen_time": time.time(),
         "status_reason": "",
         "next_status_time": 0,
         "stop_count": 0,

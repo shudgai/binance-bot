@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def compute_signal_strength(sym):
+from core.config import ENTRY_SURGE_THRESHOLD
+
+def compute_signal_strength(sym, realtime_trigger=False):
     """Generate entries exclusively from completed-candle MA7/25/99 setups."""
     s = ctx.STATES[sym]
     s["entry_block_reason"] = ""
@@ -35,20 +37,43 @@ def compute_signal_strength(sym):
     above_ma99, below_ma99 = candle_close > ma99, candle_close < ma99
 
     current_rsi = float(s.get("current_rsi", 50.0))
+    vol_surge = float(s.get("vol_surge", 0.0))
+    personality = s.get("personality", "calm")
+    atr_pct = float(s.get("atr_pct", 0.0))
+
+    # 動態量能閾值
+    thresholds = {
+        "calm": ENTRY_SURGE_THRESHOLD + 0.3,
+        "adaptive": ENTRY_SURGE_THRESHOLD + 0.1,
+        "aggressive": ENTRY_SURGE_THRESHOLD
+    }
+    base_limit = thresholds.get(personality, ENTRY_SURGE_THRESHOLD + 0.3)
+    if 3.0 < atr_pct <= 5.0:
+        base_limit *= 0.8  # 放寬極端波動幣種的量能要求
+    elif atr_pct > 5.0:
+        base_limit = thresholds.get("calm", ENTRY_SURGE_THRESHOLD + 0.3)  # 波動失控，退回極度保守模式
+    breakout_limit = base_limit * 1.5
+
     long_stack = ma7 > ma25 > ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
     short_stack = ma7 < ma25 < ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
-    # 交叉是趨勢的起點：此時 MA25 常尚未越過 MA99。交叉路線只要求價格位於
-    # MA99 正確一側與兩條短中均線斜率同向；回調/突破仍要求完整三均線排列。
+    
+    # 建立即時強勢判定
+    is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
+
+    # 交叉路線
     cross_long = (golden_cross and above_ma99 and ma7 > prev_ma7 and ma25 >= prev_ma25
-                  and candle_close > candle_open and volume_ratio >= 1.0 and current_rsi < 70)
+                  and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70)
     cross_short = (death_cross and below_ma99 and ma7 < prev_ma7 and ma25 <= prev_ma25
-                   and candle_close < candle_open and volume_ratio >= 1.0 and current_rsi > 30)
+                   and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30)
+    
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
+    
+    # 回調路線
     pullback_long = (long_spreading and long_stack and above_ma99 and candle_low <= ma25 * (1 + touch_tolerance)
-                     and candle_close >= ma25 and candle_close > candle_open and volume_ratio >= 1.0 and current_rsi < 70)
+                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70)
     pullback_short = (short_spreading and short_stack and below_ma99 and candle_high >= ma25 * (1 - touch_tolerance)
-                      and candle_close <= ma25 and candle_close < candle_open and volume_ratio >= 1.0 and current_rsi > 30)
+                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30)
 
     from core.config import DISABLE_MA_BREAKOUT
     completed = candles[:-1]
@@ -57,10 +82,11 @@ def compute_signal_strength(sym):
         prior = completed[-21:-1]
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
+        # 突破路線
         breakout_long = (long_spreading and long_stack and above_ma99 and candle_close > prior_high
-                         and candle_close > candle_open and volume_ratio >= 2.0 and current_rsi < 70)
+                         and (candle_close > candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi < 70)
         breakout_short = (short_spreading and short_stack and below_ma99 and candle_close < prior_low
-                          and candle_close < candle_open and volume_ratio >= 2.0 and current_rsi > 30)
+                          and (candle_close < candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi > 30)
 
     if cross_long or cross_short:
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
@@ -72,8 +98,8 @@ def compute_signal_strength(sym):
         ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
         ma7_slope = abs(ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
         ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
-        if volume_ratio < 1.0:
-            reason = f"量能過低（{volume_ratio:.2f}×均量），暫停交易"
+        if vol_surge < base_limit:
+            reason = f"量能過低（Surge={vol_surge:.2f}x < {base_limit:.2f}x, 個性={personality}），暫停交易"
         elif ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005:
             reason = "MA7／MA25 平走交織，屬盤整假訊號區"
         elif ma7 > ma25 and not above_ma99:
