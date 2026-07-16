@@ -70,22 +70,33 @@ def compute_signal_strength(sym, realtime_trigger=False):
     ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
     is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
 
+    # 使用者要求：動能確認門檻。實測 TRUMPUSDT/NEARUSDT/SOLUSDT 案例，MA 排列
+    # 本身沒錯，但整段持倉 RSI 幾乎都在 50 附近甚至偏多頭那一側，代表空單從頭到
+    # 尾都沒有真正的空頭動能撐著，純粹是 MA 剛好交叉就進場，訊號體質偏弱。加一道
+    # 「賣單要求 RSI 明顯低於 50、買單要求明顯高於 50」的動能確認，跟原本只防
+    # 極端值(現在＜70/＞30)的門檻不同——原本那組是防止追高/追低，這組是要求方向
+    # 本身要有動能支持，兩者疊加。
+    rsi_momentum_long_ok = current_rsi >= 51.0
+    rsi_momentum_short_ok = current_rsi <= 49.0
+
     # 交叉路線
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70
-                  and not is_flat_chop)
+                  and rsi_momentum_long_ok and not is_flat_chop)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
                    and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30
-                   and not is_flat_chop)
-    
+                   and rsi_momentum_short_ok and not is_flat_chop)
+
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
-    
+
     # 回調路線
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
-                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70)
+                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70
+                     and rsi_momentum_long_ok)
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
-                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30)
+                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30
+                      and rsi_momentum_short_ok)
 
     from core.config import DISABLE_MA_BREAKOUT
     completed = candles[:-1]
@@ -96,9 +107,11 @@ def compute_signal_strength(sym, realtime_trigger=False):
         prior_low = min(float(c[3]) for c in prior)
         # 突破路線
         breakout_long = (long_spreading and long_stack and candle_close > prior_high
-                         and (candle_close > candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi < 70)
+                         and (candle_close > candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi < 70
+                         and rsi_momentum_long_ok)
         breakout_short = (short_spreading and short_stack and candle_close < prior_low
-                          and (candle_close < candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi > 30)
+                          and (candle_close < candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi > 30
+                          and rsi_momentum_short_ok)
 
     if cross_long or cross_short:
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
@@ -121,6 +134,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
             reason = f"RSI={current_rsi:.1f} 已達極端值，防超買反轉不追多"
         elif current_rsi <= 30 and ma7 < ma25:
             reason = f"RSI={current_rsi:.1f} 已達極端值，防超賣反轉不追空"
+        elif ma7 > ma25 and not rsi_momentum_long_ok:
+            reason = f"MA7 雖高於 MA25，但 RSI={current_rsi:.1f} 未達 51，動能未確認，暫不追多"
+        elif ma7 < ma25 and not rsi_momentum_short_ok:
+            reason = f"MA7 雖低於 MA25，但 RSI={current_rsi:.1f} 未達 49 以下，動能未確認，暫不追空"
         else:
             reason = "等待 MA7／MA25 收線交叉、MA25 回調或帶量突破"
         s["entry_block_reason"] = reason

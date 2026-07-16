@@ -20,18 +20,24 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_WRONG_DIRECTION_PCT = 0.006
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
-MA_PEAK_LOCK_ARM_PCT = 0.005
+# 實測 LINKUSDT/TRUMPUSDT/SOLUSDT/FILUSDT/NEARUSDT 案例：0.5% 的啟動門檻對主流
+# 幣的正常波動來說太高，好幾筆單持倉超過 30 分鐘、期間 RSI 明顯偏向有利方向，
+# 峰值卻始終衝不破 0.5%，鎖利機制全程沒有啟動過一次，最後只能靠 MA 反轉確認
+# 出場——反轉確認本身有延遲，等到出場時獲利常常已經吐光甚至倒虧。降到剛好蓋過
+# 來回手續費(fee_floor≈0.15%)一點點的 0.18%，讓這類小峰值也能被鎖利機制接住。
+MA_PEAK_LOCK_ARM_PCT = 0.0018
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
 
 
 def _ma_peak_keep_ratio(peak_profit):
+    # 使用者要求適度收緊，儘量鎖在接近當下高點的位置，減少獲利回吐幅度。
     if peak_profit >= MA_PEAK_LOCK_HIGH_PCT:
-        return 0.85
+        return 0.90
     if peak_profit >= MA_PEAK_LOCK_MID_PCT:
-        return 0.80
-    return 0.60
+        return 0.85
+    return 0.75
 
 
 def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_confirmation=False):
@@ -575,18 +581,19 @@ async def check_exits(sym):
         _dyn_tp_base = float(s.get("_dyn_tp_base_distance", 0.0) or 0.0)
         if _dyn_tp_base > 0 and avg > 0:
             # 根據「最高利潤」所處的區間決定倍數
+            # 使用者要求適度收緊回撤容忍度，儘量鎖在接近當下高點的位置。
             if max_profit >= 0.010:
                 _tp_tier_mult = 1.00
-                _fallback_ratio = 0.6  # 獲利很大時，容忍 60% 的區間回撤
+                _fallback_ratio = 0.35  # 獲利很大時，容忍 35% 的區間回撤
             elif max_profit >= 0.006:
                 _tp_tier_mult = 0.75
-                _fallback_ratio = 0.5  # 容忍 50% 的回撤
+                _fallback_ratio = 0.30  # 容忍 30% 的回撤
             elif max_profit >= 0.004:
                 _tp_tier_mult = 0.55
-                _fallback_ratio = 0.4  # 容忍 40% 的回撤
+                _fallback_ratio = 0.25  # 容忍 25% 的回撤
             else:
                 _tp_tier_mult = 0.35
-                _fallback_ratio = 0.3  # 微利時，容忍 30% 的回撤 (見好就收)
+                _fallback_ratio = 0.20  # 微利時，容忍 20% 的回撤 (見好就收)
 
             _dyn_tp_target_pct = (_dyn_tp_base * _tp_tier_mult) / avg
             

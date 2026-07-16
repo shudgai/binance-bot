@@ -1174,6 +1174,7 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
         if s["entry_count"] == 1:
             s["is_breakeven_locked"] = False
             s["highest_profit_pct"] = 0.0
+            s["max_profit_reached"] = 0.0
             clear_peak(sym)
             s["first_entry_price"] = fill_price
             s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
@@ -1649,13 +1650,14 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         try:
             order_type = 'limit'
             limit_price = price
+            _is_structure_anchored = False
             try:
                 ob = await exchange_futures.fetch_order_book(sym, limit=5)
                 asks = ob.get('asks', [])
                 bids = ob.get('bids', [])
                 ask1 = float(asks[0][0]) if asks else price
                 bid1 = float(bids[0][0]) if bids else price
-                
+
                 prec = await get_contract_precision(sym)
                 tick_size = prec['tick_size']
 
@@ -1697,14 +1699,18 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     _atr_pct = s.get("current_atr", 0.0) / price if price > 0 else 0.015
                     _pb_mult = 0.0
 
+                    _is_structure_anchored = False
                     if side == 'buy' and 0 < _struct_support < price:
                         limit_price = _struct_support * 1.0005
+                        _is_structure_anchored = True
                         logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
                     elif side == 'sell' and _struct_resistance > price > 0:
                         limit_price = _struct_resistance * 0.9995
+                        _is_structure_anchored = True
                         logger.info(f"🎯 [結構錨定掛單] {sym} 掛在阻力位 {_struct_resistance:.6f} - 0.05% 緩衝 = {limit_price:.6f}")
                     elif _is_zone_convert and price > 0:
                         limit_price = price
+                        _is_structure_anchored = True
                         logger.info(f"📌 [邊界精準限價單] {sym} 觸發阻力/支撐精算轉換，直接掛單在臨界價 {limit_price:.6f}")
                     else:
                         atr = s.get("current_atr", 0.0)
@@ -1819,15 +1825,25 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             order_id = order['id']
             order_ts = time.time()
 
+            # 結構錨定掛單（等支撐/阻力回踩）給更長的等待時間——回踩本來就可能要
+            # 好幾分鐘才會發生，120 秒太容易在真正回踩前就被判定「完全未成交」放棄。
+            # 逾時後也不是直接放棄，而是交給 check_stale_limit_orders 判斷訊號是否
+            # 還有效、價格有沒有跑掉，沒問題的話改追對手價再試一次（見該函式）。
+            _order_timeout = (
+                DUAL_SHOT_ORDER_TIMEOUT if is_rescue_dca
+                else 150 if _is_structure_anchored
+                else min(DUAL_SHOT_ORDER_TIMEOUT, 120)
+            )
             ctx.PENDING_LIMIT_ORDERS[order_id] = {
                 "sym": sym, "side": side, "qty": base_amt,
                 "price": limit_price or price, "signal_price": price,
                 "timestamp": order_ts, "is_rescue_dca": is_rescue_dca,
                 "entry_route": entry_route, "signal_strength": signal_strength,
-                # 首倉訊號壽命最多兩分鐘；救援單沿用全域期限。
-                "timeout": DUAL_SHOT_ORDER_TIMEOUT if is_rescue_dca else min(DUAL_SHOT_ORDER_TIMEOUT, 120),
+                "timeout": _order_timeout,
+                "allow_chase_on_timeout": _is_structure_anchored and not is_rescue_dca,
+                "chased_once": False,
             }
-            logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type})")
+            logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type}, 逾時: {_order_timeout:.0f}s)")
 
             await asyncio.sleep(3)
             fetched = order
@@ -2022,6 +2038,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             if s["entry_count"] == 1:
                 s["is_breakeven_locked"] = False
                 s["highest_profit_pct"] = 0.0
+                s["max_profit_reached"] = 0.0
                 s["first_entry_price"] = fill_price
                 s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
                 s["_lin_trail_armed"] = False
@@ -2094,6 +2111,81 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     logger.info(f"⏳ [開倉錯誤冷卻] {sym} 確認交易所端真的沒有新倉位，暫停 60 秒後才會再考慮進場，避免重複撞同一個逾時問題")
 
 
+async def _chase_retry_pending_entry(info, sym, side, qty):
+    """結構錨定掛單等不到回踩、逾時了，但訊號還有效、價格也沒反向跑掉時，
+    不要直接放棄，改追當下的對手價再掛一張限價單試一次——維持 Maker 身份（比
+    直接轉市價便宜），又比死守原來那個支撐/阻力價更容易成交。只追一次
+    （chased_once=True），避免變成無限期反覆等待。
+
+    實測 LINKUSDT 案例：外層的 chase_eligible 判斷通過後，到這裡真正送出委託前
+    還有一段空窗，剛好撞上瞬間爆量尖峰（4.23x 均量），等於在最不穩定的瞬間強行
+    進場，之後很容易被巴。這裡在真正下單前，用剛抓到的最新報價再做一次「開倉價
+    是否已經跑掉」與「當下是不是異常爆量尖峰」的最終確認，只要有一項不通過就
+    放棄這次追價（不是報錯，是判斷現在不適合強行進場），留給下一輪(30秒後)重新
+    評估，而不是不管三七二十一都硬追進去。"""
+    try:
+        ob = await exchange_futures.fetch_order_book(sym, limit=5)
+        asks = ob.get('asks', [])
+        bids = ob.get('bids', [])
+        ask1 = float(asks[0][0]) if asks else 0.0
+        bid1 = float(bids[0][0]) if bids else 0.0
+        reprice = ask1 if side == 'buy' else bid1
+        if reprice <= 0:
+            return False
+
+        # 最終確認一：開倉價有沒有已經跑掉（用最新報價 vs 原始訊號價重新檢查一次）
+        signal_price = info.get("signal_price") or info.get("price")
+        adverse_ok, adverse_reason = _entry_pending_adverse_guard(
+            sym, side, signal_price, reprice, is_rescue_dca=info.get("is_rescue_dca", False),
+        )
+        if not adverse_ok:
+            logger.info(f"🛑 [追價前檢查] {sym} 開倉價已跑掉，放棄本次追價：{adverse_reason}")
+            return False
+
+        # 最終確認二：當下是不是異常爆量尖峰（流動性瞬間變薄、容易是插針/軋空），
+        # 這種瞬間強行進場風險極高，寧可跳過這輪、等尖峰退去後再評估。
+        s_chase = ctx.STATES.get(sym, {})
+        current_vol = float(s_chase.get("current_vol", 0.0) or 0.0)
+        vol_ma20 = float(s_chase.get("vol_ma20", 0.0) or 0.0)
+        vol_spike_ratio = current_vol / vol_ma20 if vol_ma20 > 0 else 0.0
+        if vol_spike_ratio > 3.0:
+            logger.info(
+                f"🛑 [追價前檢查] {sym} 當下量能異常爆發 ({vol_spike_ratio:.2f}x 均量)，"
+                f"疑似插針/流動性瞬間變薄，放棄本次追價"
+            )
+            return False
+
+        reprice = reprice * (1 + ENTRY_CHASE_OFFSET_PCT) if side == 'buy' else reprice * (1 - ENTRY_CHASE_OFFSET_PCT)
+        prec = await get_contract_precision(sym)
+        reprice = round_step(reprice, prec['tick_size'])
+        qty = round_step(qty, prec['step_size'])
+        if qty <= 0:
+            return False
+
+        params = {'marginMode': 'isolated', 'timeInForce': 'GTC'}
+        order = await exchange_futures.create_order(
+            sym, type='limit', side=side, amount=qty, price=reprice, params=params
+        )
+        order_id = order['id']
+        ctx.PENDING_LIMIT_ORDERS[order_id] = {
+            "sym": sym, "side": side, "qty": qty,
+            "price": reprice, "signal_price": info.get("signal_price") or reprice,
+            "timestamp": time.time(), "is_rescue_dca": info.get("is_rescue_dca", False),
+            "entry_route": info.get("entry_route"), "signal_strength": info.get("signal_strength"),
+            "timeout": min(DUAL_SHOT_ORDER_TIMEOUT, 90),
+            "allow_chase_on_timeout": False,
+            "chased_once": True,
+        }
+        logger.info(
+            f"📌 [逾時追價] {sym} {side} 結構錨定掛單逾時但訊號仍有效，"
+            f"改追對手價 {reprice:.6f} 再試一次 (ID: {order_id})"
+        )
+        return True
+    except Exception as e:
+        logger.info(f"⚠️ [逾時追價失敗] {sym}: {e}")
+        return False
+
+
 async def check_stale_limit_orders():
     """
     超時撤單機制 (Order Timeout Canceller)
@@ -2115,6 +2207,9 @@ async def check_stale_limit_orders():
             original_qty = info.get("qty", 0.0)
             max_wait_seconds = float(info.get("timeout", DUAL_SHOT_ORDER_TIMEOUT))
             should_cancel = elapsed > max_wait_seconds
+            # 只有「純粹逾時」(訊號沒失效、價格也沒跑掉)才有資格追價再試一次；
+            # 訊號失效或價格已反向偏離的這兩種情況，不應該追價硬進場。
+            chase_eligible = should_cancel
             cancel_reason = (
                 f"已掛單 {elapsed:.1f} 秒 > {max_wait_seconds:.0f}s"
                 if should_cancel else ""
@@ -2124,6 +2219,7 @@ async def check_stale_limit_orders():
                 setup_ok, setup_reason = _pending_entry_setup_valid(info)
                 if not setup_ok:
                     should_cancel = True
+                    chase_eligible = False
                     cancel_reason = f"進場訊號已失效: {setup_reason}"
 
             if not should_cancel:
@@ -2141,10 +2237,17 @@ async def check_stale_limit_orders():
                 )
                 if not adverse_ok:
                     should_cancel = True
+                    chase_eligible = False
                     cancel_reason = adverse_reason
 
             if not should_cancel:
                 continue
+
+            chase_eligible = (
+                chase_eligible
+                and info.get("allow_chase_on_timeout", False)
+                and not info.get("chased_once", False)
+            )
 
             cancel_ok = False
             filled_qty = 0.0
@@ -2191,15 +2294,19 @@ async def check_stale_limit_orders():
                         f"(原始預期: {original_qty:.4f})"
                     )
                 else:
-                    logger.info(
-                        f"🔄 [狀態重置] {sym} 限價單完全未成交 (filled=0)，"
-                        f"撤單後清除追蹤狀態，機器人重回 ACTIVE 掃描模式。"
-                    )
-                    if s.get('entry_count', 0) == 0 and abs(s.get('qty', 0.0)) < 1e-6:
-                        s["pending_side"] = None
-                        s["pending_time"] = 0
-                        s["last_entry_time"] = 0.0
-                        s["status"] = "ACTIVE"
+                    chased = False
+                    if chase_eligible and s.get('entry_count', 0) == 0 and abs(s.get('qty', 0.0)) < 1e-6:
+                        chased = await _chase_retry_pending_entry(info, sym, side, original_qty)
+                    if not chased:
+                        logger.info(
+                            f"🔄 [狀態重置] {sym} 限價單完全未成交 (filled=0)，"
+                            f"撤單後清除追蹤狀態，機器人重回 ACTIVE 掃描模式。"
+                        )
+                        if s.get('entry_count', 0) == 0 and abs(s.get('qty', 0.0)) < 1e-6:
+                            s["pending_side"] = None
+                            s["pending_time"] = 0
+                            s["last_entry_time"] = 0.0
+                            s["status"] = "ACTIVE"
 
             except Exception as pe:
                 logger.info(f"⚠️ [持倉同步失敗] {sym}: {pe}")

@@ -436,6 +436,7 @@ def reset_coin_state(sym):
     s["trailing_highest"] = 0.0
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
+    s["max_profit_reached"] = 0.0
     s["realtime_peak_candidate_price"] = 0.0
     s["realtime_peak_candidate_profit"] = 0.0
     s["realtime_peak_candidate_time"] = 0.0
