@@ -593,7 +593,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "qty": round(qty, 4),
         "slippage": round(total_slippage, 6),
         "friction_rate": round(friction_rate, 4),
-        "theoretical_profit": round((expected_exit - expected_entry)/expected_entry if expected_entry > 0 else 0.0, 4),
+        "theoretical_profit": round(((expected_exit - expected_entry)/expected_entry * (1.0 if str(s.get("side", "")).lower() == "buy" else -1.0)) if expected_entry > 0 else 0.0, 4),
         "ai_summary": summary,
         "ai_anomaly_tags": anomaly_tags,
         "ai_review_priority": min(100, len(anomaly_tags) * 25 + (25 if profit_pct < -0.01 else 0))
