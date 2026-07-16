@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = ("MA_Cross", "MA_Breakout", "MA25_Pullback")
 BTC_MACRO_MAX_AGE_SEC = 180.0
-BTC_MIXED_MIN_VOLUME_RATIO = 0.80
+BTC_MIXED_MIN_VOLUME_RATIO = 0.50
 
 
 def btc_macro_entry_guard(sym, side):
