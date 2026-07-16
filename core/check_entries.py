@@ -845,12 +845,5 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
         from core.entry_filter import is_ma_direction_aligned
         if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
-        ma7 = float(s.get("ma7", 0.0) or 0.0)
-        ma25 = float(s.get("ma25", 0.0) or 0.0)
-        ma99 = float(s.get("ma99", 0.0) or 0.0)
-        closed_price = float(s.get("ohlcv", [])[-2][4]) if len(s.get("ohlcv", [])) >= 2 else 0.0
-        if side == "buy" and not (closed_price > ma99 and ma7 > ma25):
-            return False, "多單不再符合 收盤價>MA99 且 MA7>MA25"
-        if side == "sell" and not (closed_price < ma99 and ma7 < ma25):
-            return False, "空單不再符合 收盤價<MA99 且 MA7<MA25"
+
     return True, "ok"
