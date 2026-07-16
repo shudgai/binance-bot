@@ -62,11 +62,9 @@ def _entry_structure_quality(sym, side, route, price):
 
     resistance = max(float(c[2]) for c in prior)
     support = min(float(c[3]) for c in prior)
-    # 使用者要求溫和放寬：原本 0.3%/0.8xATR 太嚴，實測正確訊號(如 MA25_Pullback
-    # 強度30的ETHUSDT多單)經常因為只差一點點空間被擋下，且同一根未收線K棒每次
-    # 輪詢都重複卡在這關，等於整段時間都開不了倉。收窄到 0.15%/0.4xATR，仍會擋
-    # 真正貼在天花板/地板的訊號，但放行原本只差一點點的邊緣案例。
-    min_room = max(price * 0.0015, atr * 0.4)
+    # 使用者要求溫和放寬：進一步放寬到 0.10%/0.25xATR，避免因為極度靠近的局部小支撐/阻力
+    # 而擋掉原本很好的回調進場機會。
+    min_room = max(price * 0.0010, atr * 0.25)
     max_breakout_extension = max(price * 0.0035, atr * 1.2)
     s["_entry_support"] = support
     s["_entry_resistance"] = resistance
@@ -298,9 +296,18 @@ async def check_entries():
 
     from core.config import ENTRY_STRICTNESS_MODE
     is_relaxed = (ENTRY_STRICTNESS_MODE == "relaxed")
+    
+    # 提前計算正在排隊進場的幣種，避免重複評估產生洗畫面日誌
+    inflight_symbols = {info.get("sym") for info in ctx.PENDING_LIMIT_ORDERS.values() if info.get("sym")}
+    inflight_symbols.update(symbol for symbol, st in ctx.STATES.items() if st.get("is_ordering") and abs(st.get("qty", 0.0)) <= 0.000001)
+
     candidates = []
     for sym in ctx.ALL_SYMBOLS:
         s = ctx.STATES[sym]
+
+        # 如果已經在下單中或有掛單，直接跳過重新評估
+        if sym in inflight_symbols:
+            continue
 
         # 幣種已被使用者停用，跳過所有進場（但不影響現有持倉的管理）
         if sym in disabled_syms:
