@@ -567,33 +567,46 @@ async def check_exits(sym):
             return
 
 
-        # 動態分級停利：目標距離用「進場當下 ATR」當基準（不是理論停利距離，那個
-        # 因為盈虧比下限被拉得太大，換算成%遠超這個策略真實的獲利峰值中位數
-        # 0.33%，套用下去等於永遠不會觸發）。獲利越大，本檔位要求的停利目標
-        # 也跟著放寬，讓已經證明自己是趨勢單的部位有機會繼續跑，不會在小獲利
-        # 就被這個機制提早了結；獲利還小的時候則用較低的目標，先落袋為安。
+        # 動態分級追蹤止盈 (Trailing Stop)：
+        # 先更新該倉位歷史最高利潤
+        max_profit = max(float(s.get("max_profit_reached", 0.0) or 0.0), profit_pct)
+        s["max_profit_reached"] = max_profit
+
         _dyn_tp_base = float(s.get("_dyn_tp_base_distance", 0.0) or 0.0)
         if _dyn_tp_base > 0 and avg > 0:
-            if profit_pct >= 0.010:
+            # 根據「最高利潤」所處的區間決定倍數
+            if max_profit >= 0.010:
                 _tp_tier_mult = 1.00
-            elif profit_pct >= 0.006:
+                _fallback_ratio = 0.6  # 獲利很大時，容忍 60% 的區間回撤
+            elif max_profit >= 0.006:
                 _tp_tier_mult = 0.75
-            elif profit_pct >= 0.004:
+                _fallback_ratio = 0.5  # 容忍 50% 的回撤
+            elif max_profit >= 0.004:
                 _tp_tier_mult = 0.55
+                _fallback_ratio = 0.4  # 容忍 40% 的回撤
             else:
                 _tp_tier_mult = 0.35
+                _fallback_ratio = 0.3  # 微利時，容忍 30% 的回撤 (見好就收)
+
             _dyn_tp_target_pct = (_dyn_tp_base * _tp_tier_mult) / avg
-            if profit_pct >= _dyn_tp_target_pct:
-                cs = "sell" if is_long else "buy"
-                logger.info(
-                    f"🎯 [Dynamic_TP_Tier] {sym} 獲利 {profit_pct*100:.2f}% 達到分級停利目標 "
-                    f"{_dyn_tp_target_pct*100:.2f}%（倍數 {_tp_tier_mult:.2f}x），獲利了結"
-                )
-                await close_position(
-                    sym, cs, abs(s["qty"]), p, avg,
-                    reason="[Dynamic_TP_Tier]", is_stop_loss=False,
-                )
-                return
+            
+            # 當「最高利潤」達到該檔位的啟動門檻，啟動追蹤止盈
+            if max_profit >= _dyn_tp_target_pct:
+                # 計算允許的最大回落空間 (相對於起點的比例)
+                _allowed_fallback = _dyn_tp_target_pct * _fallback_ratio
+                
+                # 如果當前利潤從最高點回落超過容忍度，就平倉
+                if (max_profit - profit_pct) >= _allowed_fallback:
+                    cs = "sell" if is_long else "buy"
+                    logger.info(
+                        f"🎯 [Dynamic_TP_Tier] {sym} 最高獲利達 {max_profit*100:.2f}% (門檻 {_dyn_tp_target_pct*100:.2f}%)，"
+                        f"回落超過容許值 {_allowed_fallback*100:.2f}%，追蹤止盈於 {profit_pct*100:.2f}%"
+                    )
+                    await close_position(
+                        sym, cs, abs(s["qty"]), p, avg,
+                        reason="[Dynamic_TP_Tier]", is_stop_loss=False,
+                    )
+                    return
 
         peak_lock_hit, peak_lock_price = update_ma_peak_lock(sym, p, is_long)
         if peak_lock_hit:
