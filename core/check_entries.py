@@ -796,7 +796,7 @@ async def check_entries():
         radar_direction = radar_profile.get("_radar_entry_direction", "none")
         radar_readiness = float(radar_profile.get("_radar_entry_readiness", 0.0) or 0.0)
         expected_side = "buy" if radar_direction == "long" else "sell" if radar_direction == "short" else None
-        if expected_side and radar_readiness >= 0.65 and side != expected_side:
+        if expected_side and radar_readiness >= 0.80 and side != expected_side:
             logger.info(f"🛑 [Final_Entry_Guard] {sym} 訊號 {side} 與雷達 {radar_direction} 不一致")
             continue
 
