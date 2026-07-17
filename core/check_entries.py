@@ -986,8 +986,8 @@ async def check_entries():
             remaining_slots -= 1
             if is_range_sig:
                 _range_slots_used += 1
-            logger.info(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
-            set_entry_diagnosis(f"{sym}: 準備立即開倉 ({route})")
+            logger.info(f"⚡ [即時開倉檢查] {sym} 觸發訊號 ({route} 路線)，準備送交交易所！")
+            set_entry_diagnosis(f"{sym}: 訊號通過，準備送單 ({route})")
         # 金字塔順勢加碼（has_pos 且同方向）已在上方「方向鎖定」區塊直接 continue 掉，
         # 不會有 has_pos=True 的候選走到這裡；execute_order() 那邊的無條件停用
         # （core/orders.py:1253）留著當防禦性保底，避免未來其他路徑意外繞過這裡。

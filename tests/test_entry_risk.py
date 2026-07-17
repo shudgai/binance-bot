@@ -22,6 +22,26 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
 
 
 class EntryRiskTests(unittest.TestCase):
+    def test_settling_contract_is_not_openable(self):
+        openable, reason = exchange_client._market_openability({
+            "active": False,
+            "contract": True,
+            "linear": True,
+            "info": {"status": "SETTLING"},
+        })
+        self.assertFalse(openable)
+        self.assertIn("SETTLING", reason)
+
+    def test_trading_linear_contract_is_openable(self):
+        openable, reason = exchange_client._market_openability({
+            "active": True,
+            "contract": True,
+            "linear": True,
+            "info": {"status": "TRADING"},
+        })
+        self.assertTrue(openable)
+        self.assertIn("TRADING", reason)
+
     def test_any_regular_cooldown_can_seek_early_reentry_but_ban_cannot(self):
         state = {"status": "COOLDOWN", "next_status_time": 2000.0,
                  "status_reason": "冷卻中 (30分鐘) - [小虧] [MA_Active_Risk_Stop]"}

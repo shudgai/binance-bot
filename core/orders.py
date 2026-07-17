@@ -12,7 +12,9 @@ from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SH
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
 ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
     ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER)
-from core.exchange_client import exchange_futures, exchange_market_data, sanitize_order_qty, get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price
+from core.exchange_client import (exchange_futures, exchange_market_data, sanitize_order_qty,
+    get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price,
+    get_contract_openability)
 from core.balance import get_balance, compute_per_coin_margin, accrue_daily_realized_pnl, get_total_wallet_balance
 import core.balance as _bal
 from core.state_manager import mark_exit, reset_coin_state, build_symbol_state
@@ -1469,6 +1471,15 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🛑 [InvalidEntrySide] {sym} 收到無效開倉方向 {side!r}，拒絕下單")
         return
     s = ctx.STATES[sym]
+    if not PAPER_TRADING and not is_rescue_dca:
+        openable, status_reason = await get_contract_openability(sym, exchange_futures)
+        if not openable:
+            s["order_fail_cooldown_until"] = time.time() + 300.0
+            logger.info(
+                f"🛑 [SymbolStatusGuard] {sym} 執行市場目前不可新增倉位"
+                f"（{status_reason}），取消送單並於 5 分鐘後重新確認"
+            )
+            return
     route_key = str(entry_route or "").lower()
     if not is_rescue_dca and route_key in MA_ENTRY_ROUTES:
         from core.entry_filter import btc_macro_entry_guard, is_ma_direction_aligned

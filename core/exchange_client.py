@@ -54,6 +54,8 @@ else:
 
 _PRECISION_CACHE = {}
 _LAST_WEIGHT_SAMPLE = None
+_INACTIVE_MARKET_RECHECK_AFTER = {}
+INACTIVE_MARKET_RECHECK_SEC = 300.0
 
 
 def convert_to_ccxt_symbol(symbol: str) -> str:
@@ -61,6 +63,52 @@ def convert_to_ccxt_symbol(symbol: str) -> str:
     if symbol.endswith("USDT"):
         return f"{symbol[:-4]}/USDT"
     return symbol
+
+
+def _market_openability(market: dict):
+    """Return whether an execution-market contract currently accepts new positions."""
+    if not isinstance(market, dict) or not market:
+        return False, "market metadata unavailable"
+    info = market.get("info") or {}
+    status = str(info.get("status") or "").upper()
+    if market.get("active") is False:
+        return False, f"status={status or 'inactive'}"
+    if status and status != "TRADING":
+        return False, f"status={status}"
+    if market.get("contract") is False or market.get("linear") is False:
+        return False, "not a USDT linear contract"
+    return True, f"status={status or 'active'}"
+
+
+async def get_contract_openability(sym: str, exchange=None):
+    """Check the account's execution venue rather than public market data."""
+    ex = exchange if exchange is not None else exchange_futures
+    markets = getattr(ex, "markets", None)
+    if markets is not None and not isinstance(markets, dict):
+        return True, "market metadata unsupported"
+    try:
+        if not markets:
+            await ex.load_markets()
+        market = ex.market(convert_to_ccxt_symbol(sym))
+        openable, reason = _market_openability(market)
+        if openable:
+            _INACTIVE_MARKET_RECHECK_AFTER.pop(sym, None)
+            return True, reason
+
+        now = time.time()
+        recheck_after = float(_INACTIVE_MARKET_RECHECK_AFTER.get(sym, 0.0) or 0.0)
+        if recheck_after and now >= recheck_after:
+            await ex.load_markets(True)
+            market = ex.market(convert_to_ccxt_symbol(sym))
+            openable, reason = _market_openability(market)
+        if openable:
+            _INACTIVE_MARKET_RECHECK_AFTER.pop(sym, None)
+        else:
+            _INACTIVE_MARKET_RECHECK_AFTER[sym] = now + INACTIVE_MARKET_RECHECK_SEC
+        return openable, reason
+    except Exception as exc:
+        # Metadata failure is not proof of delisting; create_order remains authoritative.
+        return True, f"market status check unavailable: {exc}"
 
 
 async def get_contract_precision(sym: str):
