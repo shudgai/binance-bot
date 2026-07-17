@@ -9,6 +9,8 @@ from core.state_manager import is_symbol_locked
 logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = ("MA_Cross", "MA_Breakout", "MA25_Pullback")
+RANGE_ENTRY_ROUTES = ("Range_Support_Long", "Range_Resistance_Short")
+ALL_ENTRY_ROUTES = MA_ENTRY_ROUTES + RANGE_ENTRY_ROUTES
 BTC_MACRO_MAX_AGE_SEC = 180.0
 BTC_MIXED_MIN_VOLUME_RATIO = 0.50
 
@@ -133,11 +135,51 @@ def has_strong_local_momentum_override(route, strength):
     return route in MA_ENTRY_ROUTES and float(strength) >= 25.0
 
 
+def is_range_direction_valid(sym, side, route):
+    """區間模式結構驗證：確認進場時支撐/壓力帶資料存在且方向正確。
+
+    做多（Range_Support_Long）：需要有識別到的支撐帶，且當前價格在支撐帶上方。
+    做空（Range_Resistance_Short）：需要有識別到的壓力帶，且當前價格在壓力帶下方。
+    這裡只做最後的位置驗證（進場前再確認一次），細緻的觸碰/收盤確認已在
+    compute_range_signal() 中完成。
+    """
+    s = ctx.STATES.get(sym)
+    if not s:
+        return False, "missing state"
+    price = float(s.get("close_price", 0.0) or 0.0)
+    if price <= 0:
+        return False, "invalid price"
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+
+    if route == "Range_Support_Long":
+        support = float(s.get("range_support_level", 0.0) or 0.0)
+        if support <= 0:
+            return False, "支撐帶資料已失效（state 未記錄）"
+        # 允許在 ATR×0.5 的範圍內輕微低於支撐帶（可能小幅跌破後回來）
+        tolerance = atr * 0.5 if atr > 0 else price * 0.005
+        if price < support - tolerance:
+            return False, f"現價 {price:.4f} 已跌穿支撐帶 {support:.4f} 過深，取消區間多單"
+        return True, "range_support_ok"
+
+    elif route == "Range_Resistance_Short":
+        resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
+        if resistance <= 0:
+            return False, "壓力帶資料已失效（state 未記錄）"
+        tolerance = atr * 0.5 if atr > 0 else price * 0.005
+        if price > resistance + tolerance:
+            return False, f"現價 {price:.4f} 已突破壓力帶 {resistance:.4f} 過深，取消區間空單"
+        return True, "range_resistance_ok"
+
+    return False, f"非區間路由：{route}"
+
+
 def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
-    """MA-only final entry guard; RSI, MACD and Bollinger never affect this decision."""
+    """MA-only and Range final entry guard."""
     s = ctx.STATES[sym]
-    if route not in MA_ENTRY_ROUTES:
-        logger.info(f"🛑 [MA_ONLY] {sym} 拒絕已刪除的非 MA 路由：{route}")
+    is_ma_route = route in MA_ENTRY_ROUTES
+    is_range_route = route in RANGE_ENTRY_ROUTES
+    if not is_ma_route and not is_range_route:
+        logger.info(f"🛑 [ROUTE_BLOCK] {sym} 拒絕未知路由：{route}")
         return False
     if side not in ("buy", "sell") or s.get("status") != "ACTIVE":
         return False
@@ -151,7 +193,34 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
     if len(candles) < 2:
         return False
     closed_price = float(candles[-2][4])
-    ma7 = float(s.get("ma7", 0.0) or 0.0)
+
+    # ── 區間路由：使用區間專屬驗證，不要求 MA 三線排列 ──
+    if is_range_route:
+        range_ok, range_reason = is_range_direction_valid(sym, side, route)
+        if not range_ok:
+            logger.info(f"🛑 [Range_Direction] {sym} {range_reason}")
+            return False
+        # 量能最低門檻（區間模式也需要一定參與度）
+        if not is_entry_volume_confirmed(sym, side):
+            logger.info(f"🛑 [Range_Volume] {sym} {route} 已收線成交量不足")
+            return False
+        # 影線過長檢查（避免被假突破吸引）
+        if not is_entry_pin_safe(sym, side):
+            logger.info(f"🛑 [Range_Wick] {sym} 反向影線過長，取消 {route}")
+            return False
+        atr = float(s.get("current_atr", 0.0) or 0.0)
+        if atr > 0 and len(candles) >= 3:
+            reference = float(candles[-3][4])
+            adverse = (reference - closed_price) if side == "buy" else (closed_price - reference)
+            if adverse >= atr * 2.0:
+                s["crash_cooldown_until"] = time.time() + 900
+        if time.time() < float(s.get("crash_cooldown_until", 0.0) or 0.0):
+            logger.info(f"🛑 [Range_AdverseMove] {sym} 近期逆向波動過大，等待冷卻")
+            return False
+        return True
+
+    # ── MA 路由：原有邏輯 ──
+    ma7  = float(s.get("ma7",  0.0) or 0.0)
     ma25 = float(s.get("ma25", 0.0) or 0.0)
     ma99 = float(s.get("ma99", 0.0) or 0.0)
     if min(closed_price, ma7, ma25, ma99) <= 0:

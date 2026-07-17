@@ -26,6 +26,19 @@ DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
 DISABLE_MA_BREAKOUT = True
 
+# ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────
+# 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
+# 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
+RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
+RANGE_ADX_THRESHOLD = 25.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）
+RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
+RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
+RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
+RANGE_MIN_NET_PROFIT_PCT = 0.008    # 扣手續費後最低獲利空間 0.8%（防手續費侵蝕）
+RANGE_MAX_SLOTS = 1                 # 區間模式最多佔幾個槽位（保留空間給 MA 策略）
+RANGE_MIN_SIGNAL_STRENGTH = 18.0    # 區間模式最低信號強度（高於 MA 的 15，補償結構較弱）
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 # (本金上限[USDT], 該階段槽位數)，由小到大排序；本金落在哪一段的上限之內
 # 就用那一段的槽位數，超過最後一段（1000）則沿用最後一段的槽位數。

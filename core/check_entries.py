@@ -15,7 +15,7 @@ from core.indicators import (_get_atr, calculate_ema, calculate_macd,
 from core.balance import is_daily_loss_halted
 import core.balance as _bal
 from core.state_manager import get_open_position_count, reset_coin_state
-from core.signal_engine import compute_signal_strength, _load_disabled_symbols
+from core.signal_engine import compute_signal_strength, _load_disabled_symbols, compute_range_signal
 from core.entry_filter import btc_macro_entry_guard, is_entry_allowed
 from services.bot_manager_service import set_entry_diagnosis
 
@@ -24,6 +24,82 @@ logger = logging.getLogger(__name__)
 _TRADE_HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 _LOSS_HISTORY_CACHE_MTIME = None
 _LOSS_HISTORY_CACHE = {}
+COOLDOWN_REENTRY_TOTAL_CONFIRMATIONS = 3
+COOLDOWN_REENTRY_RAPID_RECHECKS = 2
+COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC = 1.0
+
+
+def _is_confirmable_exit_cooldown(state, now=None):
+    """Any ordinary cooldown may be released after one full pass and two rapid rechecks."""
+    now = float(time.time() if now is None else now)
+    return (
+        state.get("status") == "COOLDOWN"
+        and now < float(state.get("next_status_time", 0.0) or 0.0)
+    )
+
+
+async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=None, interval=None):
+    """After one full pass, repeat all time-sensitive entry guards twice quickly."""
+    checks = int(COOLDOWN_REENTRY_RAPID_RECHECKS if checks is None else checks)
+    interval = float(COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC if interval is None else interval)
+    from core.symbol_profile import SYMBOL_PROFILES
+    for attempt in range(1, checks + 1):
+        if interval > 0:
+            await asyncio.sleep(interval)
+        s = ctx.STATES.get(sym, {})
+        if not _is_confirmable_exit_cooldown(s):
+            return False, "cooldown state changed"
+        if abs(float(s.get("qty", 0.0) or 0.0)) > 0.000001:
+            return False, "position already exists"
+
+        fresh_signal = compute_signal_strength(sym, realtime_trigger=True)
+        if not fresh_signal or fresh_signal[0] != side or fresh_signal[2] != route:
+            return False, f"signal changed on rapid check {attempt}"
+        fresh_strength = float(fresh_signal[1] or 0.0)
+
+        radar_profile = SYMBOL_PROFILES.get(sym, {})
+        if radar_profile and not bool(radar_profile.get("_trade_eligible", False)):
+            return False, f"radar eligibility lost on rapid check {attempt}"
+        macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
+        if not macro_ok:
+            return False, macro_reason
+        funding_ok, funding_reason = await _funding_rate_guard(sym, side)
+        if not funding_ok:
+            return False, funding_reason
+        ma_ok, ma_reason = is_entry_candidate_still_valid(
+            sym, side, route, fresh_strength, float(s.get("close_price", 0.0) or 0.0),
+        )
+        if not ma_ok:
+            return False, ma_reason
+        if not is_entry_allowed(sym, side, route, fresh_strength):
+            return False, f"entry filter failed on rapid check {attempt}"
+
+        price = float(s.get("close_price", 0.0) or 0.0)
+        if price <= 0:
+            return False, "invalid live price"
+        _, _, tp_dist, latest_rr = _calc_sl_tp(sym, side, s, price, route)
+        rr_floor = 1.1 if fresh_strength > 14.0 else (1.2 if fresh_strength > 12.0 else s.get("min_rr", 1.2))
+        profit_room = tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
+        if latest_rr < rr_floor or profit_room < 0.008:
+            return False, f"RR or profit room failed on rapid check {attempt}"
+        quality_ok, quality_reason, _ = _ma_candidate_quality(
+            sym, side, fresh_strength, route, price,
+        )
+        if not quality_ok:
+            return False, quality_reason
+    return True, "three confirmations passed"
+
+
+def _release_confirmed_exit_cooldown(sym, state):
+    state["status"] = "ACTIVE"
+    state["next_status_time"] = 0.0
+    state["status_reason"] = ""
+    state["cooldown_reentry_eligible"] = False
+    state["cooldown_reentry_confirm_count"] = 0
+    state["cooldown_reentry_confirm_key"] = ""
+    state["cooldown_reentry_last_pass_scan"] = 0
+    from core.cooldown_store import clear_cooldown
+    clear_cooldown(sym)
 
 
 def _calculate_correlation(klines_a, klines_b, limit=6):
@@ -313,7 +389,8 @@ async def check_entries():
         if sym in disabled_syms:
             continue
 
-        if s["status"] != "ACTIVE":
+        confirmable_cooldown = _is_confirmable_exit_cooldown(s)
+        if s["status"] != "ACTIVE" and not confirmable_cooldown:
             continue
 
         has_position = abs(s["qty"]) > 0.000001
@@ -343,10 +420,22 @@ async def check_entries():
 
         # 原本的計算邏輯
         side_strength = compute_signal_strength(sym, realtime_trigger=True)
+        is_range_signal = False
         if side_strength is None or side_strength[0] is None:
-            block_reason = s.get("entry_block_reason") or "暫無有效訊號"
-            set_entry_diagnosis(f"{sym}: {block_reason}")
-            continue
+            # MA 訊號無效時，嘗試區間模式
+            from core.config import RANGE_MODE_ENABLED, RANGE_MIN_SIGNAL_STRENGTH
+            if RANGE_MODE_ENABLED:
+                side_strength = compute_range_signal(sym)
+                if side_strength is not None and side_strength[0] is not None:
+                    is_range_signal = True
+                else:
+                    block_reason = s.get("entry_block_reason") or "暫無有效訊號"
+                    set_entry_diagnosis(f"{sym}: {block_reason}")
+                    continue
+            else:
+                block_reason = s.get("entry_block_reason") or "暫無有效訊號"
+                set_entry_diagnosis(f"{sym}: {block_reason}")
+                continue
         side, strength, route = side_strength
 
         macro_ok, macro_reason, macro_mode = btc_macro_entry_guard(sym, side)
@@ -367,10 +456,6 @@ async def check_entries():
         # [Layer 0] 每幣種最低信號強度門檻
         profile = get_entry_strictness_profile()
         coin_profile_min_sig = COIN_PROFILE_CONFIG.get(sym, DEFAULT_NEW_COIN_PROFILE).get("min_signal_strength", 20.0)
-        # 原本用 min() 取兩者較低的門檻，等於嚴格模式的全域門檻(15.0)永遠蓋掉個別幣種
-        # 特別調高的門檻（今天稍早才把主力幣/新幣門檻拉高到 18~24，min() 卻讓實際生效
-        # 門檻一直卡在 15.0，等於那次調整從未真正生效）。改成 max()，兩個門檻都當作
-        # 下限，用較嚴格的那個，個別幣種調高的門檻才會真正生效。
         min_sig = max(coin_profile_min_sig, profile.get("min_signal_strength", 10.0))
         # 當整體環境處於寬鬆模式時，我們應該真的放寬個別幣種的門檻，而不是卡死在 max()
         if profile.get("min_signal_strength", 15.0) < 15.0:
@@ -381,9 +466,15 @@ async def check_entries():
         # 今天實測 AVAX/TRX/DOT/WLD/LINK 好幾筆都是這個情況：峰值都在 0.5% 以下就陰跌
         # 打平出場。盤整期間拉高門檻，減少這種訊號品質不足以撐過盤整雜訊的進場。
         if ctx.MARKET_WIND.get("is_ranging"):
-            min_sig += 5.0
+            # 區間模式本來就是為盤整設計的，不額外加重門檻
+            if not is_range_signal:
+                min_sig += 5.0
         if macro_mode == "MIXED":
             min_sig += 3.0
+        # 區間模式使用專屬最低強度門檻（不被幣種 profile 或全域首這降低）
+        if is_range_signal:
+            from core.config import RANGE_MIN_SIGNAL_STRENGTH
+            min_sig = max(min_sig, RANGE_MIN_SIGNAL_STRENGTH)
         if strength < min_sig:
             set_entry_diagnosis(f"{sym}: 強度 {strength:.1f} < 門檻 {min_sig:.1f}")
             continue
@@ -463,6 +554,13 @@ async def check_entries():
                         set_entry_diagnosis(f"{sym}: 量價不協同，放棄進場")
                         continue
                     logger.info(f"⚡ [VOLUME_OVERRIDE] {sym} 強度 {strength:.1f} 且量能達均量 0.45x，允許進場")
+            elif is_range_signal:
+                # 區間模式：只做流動性最低門檻檢查，不要求量能爆發（區間交易量通常較低）
+                if not liquidity_check:
+                    s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
+                    logger.info(f"🛑 [Range_LOW_LIQ] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
+                    set_entry_diagnosis(f"{sym}: 流動性不足，放棄區間進場")
+                    continue
 
         s["low_participation_streak"] = 0
         _force_close_confirmation = False
@@ -474,7 +572,8 @@ async def check_entries():
             set_entry_diagnosis(f"{sym}: 即時波動不足，放棄進場")
             continue
 
-        logger.info(f"✅ [MA_RISK_PASS] {sym}: {side} MA 與通用風控通過 (Route: {route})")
+        _route_label = "Range" if is_range_signal else "MA"
+        logger.info(f"✅ [{_route_label}_RISK_PASS] {sym}: {side} {_route_label} 與通用風控通過 (Route: {route})")
         logger.info(f"🧭 [ENTRY_GATE] {sym} 進入最後進場檢查 | side={side} route={route} strength={strength:.2f}")
 
         # 已有持倉只由 MA 生命週期與硬停損管理，不建立反手新倉。
@@ -540,38 +639,24 @@ async def check_entries():
                 logger.info(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
                 continue
 
-        # --- R:R 盈虧比過濾 (Risk:Reward Filter) ---
-        # 使用者先前要求增加開倉次數，門檻從 1.5/1.2/1.3 下修到 1.3/1.0/1.1；後來發現
-        # 邊緣訊號進場後常常原地打轉、最高獲利很小就打平/小虧出場，要求拉回一點，
-        # 犧牲一些開倉次數換單筆品質，改成 1.4/1.1/1.2（介於原始與寬鬆之間）。
-        atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-        # base_rr_thresh 維持 1.2，搭配強訊號分級門檻；停利改為全倉管理後，
-        # 此處只負責進場品質，不再假設有前半倉先行落袋。
-        base_rr_thresh = s.get("min_rr", 1.2)
-
-        # 使用者反映現在幾乎完全開不了倉：實測訊號強度大多落在 15~26，strength>20 才給
-        # 最寬鬆 1.1 門檻的話，大部分訊號還是卡在 base_rr_thresh(1.4)~2.0。放寬斷點到
-        # >14/>12，讓目前實際出現的訊號強度範圍也能吃到比較寬鬆的 R:R 門檻。
-        rr_thresh = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else base_rr_thresh)
-        if base_rr_thresh >= 2.0:
-            rr_thresh = base_rr_thresh
-
-        if expected_rr < rr_thresh:
-            logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
-            continue
-
-        expected_profit_pct = (tp_dist / p if p > 0 else 0) - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
-        if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:
-            logger.info(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，無法覆蓋手續費與滑點，放棄暫存")
-            continue
-
-        # 絕對獲利空間硬門檻 (MinProfit Hard Gate)
-        # 防止在極低波動（ATR 極小）時進場。原本 1.5%，使用者反映現在幾乎開不了倉，
-        # 降到 0.8%（防止過低波動進場的用意還在，只是門檻沒那麼高）。
-        _HARD_MIN_PROFIT_PCT = 0.008  # 0.8% 硬門檻
-        if expected_profit_pct < _HARD_MIN_PROFIT_PCT:
-            logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
-            continue
+        # --- R:R 盈虧比過濾 (Risk:Reward Filter)：只對 MA 路由做 ATR RR 計算 ---
+        if not is_range_signal:
+            atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
+            base_rr_thresh = s.get("min_rr", 1.2)
+            rr_thresh = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else base_rr_thresh)
+            if base_rr_thresh >= 2.0:
+                rr_thresh = base_rr_thresh
+            if expected_rr < rr_thresh:
+                logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
+                continue
+            expected_profit_pct = (tp_dist / p if p > 0 else 0) - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
+            if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:
+                logger.info(f"⚠️ [獲利空間過濾] {sym} 預期潛在利潤過小 ({expected_profit_pct*100:.2f}% < {DUAL_SHOT_MIN_PROFIT_ROOM*100:.1f}%)，無法覆蓋手續費與滑點，放棄暫存")
+                continue
+            _HARD_MIN_PROFIT_PCT = 0.008
+            if expected_profit_pct < _HARD_MIN_PROFIT_PCT:
+                logger.info(f"🛑 [Filter:MinProfit_Hard] {sym} 預期獲利僅 {expected_profit_pct*100:.2f}%，遠低於 {_HARD_MIN_PROFIT_PCT*100:.1f}% 硬門檻，拒絕進場")
+                continue
 
         # --- Flip Buffer: 防止快速反手 ---
         last_entry_time = s.get("last_entry_time", 0.0)
@@ -591,7 +676,7 @@ async def check_entries():
         s["entry_reason"] = route
         from core.entry_reason_store import save_entry_reason
         save_entry_reason(sym, route)
-        candidates.append((sym, side, strength, route))
+        candidates.append((sym, side, strength, route, is_range_signal))
         continue
 
 
@@ -600,11 +685,12 @@ async def check_entries():
 
     # 候選可能來自上一根 K 的 pending 或回踩佇列；下單前重新驗證最新狀態。
     from core.symbol_profile import SYMBOL_PROFILES
+    from core.entry_filter import RANGE_ENTRY_ROUTES
     validated_candidates = []
-    for sym, side, strength, route in candidates:
+    for sym, side, strength, route, is_range_sig in candidates:
         s = ctx.STATES[sym]
         radar_profile = SYMBOL_PROFILES.get(sym, {})
-        if s.get("status") != "ACTIVE":
+        if s.get("status") != "ACTIVE" and not _is_confirmable_exit_cooldown(s):
             continue
         if abs(s.get("qty", 0.0)) > 0.000001:
             continue
@@ -617,23 +703,71 @@ async def check_entries():
         if expected_side and radar_readiness >= 0.65 and side != expected_side:
             logger.info(f"🛑 [Final_Entry_Guard] {sym} 訊號 {side} 與雷達 {radar_direction} 不一致")
             continue
-        if route not in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
-            logger.info(f"🛑 [Final_Entry_Guard] {sym} 非 MA 路由已停用：{route}")
+
+        # 路由白名單：MA 路由和區間路由都允許
+        allowed_routes = ("MA_Cross", "MA_Breakout", "MA25_Pullback") + tuple(RANGE_ENTRY_ROUTES)
+        if route not in allowed_routes:
+            logger.info(f"🛑 [Final_Entry_Guard] {sym} 未知路由：{route}")
             continue
-        ma_valid, ma_reason = is_entry_candidate_still_valid(sym, side, route, strength, s.get("close_price", 0.0))
-        if not ma_valid:
-            logger.info(f"🛑 [Final_Entry_Guard] {sym} MA 結構已失效：{ma_reason}")
-            continue
+
+        if not is_range_sig:
+            # MA 路由：轉迭驗證 MA 結構
+            ma_valid, ma_reason = is_entry_candidate_still_valid(sym, side, route, strength, s.get("close_price", 0.0))
+            if not ma_valid:
+                logger.info(f"🛑 [Final_Entry_Guard] {sym} MA 結構已失效：{ma_reason}")
+                continue
+        else:
+            # 區間路由：重新驗證支撐/壓力帶位置是否仍然有效
+            from core.entry_filter import is_range_direction_valid
+            range_still_ok, range_still_reason = is_range_direction_valid(sym, side, route)
+            if not range_still_ok:
+                logger.info(f"🛑 [Final_Entry_Guard] {sym} 區間結構已失效：{range_still_reason}")
+                continue
+
         if not is_entry_allowed(sym, side, route, strength):
             continue
         price = float(s.get("close_price", 0.0) or 0.0)
         if price <= 0:
             continue
+
+        # RR 驗證與獲利空間
         _, _, tp_dist, latest_rr = _calc_sl_tp(sym, side, s, price, route)
         rr_floor = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else s.get("min_rr", 1.2))
-        if (latest_rr < rr_floor or (tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)) < 0.008):
-            logger.info(f"[Final_Entry_Guard] {sym} latest RR or profit room insufficient")
-            continue
+        if not is_range_sig:
+            if (latest_rr < rr_floor or (tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)) < 0.008):
+                logger.info(f"[Final_Entry_Guard] {sym} latest RR or profit room insufficient")
+                continue
+        else:
+            # 區間模式：用區間實際幅度計算 RR 和淨獲利空間
+            support    = float(s.get("range_support_level",    0.0) or 0.0)
+            resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
+            atr        = float(s.get("current_atr", 0.0) or 0.0)
+            from core.config import RANGE_MIN_NET_PROFIT_PCT, TAKER_FEE_RATE
+            if support > 0 and resistance > 0:
+                if side == "buy":
+                    range_tp = resistance - price * 0.0005  # 壓力帶內側 0.05% 緩衝
+                    range_sl = support - atr * 0.5
+                else:
+                    range_tp = support + price * 0.0005    # 支撐帶內側 0.05% 緩衝
+                    range_sl = resistance + atr * 0.5
+                range_tp_dist = abs(range_tp - price)
+                range_sl_dist = abs(range_sl - price)
+                range_net_pct = range_tp_dist / price - TAKER_FEE_RATE * 2
+                if range_net_pct < RANGE_MIN_NET_PROFIT_PCT:
+                    logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {RANGE_MIN_NET_PROFIT_PCT*100:.1f}%")
+                    continue
+                range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
+                if range_rr < 1.0:
+                    logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < 1.0")
+                    continue
+                # 寫入進場時預先計算好的區間出場價位到 state
+                s["range_tp_price"] = range_tp
+                s["range_sl_price"] = range_sl
+                logger.info(
+                    f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} | "
+                    f"TP={range_tp:.4f} SL={range_sl:.4f} net={range_net_pct*100:.2f}%"
+                )
+
         cooldown = float(COIN_PROFILE_CONFIG.get(sym, {}).get("loss_reentry_cooldown_sec", DEFAULT_LOSS_REENTRY_COOLDOWN_SEC) or 0.0)
         loss_time = get_last_same_side_loss_time(
             sym, side, s.get("last_loss_time_long" if side == "buy" else "last_loss_time_short", 0.0)
@@ -641,12 +775,18 @@ async def check_entries():
         if cooldown > 0 and loss_time > 0 and time.time() - loss_time < cooldown:
             logger.info(f"🛑 [Final_Entry_Guard] {sym} 同方向虧損冷卻仍有效")
             continue
-        quality_ok, quality_reason, quality_score = _ma_candidate_quality(sym, side, strength, route, price)
-        if not quality_ok:
-            logger.info(f"🛑 [Entry_Structure_Guard] {sym} {quality_reason}，放棄進場")
-            continue
-        s["_entry_quality_score"] = quality_score
-        validated_candidates.append((sym, side, strength, route))
+
+        if not is_range_sig:
+            quality_ok, quality_reason, quality_score = _ma_candidate_quality(sym, side, strength, route, price)
+            if not quality_ok:
+                logger.info(f"🛑 [Entry_Structure_Guard] {sym} {quality_reason}，放棄進場")
+                continue
+            s["_entry_quality_score"] = quality_score
+        else:
+            # 區間模式的品質分：直接使用區間訊號強度作為排序依據
+            s["_entry_quality_score"] = strength
+
+        validated_candidates.append((sym, side, strength, route, is_range_sig))
 
     candidates = validated_candidates
     if not candidates:
@@ -657,36 +797,51 @@ async def check_entries():
         x[0]
     ))
 
-    # The former range lane is removed: all three capital slots now belong to this MA strategy.
+    # MA 路由與區間路由共用同一組槽位，區間模式另外套用自己的上限。
     inflight_symbols = {info.get("sym") for info in ctx.PENDING_LIMIT_ORDERS.values() if info.get("sym")}
     inflight_symbols.update(sym for sym, st in ctx.STATES.items() if st.get("is_ordering") and abs(st.get("qty", 0.0)) <= 0.000001)
     ma_capacity = max(0, 3 - open_count - len(inflight_symbols))
     remaining_slots = ma_capacity
     if remaining_slots <= 0:
         return
-    logger.info(f"📊 [品質排行] {' | '.join(f'{sym}:{side}(品質={ctx.STATES[sym].get('_entry_quality_score', 0.0):.2f}, 訊號={strength:.2f})' for sym, side, strength, _ in candidates[:3])}")
 
-    # 資金分配比例（raw_ratio）原本用「本輪全部候選訊號」的強度總和當分母，但槽位數
-    # 有限（remaining_slots），本輪候選常常遠多於實際會被派發的數量——實測同一輪出現
-    # 13 個賣出候選、槽位只剩 3 個，ADA/DOT/AVAX 強度都到 31~32（很強），分到的比例
-    # 卻被其餘 10 個「根本不會真的開倉」的候選一起拉低到只剩 11%，資金被稀釋到跟強度
-    # 完全不成比例。改成只用「實際會被派發的前 remaining_slots 名」（candidates 已經
-    # 依強度排序）當分母，讓分配比例真正反映這批「會開倉的訊號」之間的相對強弱，不被
-    # 陪榜、根本拿不到槽位的候選稀釋。
+    # 區間模式槽位計數：現有區間倉位數 + 正在下單的區間倉位數
+    from core.config import RANGE_MAX_SLOTS
+    _range_open_count = sum(
+        1 for sym in ctx.ALL_SYMBOLS
+        if abs(ctx.STATES[sym].get("qty", 0.0)) > 0.000001
+        and ctx.STATES[sym].get("entry_reason", "") in ("Range_Support_Long", "Range_Resistance_Short")
+    )
+    _range_inflight = sum(
+        1 for _sym, st in ctx.STATES.items()
+        if st.get("is_ordering") and st.get("pending_side") is not None
+        and st.get("entry_reason", "") in ("Range_Support_Long", "Range_Resistance_Short")
+    )
+    _range_slots_used = _range_open_count + _range_inflight
+
+    _qual_desc = []
+    for _c in candidates[:3]:
+        _sym, _side, _str, _rt, _ir = _c
+        _score = ctx.STATES[_sym].get("_entry_quality_score", 0.0)
+        _qual_desc.append(f"{_sym}:{_side}(品質={_score:.2f}, 訊號={_str:.2f})")
+    logger.info(f"📊 [品質排行] {' | '.join(_qual_desc)}")
+
+    # 資金分配：只用實際會被派發的前 remaining_slots 名當分母
     _weight_pool = candidates[:remaining_slots] if remaining_slots > 0 else candidates
-    total_weight = sum(strength for _, _, strength, _ in _weight_pool)
+    total_weight = sum(strength for _, _, strength, _, _ in _weight_pool)
 
-    for sym, side, strength, route in candidates:
+    for sym, side, strength, route, is_range_sig in candidates:
         if remaining_slots <= 0:
             break
         s = ctx.STATES[sym]
         has_pos = abs(s["qty"]) > 0.000001
 
         if not has_pos:
-            # 使用者要求移除「機會成本輪替」：原本槽位滿了會找一個已經停滯夠久、
-            # 獲利卻不再往上走的舊倉位平倉讓位給更強新訊號，但這會把還在正常發展、
-            # 只是還沒繼續創新高的獲利倉位提早平倉。現在槽位滿了就單純跳過這個候選，
-            # 交給既有的停損/停利/停滯超時機制自然決定舊倉位何時該出場。
+            # 區間模式超額槽位保護：已使用區間槽位數達到上限時，拒絕新的區間進場
+            if is_range_sig and _range_slots_used >= RANGE_MAX_SLOTS:
+                logger.info(f"⏳ [Range Slots Cap] {sym} 區間模式槽位已滿 ({_range_slots_used}/{RANGE_MAX_SLOTS})，略過進場")
+                continue
+
             if remaining_slots <= 0:
                 continue
 
@@ -733,7 +888,24 @@ async def check_entries():
                     logger.info(f"🧭 [方向集中度風控] {sym} 目前已有 {_same_dir_count} 筆同方向({side})倉位 >= 上限 {_MAX_SAME_DIRECTION}，{_reason}，且強度 {strength:.1f} < {_DIRECTION_OVERRIDE_STRENGTH}，放棄本次訊號以分散風險")
                     continue
 
+            if _is_confirmable_exit_cooldown(s):
+                logger.info(f"🔁 [冷卻快速複核] {sym} 首次完整流程通過，開始兩次即時複核")
+                confirmed, confirm_reason = await _rapid_reconfirm_cooldown_entry(
+                    sym, side, route, strength,
+                )
+                if not confirmed:
+                    logger.info(f"🛑 [冷卻複核失敗] {sym} 不提前開倉：{confirm_reason}")
+                    set_entry_diagnosis(f"{sym}: 冷卻快速複核失敗 - {confirm_reason}")
+                    continue
+                _release_confirmed_exit_cooldown(sym, s)
+                logger.info(
+                    f"✅ [冷卻提前解除] {sym} {side} {route} 約 2 秒內三次確認完整條件，"
+                    f"包含 MA7／MA25／MA99，允許重新開倉"
+                )
+
             remaining_slots -= 1
+            if is_range_sig:
+                _range_slots_used += 1
             logger.info(f"⚡ [即時開倉] {sym} 觸發訊號 ({route} 路線)，即刻首倉進場！")
             set_entry_diagnosis(f"{sym}: 準備立即開倉 ({route})")
         # 金字塔順勢加碼（has_pos 且同方向）已在上方「方向鎖定」區塊直接 continue 掉，
@@ -852,5 +1024,13 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
         from core.entry_filter import is_ma_direction_aligned
         if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
+
+    # 掛單／送單前必須維持與初次訊號完全相同的 RSI 動能門檻。舊版放寬到多單
+    # RSI>=50、空單 RSI<=50，會讓原本已失效、回到中性區的 MA_Cross 仍然成交。
+    current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
+    if side == "buy" and current_rsi < 51.0:
+        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 51)"
+    if side == "sell" and current_rsi > 49.0:
+        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 49)"
 
     return True, "ok"

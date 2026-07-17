@@ -57,7 +57,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
     short_stack = ma7 < ma25 and ma7 < prev_ma7 and ma25 <= prev_ma25
 
-    # 建立即時強勢判定
+    # 即時量只用來確認當下價格方向；MA 策略的參與度門檻必須使用訊號 K 棒的已收線量。
+    # 否則新 K 棒剛開始時 vol_surge 接近 0 會誤擋有效訊號，也可能被未收線瞬時量誤放行。
     is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
 
     # MA_Cross 沒有像 pullback/breakout 那樣的 long_spreading/short_spreading（gap
@@ -81,10 +82,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     # 交叉路線
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
-                  and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70
+                  and (candle_close > candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi < 70
                   and rsi_momentum_long_ok and not is_flat_chop)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
-                   and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30
+                   and (candle_close < candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi > 30
                    and rsi_momentum_short_ok and not is_flat_chop)
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
@@ -92,10 +93,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     # 回調路線
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
-                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi < 70
+                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi < 70
                      and rsi_momentum_long_ok)
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
-                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and vol_surge >= base_limit and current_rsi > 30
+                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi > 30
                       and rsi_momentum_short_ok)
 
     from core.config import DISABLE_MA_BREAKOUT
@@ -107,10 +108,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
         prior_low = min(float(c[3]) for c in prior)
         # 突破路線
         breakout_long = (long_spreading and long_stack and candle_close > prior_high
-                         and (candle_close > candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi < 70
+                         and (candle_close > candle_open or is_realtime_strong) and volume_ratio >= breakout_limit and current_rsi < 70
                          and rsi_momentum_long_ok)
         breakout_short = (short_spreading and short_stack and candle_close < prior_low
-                          and (candle_close < candle_open or is_realtime_strong) and vol_surge >= breakout_limit and current_rsi > 30
+                          and (candle_close < candle_open or is_realtime_strong) and volume_ratio >= breakout_limit and current_rsi > 30
                           and rsi_momentum_short_ok)
 
     if cross_long or cross_short:
@@ -120,8 +121,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
     elif pullback_long or pullback_short:
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
     else:
-        if vol_surge < base_limit:
-            reason = f"量能過低（Surge={vol_surge:.2f}x < {base_limit:.2f}x, 個性={personality}），暫停交易"
+        if volume_ratio < base_limit:
+            reason = f"已收線量能過低（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x, 個性={personality}），暫停交易"
         elif is_flat_chop and (golden_cross or death_cross):
             reason = "MA7／MA25 平走交織，屬盤整假訊號區"
         # 應使用者要求解封：拔除逆勢過濾器，允許積極搶短與提早下注（僅保留上面的
@@ -152,6 +153,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
     return (side, strength, route)
 
 
+
 # Legacy RSI/MACD/BB entry routes were removed when the MA lifecycle became authoritative.
 
 def _load_disabled_symbols():
@@ -161,3 +163,193 @@ def _load_disabled_symbols():
         return {s.upper().replace(":USDT", "USDT") for s in data.get("disabled", [])}
     except Exception:
         return set()
+
+
+def _find_horizontal_zones(candles, atr, lookback, min_touches, tolerance_atr):
+    """在已收盤 K 棒中找水平支撐帶與壓力帶。
+
+    演算法：
+    1. 收集所有已收盤 K 棒的低點（支撐候選）和高點（壓力候選）。
+    2. 以 ATR × tolerance_atr 為群聚半徑，把接近的價位合併為「水平帶」。
+    3. 過濾掉觸碰次數 < min_touches 的帶（太少觸碰 = 未確認支撐/壓力）。
+    4. 回傳 (最強支撐帶中心, 最強壓力帶中心)，無則回傳 None。
+
+    Args:
+        candles: 已收盤 K 棒列表（不含當前未收盤那根）
+        atr: 當前 ATR
+        lookback: 最多往回看幾根
+        min_touches: 確認水平帶的最低觸碰次數
+        tolerance_atr: 群聚半徑（ATR 倍數）
+
+    Returns:
+        (support_center, resistance_center)，找不到時為 None
+    """
+    if not candles or atr <= 0:
+        return None, None
+
+    recent = candles[-lookback:] if len(candles) >= lookback else candles
+    lows  = [float(c[3]) for c in recent]
+    highs = [float(c[2]) for c in recent]
+    band  = atr * tolerance_atr
+
+    def cluster(prices):
+        """把相近價位聚合成帶，回傳 (中心價, 觸碰次數) 的列表。"""
+        if not prices:
+            return []
+        sorted_p = sorted(prices)
+        groups = []
+        current = [sorted_p[0]]
+        for p in sorted_p[1:]:
+            if p - current[0] <= band:
+                current.append(p)
+            else:
+                groups.append(current)
+                current = [p]
+        groups.append(current)
+        return [(sum(g) / len(g), len(g)) for g in groups]
+
+    support_clusters    = [(c, t) for c, t in cluster(lows)  if t >= min_touches]
+    resistance_clusters = [(c, t) for c, t in cluster(highs) if t >= min_touches]
+
+    # 選觸碰次數最多（最強）的帶；相同次數時選最靠近當前價格的
+    support    = max(support_clusters,    key=lambda x: x[1])[0] if support_clusters    else None
+    resistance = max(resistance_clusters, key=lambda x: x[1])[0] if resistance_clusters else None
+
+    return support, resistance
+
+
+def compute_range_signal(sym):
+    """在 ADX 低（區間行情）時，偵測水平支撐/壓力並產生進場訊號。
+
+    條件（全部需滿足）：
+    - RANGE_MODE_ENABLED 為 True
+    - ADX < RANGE_ADX_THRESHOLD（確認區間行情）
+    - 找到有足夠觸碰次數的支撐帶或壓力帶
+    - 區間寬度（壓力 - 支撐）> 手續費 + RANGE_MIN_NET_PROFIT_PCT（空間保護）
+    - 當前收盤 K 棒確認回彈（做多）或拒絕（做空）：
+        做多：低點進入支撐帶誤差帶 且 收盤 > 支撐帶中心（收陽或長下影）
+        做空：高點進入壓力帶誤差帶 且 收盤 < 壓力帶中心（收陰或長上影）
+    - RSI：做多 < 55，做空 > 45
+
+    Returns:
+        (side, strength, route) 或 (None, 0, None)
+    """
+    from core.config import (
+        RANGE_MODE_ENABLED, RANGE_ADX_THRESHOLD, RANGE_LOOKBACK,
+        RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE,
+        RANGE_MIN_NET_PROFIT_PCT, TAKER_FEE_RATE,
+    )
+
+    if not RANGE_MODE_ENABLED:
+        return (None, 0, None)
+
+    s = ctx.STATES.get(sym)
+    if not s:
+        return (None, 0, None)
+
+    candles = s.get("ohlcv", [])
+    if len(candles) < 22:
+        s["entry_block_reason"] = "K 棒資料不足（區間模式）"
+        return (None, 0, None)
+
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    adx = float(s.get("adx", 0.0) or 0.0)
+    rsi = float(s.get("current_rsi", 50.0) or 50.0)
+    vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+
+    if atr <= 0 or vol_ma20 <= 0:
+        s["entry_block_reason"] = "ATR 或成交量資料不足（區間模式）"
+        return (None, 0, None)
+
+    # 1. ADX 確認區間行情
+    if adx >= RANGE_ADX_THRESHOLD:
+        s["entry_block_reason"] = f"ADX={adx:.1f} ≥ {RANGE_ADX_THRESHOLD}，趨勢明顯，不開區間倉"
+        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] ADX={adx:.1f} 過高，略過區間模式")
+        return (None, 0, None)
+
+    # 2. 辨識水平支撐/壓力帶（只用已收盤 K 棒，排除最後一根）
+    completed = candles[:-1]
+    support, resistance = _find_horizontal_zones(
+        completed, atr, RANGE_LOOKBACK, RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE
+    )
+
+    if support is None and resistance is None:
+        s["entry_block_reason"] = "找不到足夠觸碰次數的支撐/壓力帶"
+        return (None, 0, None)
+
+    # 3. 空間保護：區間寬度必須能覆蓋手續費 + 最低獲利空間
+    round_trip_fee = TAKER_FEE_RATE * 2
+    min_range_width_pct = round_trip_fee + RANGE_MIN_NET_PROFIT_PCT
+    if support is not None and resistance is not None:
+        range_width_pct = (resistance - support) / support if support > 0 else 0.0
+        if range_width_pct < min_range_width_pct:
+            s["entry_block_reason"] = (
+                f"區間寬度 {range_width_pct*100:.2f}% < 最低需求 {min_range_width_pct*100:.2f}%（手續費+獲利空間）"
+            )
+            logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] 區間過窄，略過")
+            return (None, 0, None)
+
+    # 4. 訊號 K 棒（已收盤倒數第二根）
+    sig = candles[-2]
+    candle_open  = float(sig[1])
+    candle_high  = float(sig[2])
+    candle_low   = float(sig[3])
+    candle_close = float(sig[4])
+    candle_vol   = float(sig[5])
+    volume_ratio = candle_vol / vol_ma20
+
+    touch_band = atr * RANGE_TOUCH_ATR_TOLERANCE
+
+    # 5. 做多條件：低點碰支撐帶 且 收盤回彈至支撐上方 且 RSI < 55
+    long_signal = (
+        support is not None
+        and candle_low <= support + touch_band      # 低點觸碰支撐帶
+        and candle_close >= support                  # 收盤回彈至支撐上方
+        and rsi < 55.0                               # 排除超買後的假支撐
+    )
+
+    # 6. 做空條件：高點碰壓力帶 且 收盤回落至壓力下方 且 RSI > 45
+    short_signal = (
+        resistance is not None
+        and candle_high >= resistance - touch_band   # 高點觸碰壓力帶
+        and candle_close <= resistance               # 收盤回落至壓力下方
+        and rsi > 45.0                               # 排除超賣後的假壓力
+    )
+
+    if not long_signal and not short_signal:
+        s["entry_block_reason"] = "價格未確認觸碰支撐/壓力後回彈/拒絕（區間模式）"
+        return (None, 0, None)
+
+    # 確保兩個訊號不會同時成立（優先支撐做多，壓力做空次之）
+    if long_signal and short_signal:
+        # 價格更接近支撐就做多，更接近壓力就做空
+        if support is not None and resistance is not None:
+            mid = (support + resistance) / 2
+            long_signal  = candle_close <= mid
+            short_signal = not long_signal
+        else:
+            short_signal = False  # 只有支撐時做多
+
+    side  = "buy"  if long_signal  else "sell"
+    route = "Range_Support_Long" if long_signal else "Range_Resistance_Short"
+
+    # 7. 計算訊號強度
+    # 基礎分：18（剛好達到 RANGE_MIN_SIGNAL_STRENGTH）
+    # 加分：量能比例（最多 +5）、RSI 距中線的距離（最多 +3）、ADX 越低區間越穩（最多 +2）
+    base_strength = 18.0
+    vol_bonus = min(max(volume_ratio - 0.5, 0.0) * 4.0, 5.0)
+    rsi_dist  = abs(rsi - 50.0) / 50.0
+    rsi_bonus = rsi_dist * 3.0
+    adx_bonus = max(0.0, (RANGE_ADX_THRESHOLD - adx) / RANGE_ADX_THRESHOLD) * 2.0
+    strength  = round(base_strength + vol_bonus + rsi_bonus + adx_bonus, 4)
+
+    # 8. 將識別到的支撐/壓力寫入狀態，供進場過濾與出場計算使用
+    s["range_support_level"]   = support    if support    is not None else 0.0
+    s["range_resistance_level"] = resistance if resistance is not None else 0.0
+
+    logger.info(
+        f"@@COIN_DEBUG@@ ✅ {sym} [{route}] {side} | close={candle_close:.6f}, "
+        f"support={support}, resistance={resistance}, "
+        f"ADX={adx:.1f}, RSI={rsi:.1f}, vol={volume_ratio:.2f}x, strength={strength:.2f}"
+    )
+    return (side, strength, route)

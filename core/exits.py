@@ -20,12 +20,16 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_WRONG_DIRECTION_PCT = 0.006
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
-# 實測 LINKUSDT/TRUMPUSDT/SOLUSDT/FILUSDT/NEARUSDT 案例：0.5% 的啟動門檻對主流
-# 幣的正常波動來說太高，好幾筆單持倉超過 30 分鐘、期間 RSI 明顯偏向有利方向，
-# 峰值卻始終衝不破 0.5%，鎖利機制全程沒有啟動過一次，最後只能靠 MA 反轉確認
-# 出場——反轉確認本身有延遲，等到出場時獲利常常已經吐光甚至倒虧。降到剛好蓋過
-# 來回手續費(fee_floor≈0.15%)一點點的 0.18%，讓這類小峰值也能被鎖利機制接住。
-MA_PEAK_LOCK_ARM_PCT = 0.0018
+# MA 進場的正常雜訊約 0.2%~0.4%。低於此區間就啟動 PeakLock / DynamicTP，會讓
+# 0.1%~0.2% 的毛利反覆被手續費侵蝕，卻仍容許錯向單等待到 0.6% 以上才退出。
+# 統一使用 0.5% 主動風險線與 0.6% 最低有效停利門檻，先截短虧損，再讓獲利奔跑。
+MA_ACTIVE_RISK_STOP_PCT = 0.005
+MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.0025
+MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
+MA_MIN_PROFIT_TARGET_PCT = 0.006
+MA_PROFIT_FLOOR_ARM_PCT = 0.003
+MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.0015
+MA_PEAK_LOCK_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
@@ -74,10 +78,22 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         save_peak(sym, confirmed_peak)
         s["ma_peak_saved_pct"] = confirmed_peak
 
+    # 保利地板要涵蓋雙邊 taker fee、低價幣的最小跳動與市價平倉滑點。
+    # 只多留 0.05% 時，ENA 這類 tick 約 0.12% 的合約會把理論鎖利價夾在
+    # 兩個可成交價之間；回吐的下一格就是進場價，結果毛利 0、淨損雙邊費用。
+    fee_floor = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
     if confirmed_peak < MA_PEAK_LOCK_ARM_PCT:
-        return False, float(s.get("ma_peak_lock_price", 0.0) or 0.0)
+        if confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT:
+            return False, float(s.get("ma_profit_floor_price", 0.0) or 0.0)
+        floor_price = (
+            avg * (1.0 + fee_floor) if is_long
+            else avg * (1.0 - fee_floor)
+        )
+        s["ma_profit_floor_armed"] = True
+        s["ma_profit_floor_price"] = floor_price
+        crossed = current_price <= floor_price if is_long else current_price >= floor_price
+        return crossed, floor_price
 
-    fee_floor = ROUND_TRIP_FEE_PCT + 0.0005
     locked_profit = max(fee_floor, confirmed_peak * _ma_peak_keep_ratio(confirmed_peak))
     if is_long:
         peak_price = avg * (1.0 + confirmed_peak)
@@ -288,6 +304,40 @@ def update_trailing_stop(sym, current_price, is_long):
         from core.peak_store import save_peak
         save_peak(sym, s["highest_profit_pct"])
 
+    # MA 波段有自己的 0.6% 啟動門檻與 PeakLock。峰值未達門檻前，不允許較緊的
+    # 通用 Dynamic Trailing（一般幣約 0.25% 即啟動）先把停損推到獲利側，否則會
+    # 繞過 MA_MIN_PROFIT_TARGET_PCT，重演 LDOUSDT 峰值 0.43% 就提早平倉的情況。
+    # MA7/25 失效、MA 0.5% 主動風險線、Hard Stop 與交易所災難單均由其他路徑保留。
+    route = str(s.get("entry_reason", "") or "").lower()
+    if route in MA_ENTRY_ROUTES and s["highest_profit_pct"] < MA_MIN_PROFIT_TARGET_PCT:
+        trailing_stop = float(s.get("trailing_stop_price", 0.0) or 0.0)
+        stop_loss = float(s.get("stop_loss", 0.0) or 0.0)
+        trailing_is_profit_side = trailing_stop > 0 and (
+            (is_long and trailing_stop >= avg_price) or
+            (not is_long and trailing_stop <= avg_price)
+        )
+        stop_is_profit_side = stop_loss > 0 and (
+            (is_long and stop_loss >= avg_price) or
+            (not is_long and stop_loss <= avg_price)
+        )
+        if trailing_is_profit_side or stop_is_profit_side:
+            from core.config import HARD_STOP_LOSS_PCT as _HARD_SL_DEFAULT
+            hard_sl_pct = float(s.get("hard_stop_loss_pct", _HARD_SL_DEFAULT) or _HARD_SL_DEFAULT)
+            fallback_stop = (
+                avg_price * (1.0 - hard_sl_pct) if is_long
+                else avg_price * (1.0 + hard_sl_pct)
+            )
+            s["trailing_stop_price"] = fallback_stop
+            s["stop_loss"] = fallback_stop
+            s["is_breakeven_locked"] = False
+            s["soft_trailing_armed"] = False
+            s["soft_trailing_profit_floor"] = 0.0
+            logger.info(
+                f"♻️ [MA_Trailing_Reset] {sym} 峰值 {s['highest_profit_pct']*100:.2f}% "
+                f"未達 {MA_MIN_PROFIT_TARGET_PCT*100:.2f}%，移除過早的通用獲利追蹤線"
+            )
+        return False, s.get("trailing_stop_price", 0.0)
+
     # --- [Updated] Break-Even Mechanism ---
     # 保本線必須涵蓋雙邊 taker fee，另加 0.02% 滑價緩衝；否則名義保本仍會淨虧。
     # [2026-07-14 修正B] 門檻從 1.0%(高彈)•0.6%(一般) 降至 0.6%/0.4%：
@@ -301,6 +351,7 @@ def update_trailing_stop(sym, current_price, is_long):
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     _hp_soft = s.get("highest_profit_pct", 0.0)
     if profit_pct > breakeven_threshold:
+        should_log_breakeven = not bool(s.get("is_breakeven_locked", False))
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
         if is_long:
@@ -318,7 +369,8 @@ def update_trailing_stop(sym, current_price, is_long):
             s["trailing_stop_price"] = min(_cur_ts_short if _cur_ts_short > 0 else float('inf'), new_be_sl)
             s["stop_loss"] = s["trailing_stop_price"]
             s["is_breakeven_locked"] = True
-        logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
+        if should_log_breakeven:
+            logger.info(f"🛡️ [Break-Even] {sym} profit {profit_pct*100:.2f}% > {breakeven_threshold*100}%, SL moved to entry")
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
     profile_type = str(s.get("profile_type", ""))
@@ -546,6 +598,57 @@ async def check_exits(sym):
         ma_candle_ts = int(s.get("ma_candle_ts", 0) or 0)
         candles = s.get("ohlcv", [])
         hold_sec = max(0.0, time.time() - float(s.get("open_time", time.time()) or time.time()))
+
+        # 死叉／金叉進場後若動能快速翻回反方，等到固定 0.5% 風險線會重演 ADA/SOL
+        # 同時在反彈中停損。只在持倉前 30 分鐘、已逆勢至少 0.25%、價格穿越 MA7，
+        # 且 RSI 也失去初始門檻時啟動；連續兩輪確認，避免單一報價或 RSI 邊界抖動。
+        current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
+        momentum_flipped = (
+            hold_sec >= 60
+            and hold_sec <= MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC
+            and profit_pct <= -MA_EARLY_MOMENTUM_FLIP_STOP_PCT
+            and ma7 > 0
+            and (
+                (is_long and current_rsi < 51.0 and p < ma7) or
+                (not is_long and current_rsi > 49.0 and p > ma7)
+            )
+        )
+        if momentum_flipped:
+            s["ma_momentum_flip_count"] = int(s.get("ma_momentum_flip_count", 0)) + 1
+        else:
+            s["ma_momentum_flip_count"] = 0
+        if s["ma_momentum_flip_count"] >= 2:
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"🛑 [MA_Early_Momentum_Flip] {sym} 持倉 {hold_sec:.0f}秒，"
+                f"RSI={current_rsi:.1f} 且價格穿越 MA7={ma7:.6f}，"
+                f"逆勢 {abs(profit_pct)*100:.2f}%，提前結束失效訊號"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[MA_Early_Momentum_Flip]", is_stop_loss=True,
+            )
+            return
+
+        # 不再等待兩根 5 分鐘 K 棒才控制單筆風險。連續兩次主循環都超過 0.5% 才退出，
+        # 可排除單一報價/插針，同時把實際止損控制在約 0.5%~0.6%；交易所 1.5% 災難單
+        # 繼續保留，僅作程式斷線時的最後防線。
+        if hold_sec >= 60 and profit_pct <= -MA_ACTIVE_RISK_STOP_PCT:
+            s["ma_risk_breach_count"] = int(s.get("ma_risk_breach_count", 0)) + 1
+        else:
+            s["ma_risk_breach_count"] = 0
+        if s["ma_risk_breach_count"] >= 2:
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"🛑 [MA_Active_Risk_Stop] {sym} 連續確認逆勢 "
+                f"{abs(profit_pct)*100:.2f}% >= {MA_ACTIVE_RISK_STOP_PCT*100:.2f}%，提前止損"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[MA_Active_Risk_Stop]", is_stop_loss=True,
+            )
+            return
+
         wrong_direction_confirmed = False
         if len(candles) >= 3 and hold_sec <= MA_WRONG_DIRECTION_WINDOW_SEC and profit_pct <= -MA_WRONG_DIRECTION_PCT:
             previous_closed, latest_closed = candles[-3], candles[-2]
@@ -595,7 +698,12 @@ async def check_exits(sym):
                 _tp_tier_mult = 0.35
                 _fallback_ratio = 0.20  # 微利時，容忍 20% 的回撤 (見好就收)
 
-            _dyn_tp_target_pct = (_dyn_tp_base * _tp_tier_mult) / avg
+            # ATR 很小時舊公式可低至 0.18%，實盤 XLM 峰值僅 0.27% 就出場。MA 波段至少
+            # 先走出 0.6% 才算有效獲利，避免交易成本吞掉大量小額停利。
+            _dyn_tp_target_pct = max(
+                (_dyn_tp_base * _tp_tier_mult) / avg,
+                MA_MIN_PROFIT_TARGET_PCT,
+            )
             
             # 當「最高利潤」達到該檔位的啟動門檻，啟動追蹤止盈
             if max_profit >= _dyn_tp_target_pct:
@@ -619,13 +727,14 @@ async def check_exits(sym):
         if peak_lock_hit:
             cs = "sell" if is_long else "buy"
             peak_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
+            reason = "[MA_Peak_Lock]" if s.get("ma_peak_lock_armed", False) else "[MA_Profit_Floor]"
             logger.info(
-                f"💰 [MA_Peak_Lock] {sym} 峰值 {peak_profit*100:.2f}% 回吐至 "
+                f"💰 {reason} {sym} 峰值 {peak_profit*100:.2f}% 回吐至 "
                 f"鎖利價 {peak_lock_price:.6f}，結束本段波段"
             )
             await close_position(
                 sym, cs, abs(s["qty"]), p, avg,
-                reason="[MA_Peak_Lock]", is_stop_loss=False,
+                reason=reason, is_stop_loss=False,
             )
             return
 
@@ -638,6 +747,30 @@ async def check_exits(sym):
             logger.info(f"🛡️ [MA_Disaster_Stop] {sym} 觸及 {MA_DISASTER_STOP_PCT*100:.1f}% 災難止損")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MA_Disaster_Stop]", is_stop_loss=True)
             return
+
+        # ─── 區間模式專屬止盈/止損 ──────────────────────────────────────────
+        # 檢查是否為區間模式進場，若是，則套用預計算的 tp_price 與 sl_price 進行硬止盈/止損
+        entry_reason = s.get("entry_reason", "")
+        if entry_reason in ("Range_Support_Long", "Range_Resistance_Short"):
+            range_tp = float(s.get("range_tp_price", 0.0) or 0.0)
+            range_sl = float(s.get("range_sl_price", 0.0) or 0.0)
+            
+            if range_tp > 0:
+                tp_hit = (is_long and p >= range_tp) or (not is_long and p <= range_tp)
+                if tp_hit:
+                    cs = "sell" if is_long else "buy"
+                    logger.info(f"🎯 [Range_Mode_TP] {sym} 觸及區間目標價 {range_tp:.6f}，執行止盈出場")
+                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Range_TP]", is_stop_loss=False)
+                    return
+            
+            if range_sl > 0:
+                sl_hit = (is_long and p <= range_sl) or (not is_long and p >= range_sl)
+                if sl_hit:
+                    cs = "sell" if is_long else "buy"
+                    logger.info(f"🚨 [Range_Mode_SL] {sym} 觸及區間止損價 {range_sl:.6f}，執行止損出場")
+                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Range_SL]", is_stop_loss=True)
+                    return
+        # ───────────────────────────────────────────────────────────────────
 
         # MA lifecycle exit: a completed-candle MA7 break or opposite MA7/25 cross exits after 2 consecutive confirmations.
         closed_price = float(s.get("ohlcv", [])[-2][4]) if len(s.get("ohlcv", [])) >= 2 else 0.0
@@ -778,10 +911,10 @@ async def check_exits(sym):
         _baseline_volumes = [float(c[5] or 0.0) for c in _completed[-21:-1] if float(c[5] or 0.0) > 0]
         _baseline_vol = float(np.mean(_baseline_volumes)) if _baseline_volumes else 0.0
         _completed_vol_ratio = _latest_completed_vol / _baseline_vol if _baseline_vol > 0 else 1.0
-        # 優化量縮門檻：獲利達 0.30% 且利潤仍保持在高位，但量縮至均量 70% 以下，觸發高點鎖利
+        # 量縮只結束已經走出有效報酬的波段，不再把 0.3% 內的一般雜訊當成停利。
         _peak_volume_contracting = (
-            _peak_profit >= 0.003
-            and profit_pct >= max(0.0025, _peak_profit * 0.85)
+            _peak_profit >= MA_MIN_PROFIT_TARGET_PCT
+            and profit_pct >= max(MA_MIN_PROFIT_TARGET_PCT * 0.85, _peak_profit * 0.85)
             and _completed_vol_ratio <= 0.70
         )
 

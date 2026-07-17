@@ -64,8 +64,12 @@ def build_symbol_state(sym):
         "_direction_guard_cooldown_signal_candle_ts": 0,
         "ma_exit_invalid_count": 0,
         "ma_exit_last_candle_ts": 0,
+        "ma_risk_breach_count": 0,
+        "ma_momentum_flip_count": 0,
         "ma_peak_lock_armed": False,
         "ma_peak_lock_price": 0.0,
+        "ma_profit_floor_armed": False,
+        "ma_profit_floor_price": 0.0,
         "ma_peak_saved_pct": 0.0,
         "macd_line": 0.0,
         "macd_signal": 0.0,
@@ -146,6 +150,11 @@ def build_symbol_state(sym):
         "rsi_recovery_hook": conf.get("rsi_recovery_hook", 30),
         "volatility_cap": conf.get("volatility_cap", 3.0),
         "last_peak_time": 0.0,
+        # ─ 區間模式 (Range Mode) ─
+        "range_tp_price": 0.0,        # 進場時計算的區間目標價（對向區帶邊緣）
+        "range_sl_price": 0.0,        # 進場時計算的區間止損價（支撐/壓力外側）
+        "range_support_level": 0.0,   # 識別到的水平支撐帶中心
+        "range_resistance_level": 0.0, # 識別到的水平壓力帶中心
     }
     _restore_persisted_cooldown(sym, state)
     return state
@@ -453,8 +462,12 @@ def reset_coin_state(sym):
     s["early_direction_invalid_count"] = 0
     s["ma_exit_invalid_count"] = 0
     s["ma_exit_last_candle_ts"] = 0
+    s["ma_risk_breach_count"] = 0
+    s["ma_momentum_flip_count"] = 0
     s["ma_peak_lock_armed"] = False
     s["ma_peak_lock_price"] = 0.0
+    s["ma_profit_floor_armed"] = False
+    s["ma_profit_floor_price"] = 0.0
     s["ma_peak_saved_pct"] = 0.0
     s["stop_loss"] = 0.0
     s["pending_side"] = None
@@ -499,6 +512,11 @@ def reset_coin_state(sym):
     s.pop("last_debug_pressure_time", None)
     s.pop("last_price_check", None)
     s.pop("last_price_check_time", None)
+    # 區間模式欄位歸零
+    s["range_tp_price"] = 0.0
+    s["range_sl_price"] = 0.0
+    s["range_support_level"] = 0.0
+    s["range_resistance_level"] = 0.0
     s.pop("_hard_tp_reached_logged", None)
 
 def get_active_count():
