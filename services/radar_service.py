@@ -426,6 +426,11 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     except Exception:
         previous_profiles = {}
     strict_symbols = {r["symbol"] for r in eligible}
+    from core.idle_tracker import idle_tracker
+    from core.config import RANGE_MODE_ENABLED
+    total_strategies = 2 if RANGE_MODE_ENABLED else 1
+    current_active = status_before_scan.get("active_symbols", [])
+
     now = time.time()
     profiles = {}
     eligibility_changed = False
@@ -462,8 +467,10 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
 
     # 實際核心只取設定檔前 15 檔。成熟可交易幣必須排在觀察中候選之前，
     # 嚴格候選再排在僅監控補位之前，避免不可下單幣占滿交易池。
+    # 同時優先排入非閒置（active）的幣種，閒置過久的降權到後面。
     selected_rows.sort(
         key=lambda row: (
+            not idle_tracker.is_idle(row["symbol"], total_strategies) if row["symbol"] in current_active else True,
             bool(profiles[row["symbol"]].get("_trade_eligible", False)),
             bool(profiles[row["symbol"]].get("_radar_strict_eligible", False)),
             float(row.get("entry_readiness_score", 0.0) or 0.0),

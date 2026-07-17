@@ -486,6 +486,9 @@ async def check_entries():
         range_status = "未評估"
 
         if side_strength is None or side_strength[0] is None:
+            from core.idle_tracker import idle_tracker
+            idle_tracker.mark_blocked(sym, "MA_Strategy", ma_block_reason)
+
             # MA 訊號無效時，嘗試區間模式
             from core.config import RANGE_MODE_ENABLED, RANGE_MIN_SIGNAL_STRENGTH
             if RANGE_MODE_ENABLED:
@@ -493,9 +496,12 @@ async def check_entries():
                 if side_strength is not None and side_strength[0] is not None:
                     is_range_signal = True
                     range_status = "觸發"
+                    idle_tracker.mark_active(sym, "Range_Strategy")
                 else:
                     range_status = "略過"
                     range_block_reason = s.get("entry_block_reason") or "暫無有效區間訊號"
+                    idle_tracker.mark_blocked(sym, "Range_Strategy", range_block_reason)
+                    
                     adx = float(s.get("adx", 0.0) or 0.0)
                     block_reason = ma_block_reason if adx >= 25.0 else range_block_reason
                     s["entry_block_reason"] = block_reason
@@ -514,6 +520,9 @@ async def check_entries():
                 block_reason = s.get("entry_block_reason") or "暫無有效訊號"
                 set_entry_diagnosis(f"{sym}: {block_reason}")
                 continue
+        else:
+            from core.idle_tracker import idle_tracker
+            idle_tracker.mark_active(sym, "MA_Strategy")
         
         side, strength, route = side_strength
 
