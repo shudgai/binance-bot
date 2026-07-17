@@ -35,6 +35,28 @@ MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
 
 
+def _meaningful_ma7_break(is_long, closed_price, ma7, ma25, prev_ma7, atr, avg):
+    """忽略貼著 MA7 的正常雜訊；只有均線轉弱或 MA25 失守才確認生命週期破壞。"""
+    closed_price = float(closed_price or 0.0)
+    ma7 = float(ma7 or 0.0)
+    ma25 = float(ma25 or 0.0)
+    prev_ma7 = float(prev_ma7 or 0.0)
+    atr = float(atr or 0.0)
+    avg = float(avg or 0.0)
+    if min(closed_price, ma7, ma25, avg) <= 0:
+        return False, 0.0
+    break_buffer = max(atr * 0.15, avg * 0.0005)
+    if is_long:
+        beyond_buffer = closed_price < ma7 - break_buffer
+        ma7_slope_weak = prev_ma7 > 0 and ma7 <= prev_ma7
+        ma25_lost = closed_price < ma25
+    else:
+        beyond_buffer = closed_price > ma7 + break_buffer
+        ma7_slope_weak = prev_ma7 > 0 and ma7 >= prev_ma7
+        ma25_lost = closed_price > ma25
+    return beyond_buffer and (ma7_slope_weak or ma25_lost), break_buffer
+
+
 def _ma_peak_keep_ratio(peak_profit):
     # 使用者要求適度收緊，儘量鎖在接近當下高點的位置，減少獲利回吐幅度。
     if peak_profit >= MA_PEAK_LOCK_HIGH_PCT:
@@ -779,7 +801,9 @@ async def check_exits(sym):
                 (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
                 (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
             )
-            ma7_broken = (is_long and closed_price < ma7) or (not is_long and closed_price > ma7)
+            ma7_broken, ma7_break_buffer = _meaningful_ma7_break(
+                is_long, closed_price, ma7, ma25, prev_ma7, current_atr, avg
+            )
 
             if s.get("ma_exit_last_candle_ts") != ma_candle_ts:
                 s["ma_exit_last_candle_ts"] = ma_candle_ts
@@ -796,7 +820,7 @@ async def check_exits(sym):
                     reason = "[MA7_Closed_Break]"
                 logger.info(
                     f"🎯 [MA_Lifecycle_Exit] {sym} {reason} | closed={closed_price:.6f}, "
-                    f"MA7={ma7:.6f}, MA25={ma25:.6f}, confirms={s.get('ma_exit_invalid_count', 0)}"
+                    f"MA7={ma7:.6f}, MA25={ma25:.6f}, buffer={ma7_break_buffer:.6f}, confirms={s.get('ma_exit_invalid_count', 0)}"
                 )
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason, is_stop_loss=(profit_pct <= 0))
                 return

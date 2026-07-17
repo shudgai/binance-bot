@@ -7,7 +7,8 @@ import numpy as np
 
 from core import ctx
 from core.check_entries import compute_indicators
-from core.exits import _ma_peak_keep_ratio, check_exits, update_ma_peak_lock, update_trailing_stop
+from core.exits import (_ma_peak_keep_ratio, _meaningful_ma7_break, check_exits,
+    update_ma_peak_lock, update_trailing_stop)
 from core.state_manager import build_symbol_state
 
 
@@ -70,6 +71,29 @@ class MALifecycleTests(unittest.TestCase):
             ],
         })
         return state
+
+    def test_tiny_ma7_break_while_above_ma25_is_normal_noise(self):
+        broken, buffer_size = _meaningful_ma7_break(
+            True, 74.65, 74.654286, 74.5276, 74.63, 0.10, 74.60
+        )
+        self.assertFalse(broken)
+        self.assertGreater(buffer_size, 74.654286 - 74.65)
+
+    def test_meaningful_ma7_break_requires_weak_slope_or_ma25_loss(self):
+        self.assertFalse(_meaningful_ma7_break(
+            True, 99.7, 100.0, 99.0, 99.9, 0.5, 100.0
+        )[0])
+        self.assertTrue(_meaningful_ma7_break(
+            True, 99.7, 100.0, 99.0, 100.1, 0.5, 100.0
+        )[0])
+        self.assertTrue(_meaningful_ma7_break(
+            True, 98.8, 100.0, 99.0, 99.9, 0.5, 100.0
+        )[0])
+
+    def test_short_ma7_break_is_symmetric(self):
+        self.assertTrue(_meaningful_ma7_break(
+            False, 100.3, 100.0, 101.0, 99.9, 0.5, 100.0
+        )[0])
 
     def test_ma7_break_does_not_exit_before_opposite_cross(self):
         self._position_state(closed_price=99.5)
