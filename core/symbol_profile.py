@@ -4,7 +4,7 @@ import json
 import time
 import numpy as np
 from core.config import (
-    COIN_PROFILE_CONFIG, DEFAULT_SYMBOLS, CONFIG_FILE, PERSONALITY_TEMPLATES,
+    COIN_PROFILE_CONFIG, DEFAULT_SYMBOLS, CONFIG_FILE, PERSONALITY_TEMPLATES, TRADE_POOL_SIZE,
     SYMBOL_EXIT_OVERRIDES as _DEFAULT_SYMBOL_EXIT_OVERRIDES,
 )
 import core.config as _config
@@ -101,8 +101,8 @@ def load_symbol_pool():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return normalize_symbol_list(data.get("symbols", []))[:12]
-        return normalize_symbol_list(data)[:12]
+            return normalize_symbol_list(data.get("symbols", []))[:TRADE_POOL_SIZE]
+        return normalize_symbol_list(data)[:TRADE_POOL_SIZE]
     except FileNotFoundError:
         return list(DEFAULT_SYMBOLS)
     except Exception as e:
@@ -461,12 +461,12 @@ def apply_symbol_pool_change(requested_symbols):
     from core.exchange_client import exchange_futures
     desired = filter_valid_symbols(
         exchange_futures, normalize_symbol_list(requested_symbols)
-    )[:12]
+    )[:TRADE_POOL_SIZE]
     locked_symbols = [sym for sym in ctx.ALL_SYMBOLS if _is_symbol_locked(sym)]
 
     new_symbols = []
     used = set()
-    # 雷達策略是 Top 12；舊邏輯取新舊池較大值，池子一旦長到 23 就永遠縮不回來。
+    # 雷達策略是 Top 15；舊邏輯取新舊池較大值，池子一旦長到 23 就永遠縮不回來。
     # 僅真實持倉或掛單鎖定可讓保護數暫時高於雷達需求。
     target_count = max(len(desired), len(locked_symbols))
 

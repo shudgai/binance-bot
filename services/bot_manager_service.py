@@ -5,12 +5,12 @@ import time
 import threading
 import subprocess
 from services.system_log_service import add_system_log
+from core.config import TRADE_POOL_SIZE
 
 # 模擬交易機器人狀態 (支援多幣種多進程)
-TRADE_POOL_SIZE = 12
 bot_status = {
     "is_running": False,
-    "strategy": "Top 12 Radar / 4 Slots",
+    "strategy": "Top 15 Radar / 4 Slots",
     "balance_quote": 150.0,
     "active_orders": 0,
     "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
@@ -45,8 +45,8 @@ def _strategy_label(balance=None):
 
     slots = get_dynamic_max_slots(balance)
     if slots == 3:
-        return "Top 12 Radar / 3 MA Trend Slots"
-    return f"Top 12 Radar / {slots} Slots"
+        return "Top 15 Radar / 3 MA Trend Slots"
+    return f"Top 15 Radar / {slots} Slots"
 
 
 def _record_entry_diagnosis(message: str, now: float | None = None):
@@ -185,7 +185,7 @@ def _restore_truncated_radar_pool(symbols):
     """雷達仔保存完整 profiles 時，避免短暫重啟狀態把正式監控池縮成少數幣。
 
     profiles 會保存雷達排名與交易資格； symbols 偶爾只剰冷卻候補/最後監控幣。
-    啟動時只有 symbols 少於 8 檔才視為截斷，並由 profiles 恢復正式 Top 12；
+    啟動時只有 symbols 少於 8 檔才視為截斷，並由 profiles 恢復正式 Top 15；
     已有 8 檔以上視為正常自訂池，不擅自覆蓋。
     """
     symbols = normalize_symbol_list(symbols)
@@ -200,7 +200,7 @@ def _restore_truncated_radar_pool(symbols):
     ]
     ranked = _filter_disabled_symbols(normalize_symbol_list(ranked, max_count=25))
     if len(symbols) < 8 and len(ranked) >= 8:
-        restored = list(ranked[:12])
+        restored = list(ranked[:TRADE_POOL_SIZE])
         add_system_log(
             f"♻️ [啟動幣池修復] symbols 僅 {len(symbols)} 檔，"
             f"由雷達 profiles 恢復為 {len(restored)} 檔",

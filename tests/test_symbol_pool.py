@@ -13,7 +13,7 @@ from core.symbol_profile import apply_symbol_pool_change, save_symbol_pool
 
 class SymbolPoolTests(unittest.TestCase):
     @patch("core.symbol_profile.save_symbol_pool")
-    def test_pool_shrinks_to_top_twelve_instead_of_preserving_old_high_water_mark(self, mock_save):
+    def test_pool_shrinks_to_top_fifteen_instead_of_preserving_old_high_water_mark(self, mock_save):
         old_symbols = [f"OLD{i}USDT" for i in range(23)]
         requested = [f"NEW{i}USDT" for i in range(15)]
         original_symbols = list(ctx.ALL_SYMBOLS)
@@ -29,8 +29,8 @@ class SymbolPoolTests(unittest.TestCase):
                        side_effect=lambda _, symbols: symbols):
                 updated = apply_symbol_pool_change(requested)
 
-            self.assertEqual(len(updated), 12)
-            self.assertEqual(updated, requested[:12])
+            self.assertEqual(len(updated), 15)
+            self.assertEqual(updated, requested[:15])
         finally:
             ctx.ALL_SYMBOLS[:] = original_symbols
             ctx.STATES.clear()

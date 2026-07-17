@@ -24,6 +24,7 @@ DUAL_SHOT_MAX_SLOTS = 3
 DUAL_SHOT_LEVERAGE = 5
 DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
+TRADE_POOL_SIZE = 15
 DISABLE_MA_BREAKOUT = True
 
 # ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────

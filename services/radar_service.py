@@ -6,7 +6,7 @@ from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
 from services.binance_service import get_atr_ranked_coins, get_hot_movers as _get_hot_movers
 from core.ctx import CACHE
-from core.config import COIN_PROFILE_CONFIG
+from core.config import COIN_PROFILE_CONFIG, TRADE_POOL_SIZE
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 
@@ -172,11 +172,10 @@ CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
 # 選幣數擴大到 15：新倉條件變嚴後，需要更多候選給 5 個倉位槽篩選。
 # 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 15 檔而同時開更多單。
 RADAR_SELECT_COUNT = 25
-TRADE_POOL_SIZE = 12
 HOT_MOVERS_COUNT   = 0
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
-# 動能篩選門檻（12 檔候選版）：
+# 動能篩選門檻（15 檔交易池版）：
 #   ATR 2.5%~7.2%：保留中高動能，允許 NEAR/ADA/AAVE 這類高流動性強波動候選進池。
 #   1h 波動 0.42%~2.8%：條件變嚴後放寬候選池，但仍排除完全不動的死水幣。
 from core.config import MIN_ATR_PCT_FOR_ENTRY, MAX_ATR_PCT_FOR_ENTRY, MIN_1H_VOL_PCT_FOR_ENTRY, MAX_1H_VOL_PCT_FOR_ENTRY, MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
@@ -373,7 +372,7 @@ def _follow_source_radar_switch(force_start=False):
 from services.binance_service import get_dynamic_top_15_coins
 
 def auto_radar_switch(force_start=False, restart_on_change=True):
-    """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 12 個幣種，並更新配置。
+    """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。
     掃描全市場，但只保留真實加密幣（排除股票型/ETF/商品型合約）。
     """
     status_before_scan = get_bot_status()
@@ -406,7 +405,7 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
 
     ranking = [r for r in ranking if _is_crypto(r['symbol'])]
     eligible = prioritize_entry_ready([r for r in ranking if is_strict_radar_eligible(r)])
-    # 先取完全符合動能區間者；不足 12 檔時，從有效排名補足。
+    # 先取完全符合動能區間者；不足候選池上限時，從有效排名補足。
     selected_rows = list(eligible[:RADAR_SELECT_COUNT])
     selected_symbols = {r["symbol"] for r in selected_rows}
     if len(selected_rows) < RADAR_SELECT_COUNT:
@@ -461,7 +460,7 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
             eligibility_changed = True
         profiles[sym] = profile
 
-    # 實際核心只取設定檔前 12 檔。成熟可交易幣必須排在觀察中候選之前，
+    # 實際核心只取設定檔前 15 檔。成熟可交易幣必須排在觀察中候選之前，
     # 嚴格候選再排在僅監控補位之前，避免不可下單幣占滿交易池。
     selected_rows.sort(
         key=lambda row: (
@@ -484,9 +483,9 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     save_symbol_config(trade_symbols)
     _save_radar_profiles(profiles)
     
-    add_system_log(f"🎯 [動態選幣] 已更新監控池為前 15 名動能幣種: {', '.join(best_symbols)}", "success")
+    add_system_log(f"🎯 [動態選幣] 已更新交易池為前 15 名動能幣種: {', '.join(trade_symbols)}", "success")
     
-    # 3. 雷達保留 25 檔候選資料，但交易核心只接收資格排序後前 12 檔。
+    # 3. 雷達保留 25 檔候選資料，但交易核心只接收資格排序後前 15 檔。
     symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(trade_symbols)
     if restart_on_change and (force_start or (status_before_scan.get("is_running") and (symbols_changed or eligibility_changed))):
         # 注意：start_bot 會處理重新啟動邏輯

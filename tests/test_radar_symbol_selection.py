@@ -36,9 +36,9 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert set(MANAGER_DEFAULT_SYMBOLS).issubset(set(DEFAULT_SYMBOLS))
     assert ATR_ELIGIBLE_SYMBOLS == EXPECTED_ATR_SYMBOLS
     assert CORE_SYMBOLS == EXPECTED_ATR_SYMBOLS
-    assert RADAR_SELECT_COUNT == 25  # 候選池；實際交易監控仍由 bot manager 截為 12 檔
-    assert TRADE_POOL_SIZE == 12
-    assert MANAGER_TRADE_POOL_SIZE == 12
+    assert RADAR_SELECT_COUNT == 25  # 候選池；實際交易監控仍由 bot manager 截為 15 檔
+    assert TRADE_POOL_SIZE == 15
+    assert MANAGER_TRADE_POOL_SIZE == 15
     assert MIN_ATR_PCT_FOR_ENTRY == 1.5
     assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
@@ -62,17 +62,17 @@ def test_startup_restores_truncated_pool_from_ranked_radar_profiles():
         f"COIN{i}USDT": {
             "_radar_rank": i,
             "_radar_atr_pct": 3.0,
-            "_trade_eligible": i != 12,
+            "_trade_eligible": i != 15,
         }
-        for i in range(1, 13)
+        for i in range(1, 16)
     }
     with patch("services.bot_manager_service.load_symbol_profiles", return_value=profiles), \
          patch("services.bot_manager_service.add_system_log"):
         restored = _restore_truncated_radar_pool(["XRPUSDT", "LABUSDT"])
 
-    assert len(restored) == 12
+    assert len(restored) == 15
     assert restored[0] == "COIN1USDT"
-    assert restored[-1] == "COIN12USDT"
+    assert restored[-1] == "COIN15USDT"
 
 
 def test_startup_keeps_a_normal_sized_pool_unchanged():

@@ -13,7 +13,7 @@ import requests
 from core import ctx
 from core.config import (
     PAPER_TRADING, MAIN_LOOP_INTERVAL_SEC,
-    TRADE_POLL_INTERVAL_SEC, TRADE_POLL_LIMIT, API_RATE_LIMIT_COOLDOWN_SEC,
+    TRADE_POLL_INTERVAL_SEC, TRADE_POLL_LIMIT, API_RATE_LIMIT_COOLDOWN_SEC, TRADE_POOL_SIZE,
 )
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state, repair_invalid_states
@@ -330,7 +330,7 @@ async def cancel_orphan_exchange_entry_orders(exchange):
         # Binance futures charges more weight for an all-symbol query, but this runs
         # exactly once at startup.  One account-wide request is still safer and
         # lighter than polling every possible market, and it also finds an orphan
-        # whose symbol has already fallen out of the current Top 12 pool.
+        # whose symbol has already fallen out of the current Top 15 pool.
         if isinstance(options, dict):
             options[warning_key] = False
         open_orders = await exchange.fetch_open_orders()
@@ -909,7 +909,7 @@ async def periodic_momentum_swap():
                     if evicted:
                         logger.info(f"🗑️ [動態汰換] 剔除無效監控幣種 (Calm + 低量能): {', '.join(evicted)}")
 
-                    new_pool = list(dict.fromkeys(selected_list[:12] + protected))
+                    new_pool = list(dict.fromkeys(selected_list[:TRADE_POOL_SIZE] + protected))
                     profiles = load_symbol_profiles()
                     old_pool = list(ctx.ALL_SYMBOLS)
                     for sym in new_pool:
