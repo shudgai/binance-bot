@@ -17,7 +17,8 @@ from core.check_entries import (
 from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setup_valid,
     _entry_signal_chase_guard, _pending_entry_reprice_needed,
     _translated_pending_limit_price, _ma_cross_anti_chase_plan, _is_dynamic_pending_entry,
-    _reanchor_rejected_passive_price, _entry_price_guard)
+    _reanchor_rejected_passive_price, _entry_price_guard,
+    _ma25_confirmed_pullback_price)
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -74,6 +75,20 @@ class EntryRiskTests(unittest.TestCase):
             ))
         self.assertFalse(confirmed)
         self.assertIn("signal changed", reason)
+
+    def test_confirmed_ma25_pullback_does_not_wait_at_deep_structure_again(self):
+        buy_price = _ma25_confirmed_pullback_price("buy", 99.0, 100.0, 0.4)
+        sell_price = _ma25_confirmed_pullback_price("sell", 101.0, 100.0, 0.4)
+        self.assertAlmostEqual(buy_price, 99.8)
+        self.assertAlmostEqual(sell_price, 100.2)
+
+    def test_confirmed_ma25_pullback_keeps_nearby_passive_structure(self):
+        self.assertAlmostEqual(
+            _ma25_confirmed_pullback_price("buy", 99.94, 100.0, 0.4), 99.94
+        )
+        self.assertAlmostEqual(
+            _ma25_confirmed_pullback_price("sell", 100.06, 100.0, 0.4), 100.06
+        )
 
     def test_stale_structure_price_is_reanchored_inside_existing_guard(self):
         sym = "XRPUSDT"

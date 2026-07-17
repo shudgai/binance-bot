@@ -379,6 +379,19 @@ def _reanchor_rejected_passive_price(sym, side, order_price, market_price, mode=
     return order_price, False
 
 
+def _ma25_confirmed_pullback_price(side, structure_price, market_price, atr):
+    """MA25 已確認回踩後只保留小幅被動價差，避免再等一次深層結構回踩。"""
+    structure_price = float(structure_price or 0.0)
+    market_price = float(market_price or 0.0)
+    atr = float(atr or 0.0)
+    if structure_price <= 0 or market_price <= 0:
+        return structure_price
+    max_distance = max(market_price * 0.0005, min(market_price * 0.0025, atr * 0.5))
+    if str(side).lower() == "buy":
+        return min(max(structure_price, market_price - max_distance), market_price * 0.9997)
+    return max(min(structure_price, market_price + max_distance), market_price * 1.0003)
+
+
 def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=True,
                               is_rescue_dca=False):
     """Prevent a fresh position from chasing materially beyond its signal price."""
@@ -1830,11 +1843,19 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     limit_price = _ma_cross_anchor_price
                     logger.info(f"🎯 [MA7錨定掛單] {sym} 防追價回調委託 @ {limit_price:.6f}")
                 elif side == 'buy' and 0 < _struct_support < current_market_price:
-                    limit_price = _struct_support * 1.0005
-                    logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
+                    structure_price = _struct_support * 1.0005
+                    limit_price = (
+                        _ma25_confirmed_pullback_price(side, structure_price, current_market_price, atr)
+                        if str(entry_route or "").lower() == "ma25_pullback" else structure_price
+                    )
+                    logger.info(f"🎯 [MA25確認回踩掛單-Paper] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
                 elif side == 'sell' and _struct_resistance > current_market_price > 0:
-                    limit_price = _struct_resistance * 0.9995
-                    logger.info(f"🎯 [結構錨定掛單] {sym} 掛在阻力位 {_struct_resistance:.6f} - 0.05% 緩衝 = {limit_price:.6f}")
+                    structure_price = _struct_resistance * 0.9995
+                    limit_price = (
+                        _ma25_confirmed_pullback_price(side, structure_price, current_market_price, atr)
+                        if str(entry_route or "").lower() == "ma25_pullback" else structure_price
+                    )
+                    logger.info(f"🎯 [MA25確認回踩掛單-Paper] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
                 elif side == 'buy':
                     target_pb = current_market_price - atr * _pb_mult
                     if len(s.get("ohlcv", [])) >= 2:
@@ -1970,13 +1991,21 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         _is_structure_anchored = True
                         logger.info(f"🎯 [MA7錨定掛單] {sym} 防追價回調委託 @ {limit_price:.6f}")
                     elif side == 'buy' and 0 < _struct_support < price:
-                        limit_price = _struct_support * 1.0005
+                        structure_price = _struct_support * 1.0005
+                        limit_price = (
+                            _ma25_confirmed_pullback_price(side, structure_price, market_price, s.get("current_atr", 0.0))
+                            if str(entry_route or "").lower() == "ma25_pullback" else structure_price
+                        )
                         _is_structure_anchored = True
-                        logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
+                        logger.info(f"🎯 [MA25確認回踩掛單] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
                     elif side == 'sell' and _struct_resistance > price > 0:
-                        limit_price = _struct_resistance * 0.9995
+                        structure_price = _struct_resistance * 0.9995
+                        limit_price = (
+                            _ma25_confirmed_pullback_price(side, structure_price, market_price, s.get("current_atr", 0.0))
+                            if str(entry_route or "").lower() == "ma25_pullback" else structure_price
+                        )
                         _is_structure_anchored = True
-                        logger.info(f"🎯 [結構錨定掛單] {sym} 掛在阻力位 {_struct_resistance:.6f} - 0.05% 緩衝 = {limit_price:.6f}")
+                        logger.info(f"🎯 [MA25確認回踩掛單] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
                     elif _is_zone_convert and price > 0:
                         limit_price = price
                         _is_structure_anchored = True
