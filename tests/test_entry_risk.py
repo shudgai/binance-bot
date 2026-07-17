@@ -18,7 +18,7 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
     _entry_signal_chase_guard, _pending_entry_reprice_needed,
     _translated_pending_limit_price, _ma_cross_anti_chase_plan, _is_dynamic_pending_entry,
     _reanchor_rejected_passive_price, _entry_price_guard,
-    _ma25_confirmed_pullback_price)
+    _ma25_confirmed_pullback_price, _range_exit_bracket)
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -374,6 +374,18 @@ class EntryRiskTests(unittest.TestCase):
     def test_pullback_to_better_price_is_not_adverse_chase(self):
         allowed, _ = _entry_signal_chase_guard("buy", 100.0, 99.0)
         self.assertTrue(allowed)
+
+    def test_range_long_exchange_bracket_keeps_opposite_boundary_target(self):
+        state = {"range_tp_price": 102.95, "range_sl_price": 98.5}
+        self.assertEqual(_range_exit_bracket(state, 99.02, True, 0.01), (98.5, 102.95))
+
+    def test_range_short_exchange_bracket_keeps_opposite_boundary_target(self):
+        state = {"range_tp_price": 97.05, "range_sl_price": 101.5}
+        self.assertEqual(_range_exit_bracket(state, 100.98, False, 0.01), (101.5, 97.05))
+
+    def test_range_exchange_bracket_rejects_wrong_side_prices(self):
+        state = {"range_tp_price": 98.0, "range_sl_price": 102.0}
+        self.assertIsNone(_range_exit_bracket(state, 100.0, True, 0.01))
 
     def test_long_bracket_enforces_minimum_reward_over_risk(self):
         stop, take_profit = _enforce_bracket_rr(100.0, 97.0, 102.0, True, 0.1, min_rr=1.5)

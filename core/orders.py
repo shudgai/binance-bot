@@ -82,6 +82,19 @@ async def _cancel_exchange_exit_order(sym, state_key, label):
         s[state_key] = None
 
 
+def _range_exit_bracket(state, avg, is_long, tick_size):
+    """區間單固定在對側邊界停利、結構外側停損，不套用趨勢單的 R:R 延伸。"""
+    avg = float(avg or 0.0)
+    take_profit = float(state.get("range_tp_price", 0.0) or 0.0)
+    stop = float(state.get("range_sl_price", 0.0) or 0.0)
+    if avg <= 0 or take_profit <= 0 or stop <= 0:
+        return None
+    valid = stop < avg < take_profit if is_long else take_profit < avg < stop
+    if not valid:
+        return None
+    return round_step(stop, tick_size), round_step(take_profit, tick_size)
+
+
 def _enforce_bracket_rr(avg, stop_price, take_profit_price, is_long, tick_size, min_rr=EXIT_RR_MULTIPLIER):
     """以最終掛單價保證停利距離至少為停損距離的 min_rr 倍。"""
     avg = float(avg)
@@ -164,6 +177,18 @@ async def _replace_exchange_exit_orders(sym):
             f"⚠️ [Bracket_RR_Guard] {sym} 最終掛單盈虧比不足，"
             f"停利由 {_original_tp} 校正為 {take_profit_price}（最低 R:R={bracket_min_rr}）"
         )
+
+    is_range_route = route in RANGE_ENTRY_ROUTES
+    if is_range_route:
+        range_bracket = _range_exit_bracket(s, avg, is_long, prec["tick_size"])
+        if range_bracket is not None:
+            stop_price, take_profit_price = range_bracket
+            logger.info(
+                f"🎯 [Range_Exchange_Bracket] {sym} 使用區間結構保護單："
+                f"TP={take_profit_price} SL={stop_price}，不延伸到區間外"
+            )
+        else:
+            logger.info(f"⚠️ [Range_Exchange_Bracket] {sym} 區間 TP/SL 遺失或方向錯誤，使用通用保護單")
 
     # MA 波段固定使用 1.5% 災難止損；不可再被 TP/RR 或均線錨點縮窄。
     if is_ma_route:
