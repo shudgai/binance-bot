@@ -421,6 +421,9 @@ async def check_entries():
         # 原本的計算邏輯
         side_strength = compute_signal_strength(sym, realtime_trigger=True)
         is_range_signal = False
+        ma_status = "無訊號" if (side_strength is None or side_strength[0] is None) else "觸發"
+        range_status = "未評估"
+
         if side_strength is None or side_strength[0] is None:
             # MA 訊號無效時，嘗試區間模式
             from core.config import RANGE_MODE_ENABLED, RANGE_MIN_SIGNAL_STRENGTH
@@ -428,15 +431,32 @@ async def check_entries():
                 side_strength = compute_range_signal(sym)
                 if side_strength is not None and side_strength[0] is not None:
                     is_range_signal = True
+                    range_status = "觸發"
                 else:
+                    range_status = "略過"
                     block_reason = s.get("entry_block_reason") or "暫無有效訊號"
                     set_entry_diagnosis(f"{sym}: {block_reason}")
+                    
+                    # 模式切換確認日誌
+                    adx = float(s.get("adx", 0.0) or 0.0)
+                    if adx < 25.0:
+                        logger.info(f"🔍 [Decision] {sym} | 決策路徑: 盤整環境但區間模式確認中 ({block_reason})")
+                    else:
+                        logger.info(f"🔍 [Decision] {sym} | 決策路徑: 趨勢過強 (ADX={adx:.1f})，區間模式停用")
                     continue
             else:
                 block_reason = s.get("entry_block_reason") or "暫無有效訊號"
                 set_entry_diagnosis(f"{sym}: {block_reason}")
                 continue
+        
         side, strength, route = side_strength
+
+        # 模式切換確認日誌（順利產生訊號進場時）
+        adx = float(s.get("adx", 0.0) or 0.0)
+        if is_range_signal:
+            logger.info(f"🔍 [Decision] {sym} | 決策路徑: 區間模式就緒，觸發 {route} ({side})")
+        else:
+            logger.info(f"🔍 [Decision] {sym} | 決策路徑: 趨勢模式 (ADX={adx:.1f})，觸發 MA 訊號 {route} ({side})")
 
         macro_ok, macro_reason, macro_mode = btc_macro_entry_guard(sym, side)
         s["_btc_macro_mode"] = macro_mode
