@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
     DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT,
-    DEFAULT_LOSS_REENTRY_COOLDOWN_SEC, get_entry_strictness_profile)
+    DEFAULT_LOSS_REENTRY_COOLDOWN_SEC, MIN_5M_ATR_PCT_FOR_MA_ENTRY,
+    get_entry_strictness_profile)
 from core.indicators import (_get_atr, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -638,9 +639,14 @@ async def check_entries():
 
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
-        if _atr_pct_5m < 0.0008:
-            logger.info(f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < 0.08%，放棄進場")
-            set_entry_diagnosis(f"{sym}: 即時波動不足，放棄進場")
+        _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY
+        if _atr_pct_5m < _min_atr_pct_5m:
+            _mode_name = "區間" if is_range_signal else "MA"
+            logger.info(
+                f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < "
+                f"{_min_atr_pct_5m*100:.2f}%（{_mode_name} 成本安全線），放棄進場"
+            )
+            set_entry_diagnosis(f"{sym}: 即時波動不足，未達 {_mode_name} 成本安全線")
             continue
 
         _route_label = "Range" if is_range_signal else "MA"
