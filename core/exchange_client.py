@@ -53,6 +53,7 @@ else:
     exchange_market_data = exchange_futures
 
 _PRECISION_CACHE = {}
+_LAST_WEIGHT_SAMPLE = None
 
 
 def convert_to_ccxt_symbol(symbol: str) -> str:
@@ -162,18 +163,29 @@ async def get_reference_price(sym: str, exchange=None) -> float:
 
 
 def check_binance_weight():
+    global _LAST_WEIGHT_SAMPLE
     try:
-        weights = []
-        for exchange in (exchange_futures, exchange_market_data):
+        samples = []
+        for index, exchange in enumerate((exchange_futures, exchange_market_data)):
             headers = getattr(exchange, "last_response_headers", {}) or {}
             for key, value in headers.items():
                 if key.lower() == "x-mbx-used-weight-1m":
-                    weights.append(int(value))
+                    request_ts = float(getattr(exchange, "lastRestRequestTimestamp", 0.0) or 0.0)
+                    samples.append((request_ts, index, int(value)))
                     break
-        if not weights:
+        if not samples:
             return 0.0
 
-        weight = max(weights)
+        # 兩個 client 的 header 都是各自最後一次回應。只採用最近一次 REST
+        # 請求的回應，避免久未更新的舊高權重每輪重複觸發冷卻。
+        latest_ts = max(sample[0] for sample in samples)
+        latest_samples = [sample for sample in samples if sample[0] == latest_ts]
+        request_ts, source_index, weight = max(latest_samples, key=lambda sample: sample[2])
+        sample_key = (request_ts, source_index, weight)
+        if sample_key == _LAST_WEIGHT_SAMPLE:
+            return 0.0
+        _LAST_WEIGHT_SAMPLE = sample_key
+
         if weight >= 1800:
             cooldown = 60.0
             level = "重度"

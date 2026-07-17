@@ -3,11 +3,21 @@ from unittest.mock import patch
 
 from core import ctx, exchange_client
 from services import api
+from core.runner import _is_permanent_market_symbol_error
 
 
 class ApiRateLimitTests(unittest.TestCase):
     def tearDown(self):
         ctx.api_cooldown_until = 0.0
+        exchange_client._LAST_WEIGHT_SAMPLE = None
+
+    def test_bad_market_symbol_is_permanent_not_retryable(self):
+        self.assertTrue(_is_permanent_market_symbol_error(
+            Exception("binance does not have market symbol REUSDT")
+        ))
+        self.assertFalse(_is_permanent_market_symbol_error(
+            Exception("temporary websocket timeout")
+        ))
 
     def test_high_market_data_weight_activates_global_cooldown(self):
         with patch.object(
@@ -15,14 +25,67 @@ class ApiRateLimitTests(unittest.TestCase):
             "last_response_headers",
             {"x-mbx-used-weight-1m": "500"},
         ), patch.object(
+            exchange_client.exchange_futures,
+            "lastRestRequestTimestamp",
+            1000,
+        ), patch.object(
             exchange_client.exchange_market_data,
             "last_response_headers",
             {"x-mbx-used-weight-1m": "1900"},
+        ), patch.object(
+            exchange_client.exchange_market_data,
+            "lastRestRequestTimestamp",
+            2000,
         ):
             cooldown = exchange_client.check_binance_weight()
 
         self.assertEqual(cooldown, 60.0)
         self.assertGreater(ctx.api_cooldown_until, 0.0)
+
+    def test_stale_higher_header_does_not_override_latest_weight(self):
+        with patch.object(
+            exchange_client.exchange_futures,
+            "last_response_headers",
+            {"x-mbx-used-weight-1m": "1900"},
+        ), patch.object(
+            exchange_client.exchange_futures,
+            "lastRestRequestTimestamp",
+            1000,
+        ), patch.object(
+            exchange_client.exchange_market_data,
+            "last_response_headers",
+            {"x-mbx-used-weight-1m": "500"},
+        ), patch.object(
+            exchange_client.exchange_market_data,
+            "lastRestRequestTimestamp",
+            2000,
+        ):
+            cooldown = exchange_client.check_binance_weight()
+
+        self.assertEqual(cooldown, 0.0)
+        self.assertEqual(ctx.api_cooldown_until, 0.0)
+
+    def test_same_weight_sample_only_applies_cooldown_once(self):
+        with patch.object(
+            exchange_client.exchange_market_data,
+            "last_response_headers",
+            {"x-mbx-used-weight-1m": "1217"},
+        ), patch.object(
+            exchange_client.exchange_market_data,
+            "lastRestRequestTimestamp",
+            2000,
+        ), patch.object(
+            exchange_client.exchange_futures,
+            "last_response_headers",
+            {},
+        ):
+            first = exchange_client.check_binance_weight()
+            first_deadline = ctx.api_cooldown_until
+            second = exchange_client.check_binance_weight()
+
+        self.assertEqual(first, 5.0)
+        self.assertEqual(second, 0.0)
+        self.assertEqual(ctx.api_cooldown_until, first_deadline)
 
     def test_all_trades_uses_local_history_instead_of_per_symbol_api(self):
         local_trade = {

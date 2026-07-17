@@ -97,13 +97,14 @@ async def update_trade_signal(sym, trade):
             if peak_hit and not s.get("_is_closing", False):
                 from core.orders import close_position
                 close_side = "sell" if _is_long else "buy"
+                reason = "[MA_Peak_Lock]" if s.get("ma_peak_lock_armed", False) else "[MA_Profit_Floor]"
                 logger.info(
-                    f"⚡ [Realtime_MA_Peak_Lock] {sym} 即時價格 {price:.6f} "
+                    f"⚡ [Realtime_{reason.strip('[]')}] {sym} 即時價格 {price:.6f} "
                     f"穿越高點鎖利 {peak_lock_price:.6f}，結束本段波段"
                 )
                 await close_position(
                     sym, close_side, abs(s["qty"]), price, avg_p,
-                    reason="[MA_Peak_Lock]", is_stop_loss=False,
+                    reason=reason, is_stop_loss=False,
                 )
             return
 

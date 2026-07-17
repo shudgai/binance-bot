@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import ctx
 from core.ctx import init_states
-from core.runner import calibrate_with_exchange
+from core.runner import calibrate_with_exchange, cancel_orphan_exchange_entry_orders
 from core.state_manager import reset_coin_state
 
 
@@ -31,6 +31,53 @@ class ExchangeCalibrationTests(unittest.TestCase):
             ctx.STATES.pop(self.sym, None)
         else:
             ctx.STATES[self.sym] = self.original_state
+
+    def test_startup_cancels_only_untracked_entry_orders(self):
+        exchange = AsyncMock()
+        exchange.options = {"warnOnFetchOpenOrdersWithoutSymbol": True}
+        exchange.fetch_open_orders.return_value = [
+            {"id": "orphan-entry", "symbol": "XRP/USDT:USDT", "status": "open",
+             "side": "buy", "type": "limit", "reduceOnly": False},
+            {"id": "tracked-entry", "symbol": "XRP/USDT:USDT", "status": "open",
+             "side": "buy", "type": "limit", "reduceOnly": False},
+            {"id": "protective-stop", "symbol": "XRP/USDT:USDT", "status": "open",
+             "side": "sell", "type": "stop_market", "info": {"reduceOnly": "true"}},
+        ]
+        original_pending = dict(ctx.PENDING_LIMIT_ORDERS)
+        try:
+            ctx.PENDING_LIMIT_ORDERS.clear()
+            ctx.PENDING_LIMIT_ORDERS["tracked-entry"] = {"sym": self.sym}
+            cancelled = asyncio.run(cancel_orphan_exchange_entry_orders(exchange))
+        finally:
+            ctx.PENDING_LIMIT_ORDERS.clear()
+            ctx.PENDING_LIMIT_ORDERS.update(original_pending)
+
+        self.assertEqual(cancelled, 1)
+        self.assertTrue(exchange.options["warnOnFetchOpenOrdersWithoutSymbol"])
+        exchange.cancel_order.assert_awaited_once_with(
+            "orphan-entry", "XRP/USDT:USDT",
+        )
+
+    def test_startup_orphan_scan_preserves_close_position_order(self):
+        exchange = AsyncMock()
+        exchange.fetch_open_orders.return_value = [{
+            "id": "protect-position", "symbol": "XRP/USDT:USDT",
+            "status": "new", "info": {"closePosition": "true"},
+        }]
+
+        cancelled = asyncio.run(cancel_orphan_exchange_entry_orders(exchange))
+
+        self.assertEqual(cancelled, 0)
+        exchange.cancel_order.assert_not_awaited()
+
+    def test_startup_orphan_scan_failure_does_not_block_boot(self):
+        exchange = AsyncMock()
+        exchange.fetch_open_orders.side_effect = RuntimeError("temporary API error")
+
+        cancelled = asyncio.run(cancel_orphan_exchange_entry_orders(exchange))
+
+        self.assertEqual(cancelled, 0)
+        exchange.cancel_order.assert_not_awaited()
 
     def test_exchange_closed_position_cancels_remaining_exit_orders_and_resets_state(self):
         state = ctx.STATES[self.sym]

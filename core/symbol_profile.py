@@ -101,8 +101,8 @@ def load_symbol_pool():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return normalize_symbol_list(data.get("symbols", []))
-        return normalize_symbol_list(data)
+            return normalize_symbol_list(data.get("symbols", []))[:12]
+        return normalize_symbol_list(data)[:12]
     except FileNotFoundError:
         return list(DEFAULT_SYMBOLS)
     except Exception as e:
@@ -459,12 +459,16 @@ def filter_valid_symbols(exchange, symbols):
 def apply_symbol_pool_change(requested_symbols):
     import core.ctx as ctx
     from core.exchange_client import exchange_futures
-    desired = filter_valid_symbols(exchange_futures, normalize_symbol_list(requested_symbols))
+    desired = filter_valid_symbols(
+        exchange_futures, normalize_symbol_list(requested_symbols)
+    )[:12]
     locked_symbols = [sym for sym in ctx.ALL_SYMBOLS if _is_symbol_locked(sym)]
 
     new_symbols = []
     used = set()
-    target_count = min(23, max(len(desired), len(ctx.ALL_SYMBOLS)))
+    # 雷達策略是 Top 12；舊邏輯取新舊池較大值，池子一旦長到 23 就永遠縮不回來。
+    # 僅真實持倉或掛單鎖定可讓保護數暫時高於雷達需求。
+    target_count = max(len(desired), len(locked_symbols))
 
     for sym in locked_symbols:
         if sym not in used:
@@ -499,9 +503,8 @@ def _is_symbol_locked(sym):
     s = ctx.STATES.get(sym)
     if not s:
         return False
-    has_pending_order = any(info.get("symbol") == sym for info in ctx.PENDING_LIMIT_ORDERS.values())
-    return (abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or
-            s["status"] in ("COOLDOWN", "BANNED") or s.get("pending_side") is not None or
+    has_pending_order = any((info.get("sym") or info.get("symbol")) == sym for info in ctx.PENDING_LIMIT_ORDERS.values())
+    return (abs(s["qty"]) > 0.000001 or s["entry_count"] > 0 or s["open_time"] > 0 or s.get("pending_side") is not None or
             has_pending_order)
 
 

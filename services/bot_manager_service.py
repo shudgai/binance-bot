@@ -182,7 +182,8 @@ def _restore_truncated_radar_pool(symbols):
     """雷達仔保存完整 profiles 時，避免短暫重啟狀態把正式監控池縮成少數幣。
 
     profiles 會保存雷達排名與交易資格； symbols 偶爾只剰冷卻候補/最後監控幣。
-    啟動時若 profiles 至少有 8 檔、但 symbols 少於 15 檔，依雷達排名恢復最多 25 檔。
+    啟動時只有 symbols 少於 8 檔才視為截斷，並由 profiles 恢復正式 Top 12；
+    已有 8 檔以上視為正常自訂池，不擅自覆蓋。
     """
     symbols = normalize_symbol_list(symbols)
     profiles = load_symbol_profiles()
@@ -195,11 +196,8 @@ def _restore_truncated_radar_pool(symbols):
         and float(profile.get("_radar_atr_pct", 0.0) or 0.0) > 0
     ]
     ranked = _filter_disabled_symbols(normalize_symbol_list(ranked, max_count=25))
-    if len(symbols) < 15 and len(ranked) >= 8:
-        restored = list(ranked)
-        for sym in symbols:
-            if sym not in restored and len(restored) < 25:
-                restored.append(sym)
+    if len(symbols) < 8 and len(ranked) >= 8:
+        restored = list(ranked[:12])
         add_system_log(
             f"♻️ [啟動幣池修復] symbols 僅 {len(symbols)} 檔，"
             f"由雷達 profiles 恢復為 {len(restored)} 檔",

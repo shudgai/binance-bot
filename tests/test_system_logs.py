@@ -8,6 +8,7 @@ from services import api
 from services import system_log_service as log_service
 from services.system_log_service import add_system_log, clear_system_logs
 from services.bot_manager_service import (
+    _prune_entry_diagnoses,
     _summarize_entry_diagnosis,
     bot_status,
     classify_bot_log_level,
@@ -100,6 +101,19 @@ class SystemLogTests(unittest.TestCase):
 
             self.assertIn("ETHUSDT", summary)
             self.assertNotIn("K 線資料不足", summary)
+        finally:
+            bot_status["entry_diagnoses"] = original_map
+
+
+    def test_entry_diagnoses_are_pruned_to_active_pool(self):
+        original_map = dict(bot_status.get("entry_diagnoses", {}))
+        try:
+            bot_status["entry_diagnoses"] = {
+                "BTCUSDT": {"message": "current"},
+                "REUSDT": {"message": "stale"},
+            }
+            _prune_entry_diagnoses(["BTCUSDT"])
+            self.assertEqual(set(bot_status["entry_diagnoses"]), {"BTCUSDT"})
         finally:
             bot_status["entry_diagnoses"] = original_map
 

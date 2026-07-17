@@ -56,6 +56,20 @@ async def wait_for_api_cooldown():
         await asyncio.sleep(remaining)
 
 
+def _is_permanent_market_symbol_error(error):
+    message = str(error).lower()
+    return isinstance(error, ccxt.BadSymbol) or "does not have market symbol" in message
+
+
+def _disable_unsupported_symbol(sym, error):
+    ctx.UNSUPPORTED_SYMBOLS.add(sym)
+    state = ctx.STATES.get(sym)
+    if isinstance(state, dict):
+        state["status"] = "BANNED"
+        state["status_reason"] = f"交易環境不支援此合約: {error}"
+    logger.info(f"🚫 [永久無效市場] {sym} 已停止成交流監聽並移出交易池: {error}")
+
+
 async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
     if initial_delay > 0:
         await asyncio.sleep(initial_delay)
@@ -82,6 +96,9 @@ async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
             activate_api_cooldown()
             logger.info(f"🚨 [成交流限流] {sym} 暫停所有行情 REST 請求 {API_RATE_LIMIT_COOLDOWN_SEC:.0f} 秒: {e}")
         except Exception as e:
+            if _is_permanent_market_symbol_error(e):
+                _disable_unsupported_symbol(sym, e)
+                return
             error_count += 1
             if "429" in str(e) or "-1003" in str(e):
                 activate_api_cooldown()
@@ -104,7 +121,14 @@ async def watch_symbol_trades(exchange, sym, initial_delay=0.0):
 
 
 async def ensure_watch_tasks(exchange):
-    desired_symbols = set(ctx.ALL_SYMBOLS)
+    unsupported = set(ctx.UNSUPPORTED_SYMBOLS)
+    if unsupported:
+        filtered_symbols = [sym for sym in ctx.ALL_SYMBOLS if sym not in unsupported]
+        if filtered_symbols != ctx.ALL_SYMBOLS:
+            ctx.ALL_SYMBOLS[:] = filtered_symbols
+            from core.symbol_profile import save_symbol_pool
+            save_symbol_pool(filtered_symbols)
+    desired_symbols = set(ctx.ALL_SYMBOLS) - unsupported
     current_symbols = set(ctx.WATCH_TASKS.keys())
 
     for sym in current_symbols - desired_symbols:
@@ -281,6 +305,77 @@ async def _infer_exchange_open_time(exchange, sym):
     timestamps = [int(t.get("timestamp") or (t.get("info") or {}).get("time") or 0) for t in cycle]
     timestamps = [ts for ts in timestamps if ts > 0]
     return min(timestamps) / 1000.0 if timestamps else 0.0
+
+
+def _exchange_order_is_reduce_only(order):
+    """Return True for protective close orders that must survive entry cleanup."""
+    info = order.get("info") or {}
+    reduce_only = order.get("reduceOnly", info.get("reduceOnly", False))
+    close_position = order.get("closePosition", info.get("closePosition", False))
+    return str(reduce_only).lower() in ("true", "1") or str(close_position).lower() in ("true", "1")
+
+
+def _exchange_order_symbol(order):
+    raw_symbol = str(order.get("symbol") or (order.get("info") or {}).get("symbol") or "")
+    return raw_symbol.split(":")[0].replace("/", "")
+
+
+async def cancel_orphan_exchange_entry_orders(exchange):
+    """Cancel restart-orphaned entries while preserving reduce-only exits."""
+    options = getattr(exchange, "options", None)
+    warning_key = "warnOnFetchOpenOrdersWithoutSymbol"
+    warning_was_present = isinstance(options, dict) and warning_key in options
+    previous_warning = options.get(warning_key) if warning_was_present else None
+    try:
+        # Binance futures charges more weight for an all-symbol query, but this runs
+        # exactly once at startup.  One account-wide request is still safer and
+        # lighter than polling every possible market, and it also finds an orphan
+        # whose symbol has already fallen out of the current Top 12 pool.
+        if isinstance(options, dict):
+            options[warning_key] = False
+        open_orders = await exchange.fetch_open_orders()
+    except Exception as exc:
+        logger.info(f"⚠️ [啟動孤兒單掃描失敗] 無法取得交易所未成交單: {exc}")
+        return 0
+    finally:
+        if isinstance(options, dict):
+            if warning_was_present:
+                options[warning_key] = previous_warning
+            else:
+                options.pop(warning_key, None)
+
+    cancelled = 0
+    tracked_ids = {str(order_id) for order_id in ctx.PENDING_LIMIT_ORDERS}
+    for order in open_orders or []:
+        info = order.get("info") or {}
+        order_id = str(order.get("id") or info.get("orderId") or "")
+        status = str(order.get("status") or info.get("status") or "open").lower()
+        if not order_id or order_id in tracked_ids or status not in ("open", "new", "partially_filled"):
+            continue
+        if _exchange_order_is_reduce_only(order):
+            continue
+
+        sym = _exchange_order_symbol(order)
+        display_sym = sym or "UNKNOWN"
+        cancel_symbol = order.get("symbol") or sym or None
+        try:
+            await exchange.cancel_order(order_id, cancel_symbol)
+            cancelled += 1
+            state = ctx.STATES.get(sym)
+            if isinstance(state, dict) and abs(float(state.get("qty", 0.0) or 0.0)) <= 0.000001:
+                state["pending_side"] = None
+                state["pending_time"] = 0
+                state["is_ordering"] = False
+            logger.info(
+                f"🧹 [啟動孤兒進場單撤銷] {display_sym} 訂單 {order_id} "
+                f"不在本地追蹤，已撤銷；待最新條件成立後重新掛單"
+            )
+        except Exception as exc:
+            logger.info(f"🚨 [啟動孤兒進場單撤銷失敗] {display_sym} {order_id}: {exc}")
+
+    if cancelled:
+        logger.info(f"✅ [啟動孤兒單清理] 共撤銷 {cancelled} 張失去策略上下文的進場單")
+    return cancelled
 
 
 async def calibrate_with_exchange(exchange):
@@ -523,6 +618,8 @@ async def main_loop(exchange):
     # _calc_sl_tp 在 ATR 還是 0 時也有預設回退值），所以把校準提到 ATR 暖機之前，
     # 讓「偵測並補掛缺少的止損/停利單」盡量在程序剛起來的第一時間就發生，縮短
     # 倉位沒有交易所端保護的空窗期。
+    logger.info("🧹 [INIT] 正在清理重啟後失去本地追蹤的交易所進場單...")
+    await cancel_orphan_exchange_entry_orders(exchange)
     logger.info("🔍 [INIT] 正在啟動時校準倉位...")
     await calibrate_with_exchange(exchange)
     await fetch_real_balance()
@@ -812,7 +909,7 @@ async def periodic_momentum_swap():
                     if evicted:
                         logger.info(f"🗑️ [動態汰換] 剔除無效監控幣種 (Calm + 低量能): {', '.join(evicted)}")
 
-                    new_pool = list(dict.fromkeys(selected_list + protected))
+                    new_pool = list(dict.fromkeys(selected_list[:12] + protected))
                     profiles = load_symbol_profiles()
                     old_pool = list(ctx.ALL_SYMBOLS)
                     for sym in new_pool:

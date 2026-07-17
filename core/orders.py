@@ -26,6 +26,7 @@ from services.ai_manager import ai_engine
 logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
+RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_PENDING_MONITOR_INTERVAL_SEC = 3.0
 MA_PENDING_REPRICE_COOLDOWN_SEC = 6.0
@@ -507,10 +508,15 @@ def _is_ma_pending_entry(info):
             and not info.get("is_rescue_dca", False))
 
 
+def _is_dynamic_pending_entry(info):
+    route = str(info.get("entry_route") or "").lower()
+    return (route in MA_ENTRY_ROUTES or route in RANGE_ENTRY_ROUTES) and not info.get("is_rescue_dca", False)
+
+
 def _pending_entry_reprice_needed(sym, info, current_price, now=None):
-    """Detect material market movement since this limit price was calculated."""
-    if not _is_ma_pending_entry(info) or current_price <= 0:
-        return False, "not_dynamic_ma_order"
+    """Detect a moved MA or range anchor without imposing a fixed order timeout."""
+    if not _is_dynamic_pending_entry(info) or current_price <= 0:
+        return False, "not_dynamic_strategy_order"
     now = float(time.time() if now is None else now)
     last_reprice_at = float(info.get("last_reprice_at",
         info.get("timestamp", info.get("placed_at", 0.0))) or 0.0)
@@ -522,6 +528,21 @@ def _pending_entry_reprice_needed(sym, info, current_price, now=None):
         return False, "missing_market_reference"
     s = ctx.STATES.get(sym, {})
     atr = float(s.get("current_atr", 0.0) or 0.0)
+    route = str(info.get("entry_route") or "").lower()
+    if route in RANGE_ENTRY_ROUTES:
+        support = float(s.get("range_support_level", 0.0) or 0.0)
+        resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
+        desired_price = (
+            support * 1.0002 if route == "range_support_long"
+            else resistance * 0.9998
+        )
+        old_limit = float(info.get("price") or info.get("limit_price") or 0.0)
+        if desired_price <= 0 or old_limit <= 0:
+            return False, "missing_range_anchor"
+        anchor_drift_limit = max(current_price * 0.0005, atr * 0.10)
+        if abs(desired_price - old_limit) >= anchor_drift_limit:
+            return True, "range anchor moved"
+        return False, "range anchor unchanged"
     if info.get("ma_cross_anti_chase", False):
         _, desired_price, _ = _ma_cross_anti_chase_plan(
             sym, info.get("side"), current_price, info.get("entry_route"),
@@ -544,7 +565,15 @@ def _pending_entry_reprice_needed(sym, info, current_price, now=None):
 
 
 def _translated_pending_limit_price(info, current_price):
-    """Move the old limit with the market while preserving its pullback distance."""
+    """Re-anchor a pending limit to current MA or horizontal range structure."""
+    route = str(info.get("entry_route") or "").lower()
+    if route in RANGE_ENTRY_ROUTES:
+        s = ctx.STATES.get(info.get("sym"), {})
+        if route == "range_support_long":
+            support = float(s.get("range_support_level", 0.0) or 0.0)
+            return support * 1.0002 if support > 0 else 0.0
+        resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
+        return resistance * 0.9998 if resistance > 0 else 0.0
     if info.get("ma_cross_anti_chase", False):
         _, anchor_price, _ = _ma_cross_anti_chase_plan(
             info.get("sym"), info.get("side"), current_price,
@@ -1313,7 +1342,7 @@ async def check_paper_pending_order(sym):
     side = order["side"]
     limit_price = order["limit_price"]
     elapsed = time.time() - order["placed_at"]
-    if elapsed > order["timeout"] and not _is_ma_pending_entry(order):
+    if elapsed > order["timeout"] and not _is_dynamic_pending_entry(order):
         s["pending_paper_order"] = None
         logger.info(f"⌛ [Paper超時撤單] {sym} {side} @ {limit_price:.6f} 超過 {order['timeout']}秒未成交，已撤單")
         return
@@ -1340,7 +1369,7 @@ async def check_paper_pending_order(sym):
     if reprice:
         new_limit = _translated_pending_limit_price(order, p)
         price_ok, price_reason = _entry_price_guard(
-            sym, side, new_limit, p, mode=("ma7_pullback" if order.get("ma_cross_anti_chase", False) else "pullback"),
+            sym, side, new_limit, p, mode=("ma7_pullback" if order.get("ma_cross_anti_chase", False) else "range_limit" if str(order.get("entry_route") or "").lower() in RANGE_ENTRY_ROUTES else "pullback"),
             is_rescue_dca=False,
         )
         if new_limit > 0 and price_ok:
@@ -1382,7 +1411,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🛑 [InvalidEntrySide] {sym} 收到無效開倉方向 {side!r}，拒絕下單")
         return
     s = ctx.STATES[sym]
-    if not is_rescue_dca and str(entry_route or "").lower() in MA_ENTRY_ROUTES:
+    route_key = str(entry_route or "").lower()
+    if not is_rescue_dca and route_key in MA_ENTRY_ROUTES:
         from core.entry_filter import btc_macro_entry_guard, is_ma_direction_aligned
         macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
         if not macro_ok:
@@ -1390,6 +1420,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             return
         if not is_ma_direction_aligned(s, side, entry_route):
             logger.info(f"🛑 [Final_MA_Direction_Guard] {sym} {side} 未通過 MA7/MA25/MA99 完整排列與斜率，拒絕送單")
+            return
+    elif not is_rescue_dca and route_key in RANGE_ENTRY_ROUTES:
+        from core.entry_filter import is_range_direction_valid
+        range_ok, range_reason = is_range_direction_valid(sym, side, entry_route)
+        if not range_ok:
+            logger.info(f"🛑 [Final_Range_Guard] {sym} {side}：{range_reason}")
             return
     if s.get("_is_closing", False):
         logger.info(f"🛑 [CloseInProgress] {sym} 正在平倉，拒絕新的 {side} 進場單")
@@ -2098,7 +2134,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 adverse_ok, adverse_reason = _entry_pending_adverse_guard(
                     sym, side, price, latest_ref_price, is_rescue_dca=is_rescue_dca
                 )
-                if not adverse_ok and not _is_ma_pending_entry(ctx.PENDING_LIMIT_ORDERS.get(order_id, {})):
+                if not adverse_ok and not _is_dynamic_pending_entry(ctx.PENDING_LIMIT_ORDERS.get(order_id, {})):
                     try:
                         await exchange_futures.cancel_order(order_id, sym)
                     except Exception as ce:
@@ -2417,7 +2453,7 @@ async def _relist_pending_entry(info, sym, side, qty, current_price):
         if qty <= 0:
             return False
         price_ok, price_reason = _entry_price_guard(
-            sym, side, new_price, current_price, mode=("ma7_pullback" if info.get("ma_cross_anti_chase", False) else "pullback"),
+            sym, side, new_price, current_price, mode=("ma7_pullback" if info.get("ma_cross_anti_chase", False) else "range_limit" if str(info.get("entry_route") or "").lower() in RANGE_ENTRY_ROUTES else "pullback"),
             is_rescue_dca=False,
         )
         if not price_ok:
@@ -2474,9 +2510,9 @@ async def check_stale_limit_orders():
             side = info.get("side", "")
             original_qty = info.get("qty", 0.0)
             max_wait_seconds = float(info.get("timeout", DUAL_SHOT_ORDER_TIMEOUT))
-            dynamic_ma_order = _is_ma_pending_entry(info)
+            dynamic_strategy_order = _is_dynamic_pending_entry(info)
             # MA 掛單不再因固定秒數到期；持續看結構與價格。舊式／救援單保留逾時。
-            should_cancel = elapsed > max_wait_seconds and not dynamic_ma_order
+            should_cancel = elapsed > max_wait_seconds and not dynamic_strategy_order
             chase_eligible = should_cancel
             reprice_eligible = False
             latest_ref_price = 0.0
@@ -2491,7 +2527,7 @@ async def check_stale_limit_orders():
                 chase_eligible = False
                 cancel_reason = f"進場訊號已失效: {setup_reason}"
 
-            if setup_ok and (dynamic_ma_order or not should_cancel):
+            if setup_ok and (dynamic_strategy_order or not should_cancel):
                 try:
                     latest_ref_price = await get_reference_price(sym, exchange_futures)
                 except Exception as pe:
@@ -2500,7 +2536,7 @@ async def check_stale_limit_orders():
                 if latest_ref_price <= 0:
                     latest_ref_price = float(s_check.get("last_trade_price", 0.0)
                         or s_check.get("close_price", 0.0) or 0.0)
-                if dynamic_ma_order:
+                if dynamic_strategy_order:
                     reprice_eligible, reprice_reason = _pending_entry_reprice_needed(
                         sym, info, latest_ref_price,
                     )

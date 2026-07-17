@@ -52,6 +52,26 @@ def test_ma_wave_position_uses_dedicated_realtime_peak_lock():
     assert state["ma_peak_lock_armed"] is True
 
 
+def test_ma_profit_floor_closes_on_realtime_trade_tick():
+    sym = "ETHUSDT"
+    init_states([sym])
+    reset_coin_state(sym)
+    state = STATES[sym]
+    state.update({
+        "qty": 1.0, "avg_price": 100.0, "entry_reason": "MA_Cross",
+        "current_atr": 0.1, "highest_profit_pct": 0.0035,
+        "trailing_highest": 100.35, "trade_price_history": [100.2],
+        "trade_qty_history": [1.0],
+    })
+
+    with patch("core.orders.close_position", AsyncMock()) as close:
+        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0}))
+
+    close.assert_awaited_once()
+    assert close.await_args.kwargs["reason"] == "[MA_Profit_Floor]"
+    assert close.await_args.kwargs["is_stop_loss"] is False
+
+
 def test_realtime_trade_does_not_close_before_soft_activation():
     sym = "XRPUSDT"
     init_states([sym])

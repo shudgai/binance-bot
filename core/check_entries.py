@@ -61,7 +61,8 @@ def log_decision_summary(
             detail = block_reason or "區間空間不足或邊界確認中"
             reason = f"盤整環境但區間模式確認中 ({detail})"
         else:
-            reason = f"趨勢過強 (ADX={adx:.1f})，區間模式停用"
+            detail = block_reason or "等待新的 MA 訊號"
+            reason = f"趨勢模式未進場 ({detail})；ADX={adx:.1f}，區間模式停用"
     else:
         # range_status == "未評估"（RANGE_MODE_ENABLED=False 且 MA 無訊號）
         reason = f"趨勢模式無訊號 (ADX={adx:.1f})，區間模式未啟用"
@@ -460,6 +461,7 @@ async def check_entries():
 
         # 原本的計算邏輯
         side_strength = compute_signal_strength(sym, realtime_trigger=True)
+        ma_block_reason = s.get("entry_block_reason") or "暫無有效 MA 訊號"
         is_range_signal = False
         ma_status = "無訊號" if (side_strength is None or side_strength[0] is None) else "觸發"
         range_status = "未評估"
@@ -474,11 +476,13 @@ async def check_entries():
                     range_status = "觸發"
                 else:
                     range_status = "略過"
-                    block_reason = s.get("entry_block_reason") or "暫無有效訊號"
+                    range_block_reason = s.get("entry_block_reason") or "暫無有效區間訊號"
+                    adx = float(s.get("adx", 0.0) or 0.0)
+                    block_reason = ma_block_reason if adx >= 25.0 else range_block_reason
+                    s["entry_block_reason"] = block_reason
                     set_entry_diagnosis(f"{sym}: {block_reason}")
                     
                     # 模式切換確認日誌
-                    adx = float(s.get("adx", 0.0) or 0.0)
                     log_decision_summary(
                         sym,
                         ma_status=ma_status,
@@ -648,6 +652,7 @@ async def check_entries():
             continue
 
         if not is_entry_allowed(sym, side, route, strength):
+            set_entry_diagnosis("{}: {}".format(sym, s.get("entry_block_reason") or "最後進場檢查未通過"))
             continue
 
         # 同方向虧損後維持冷卻，避免重複使用同一個失效 MA 波段。
@@ -792,6 +797,7 @@ async def check_entries():
                 continue
 
         if not is_entry_allowed(sym, side, route, strength):
+            set_entry_diagnosis("{}: {}".format(sym, s.get("entry_block_reason") or "最後進場檢查未通過"))
             continue
         price = float(s.get("close_price", 0.0) or 0.0)
         if price <= 0:
@@ -810,30 +816,32 @@ async def check_entries():
             resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
             atr        = float(s.get("current_atr", 0.0) or 0.0)
             from core.config import RANGE_MIN_NET_PROFIT_PCT, TAKER_FEE_RATE
-            if support > 0 and resistance > 0:
-                if side == "buy":
-                    range_tp = resistance - price * 0.0005  # 壓力帶內側 0.05% 緩衝
-                    range_sl = support - atr * 0.5
-                else:
-                    range_tp = support + price * 0.0005    # 支撐帶內側 0.05% 緩衝
-                    range_sl = resistance + atr * 0.5
-                range_tp_dist = abs(range_tp - price)
-                range_sl_dist = abs(range_sl - price)
-                range_net_pct = range_tp_dist / price - TAKER_FEE_RATE * 2
-                if range_net_pct < RANGE_MIN_NET_PROFIT_PCT:
-                    logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {RANGE_MIN_NET_PROFIT_PCT*100:.1f}%")
-                    continue
-                range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
-                if range_rr < 1.0:
-                    logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < 1.0")
-                    continue
-                # 寫入進場時預先計算好的區間出場價位到 state
-                s["range_tp_price"] = range_tp
-                s["range_sl_price"] = range_sl
-                logger.info(
-                    f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} | "
-                    f"TP={range_tp:.4f} SL={range_sl:.4f} net={range_net_pct*100:.2f}%"
-                )
+            if not (support > 0 and resistance > 0 and support < resistance):
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 支撐/壓力資料不完整或順序錯誤")
+                continue
+            if side == "buy":
+                range_tp = resistance - price * 0.0005  # 壓力帶內側 0.05% 緩衝
+                range_sl = support - atr * 0.5
+            else:
+                range_tp = support + price * 0.0005    # 支撐帶內側 0.05% 緩衝
+                range_sl = resistance + atr * 0.5
+            range_tp_dist = abs(range_tp - price)
+            range_sl_dist = abs(range_sl - price)
+            range_net_pct = range_tp_dist / price - TAKER_FEE_RATE * 2
+            if range_net_pct < RANGE_MIN_NET_PROFIT_PCT:
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {RANGE_MIN_NET_PROFIT_PCT*100:.1f}%")
+                continue
+            range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
+            if range_rr < 1.0:
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < 1.0")
+                continue
+            # 寫入進場時預先計算好的區間出場價位到 state
+            s["range_tp_price"] = range_tp
+            s["range_sl_price"] = range_sl
+            logger.info(
+                f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} | "
+                f"TP={range_tp:.4f} SL={range_sl:.4f} net={range_net_pct*100:.2f}%"
+            )
 
         cooldown = float(COIN_PROFILE_CONFIG.get(sym, {}).get("loss_reentry_cooldown_sec", DEFAULT_LOSS_REENTRY_COOLDOWN_SEC) or 0.0)
         loss_time = get_last_same_side_loss_time(
@@ -1083,6 +1091,17 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
             f"price moved adverse {adverse_move/reference_price*100:.2f}% "
             f"(limit {adverse_limit/reference_price*100:.2f}%)"
         )
+
+    if route in ("Range_Support_Long", "Range_Resistance_Short"):
+        from core.config import RANGE_ADX_THRESHOLD
+        from core.entry_filter import is_range_direction_valid
+        adx = float(s.get("current_adx", s.get("adx", 99.0)) or 99.0)
+        if adx >= RANGE_ADX_THRESHOLD:
+            return False, f"range trend strengthened (ADX {adx:.1f} >= {RANGE_ADX_THRESHOLD:.1f})"
+        range_ok, range_reason = is_range_direction_valid(sym, side, route)
+        if not range_ok:
+            return False, range_reason
+        return True, "range setup valid"
 
     if route not in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
         return False, "non-MA route disabled"

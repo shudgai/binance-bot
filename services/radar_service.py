@@ -172,6 +172,7 @@ CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
 # 選幣數擴大到 15：新倉條件變嚴後，需要更多候選給 5 個倉位槽篩選。
 # 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 15 檔而同時開更多單。
 RADAR_SELECT_COUNT = 25
+TRADE_POOL_SIZE = 12
 HOT_MOVERS_COUNT   = 0
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
@@ -459,25 +460,39 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         if bool(previous.get("_trade_eligible", False)) != trade_eligible:
             eligibility_changed = True
         profiles[sym] = profile
-    
+
+    # 實際核心只取設定檔前 12 檔。成熟可交易幣必須排在觀察中候選之前，
+    # 嚴格候選再排在僅監控補位之前，避免不可下單幣占滿交易池。
+    selected_rows.sort(
+        key=lambda row: (
+            bool(profiles[row["symbol"]].get("_trade_eligible", False)),
+            bool(profiles[row["symbol"]].get("_radar_strict_eligible", False)),
+            float(row.get("entry_readiness_score", 0.0) or 0.0),
+            float(row.get("momentum_score", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
+    best_symbols = [row["symbol"] for row in selected_rows]
+
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
         return get_bot_status().get("active_symbols", [])
 
     # 2. 將選出的 15 個幣種寫入 bot_symbols.json
     # 使用 save_symbol_config 確保配置被正確持久化
-    save_symbol_config(best_symbols)
+    trade_symbols = best_symbols[:TRADE_POOL_SIZE]
+    save_symbol_config(trade_symbols)
     _save_radar_profiles(profiles)
     
     add_system_log(f"🎯 [動態選幣] 已更新監控池為前 15 名動能幣種: {', '.join(best_symbols)}", "success")
     
-    # 3. 如果是強制啟動或正在運行，則啟動新幣池
-    symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(best_symbols)
+    # 3. 雷達保留 25 檔候選資料，但交易核心只接收資格排序後前 12 檔。
+    symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(trade_symbols)
     if restart_on_change and (force_start or (status_before_scan.get("is_running") and (symbols_changed or eligibility_changed))):
         # 注意：start_bot 會處理重新啟動邏輯
-        start_bot(best_symbols, status_before_scan.get("trade_amount", 150.0))
+        start_bot(trade_symbols, status_before_scan.get("trade_amount", 150.0))
     
-    return best_symbols
+    return trade_symbols
 
 
 def _find_atr_replacement(current_syms):

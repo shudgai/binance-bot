@@ -133,6 +133,19 @@ class TakeProfitTests(unittest.TestCase):
         self.assertGreater(s["trailing_stop_price"], 0.0)
         self.assertLess(s["trailing_stop_price"], 100.0)
 
+    def test_breakeven_log_is_emitted_only_when_lock_changes(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": -1.0, "avg_price": 100.0, "current_atr": 0.05,
+                  "trailing_stop_price": 0.0, "trailing_lowest": float("inf")})
+        with self.assertLogs("core.exits", level="INFO") as captured:
+            update_trailing_stop(sym, 99.3, False)
+            update_trailing_stop(sym, 99.3, False)
+        break_even_logs = [line for line in captured.output if "[Break-Even]" in line]
+        self.assertEqual(len(break_even_logs), 1)
+
     def test_peak_giveback_does_not_create_tiny_stop_below_entry(self):
         # 小幅盤中峰值後轉負，不能繞過 ATR/硬停損另造超窄停損。
         from unittest.mock import patch, AsyncMock
@@ -389,7 +402,7 @@ class TakeProfitTests(unittest.TestCase):
         candles.append([20 * 300000, 100.0, 100.2, 99.4, 99.5, 500.0])
         candles.append([21 * 300000, 99.5, 99.6, 99.45, 99.5, 50.0])
         s.update({
-            "qty": -2.0, "avg_price": 100.0, "close_price": 99.5,
+            "qty": -2.0, "avg_price": 100.0, "close_price": 99.4,
             "open_time": time.time() - 900, "last_entry_time": time.time() - 900,
             "last_entry_price": 100.0, "current_atr": 0.2,
             "atr_history": [0.2] * 20, "current_rsi": 45.0,
@@ -397,7 +410,7 @@ class TakeProfitTests(unittest.TestCase):
             "prev_macd_line": -0.015, "prev_macd_signal": -0.01,
             "current_vol": 50.0, "vol_ma20": 1000.0,
             "ohlcv": candles, "pnl_history": [],
-            "highest_profit_pct": 0.0055,
+            "highest_profit_pct": 0.0065,
         })
 
         async def run_check():

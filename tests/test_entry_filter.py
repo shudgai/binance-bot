@@ -73,9 +73,9 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ma99"] = 100.5
         self.assertTrue(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
-    def test_pullback_still_rejects_incomplete_long_stack(self):
+    def test_pullback_rejects_price_deep_below_ma99_buffer(self):
         sym = self._state("buy")
-        STATES[sym]["ma99"] = 100.5
+        STATES[sym]["ma99"] = 103.0
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA25_Pullback", strength=25.0))
 
     def test_adverse_ma25_slope_is_rejected(self):
@@ -84,7 +84,7 @@ class EntryFilterTests(unittest.TestCase):
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
     def test_insufficient_closed_volume_is_rejected(self):
-        sym = self._state("buy", volume=500.0)
+        sym = self._state("buy", volume=400.0)
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
     def test_bad_opposing_wick_is_rejected(self):
@@ -92,52 +92,56 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy"))
 
+    def test_final_filter_records_opposing_wick_reason(self):
+        sym = self._state("buy")
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]
+        self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
+        self.assertIn("反向影線過長", STATES[sym]["entry_block_reason"])
 
-    def test_btc_dual_bull_allows_alt_long_and_blocks_alt_short(self):
+
+    def test_disabled_btc_macro_guard_allows_alt_to_follow_local_signal(self):
         sym = self._state("buy")
         original = dict(ctx.MARKET_WIND)
         try:
             ctx.MARKET_WIND.update({"btc_trend_1h": "BULL", "btc_trend_4h": "BULL", "btc_macro_updated_at": time.time()})
-            self.assertTrue(btc_macro_entry_guard(sym, "buy")[0])
-            allowed, reason, mode = btc_macro_entry_guard(sym, "sell")
-            self.assertFalse(allowed)
-            self.assertEqual(mode, "BULL")
-            self.assertIn("禁止", reason)
+            for side in ("buy", "sell"):
+                allowed, reason, mode = btc_macro_entry_guard(sym, side)
+                self.assertTrue(allowed)
+                self.assertEqual(mode, "DISABLED")
+                self.assertIn("個幣獨立走勢", reason)
         finally:
             ctx.MARKET_WIND.clear()
             ctx.MARKET_WIND.update(original)
 
-    def test_btc_dual_bear_allows_alt_short_and_blocks_alt_long(self):
+    def test_disabled_btc_macro_guard_does_not_block_against_btc_trend(self):
         sym = self._state("sell")
         original = dict(ctx.MARKET_WIND)
         try:
             ctx.MARKET_WIND.update({"btc_trend_1h": "BEAR", "btc_trend_4h": "BEAR", "btc_macro_updated_at": time.time()})
             self.assertTrue(btc_macro_entry_guard(sym, "sell")[0])
-            self.assertFalse(btc_macro_entry_guard(sym, "buy")[0])
+            self.assertTrue(btc_macro_entry_guard(sym, "buy")[0])
         finally:
             ctx.MARKET_WIND.clear()
             ctx.MARKET_WIND.update(original)
 
-    def test_btc_mixed_direction_requires_point_eight_rvol(self):
+    def test_disabled_btc_macro_guard_does_not_require_mixed_market_rvol(self):
         sym = self._state("buy", volume=700.0)
         original = dict(ctx.MARKET_WIND)
         try:
             ctx.MARKET_WIND.update({"btc_trend_1h": "BULL", "btc_trend_4h": "NEUTRAL", "btc_macro_updated_at": time.time()})
-            self.assertFalse(btc_macro_entry_guard(sym, "buy")[0])
-            STATES[sym]["ohlcv"][-2][5] = 900.0
             allowed, _, mode = btc_macro_entry_guard(sym, "buy")
             self.assertTrue(allowed)
-            self.assertEqual(mode, "MIXED")
+            self.assertEqual(mode, "DISABLED")
         finally:
             ctx.MARKET_WIND.clear()
             ctx.MARKET_WIND.update(original)
 
-    def test_stale_btc_macro_blocks_alt_but_not_btc_itself(self):
+    def test_disabled_btc_macro_guard_ignores_stale_macro_timestamp(self):
         sym = self._state("buy")
         original = dict(ctx.MARKET_WIND)
         try:
             ctx.MARKET_WIND["btc_macro_updated_at"] = time.time() - 181.0
-            self.assertFalse(btc_macro_entry_guard(sym, "buy")[0])
+            self.assertTrue(btc_macro_entry_guard(sym, "buy")[0])
             self.assertTrue(btc_macro_entry_guard("BTCUSDT", "buy")[0])
         finally:
             ctx.MARKET_WIND.clear()

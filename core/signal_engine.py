@@ -165,7 +165,8 @@ def _load_disabled_symbols():
         return set()
 
 
-def _find_horizontal_zones(candles, atr, lookback, min_touches, tolerance_atr):
+def _find_horizontal_zones(candles, atr, lookback, min_touches, tolerance_atr,
+                           current_price=0.0):
     """在已收盤 K 棒中找水平支撐帶與壓力帶。
 
     演算法：
@@ -211,9 +212,16 @@ def _find_horizontal_zones(candles, atr, lookback, min_touches, tolerance_atr):
     support_clusters    = [(c, t) for c, t in cluster(lows)  if t >= min_touches]
     resistance_clusters = [(c, t) for c, t in cluster(highs) if t >= min_touches]
 
-    # 選觸碰次數最多（最強）的帶；相同次數時選最靠近當前價格的
-    support    = max(support_clusters,    key=lambda x: x[1])[0] if support_clusters    else None
-    resistance = max(resistance_clusters, key=lambda x: x[1])[0] if resistance_clusters else None
+    # 區間交易要使用「現價下方最近支撐／現價上方最近壓力」。舊版只取觸碰
+    # 次數最多，次數相同時會因排序順序拿到最遠價位，甚至把不同區段硬配成一個區間。
+    if current_price > 0:
+        supports_below = [(c, t) for c, t in support_clusters if c <= current_price]
+        resistances_above = [(c, t) for c, t in resistance_clusters if c >= current_price]
+        support = max(supports_below, key=lambda x: x[0])[0] if supports_below else None
+        resistance = min(resistances_above, key=lambda x: x[0])[0] if resistances_above else None
+    else:
+        support = max(support_clusters, key=lambda x: x[1])[0] if support_clusters else None
+        resistance = max(resistance_clusters, key=lambda x: x[1])[0] if resistance_clusters else None
 
     return support, resistance
 
@@ -277,12 +285,14 @@ def compute_range_signal(sym):
 
     # 2. 辨識水平支撐/壓力帶（只用已收盤 K 棒，排除最後一根）
     completed = candles[:-1]
+    signal_close = float(completed[-1][4])
     support, resistance = _find_horizontal_zones(
-        completed, atr, RANGE_LOOKBACK, RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE
+        completed, atr, RANGE_LOOKBACK, RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE,
+        current_price=signal_close,
     )
 
-    if support is None and resistance is None:
-        s["entry_block_reason"] = "找不到足夠觸碰次數的支撐/壓力帶"
+    if support is None or resistance is None or support >= resistance:
+        s["entry_block_reason"] = "需要同時找到現價下方支撐與上方壓力帶"
         return (None, 0, None)
 
     # 3. 空間保護：區間寬度必須能覆蓋手續費 + 最低獲利空間
@@ -307,12 +317,18 @@ def compute_range_signal(sym):
     volume_ratio = candle_vol / vol_ma20
 
     touch_band = atr * RANGE_TOUCH_ATR_TOLERANCE
+    body = max(abs(candle_close - candle_open), candle_close * 0.0001)
+    lower_wick = min(candle_open, candle_close) - candle_low
+    upper_wick = candle_high - max(candle_open, candle_close)
+    bullish_rejection = candle_close > candle_open or lower_wick >= body * 1.2
+    bearish_rejection = candle_close < candle_open or upper_wick >= body * 1.2
 
     # 5. 做多條件：低點碰支撐帶 且 收盤回彈至支撐上方 且 RSI < 55
     long_signal = (
         support is not None
         and candle_low <= support + touch_band      # 低點觸碰支撐帶
         and candle_close >= support                  # 收盤回彈至支撐上方
+        and bullish_rejection                        # 收陽或足夠長下影確認拒跌
         and rsi < 55.0                               # 排除超買後的假支撐
     )
 
@@ -321,6 +337,7 @@ def compute_range_signal(sym):
         resistance is not None
         and candle_high >= resistance - touch_band   # 高點觸碰壓力帶
         and candle_close <= resistance               # 收盤回落至壓力下方
+        and bearish_rejection                        # 收陰或足夠長上影確認拒漲
         and rsi > 45.0                               # 排除超賣後的假壓力
     )
 

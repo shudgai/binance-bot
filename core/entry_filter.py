@@ -136,38 +136,39 @@ def has_strong_local_momentum_override(route, strength):
 
 
 def is_range_direction_valid(sym, side, route):
-    """區間模式結構驗證：確認進場時支撐/壓力帶資料存在且方向正確。
-
-    做多（Range_Support_Long）：需要有識別到的支撐帶，且當前價格在支撐帶上方。
-    做空（Range_Resistance_Short）：需要有識別到的壓力帶，且當前價格在壓力帶下方。
-    這裡只做最後的位置驗證（進場前再確認一次），細緻的觸碰/收盤確認已在
-    compute_range_signal() 中完成。
-    """
+    """區間掛單前確認雙邊區域完整、方向正確，且現價仍靠近對應邊界。"""
     s = ctx.STATES.get(sym)
     if not s:
         return False, "missing state"
     price = float(s.get("close_price", 0.0) or 0.0)
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    support = float(s.get("range_support_level", 0.0) or 0.0)
+    resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
     if price <= 0:
         return False, "invalid price"
-    atr = float(s.get("current_atr", 0.0) or 0.0)
+    if support <= 0 or resistance <= 0 or support >= resistance:
+        return False, "支撐與壓力帶資料不完整或順序錯誤"
+
+    width = resistance - support
+    edge_tolerance = max(atr, width * 0.20) if atr > 0 else width * 0.20
+    breakout_tolerance = atr * 0.5 if atr > 0 else price * 0.005
 
     if route == "Range_Support_Long":
-        support = float(s.get("range_support_level", 0.0) or 0.0)
-        if support <= 0:
-            return False, "支撐帶資料已失效（state 未記錄）"
-        # 允許在 ATR×0.5 的範圍內輕微低於支撐帶（可能小幅跌破後回來）
-        tolerance = atr * 0.5 if atr > 0 else price * 0.005
-        if price < support - tolerance:
+        if side != "buy":
+            return False, "支撐路由方向必須為 buy"
+        if price < support - breakout_tolerance:
             return False, f"現價 {price:.4f} 已跌穿支撐帶 {support:.4f} 過深，取消區間多單"
+        if price > support + edge_tolerance:
+            return False, f"現價已離開支撐邊界，偏離 {((price-support)/price)*100:.2f}%"
         return True, "range_support_ok"
 
-    elif route == "Range_Resistance_Short":
-        resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
-        if resistance <= 0:
-            return False, "壓力帶資料已失效（state 未記錄）"
-        tolerance = atr * 0.5 if atr > 0 else price * 0.005
-        if price > resistance + tolerance:
+    if route == "Range_Resistance_Short":
+        if side != "sell":
+            return False, "壓力路由方向必須為 sell"
+        if price > resistance + breakout_tolerance:
             return False, f"現價 {price:.4f} 已突破壓力帶 {resistance:.4f} 過深，取消區間空單"
+        if price < resistance - edge_tolerance:
+            return False, f"現價已離開壓力邊界，偏離 {((resistance-price)/price)*100:.2f}%"
         return True, "range_resistance_ok"
 
     return False, f"非區間路由：{route}"
@@ -207,6 +208,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
         # 影線過長檢查（避免被假突破吸引）
         if not is_entry_pin_safe(sym, side):
             logger.info(f"🛑 [Range_Wick] {sym} 反向影線過長，取消 {route}")
+            s["entry_block_reason"] = f"{route} 反向影線過長，取消進場"
             return False
         atr = float(s.get("current_atr", 0.0) or 0.0)
         if atr > 0 and len(candles) >= 3:
@@ -235,6 +237,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
         return False
     if not is_entry_pin_safe(sym, side):
         logger.info(f"🛑 [MA_WICK] {sym} 反向影線過長，取消 {route}")
+        s["entry_block_reason"] = f"{route} 反向影線過長，取消進場"
         return False
 
     atr = float(s.get("current_atr", 0.0) or 0.0)

@@ -4,12 +4,14 @@ import numpy as np
 from core.config import DEFAULT_SYMBOLS
 from services.bot_manager_service import (
     DEFAULT_SYMBOLS as MANAGER_DEFAULT_SYMBOLS,
+    _prioritize_trade_pool,
     _restore_truncated_radar_pool,
 )
 from services.radar_service import (
     ATR_ELIGIBLE_SYMBOLS,
     CORE_SYMBOLS,
     RADAR_SELECT_COUNT,
+    TRADE_POOL_SIZE,
     MIN_ATR_PCT_FOR_ENTRY,
     MAX_ATR_PCT_FOR_ENTRY,
     MIN_1H_VOL_PCT_FOR_ENTRY,
@@ -32,9 +34,10 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert set(MANAGER_DEFAULT_SYMBOLS).issubset(set(DEFAULT_SYMBOLS))
     assert ATR_ELIGIBLE_SYMBOLS == EXPECTED_ATR_SYMBOLS
     assert CORE_SYMBOLS == EXPECTED_ATR_SYMBOLS
-    assert RADAR_SELECT_COUNT == 15
-    assert MIN_ATR_PCT_FOR_ENTRY == 2.0
-    assert MAX_ATR_PCT_FOR_ENTRY == 6.0
+    assert RADAR_SELECT_COUNT == 25  # 候選池；實際交易監控仍由 bot manager 截為 12 檔
+    assert TRADE_POOL_SIZE == 12
+    assert MIN_ATR_PCT_FOR_ENTRY == 1.5
+    assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
     assert MAX_1H_VOL_PCT_FOR_ENTRY == 2.8
 
@@ -67,6 +70,20 @@ def test_startup_keeps_a_normal_sized_pool_unchanged():
     current = [f"COIN{i}USDT" for i in range(1, 9)]
     with patch("services.bot_manager_service.load_symbol_profiles", return_value={}):
         assert _restore_truncated_radar_pool(current) == current
+
+
+def test_trade_pool_prioritizes_mature_then_observing_then_watch_only():
+    symbols = ["WATCHUSDT", "OBSERVEUSDT", "READYUSDT", "READY2USDT"]
+    profiles = {
+        "WATCHUSDT": {"_radar_rank": 1},
+        "OBSERVEUSDT": {"_radar_strict_eligible": True, "_radar_entry_readiness": 0.9},
+        "READYUSDT": {"_trade_eligible": True, "_radar_entry_readiness": 0.6},
+        "READY2USDT": {"_trade_eligible": True, "_radar_entry_readiness": 0.8},
+    }
+
+    assert _prioritize_trade_pool(symbols, profiles) == [
+        "READY2USDT", "READYUSDT", "OBSERVEUSDT", "WATCHUSDT",
+    ]
 
 
 def _make_5m_klines(closes):
