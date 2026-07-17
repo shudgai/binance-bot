@@ -36,7 +36,7 @@ MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
 
 
 def _meaningful_ma7_break(is_long, closed_price, ma7, ma25, prev_ma7, atr, avg):
-    """忽略貼著 MA7 的正常雜訊；只有均線轉弱或 MA25 失守才確認生命週期破壞。"""
+    """忽略 MA7/MA25 附近的正常回踩；兩條均線都明顯失守才確認生命週期破壞。"""
     closed_price = float(closed_price or 0.0)
     ma7 = float(ma7 or 0.0)
     ma25 = float(ma25 or 0.0)
@@ -46,15 +46,14 @@ def _meaningful_ma7_break(is_long, closed_price, ma7, ma25, prev_ma7, atr, avg):
     if min(closed_price, ma7, ma25, avg) <= 0:
         return False, 0.0
     break_buffer = max(atr * 0.15, avg * 0.0005)
+    structure_buffer = max(atr * 0.25, avg * 0.0008)
     if is_long:
         beyond_buffer = closed_price < ma7 - break_buffer
-        ma7_slope_weak = prev_ma7 > 0 and ma7 <= prev_ma7
-        ma25_lost = closed_price < ma25
+        ma25_lost = closed_price < ma25 - structure_buffer
     else:
         beyond_buffer = closed_price > ma7 + break_buffer
-        ma7_slope_weak = prev_ma7 > 0 and ma7 >= prev_ma7
-        ma25_lost = closed_price > ma25
-    return beyond_buffer and (ma7_slope_weak or ma25_lost), break_buffer
+        ma25_lost = closed_price > ma25 + structure_buffer
+    return beyond_buffer and ma25_lost, break_buffer
 
 
 def _ma_peak_keep_ratio(peak_profit):

@@ -79,20 +79,28 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(broken)
         self.assertGreater(buffer_size, 74.654286 - 74.65)
 
-    def test_meaningful_ma7_break_requires_weak_slope_or_ma25_loss(self):
+    def test_meaningful_ma7_break_requires_buffered_ma25_loss(self):
         self.assertFalse(_meaningful_ma7_break(
             True, 99.7, 100.0, 99.0, 99.9, 0.5, 100.0
         )[0])
-        self.assertTrue(_meaningful_ma7_break(
+        self.assertFalse(_meaningful_ma7_break(
             True, 99.7, 100.0, 99.0, 100.1, 0.5, 100.0
         )[0])
         self.assertTrue(_meaningful_ma7_break(
             True, 98.8, 100.0, 99.0, 99.9, 0.5, 100.0
         )[0])
 
+    def test_doge_and_sui_shallow_ma25_undercuts_do_not_exit(self):
+        self.assertFalse(_meaningful_ma7_break(
+            True, 0.071870, 0.071987, 0.071919, 0.072000, 0.000075, 0.071920
+        )[0])
+        self.assertFalse(_meaningful_ma7_break(
+            True, 0.735100, 0.736471, 0.735408, 0.736600, 0.001336, 0.735700
+        )[0])
+
     def test_short_ma7_break_is_symmetric(self):
         self.assertTrue(_meaningful_ma7_break(
-            False, 100.3, 100.0, 101.0, 99.9, 0.5, 100.0
+            False, 101.2, 100.0, 101.0, 99.9, 0.5, 100.0
         )[0])
 
     def test_ma7_break_does_not_exit_before_opposite_cross(self):
