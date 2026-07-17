@@ -4,6 +4,7 @@ from unittest.mock import patch
 from core import ctx, exchange_client
 from services import api
 from core.runner import _is_permanent_market_symbol_error
+from core.market_data import _select_kline_fetch_batch
 
 
 class ApiRateLimitTests(unittest.TestCase):
@@ -18,6 +19,35 @@ class ApiRateLimitTests(unittest.TestCase):
         self.assertFalse(_is_permanent_market_symbol_error(
             Exception("temporary websocket timeout")
         ))
+
+    def test_kline_warmup_fetches_every_symbol_missing_history(self):
+        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
+        states = {
+            "BTCUSDT": {"ohlcv": [[0]] * 120},
+            "ETHUSDT": {"ohlcv": []},
+            "SOLUSDT": {},
+            "DOGEUSDT": {"ohlcv": [[0]] * 20},
+        }
+
+        batch, idx, is_warmup = _select_kline_fetch_batch(
+            symbols, states, batches=2, idx=1
+        )
+
+        self.assertEqual(batch, ["ETHUSDT", "SOLUSDT", "DOGEUSDT"])
+        self.assertEqual(idx, 1)
+        self.assertTrue(is_warmup)
+
+    def test_kline_steady_state_keeps_rate_limited_rotation(self):
+        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
+        states = {sym: {"ohlcv": [[0]] * 120} for sym in symbols}
+
+        batch, idx, is_warmup = _select_kline_fetch_batch(
+            symbols, states, batches=2, idx=1
+        )
+
+        self.assertEqual(batch, ["SOLUSDT", "DOGEUSDT"])
+        self.assertEqual(idx, 1)
+        self.assertFalse(is_warmup)
 
     def test_high_market_data_weight_activates_global_cooldown(self):
         with patch.object(

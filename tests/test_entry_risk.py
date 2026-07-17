@@ -16,7 +16,8 @@ from core.check_entries import (
 )
 from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setup_valid,
     _entry_signal_chase_guard, _pending_entry_reprice_needed,
-    _translated_pending_limit_price, _ma_cross_anti_chase_plan, _is_dynamic_pending_entry)
+    _translated_pending_limit_price, _ma_cross_anti_chase_plan, _is_dynamic_pending_entry,
+    _reanchor_rejected_passive_price, _entry_price_guard)
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -73,6 +74,20 @@ class EntryRiskTests(unittest.TestCase):
             ))
         self.assertFalse(confirmed)
         self.assertIn("signal changed", reason)
+
+    def test_stale_structure_price_is_reanchored_inside_existing_guard(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        STATES[sym]["current_atr"] = 0.2
+        refreshed, changed = _reanchor_rejected_passive_price(
+            sym, "buy", 99.1, 100.0, mode="pullback"
+        )
+        self.assertTrue(changed)
+        self.assertGreater(refreshed, 99.1)
+        self.assertLess(refreshed, 100.0)
+        self.assertTrue(_entry_price_guard(
+            sym, "buy", refreshed, 100.0, mode="pullback"
+        )[0])
 
     def test_pending_ma_order_does_not_expire_by_clock(self):
         info = {

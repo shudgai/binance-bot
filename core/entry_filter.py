@@ -63,10 +63,14 @@ def is_ma_direction_aligned(state, side, route=None):
         return False
     normalized_route = str(route or "").lower()
     if side == "buy" and normalized_route == "ma_cross":
-        return (closed_price > ma99 and prev_ma7 <= prev_ma25 and ma7 > ma25
+        ma99_buffer = ma99 * 0.99
+        return (closed_price > ma99_buffer and ma25 > ma99_buffer
+                and prev_ma7 <= prev_ma25 and ma7 > ma25
                 and ma7 > prev_ma7 and ma25 >= prev_ma25)
     if side == "sell" and normalized_route == "ma_cross":
-        return (closed_price < ma99 and prev_ma7 >= prev_ma25 and ma7 < ma25
+        ma99_buffer = ma99 * 1.01
+        return (closed_price < ma99_buffer and ma25 < ma99_buffer
+                and prev_ma7 >= prev_ma25 and ma7 < ma25
                 and ma7 < prev_ma7 and ma25 <= prev_ma25)
     if side == "buy":
         # MA25_Pullback / MA_Breakout：不強求完整牛市排列（MA25>MA99），
@@ -229,6 +233,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
         return False
     if not is_ma_direction_aligned(s, side, route):
         logger.info(f"🛑 [MA_DIRECTION] {sym} 未通過 MA7/MA25/MA99 完整排列與斜率確認")
+        s["entry_block_reason"] = "未通過 MA7／MA25／MA99 排列、1% 緩衝與斜率確認"
         return False
 
     s["entry_reason"] = route

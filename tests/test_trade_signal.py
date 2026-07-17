@@ -133,6 +133,21 @@ class TradeSignalTests(unittest.TestCase):
         self.assertAlmostEqual(support, 99.01)
         self.assertAlmostEqual(resistance, 101.01)
 
+    def test_range_zone_picker_skips_nearby_noise_for_tradeable_pair(self):
+        candles = [
+            [0, 100.0, 100.05, 99.95, 100.0, 1],
+            [1, 100.0, 100.06, 99.96, 100.0, 1],
+            [2, 100.0, 101.01, 99.00, 100.0, 1],
+            [3, 100.0, 101.02, 99.01, 100.0, 1],
+        ]
+        support, resistance = _find_horizontal_zones(
+            candles, 0.1, 40, 2, 0.3,
+            current_price=100.0, min_width_pct=0.009,
+        )
+        self.assertIsNotNone(support)
+        self.assertIsNotNone(resistance)
+        self.assertGreaterEqual((resistance - support) / support, 0.009)
+
     def test_range_signal_requires_both_sides_of_range(self):
         sym = self._setup_range_signal_state([20, 99.0, 99.3, 98.9, 99.2, 1000.0])
         with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, None)):

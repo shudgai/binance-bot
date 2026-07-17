@@ -7,6 +7,7 @@ import subprocess
 from services.system_log_service import add_system_log
 
 # 模擬交易機器人狀態 (支援多幣種多進程)
+TRADE_POOL_SIZE = 12
 bot_status = {
     "is_running": False,
     "strategy": "Top 12 Radar / 4 Slots",
@@ -155,7 +156,7 @@ def load_symbol_config():
             symbols = normalize_symbol_list(data)
         symbols = _filter_disabled_symbols(symbols)
         raw_profiles = data.get("profiles", {}) if isinstance(data, dict) else {}
-        return _prioritize_trade_pool(symbols, raw_profiles)
+        return _prioritize_trade_pool(symbols, raw_profiles)[:TRADE_POOL_SIZE]
     except Exception:
         return _filter_disabled_symbols(list(DEFAULT_SYMBOLS))
 
@@ -520,7 +521,7 @@ def start_bot(symbols=None, trade_amt: float = None):
 
     symbols = normalize_symbol_list(symbols)
     symbols = _restore_truncated_radar_pool(symbols)
-    symbols = _prioritize_trade_pool(symbols, load_symbol_profiles())
+    symbols = _prioritize_trade_pool(symbols, load_symbol_profiles())[:TRADE_POOL_SIZE]
     # 保留有持倉的幣種，避免被換掉
     open_syms = _get_open_position_symbols()
     for s in reversed(open_syms):
@@ -666,7 +667,7 @@ def set_bot_symbol(symbols):
         symbols = list(DEFAULT_SYMBOLS)
 
     symbols = normalize_symbol_list(symbols)
-    symbols = [s for s in symbols if not COIN_PROFILE_CONFIG.get(s, {}).get("disable_entry", False)]
+    symbols = [s for s in symbols if not COIN_PROFILE_CONFIG.get(s, {}).get("disable_entry", False)][:TRADE_POOL_SIZE]
     save_symbol_config(symbols)
     bot_status["active_symbols"] = symbols
 

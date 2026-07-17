@@ -173,6 +173,24 @@ async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SI
             await asyncio.sleep(pause_sec)
 
 
+def _select_kline_fetch_batch(symbols, states, batches, idx, minimum_candles=100):
+    """啟動或換池先補齊缺少的 K 線，穩態才使用輪替批次。"""
+    missing = [
+        sym for sym in symbols
+        if len((states.get(sym, {}).get("ohlcv") or [])) < minimum_candles
+    ]
+    if missing:
+        return missing, idx, True
+
+    batch_size = (len(symbols) + batches - 1) // batches
+    start = idx * batch_size
+    batch = symbols[start:start + batch_size]
+    if not batch:
+        idx = 0
+        batch = symbols[:batch_size]
+    return batch, idx, False
+
+
 async def fetch_all_klines(exchange):
     from core import ctx
     from core.config import MARKET_FETCH_BATCHES, KLINE_BATCH_PAUSE_SEC
@@ -188,13 +206,12 @@ async def fetch_all_klines(exchange):
     # 分批輪替抓取：每輪主迴圈只抓一批，而不是把所有監控幣種同時發出去，
     # 降低瞬間對外請求量、避免衝高幣安 API 權重（曾發生過權重打到 3900+/2400）。
     batches = max(1, int(MARKET_FETCH_BATCHES))
-    batch_size = (total + batches - 1) // batches
     idx = getattr(ctx, 'market_fetch_index', 0)
-    start = idx * batch_size
-    batch = symbols[start:start + batch_size]
-    if not batch:
-        idx = 0
-        batch = symbols[:batch_size]
+    batch, idx, is_warmup = _select_kline_fetch_batch(
+        symbols, ctx.STATES, batches, idx
+    )
+    if is_warmup:
+        logger.info(f"⏳ [K線暖機] 一次補齊 {len(batch)} 個缺資料幣種，完成後恢復分批更新")
 
     tasks = {sym: fetch_with_sem(sym) for sym in batch}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -206,7 +223,8 @@ async def fetch_all_klines(exchange):
         else:
             logger.info(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
 
-    ctx.market_fetch_index = (idx + 1) % batches
+    if not is_warmup:
+        ctx.market_fetch_index = (idx + 1) % batches
     if KLINE_BATCH_PAUSE_SEC > 0:
         await asyncio.sleep(KLINE_BATCH_PAUSE_SEC)
 

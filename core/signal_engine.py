@@ -166,7 +166,7 @@ def _load_disabled_symbols():
 
 
 def _find_horizontal_zones(candles, atr, lookback, min_touches, tolerance_atr,
-                           current_price=0.0):
+                           current_price=0.0, min_width_pct=0.0):
     """在已收盤 K 棒中找水平支撐帶與壓力帶。
 
     演算法：
@@ -217,6 +217,25 @@ def _find_horizontal_zones(candles, atr, lookback, min_touches, tolerance_atr,
     if current_price > 0:
         supports_below = [(c, t) for c, t in support_clusters if c <= current_price]
         resistances_above = [(c, t) for c, t in resistance_clusters if c >= current_price]
+        if min_width_pct > 0:
+            valid_pairs = [
+                (support_row, resistance_row)
+                for support_row in supports_below
+                for resistance_row in resistances_above
+                if support_row[0] > 0
+                and (resistance_row[0] - support_row[0]) / support_row[0] >= min_width_pct
+            ]
+            if not valid_pairs:
+                return None, None
+            support_row, resistance_row = min(
+                valid_pairs,
+                key=lambda pair: (
+                    (pair[1][0] - pair[0][0]) / pair[0][0],
+                    -(pair[0][1] + pair[1][1]),
+                    abs(((pair[0][0] + pair[1][0]) / 2.0) - current_price),
+                ),
+            )
+            return support_row[0], resistance_row[0]
         support = max(supports_below, key=lambda x: x[0])[0] if supports_below else None
         resistance = min(resistances_above, key=lambda x: x[0])[0] if resistances_above else None
     else:
@@ -266,7 +285,9 @@ def compute_range_signal(sym):
     vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
 
     if atr <= 0 or vol_ma20 <= 0:
-        s["entry_block_reason"] = "ATR 或成交量資料不足（區間模式）"
+        s["entry_block_reason"] = (
+            f"ATR 或成交量資料不足（區間模式：ATR={atr:.8g}, VolMA20={vol_ma20:.2f}）"
+        )
         return (None, 0, None)
 
     # 1. ADX 確認區間行情
@@ -286,9 +307,10 @@ def compute_range_signal(sym):
     # 2. 辨識水平支撐/壓力帶（只用已收盤 K 棒，排除最後一根）
     completed = candles[:-1]
     signal_close = float(completed[-1][4])
+    min_range_width_pct = TAKER_FEE_RATE * 2 + RANGE_MIN_NET_PROFIT_PCT
     support, resistance = _find_horizontal_zones(
         completed, atr, RANGE_LOOKBACK, RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE,
-        current_price=signal_close,
+        current_price=signal_close, min_width_pct=min_range_width_pct,
     )
 
     if support is None or resistance is None or support >= resistance:

@@ -73,6 +73,15 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ma99"] = 100.5
         self.assertTrue(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
+    def test_fresh_cross_allows_one_percent_ma99_transition_buffer(self):
+        sym = self._state("buy")
+        STATES[sym].update({
+            "ma7": 101.0, "ma25": 100.5, "ma99": 101.2,
+            "prev_ma7": 100.4, "prev_ma25": 100.5,
+        })
+        STATES[sym]["ohlcv"][-2] = [1, 100.6, 101.1, 100.5, 101.0, 1300.0]
+        self.assertTrue(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
+
     def test_pullback_rejects_price_deep_below_ma99_buffer(self):
         sym = self._state("buy")
         STATES[sym]["ma99"] = 103.0

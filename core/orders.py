@@ -359,6 +359,26 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
     return True, "ok"
 
 
+def _reanchor_rejected_passive_price(sym, side, order_price, market_price, mode="pullback"):
+    """將過度偏離的被動委託沿最新市價平移，保留回踩折價但不放寬價格保護。"""
+    order_price = float(order_price or 0.0)
+    market_price = float(market_price or 0.0)
+    if order_price <= 0 or market_price <= 0:
+        return order_price, False
+    if (side == "buy" and order_price >= market_price) or (side == "sell" and order_price <= market_price):
+        return order_price, False
+
+    distance = order_price - market_price
+    for retained_distance in (0.75, 0.50, 0.25, 0.10, 0.0):
+        candidate = market_price + distance * retained_distance
+        allowed, _ = _entry_price_guard(
+            sym, side, candidate, market_price, mode=mode, is_rescue_dca=False
+        )
+        if allowed:
+            return candidate, candidate != order_price
+    return order_price, False
+
+
 def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=True,
                               is_rescue_dca=False):
     """Prevent a fresh position from chasing materially beyond its signal price."""
@@ -2016,6 +2036,22 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 mode=("ma7_pullback" if _ma_cross_anti_chase else actual_entry_mode),
                 is_rescue_dca=is_rescue_dca,
             )
+            if not order_price_ok and _is_structure_anchored and limit_price is not None:
+                old_limit_price = limit_price
+                refreshed_price, refreshed = _reanchor_rejected_passive_price(
+                    sym, side, limit_price, market_price, mode=actual_entry_mode
+                )
+                if refreshed:
+                    limit_price = round_step(refreshed_price, tick_size)
+                    order_price_ok, order_price_reason = _entry_price_guard(
+                        sym, side, limit_price, market_price, mode=actual_entry_mode,
+                        is_rescue_dca=is_rescue_dca,
+                    )
+                    if order_price_ok:
+                        logger.info(
+                            f"🔄 [初次動態重掛] {sym} {side} 結構價 {old_limit_price:.6f} 已偏離，"
+                            f"依最新市價 {market_price:.6f} 改掛 {limit_price:.6f}"
+                        )
             if not order_price_ok:
                 logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 委託價偏離即時牌價：{order_price_reason}，取消開倉")
                 logger.info(f"🧱 [ORDER_BLOCK] {sym} 被委託價格偏離攔截，未送單")

@@ -4,6 +4,7 @@ import numpy as np
 from core.config import DEFAULT_SYMBOLS
 from services.bot_manager_service import (
     DEFAULT_SYMBOLS as MANAGER_DEFAULT_SYMBOLS,
+    TRADE_POOL_SIZE as MANAGER_TRADE_POOL_SIZE,
     _prioritize_trade_pool,
     _restore_truncated_radar_pool,
 )
@@ -36,6 +37,7 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert CORE_SYMBOLS == EXPECTED_ATR_SYMBOLS
     assert RADAR_SELECT_COUNT == 25  # 候選池；實際交易監控仍由 bot manager 截為 12 檔
     assert TRADE_POOL_SIZE == 12
+    assert MANAGER_TRADE_POOL_SIZE == 12
     assert MIN_ATR_PCT_FOR_ENTRY == 1.5
     assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
