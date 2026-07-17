@@ -41,8 +41,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
     personality = s.get("personality", "calm")
     atr_pct = float(s.get("atr_pct", 0.0))
 
-    # 動態量能閾值 — 放寬至 0.8x，只需基本流動性確認
-    base_limit = 0.8
+    # 動態量能閾值 — 放寬至 0.6x，只需基本流動性確認
+    base_limit = 0.6
     if atr_pct > 5.0:
         base_limit = 1.0  # 波動失控時稍微收緊
     breakout_limit = base_limit * 1.5

@@ -111,7 +111,14 @@ def is_entry_volume_confirmed(sym, side):
     closed_volume = float(candles[-2][5])
     route = str(s.get("entry_reason", "") or "")
     # 調降門檻以對齊全域放寬的 0.50x 基線與 CONFLUENCE_FAIL 的 0.40x-0.45x
-    required = 0.45 if route == "MA_Cross" else 0.6 if route == "MA_Breakout" else 0.4
+    if route == "MA_Cross":
+        required = 0.45
+    elif route == "MA_Breakout":
+        required = 0.6
+    elif route in RANGE_ENTRY_ROUTES:
+        required = 0.75  # 提高區間模式成交量門檻，避免在低成交量/弱支撐下進場接刀
+    else:
+        required = 0.4
     return closed_volume >= vol_ma20 * required
 
 
