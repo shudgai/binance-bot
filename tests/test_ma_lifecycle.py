@@ -114,6 +114,24 @@ class MALifecycleTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_early_momentum_confirmation_counts_once_per_closed_candle(self):
+        state = self._position_state(closed_price=98.8)
+        state.update({
+            "close_price": 99.7,
+            "current_rsi": 45.0,
+            "open_time": time.time() - 120,
+        })
+
+        async def run():
+            close_mock = AsyncMock()
+            with patch("core.orders.close_position", close_mock):
+                await check_exits(self.sym)
+                await check_exits(self.sym)
+                close_mock.assert_not_called()
+                self.assertEqual(state.get("ma_momentum_flip_count"), 1)
+
+        asyncio.run(run())
+
     def test_confirmed_wrong_direction_exits_before_disaster_stop(self):
         state = self._position_state(closed_price=99.2)
         opened = time.time() - 700
@@ -241,17 +259,20 @@ class MALifecycleTests(unittest.TestCase):
         self.assertAlmostEqual(floor_price, 99.75)
 
     def test_ma_short_early_momentum_flip_exits_after_two_confirmations(self):
-        state = self._position_state(closed_price=100.3, ma7=100.1, ma25=101.0)
+        state = self._position_state(closed_price=101.2, ma7=100.1, ma25=101.0)
         state.update({
-            "qty": -1.0, "close_price": 100.3,
+            "qty": -1.0, "close_price": 101.2,
             "open_time": time.time() - 120, "current_rsi": 50.0,
         })
+        first_candle_ts = state["ma_candle_ts"]
 
         async def run():
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
+                state["ma_candle_ts"] = first_candle_ts + 300000
+                state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 await check_exits(self.sym)
                 close_mock.assert_called_once()
                 self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Early_Momentum_Flip]")
@@ -259,16 +280,19 @@ class MALifecycleTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_ma_long_early_momentum_flip_is_symmetric(self):
-        state = self._position_state(closed_price=99.7, ma7=99.9, ma25=99.0)
+        state = self._position_state(closed_price=98.8, ma7=99.9, ma25=99.0)
         state.update({
-            "close_price": 99.7, "open_time": time.time() - 120,
+            "close_price": 98.8, "open_time": time.time() - 120,
             "current_rsi": 50.0,
         })
+        first_candle_ts = state["ma_candle_ts"]
 
         async def run():
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
+                state["ma_candle_ts"] = first_candle_ts + 300000
+                state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 await check_exits(self.sym)
                 close_mock.assert_called_once()
                 self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Early_Momentum_Flip]")
@@ -276,21 +300,28 @@ class MALifecycleTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_ma_early_momentum_flip_confirmation_resets_when_structure_recovers(self):
-        state = self._position_state(closed_price=100.3, ma7=100.1, ma25=101.0)
+        state = self._position_state(closed_price=101.2, ma7=100.1, ma25=101.0)
         state.update({
-            "qty": -1.0, "close_price": 100.3,
+            "qty": -1.0, "close_price": 101.2,
             "open_time": time.time() - 120, "current_rsi": 50.0,
         })
+        first_candle_ts = state["ma_candle_ts"]
 
         async def run():
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
                 self.assertEqual(state["ma_momentum_flip_count"], 1)
+                state["ma_candle_ts"] = first_candle_ts + 300000
+                state["ohlcv"][-2][0] = state["ma_candle_ts"]
+                state["ohlcv"][-2][4] = 100.0
                 state["close_price"] = 100.0
                 await check_exits(self.sym)
                 self.assertEqual(state["ma_momentum_flip_count"], 0)
-                state["close_price"] = 100.3
+                state["ma_candle_ts"] = first_candle_ts + 600000
+                state["ohlcv"][-2][0] = state["ma_candle_ts"]
+                state["ohlcv"][-2][4] = 101.2
+                state["close_price"] = 101.2
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
                 self.assertEqual(state["ma_momentum_flip_count"], 1)

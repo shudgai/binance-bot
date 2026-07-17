@@ -622,23 +622,31 @@ async def check_exits(sym):
 
         # 死叉／金叉進場後若動能快速翻回反方，等到固定 0.5% 風險線會重演 ADA/SOL
         # 同時在反彈中停損。只在持倉前 30 分鐘、已逆勢至少 0.25%、價格穿越 MA7，
-        # 且 RSI 也失去初始門檻時啟動；連續兩輪確認，避免單一報價或 RSI 邊界抖動。
+        # 且 RSI 也失去初始門檻時啟動；連續兩根已收線 K 棒確認，避免盤中報價抖動。
         current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
+        latest_closed_price = float(candles[-2][4]) if len(candles) >= 2 else 0.0
+        early_structure_broken, _ = _meaningful_ma7_break(
+            is_long, latest_closed_price, ma7, ma25, prev_ma7, current_atr, avg
+        )
         momentum_flipped = (
             hold_sec >= 60
             and hold_sec <= MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC
             and profit_pct <= -MA_EARLY_MOMENTUM_FLIP_STOP_PCT
-            and ma7 > 0
+            and early_structure_broken
             and (
-                (is_long and current_rsi < 51.0 and p < ma7) or
-                (not is_long and current_rsi > 49.0 and p > ma7)
+                (is_long and current_rsi < 51.0) or
+                (not is_long and current_rsi > 49.0)
             )
         )
-        if momentum_flipped:
-            s["ma_momentum_flip_count"] = int(s.get("ma_momentum_flip_count", 0)) + 1
-        else:
-            s["ma_momentum_flip_count"] = 0
-        if s["ma_momentum_flip_count"] >= 2:
+        # 主迴圈可能在同一根 K 棒內執行多次；只讓每根已收線 K 棒計數一次，避免把
+        # 幾秒內的兩次報價誤當成兩次趨勢確認。
+        if ma_candle_ts and s.get("ma_momentum_last_candle_ts") != ma_candle_ts:
+            s["ma_momentum_last_candle_ts"] = ma_candle_ts
+            if momentum_flipped:
+                s["ma_momentum_flip_count"] = int(s.get("ma_momentum_flip_count", 0)) + 1
+            else:
+                s["ma_momentum_flip_count"] = 0
+        if int(s.get("ma_momentum_flip_count", 0)) >= 2:
             cs = "sell" if is_long else "buy"
             logger.info(
                 f"🛑 [MA_Early_Momentum_Flip] {sym} 持倉 {hold_sec:.0f}秒，"
