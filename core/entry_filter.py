@@ -154,7 +154,10 @@ def is_range_direction_valid(sym, side, route):
         return False, "支撐與壓力帶資料不完整或順序錯誤"
 
     width = resistance - support
-    edge_tolerance = max(atr, width * 0.20) if atr > 0 else width * 0.20
+    # 訊號 K 棒收線後到最終下單守衛之間市場可能已彈走，放寬允許偏離上限至 2x ATR
+    # 或區間寬度的 40%（原本 1x ATR / 20%），讓從支撐/壓力彈開後還在合理距離的
+    # 進場機會不被誤擋。
+    edge_tolerance = max(atr * 2.0, width * 0.40) if atr > 0 else width * 0.40
     breakout_tolerance = atr * 0.5 if atr > 0 else price * 0.005
 
     if route == "Range_Support_Long":
