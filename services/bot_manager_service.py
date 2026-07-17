@@ -27,6 +27,8 @@ bot_status = {
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
+_restart_order_cache = {"checked_at": 0.0, "orders": None}
+RESTART_ORDER_CACHE_SEC = 5.0
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
@@ -507,8 +509,69 @@ def _get_open_position_symbols():
     except Exception:
         return []
 
+
+def _restart_blocking_entry_orders(orders):
+    """Keep only live non-reduce-only orders that could open/increase a position."""
+    blocking = []
+    for order in orders or []:
+        info = order.get("info") or {}
+        status = str(order.get("status") or info.get("status") or "NEW").upper()
+        if status not in ("OPEN", "NEW", "PARTIALLY_FILLED"):
+            continue
+        reduce_only = order.get("reduceOnly", info.get("reduceOnly", False))
+        close_position = order.get("closePosition", info.get("closePosition", False))
+        if str(reduce_only).lower() in ("true", "1"):
+            continue
+        if str(close_position).lower() in ("true", "1"):
+            continue
+        blocking.append(order)
+    return blocking
+
+
+def _get_restart_blocking_entry_orders(force=False):
+    """Query only when a restart is requested, avoiding continuous API weight."""
+    now = time.time()
+    cached_at = float(_restart_order_cache.get("checked_at", 0.0) or 0.0)
+    if not force and now - cached_at < RESTART_ORDER_CACHE_SEC:
+        return _restart_order_cache.get("orders")
+    try:
+        from services.binance_service import client
+        if client is None:
+            raise RuntimeError("Binance client unavailable")
+        orders = client.futures_get_open_orders()
+        blocking = _restart_blocking_entry_orders(orders)
+        _restart_order_cache.update({"checked_at": now, "orders": blocking})
+        bot_status["active_orders"] = len(blocking)
+        return blocking
+    except Exception as exc:
+        _restart_order_cache.update({"checked_at": now, "orders": None})
+        add_system_log(f"⚠️ [重啟安全檢查] 無法確認交易所進場掛單：{exc}", "warning")
+        return None
+
+
+def _restart_is_safe():
+    orders = _get_restart_blocking_entry_orders()
+    if orders is None:
+        add_system_log("⏳ [重啟延後] 無法確認交易所掛單狀態，保留目前交易程序", "warning")
+        return False
+    if orders:
+        labels = []
+        for order in orders[:3]:
+            info = order.get("info") or {}
+            labels.append(str(order.get("symbol") or info.get("symbol") or "UNKNOWN"))
+        add_system_log(
+            f"⏳ [重啟延後] 仍有 {len(orders)} 張待成交進場單"
+            f"（{', '.join(labels)}），待成交、撤單或訊號失效後再重啟",
+            "warning",
+        )
+        return False
+    return True
+
+
 def start_bot(symbols=None, trade_amt: float = None):
     global bot_processes
+    if bot_status.get("is_running") and bot_processes and not _restart_is_safe():
+        return False
     # 確保啟動新 bot 前先清除舊的 bot 進程，避免系統中存在重複執行
     kill_bot()
 
@@ -623,8 +686,7 @@ def kill_bot():
             pass
 
 def restart_bot():
-    kill_bot()
-    start_bot()
+    return start_bot()
 
 
 def auto_restore_bot_on_startup():
@@ -655,6 +717,12 @@ def toggle_bot():
     if is_running:
         start_bot()
     else:
+        if not _restart_is_safe():
+            add_system_log(
+                "ℹ️ 若確定要停止，請先取消待成交進場單；目前機器人維持運行以繼續管理掛單",
+                "warning",
+            )
+            return True
         kill_bot()
     return bot_status["is_running"]
 
