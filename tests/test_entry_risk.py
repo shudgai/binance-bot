@@ -12,7 +12,7 @@ from core.state_manager import reset_coin_state, repair_invalid_states, get_open
 from core import ctx
 from core import exchange_client
 from core.check_entries import (
-    _is_confirmable_exit_cooldown, _rapid_reconfirm_cooldown_entry,
+    _is_confirmable_exit_cooldown, _rapid_reconfirm_cooldown_entry, _range_exit_prices,
 )
 from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setup_valid,
     _entry_signal_chase_guard, _pending_entry_reprice_needed,
@@ -402,6 +402,14 @@ class EntryRiskTests(unittest.TestCase):
     def test_range_short_exchange_bracket_keeps_opposite_boundary_target(self):
         state = {"range_tp_price": 97.05, "range_sl_price": 101.5}
         self.assertEqual(_range_exit_bracket(state, 100.98, False, 0.01), (101.5, 97.05))
+
+    def test_btc_range_short_stop_keeps_room_from_actual_entry(self):
+        take_profit, stop = _range_exit_prices(
+            63275.0, 62693.85, 63250.357143, 200.885714, "sell"
+        )
+        self.assertAlmostEqual(take_profit, 62725.4875)
+        self.assertGreaterEqual((stop - 63275.0) / 63275.0, 0.003 - 1e-12)
+        self.assertGreater((63275.0 - take_profit) / (stop - 63275.0), 1.0)
 
     def test_range_exchange_bracket_rejects_wrong_side_prices(self):
         state = {"range_tp_price": 98.0, "range_sl_price": 102.0}

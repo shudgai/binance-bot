@@ -1559,7 +1559,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             # 強訊號（強度 >= 20）直接豁免 OrderFlow 過濾，避免封鎖高品質進場訊號
             _signal_str_of = signal_strength or 0.0
             _flow_bypass = _signal_str_of >= 20.0
-            _flow_threshold = 0.55 if _is_low_vol_of else 0.60
+            _flow_threshold = 0.45 if _is_low_vol_of else 0.50
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if not _flow_bypass:
                 if side == 'buy':

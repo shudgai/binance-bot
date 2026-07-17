@@ -17,14 +17,14 @@ from core.calc import profit_pct as _profit_pct
 logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
-MA_DISASTER_STOP_PCT = 0.015
-MA_WRONG_DIRECTION_PCT = 0.006
+MA_DISASTER_STOP_PCT = 0.025
+MA_WRONG_DIRECTION_PCT = 0.01
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
 # MA 進場的正常雜訊約 0.2%~0.4%。低於此區間就啟動 PeakLock / DynamicTP，會讓
 # 0.1%~0.2% 的毛利反覆被手續費侵蝕，卻仍容許錯向單等待到 0.6% 以上才退出。
 # 統一使用 0.5% 主動風險線與 0.6% 最低有效停利門檻，先截短虧損，再讓獲利奔跑。
-MA_ACTIVE_RISK_STOP_PCT = 0.005
-MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.0025
+MA_ACTIVE_RISK_STOP_PCT = 0.01
+MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
 MA_MIN_PROFIT_TARGET_PCT = 0.006
 MA_PROFIT_FLOOR_ARM_PCT = 0.003
@@ -620,63 +620,6 @@ async def check_exits(sym):
         candles = s.get("ohlcv", [])
         hold_sec = max(0.0, time.time() - float(s.get("open_time", time.time()) or time.time()))
 
-        # 死叉／金叉進場後若動能快速翻回反方，等到固定 0.5% 風險線會重演 ADA/SOL
-        # 同時在反彈中停損。只在持倉前 30 分鐘、已逆勢至少 0.25%、價格穿越 MA7，
-        # 且 RSI 也失去初始門檻時啟動；連續兩根已收線 K 棒確認，避免盤中報價抖動。
-        current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
-        latest_closed_price = float(candles[-2][4]) if len(candles) >= 2 else 0.0
-        early_structure_broken, _ = _meaningful_ma7_break(
-            is_long, latest_closed_price, ma7, ma25, prev_ma7, current_atr, avg
-        )
-        momentum_flipped = (
-            hold_sec >= 60
-            and hold_sec <= MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC
-            and profit_pct <= -MA_EARLY_MOMENTUM_FLIP_STOP_PCT
-            and early_structure_broken
-            and (
-                (is_long and current_rsi < 51.0) or
-                (not is_long and current_rsi > 49.0)
-            )
-        )
-        # 主迴圈可能在同一根 K 棒內執行多次；只讓每根已收線 K 棒計數一次，避免把
-        # 幾秒內的兩次報價誤當成兩次趨勢確認。
-        if ma_candle_ts and s.get("ma_momentum_last_candle_ts") != ma_candle_ts:
-            s["ma_momentum_last_candle_ts"] = ma_candle_ts
-            if momentum_flipped:
-                s["ma_momentum_flip_count"] = int(s.get("ma_momentum_flip_count", 0)) + 1
-            else:
-                s["ma_momentum_flip_count"] = 0
-        if int(s.get("ma_momentum_flip_count", 0)) >= 2:
-            cs = "sell" if is_long else "buy"
-            logger.info(
-                f"🛑 [MA_Early_Momentum_Flip] {sym} 持倉 {hold_sec:.0f}秒，"
-                f"RSI={current_rsi:.1f} 且價格穿越 MA7={ma7:.6f}，"
-                f"逆勢 {abs(profit_pct)*100:.2f}%，提前結束失效訊號"
-            )
-            await close_position(
-                sym, cs, abs(s["qty"]), p, avg,
-                reason="[MA_Early_Momentum_Flip]", is_stop_loss=True,
-            )
-            return
-
-        # 不再等待兩根 5 分鐘 K 棒才控制單筆風險。連續兩次主循環都超過 0.5% 才退出，
-        # 可排除單一報價/插針，同時把實際止損控制在約 0.5%~0.6%；交易所 1.5% 災難單
-        # 繼續保留，僅作程式斷線時的最後防線。
-        if hold_sec >= 60 and profit_pct <= -MA_ACTIVE_RISK_STOP_PCT:
-            s["ma_risk_breach_count"] = int(s.get("ma_risk_breach_count", 0)) + 1
-        else:
-            s["ma_risk_breach_count"] = 0
-        if s["ma_risk_breach_count"] >= 2:
-            cs = "sell" if is_long else "buy"
-            logger.info(
-                f"🛑 [MA_Active_Risk_Stop] {sym} 連續確認逆勢 "
-                f"{abs(profit_pct)*100:.2f}% >= {MA_ACTIVE_RISK_STOP_PCT*100:.2f}%，提前止損"
-            )
-            await close_position(
-                sym, cs, abs(s["qty"]), p, avg,
-                reason="[MA_Active_Risk_Stop]", is_stop_loss=True,
-            )
-            return
 
         wrong_direction_confirmed = False
         if len(candles) >= 3 and hold_sec <= MA_WRONG_DIRECTION_WINDOW_SEC and profit_pct <= -MA_WRONG_DIRECTION_PCT:
@@ -784,14 +727,7 @@ async def check_exits(sym):
             range_tp = float(s.get("range_tp_price", 0.0) or 0.0)
             range_sl = float(s.get("range_sl_price", 0.0) or 0.0)
             
-            if range_tp > 0:
-                tp_hit = (is_long and p >= range_tp) or (not is_long and p <= range_tp)
-                if tp_hit:
-                    cs = "sell" if is_long else "buy"
-                    logger.info(f"🎯 [Range_Mode_TP] {sym} 觸及區間目標價 {range_tp:.6f}，執行止盈出場")
-                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Range_TP]", is_stop_loss=False)
-                    return
-            
+
             if range_sl > 0:
                 sl_hit = (is_long and p <= range_sl) or (not is_long and p >= range_sl)
                 if sl_hit:

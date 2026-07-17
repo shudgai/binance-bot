@@ -41,17 +41,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
     personality = s.get("personality", "calm")
     atr_pct = float(s.get("atr_pct", 0.0))
 
-    # 動態量能閾值
-    thresholds = {
-        "calm": ENTRY_SURGE_THRESHOLD,
-        "adaptive": ENTRY_SURGE_THRESHOLD,
-        "aggressive": ENTRY_SURGE_THRESHOLD
-    }
-    base_limit = thresholds.get(personality, ENTRY_SURGE_THRESHOLD)
-    if 3.0 < atr_pct <= 5.0:
-        base_limit *= 0.8  # 放寬極端波動幣種的量能要求
-    elif atr_pct > 5.0:
-        base_limit = thresholds.get("calm", ENTRY_SURGE_THRESHOLD)  # 波動失控，退回極度保守模式
+    # 動態量能閾值 — 放寬至 0.8x，只需基本流動性確認
+    base_limit = 0.8
+    if atr_pct > 5.0:
+        base_limit = 1.0  # 波動失控時稍微收緊
     breakout_limit = base_limit * 1.5
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
@@ -71,33 +64,26 @@ def compute_signal_strength(sym, realtime_trigger=False):
     ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
     is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
 
-    # 使用者要求：動能確認門檻。實測 TRUMPUSDT/NEARUSDT/SOLUSDT 案例，MA 排列
-    # 本身沒錯，但整段持倉 RSI 幾乎都在 50 附近甚至偏多頭那一側，代表空單從頭到
-    # 尾都沒有真正的空頭動能撐著，純粹是 MA 剛好交叉就進場，訊號體質偏弱。加一道
-    # 「賣單要求 RSI 明顯低於 50、買單要求明顯高於 50」的動能確認，跟原本只防
-    # 極端值(現在＜70/＞30)的門檻不同——原本那組是防止追高/追低，這組是要求方向
-    # 本身要有動能支持，兩者疊加。
-    rsi_momentum_long_ok = current_rsi >= 51.0
-    rsi_momentum_short_ok = current_rsi <= 49.0
-
-    # 交叉路線
+    # 交叉路線：MA7 x MA25 金叉/死叉，只需確認 K 棒方向與非極端 RSI
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
-                  and (candle_close > candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi < 70
-                  and rsi_momentum_long_ok and not is_flat_chop)
+                  and (candle_close > candle_open or is_realtime_strong)
+                  and volume_ratio >= base_limit and current_rsi < 70
+                  and not is_flat_chop)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
-                   and (candle_close < candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi > 30
-                   and rsi_momentum_short_ok and not is_flat_chop)
+                   and (candle_close < candle_open or is_realtime_strong)
+                   and volume_ratio >= base_limit and current_rsi > 30
+                   and not is_flat_chop)
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
 
-    # 回調路線
+    # 回調路線：只需量能 + K 棒方向確認，不再過濾 RSI 方向動能
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
-                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi < 70
-                     and rsi_momentum_long_ok)
+                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
+                     and volume_ratio >= base_limit and current_rsi < 70)
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
-                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong) and volume_ratio >= base_limit and current_rsi > 30
-                      and rsi_momentum_short_ok)
+                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
+                      and volume_ratio >= base_limit and current_rsi > 30)
 
     from core.config import DISABLE_MA_BREAKOUT
     completed = candles[:-1]
@@ -106,13 +92,13 @@ def compute_signal_strength(sym, realtime_trigger=False):
         prior = completed[-21:-1]
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
-        # 突破路線
+        # 突破路線：放寬量能門檻，不過濾 RSI 動能方向
         breakout_long = (long_spreading and long_stack and candle_close > prior_high
-                         and (candle_close > candle_open or is_realtime_strong) and volume_ratio >= breakout_limit and current_rsi < 70
-                         and rsi_momentum_long_ok)
+                         and (candle_close > candle_open or is_realtime_strong)
+                         and volume_ratio >= breakout_limit and current_rsi < 70)
         breakout_short = (short_spreading and short_stack and candle_close < prior_low
-                          and (candle_close < candle_open or is_realtime_strong) and volume_ratio >= breakout_limit and current_rsi > 30
-                          and rsi_momentum_short_ok)
+                           and (candle_close < candle_open or is_realtime_strong)
+                           and volume_ratio >= breakout_limit and current_rsi > 30)
 
     if cross_long or cross_short:
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
@@ -122,23 +108,13 @@ def compute_signal_strength(sym, realtime_trigger=False):
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
     else:
         if volume_ratio < base_limit:
-            reason = f"已收線量能過低（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x, 個性={personality}），暫停交易"
+            reason = f"量能不足（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x），暫停交易"
         elif is_flat_chop and (golden_cross or death_cross):
             reason = "MA7／MA25 平走交織，屬盤整假訊號區"
-        # 應使用者要求解封：拔除逆勢過濾器，允許積極搶短與提早下注（僅保留上面的
-        # 平走盤整過濾，逆勢方向本身不再由這裡擋，仍受 entry_filter.py MA99 對齊把關）
-        # elif ma7 > ma25 and not above_ma99:
-        #     reason = "MA7 雖高於 MA25，但價格仍在 MA99 下方，禁止逆勢做多"
-        # elif ma7 < ma25 and not below_ma99:
-        #     reason = "MA7 雖低於 MA25，但價格仍在 MA99 上方，禁止逆勢做空"
         elif current_rsi >= 70 and ma7 > ma25:
             reason = f"RSI={current_rsi:.1f} 已達極端值，防超買反轉不追多"
         elif current_rsi <= 30 and ma7 < ma25:
             reason = f"RSI={current_rsi:.1f} 已達極端值，防超賣反轉不追空"
-        elif ma7 > ma25 and not rsi_momentum_long_ok:
-            reason = f"MA7 雖高於 MA25，但 RSI={current_rsi:.1f} 未達 51，動能未確認，暫不追多"
-        elif ma7 < ma25 and not rsi_momentum_short_ok:
-            reason = f"MA7 雖低於 MA25，但 RSI={current_rsi:.1f} 未達 49 以下，動能未確認，暫不追空"
         else:
             reason = "等待 MA7／MA25 收線交叉、MA25 回調或帶量突破"
         s["entry_block_reason"] = reason

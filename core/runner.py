@@ -256,9 +256,20 @@ async def _record_external_position_close(exchange, sym, state):
     stored_stop_id = str(state.get("exchange_stop_order_id") or "")
     stored_tp_id = str(state.get("exchange_take_profit_order_id") or "")
     order_id_text = str(order_id or "")
+    actual_stop_order_id = ""
+    if stored_stop_id:
+        try:
+            algo_order = await exchange.fapiPrivateGetAlgoOrder({"algoId": stored_stop_id})
+            actual_stop_order_id = str((algo_order or {}).get("actualOrderId") or "")
+        except Exception as algo_error:
+            logger.info(f"ℹ️ [ExternalClose] {sym} 無法核對 Algo 止損子訂單: {algo_error}")
     if "TAKE_PROFIT" in order_type or (stored_tp_id and order_id_text == stored_tp_id):
         exit_reason = "[External_Take_Profit]"
-    elif "STOP" in order_type or (stored_stop_id and order_id_text == stored_stop_id):
+    elif (
+        "STOP" in order_type
+        or (stored_stop_id and order_id_text == stored_stop_id)
+        or (actual_stop_order_id and order_id_text == actual_stop_order_id)
+    ):
         exit_reason = "[External_Stop_Loss]"
     else:
         exit_reason = "[External_Close]"

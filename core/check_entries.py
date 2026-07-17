@@ -30,6 +30,24 @@ COOLDOWN_REENTRY_RAPID_RECHECKS = 2
 COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC = 1.0
 
 
+def _range_exit_prices(price, support, resistance, atr, side):
+    """Build range exits with enough room between the actual fill and structural stop."""
+    price = float(price)
+    support = float(support)
+    resistance = float(resistance)
+    atr = float(atr)
+    minimum_stop_room = max(atr * 0.75, price * 0.003)
+    if side == "buy":
+        take_profit = resistance - price * 0.0005
+        structural_stop = support - atr * 0.5
+        stop = min(structural_stop, price - minimum_stop_room)
+    else:
+        take_profit = support + price * 0.0005
+        structural_stop = resistance + atr * 0.5
+        stop = max(structural_stop, price + minimum_stop_room)
+    return take_profit, stop
+
+
 def log_decision_summary(
     sym: str,
     ma_status: str,
@@ -825,12 +843,9 @@ async def check_entries():
             if not (support > 0 and resistance > 0 and support < resistance):
                 logger.info(f"🛑 [Range_Final_Guard] {sym} 支撐/壓力資料不完整或順序錯誤")
                 continue
-            if side == "buy":
-                range_tp = resistance - price * 0.0005  # 壓力帶內側 0.05% 緩衝
-                range_sl = support - atr * 0.5
-            else:
-                range_tp = support + price * 0.0005    # 支撐帶內側 0.05% 緩衝
-                range_sl = resistance + atr * 0.5
+            range_tp, range_sl = _range_exit_prices(
+                price, support, resistance, atr, side
+            )
             range_tp_dist = abs(range_tp - price)
             range_sl_dist = abs(range_sl - price)
             range_net_pct = range_tp_dist / price - TAKER_FEE_RATE * 2

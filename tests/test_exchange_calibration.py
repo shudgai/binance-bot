@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import ctx
 from core.ctx import init_states
-from core.runner import calibrate_with_exchange, cancel_orphan_exchange_entry_orders
+from core.runner import (_record_external_position_close, calibrate_with_exchange,
+    cancel_orphan_exchange_entry_orders)
 from core.state_manager import reset_coin_state
 
 
@@ -156,6 +157,37 @@ class ExchangeCalibrationTests(unittest.TestCase):
         self.assertEqual(kwargs["fees"], 0.2)
         self.assertEqual(kwargs["actual_exit"], 105.0)
         self.assertEqual(state["qty"], 0.0)
+
+    def test_triggered_algo_stop_is_classified_from_actual_child_order(self):
+        state = ctx.STATES[self.sym]
+        state.update({
+            "qty": -2.0,
+            "avg_price": 100.0,
+            "open_time": time.time() - 60,
+            "entry_reason": "Range_Resistance_Short",
+            "exchange_stop_order_id": "algo-stop-1",
+        })
+        exchange = AsyncMock()
+        exchange.fetch_my_trades.return_value = [{
+            "id": "trade-1",
+            "order": "child-market-1",
+            "timestamp": int(time.time() * 1000),
+            "side": "buy",
+            "amount": 2.0,
+            "price": 101.0,
+            "fee": {"cost": 0.1},
+            "info": {"realizedPnl": "-2.0", "type": "MARKET"},
+        }]
+        exchange.fapiPrivateGetAlgoOrder.return_value = {
+            "algoId": "algo-stop-1",
+            "actualOrderId": "child-market-1",
+            "orderType": "STOP_MARKET",
+        }
+
+        with patch("core.orders.record_trade_result", return_value=True):
+            reason = asyncio.run(_record_external_position_close(exchange, self.sym, state))
+
+        self.assertEqual(reason, "[External_Stop_Loss]")
 
     def test_exchange_close_id_is_deduplicated_in_trade_history(self):
         from core.orders import record_trade_result
