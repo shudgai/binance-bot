@@ -875,8 +875,7 @@ async def check_entries():
     # MA 路由與區間路由共用同一組槽位，區間模式另外套用自己的上限。
     inflight_symbols = {info.get("sym") for info in ctx.PENDING_LIMIT_ORDERS.values() if info.get("sym")}
     inflight_symbols.update(sym for sym, st in ctx.STATES.items() if st.get("is_ordering") and abs(st.get("qty", 0.0)) <= 0.000001)
-    ma_capacity = max(0, 3 - open_count - len(inflight_symbols))
-    remaining_slots = ma_capacity
+    remaining_slots = max(0, dynamic_max_positions - open_count - len(inflight_symbols))
     if remaining_slots <= 0:
         return
 

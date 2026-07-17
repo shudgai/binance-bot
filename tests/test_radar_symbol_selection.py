@@ -2,6 +2,7 @@ from unittest.mock import patch
 import numpy as np
 
 from core.config import DEFAULT_SYMBOLS
+from core.balance import get_dynamic_max_slots
 from services.bot_manager_service import (
     DEFAULT_SYMBOLS as MANAGER_DEFAULT_SYMBOLS,
     TRADE_POOL_SIZE as MANAGER_TRADE_POOL_SIZE,
@@ -42,6 +43,11 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
     assert MAX_1H_VOL_PCT_FOR_ENTRY == 2.8
+
+
+def test_entry_slots_follow_capital_tiers():
+    assert get_dynamic_max_slots(150) == 3
+    assert get_dynamic_max_slots(250) == 5
 
 
 def test_atr_pool_excludes_event_and_unapproved_coins():
