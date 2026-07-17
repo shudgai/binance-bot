@@ -106,12 +106,24 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
     if confirmed_peak < MA_PEAK_LOCK_ARM_PCT:
         if confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT:
             return False, float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-        floor_price = (
-            avg * (1.0 + fee_floor) if is_long
-            else avg * (1.0 - fee_floor)
-        )
+        # [修正] 0.3%~0.6% 中間段：用峰值的 70% 比例追蹤停利，讓停利線隨峰值上移。
+        # 舊版固定用 fee_floor（保本線），導致峰值到 0.3% 時停利線仍只在 ~0.25% 保本附近，
+        # 沒有隨峰值往上走，最終出場在接近 0.00%。
+        mid_keep_ratio = 0.70
+        locked_mid = max(fee_floor, confirmed_peak * mid_keep_ratio)
+        if is_long:
+            floor_price = avg * (1.0 + locked_mid)
+            # 棘輪：只能往更保護的方向推進（更高）
+            floor_price = max(float(s.get("ma_profit_floor_price", 0.0) or 0.0), floor_price)
+        else:
+            floor_price = avg * (1.0 - locked_mid)
+            prev_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
+            floor_price = min(prev_floor if prev_floor > 0 else float("inf"), floor_price)
         s["ma_profit_floor_armed"] = True
         s["ma_profit_floor_price"] = floor_price
+        # [保護] 若當前利潤明顯高於 floor（代表價格在 floor 上方往上走），不要觸發出場。
+        # 「price <= floor」只有在真正跌穿 floor 時才成立；若 current_price 還在 floor 上方，
+        # crossed=False，讓利潤繼續跑。
         crossed = current_price <= floor_price if is_long else current_price >= floor_price
         return crossed, floor_price
 
@@ -878,11 +890,22 @@ async def check_exits(sym):
         _baseline_volumes = [float(c[5] or 0.0) for c in _completed[-21:-1] if float(c[5] or 0.0) > 0]
         _baseline_vol = float(np.mean(_baseline_volumes)) if _baseline_volumes else 0.0
         _completed_vol_ratio = _latest_completed_vol / _baseline_vol if _baseline_vol > 0 else 1.0
+        # 盤中若正在創新高（現根 K 棒的 HIGH 超越前一根的 HIGH），代表價格仍往上走，
+        # 此時量縮可能只是「新 K 棒剛開始、成交量尚未累積」，不應視為動能衰竭。
+        _cur_candle_high = float(_ohlcv_early[-1][2]) if _ohlcv_early else 0.0
+        _prev_candle_high = float(_completed[-1][2]) if _completed else 0.0
+        _intra_candle_making_new_high = (
+            is_long and _cur_candle_high > _prev_candle_high
+        ) or (
+            not is_long and float(_ohlcv_early[-1][3]) < float(_completed[-1][3]) if _ohlcv_early and _completed else False
+        )
         # 量縮只結束已經走出有效報酬的波段，不再把 0.3% 內的一般雜訊當成停利。
+        # 若盤中價格仍在創新高（往上走），不觸發量縮出場，讓利潤繼續奔跑。
         _peak_volume_contracting = (
             _peak_profit >= MA_MIN_PROFIT_TARGET_PCT
             and profit_pct >= max(MA_MIN_PROFIT_TARGET_PCT * 0.85, _peak_profit * 0.85)
             and _completed_vol_ratio <= 0.70
+            and not _intra_candle_making_new_high
         )
 
     s["peak_volume_contraction_count"] = (

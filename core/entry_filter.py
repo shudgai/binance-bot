@@ -130,6 +130,25 @@ def is_valid_candle(sym, side):
     return lower_wick <= body * 1.8
 
 
+def is_range_wick_safe(sym, side):
+    """區間模式專用影線檢查：門檻比 MA 趨勢更寬鬆（3.5x vs 1.8x）。
+    區間支撐/壓力附近震盪時，小 body + 較長影線屬正常現象，
+    用 MA 趨勢的嚴格門檻會把合理的反彈進場機會全部擋掉。
+    僅拒絕極端影線（代表方向被強烈否定的假訊號）。
+    """
+    candles = ctx.STATES[sym].get("ohlcv", [])
+    if len(candles) < 2:
+        return False
+    candle = candles[-2]
+    candle_open, high, low, close = map(float, candle[1:5])
+    body = max(abs(close - candle_open), close * 0.0001)
+    upper_wick = high - max(candle_open, close)
+    lower_wick = min(candle_open, close) - low
+    if side == "buy":
+        return upper_wick <= body * 3.5
+    return lower_wick <= body * 3.5
+
+
 def is_entry_pin_safe(sym, side):
     return is_valid_candle(sym, side)
 
@@ -213,9 +232,14 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
             logger.info(f"🛑 [Range_Volume] {sym} {route} 已收線成交量不足")
             return False
         # 影線過長檢查（避免被假突破吸引）
-        if not is_entry_pin_safe(sym, side):
+        # 區間模式使用寬鬆門檻（3.5x），並加入冷卻避免同一根 K 棒每 10 秒重複拒絕。
+        if time.time() < float(s.get("range_wick_cooldown_until", 0.0) or 0.0):
+            return False
+        if not is_range_wick_safe(sym, side):
             logger.info(f"🛑 [Range_Wick] {sym} 反向影線過長，取消 {route}")
             s["entry_block_reason"] = f"{route} 反向影線過長，取消進場"
+            # 冷卻 60 秒：同一根 K 棒影線不會改變，不要每 10 秒重試
+            s["range_wick_cooldown_until"] = time.time() + 60.0
             return False
         atr = float(s.get("current_atr", 0.0) or 0.0)
         if atr > 0 and len(candles) >= 3:
