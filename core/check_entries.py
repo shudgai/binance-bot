@@ -29,6 +29,46 @@ COOLDOWN_REENTRY_RAPID_RECHECKS = 2
 COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC = 1.0
 
 
+def log_decision_summary(
+    sym: str,
+    ma_status: str,
+    range_status: str,
+    adx: float,
+    route: str = "",
+    side: str = "",
+    block_reason: str = "",
+) -> None:
+    """每次訊號評估完畢後，輸出一行結構化的模式決策摘要。
+
+    Args:
+        sym:          交易對名稱。
+        ma_status:    MA 訊號狀態 ("觸發" / "無訊號")。
+        range_status: 區間模式狀態 ("觸發" / "略過" / "未評估")。
+        adx:          當前 ADX 數值。
+        route:        進場路由標籤，訊號觸發時帶入。
+        side:         方向 ("LONG" / "SHORT")，訊號觸發時帶入。
+        block_reason: 阻斷原因，僅略過時帶入。
+    """
+    if ma_status == "觸發":
+        # 趨勢模式成功觸發
+        reason = f"趨勢模式 (ADX={adx:.1f})，觸發 MA 訊號 {route} ({side})"
+    elif range_status == "觸發":
+        # 區間模式成功觸發
+        reason = f"區間模式就緒，觸發 {route} ({side})"
+    elif range_status == "略過":
+        # 兩種模式均未能觸發
+        if adx < 25.0:
+            detail = block_reason or "區間空間不足或邊界確認中"
+            reason = f"盤整環境但區間模式確認中 ({detail})"
+        else:
+            reason = f"趨勢過強 (ADX={adx:.1f})，區間模式停用"
+    else:
+        # range_status == "未評估"（RANGE_MODE_ENABLED=False 且 MA 無訊號）
+        reason = f"趨勢模式無訊號 (ADX={adx:.1f})，區間模式未啟用"
+
+    logger.info(f"🔍 [Decision] {sym} | 決策路徑: {reason}")
+
+
 def _is_confirmable_exit_cooldown(state, now=None):
     """Any ordinary cooldown may be released after one full pass and two rapid rechecks."""
     now = float(time.time() if now is None else now)
@@ -439,10 +479,13 @@ async def check_entries():
                     
                     # 模式切換確認日誌
                     adx = float(s.get("adx", 0.0) or 0.0)
-                    if adx < 25.0:
-                        logger.info(f"🔍 [Decision] {sym} | 決策路徑: 盤整環境但區間模式確認中 ({block_reason})")
-                    else:
-                        logger.info(f"🔍 [Decision] {sym} | 決策路徑: 趨勢過強 (ADX={adx:.1f})，區間模式停用")
+                    log_decision_summary(
+                        sym,
+                        ma_status=ma_status,
+                        range_status=range_status,
+                        adx=adx,
+                        block_reason=block_reason,
+                    )
                     continue
             else:
                 block_reason = s.get("entry_block_reason") or "暫無有效訊號"
@@ -453,10 +496,14 @@ async def check_entries():
 
         # 模式切換確認日誌（順利產生訊號進場時）
         adx = float(s.get("adx", 0.0) or 0.0)
-        if is_range_signal:
-            logger.info(f"🔍 [Decision] {sym} | 決策路徑: 區間模式就緒，觸發 {route} ({side})")
-        else:
-            logger.info(f"🔍 [Decision] {sym} | 決策路徑: 趨勢模式 (ADX={adx:.1f})，觸發 MA 訊號 {route} ({side})")
+        log_decision_summary(
+            sym,
+            ma_status=ma_status,
+            range_status=range_status,
+            adx=adx,
+            route=route,
+            side=side,
+        )
 
         macro_ok, macro_reason, macro_mode = btc_macro_entry_guard(sym, side)
         s["_btc_macro_mode"] = macro_mode

@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
 MA_DISASTER_STOP_PCT = 0.015
+MA_PENDING_MONITOR_INTERVAL_SEC = 3.0
+MA_PENDING_REPRICE_COOLDOWN_SEC = 6.0
+MA_CROSS_MAX_EXTENSION_PCT = 0.0025
+MA_CROSS_MAX_EXTENSION_ATR_MULT = 0.5
+MA_CROSS_ANCHOR_BUFFER_PCT = 0.0003
 
 
 def should_block_order_flow(side, bids, asks, threshold, paper_trading):
@@ -347,7 +352,7 @@ def _entry_price_guard(sym, side, order_price, market_price, mode="", is_rescue_
         chase_limit = 0.008  # 寬鬆模式下追價極限放寬至 0.8%
     else:
         chase_limit = max(0.003, min(0.010, atr_pct * 0.8 if atr_pct > 0 else 0.004))
-    if total_dev > chase_limit:
+    if mode != "ma7_pullback" and total_dev > chase_limit:
         return False, f"chase price drift {total_dev*100:.2f}% > {chase_limit*100:.2f}%"
 
     return True, "ok"
@@ -456,11 +461,106 @@ def _pending_entry_setup_valid(info, validator=None):
     if validator is None:
         from core.check_entries import is_entry_candidate_still_valid
         validator = is_entry_candidate_still_valid
+    # 掛單期間以最新市價驗證；方向、MA、RSI 或大盤結構失效時仍會撤單。
+    state = ctx.STATES.get(info.get("sym"), {})
+    latest_price = float(state.get("close_price", 0.0) or 0.0)
+    validation_price = latest_price or float(info.get("signal_price") or info.get("price") or 0.0)
     return validator(
         info.get("sym"), info.get("side"), route,
         float(info.get("signal_strength", 0.0) or 0.0),
-        float(info.get("signal_price") or info.get("price") or 0.0),
+        validation_price,
     )
+
+
+def _ma_cross_anti_chase_plan(sym, side, current_price, entry_route):
+    """Return a MA7-anchored limit when a fresh MA cross is already extended."""
+    if str(entry_route or "").lower() != "ma_cross":
+        return False, 0.0, "not_ma_cross"
+    current_price = float(current_price or 0.0)
+    s = ctx.STATES.get(sym, {})
+    ma7 = float(s.get("ma7", 0.0) or 0.0)
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    if current_price <= 0 or ma7 <= 0:
+        return False, 0.0, "missing_price_or_ma7"
+
+    extension = current_price - ma7 if side == "buy" else ma7 - current_price
+    max_extension = max(
+        current_price * MA_CROSS_MAX_EXTENSION_PCT,
+        atr * MA_CROSS_MAX_EXTENSION_ATR_MULT,
+    )
+    anchor_price = (
+        ma7 * (1 + MA_CROSS_ANCHOR_BUFFER_PCT)
+        if side == "buy"
+        else ma7 * (1 - MA_CROSS_ANCHOR_BUFFER_PCT)
+    )
+    if extension <= max_extension:
+        return False, anchor_price, "price_near_ma7"
+
+    return True, anchor_price, (
+        f"price/MA7 extension {extension/current_price*100:.2f}% > "
+        f"{max_extension/current_price*100:.2f}%"
+    )
+
+
+def _is_ma_pending_entry(info):
+    return (str(info.get("entry_route") or "").lower() in MA_ENTRY_ROUTES
+            and not info.get("is_rescue_dca", False))
+
+
+def _pending_entry_reprice_needed(sym, info, current_price, now=None):
+    """Detect material market movement since this limit price was calculated."""
+    if not _is_ma_pending_entry(info) or current_price <= 0:
+        return False, "not_dynamic_ma_order"
+    now = float(time.time() if now is None else now)
+    last_reprice_at = float(info.get("last_reprice_at",
+        info.get("timestamp", info.get("placed_at", 0.0))) or 0.0)
+    if now - last_reprice_at < MA_PENDING_REPRICE_COOLDOWN_SEC:
+        return False, "reprice_cooldown"
+    market_ref = float(info.get("market_reference_price")
+                       or info.get("signal_price") or 0.0)
+    if market_ref <= 0:
+        return False, "missing_market_reference"
+    s = ctx.STATES.get(sym, {})
+    atr = float(s.get("current_atr", 0.0) or 0.0)
+    if info.get("ma_cross_anti_chase", False):
+        _, desired_price, _ = _ma_cross_anti_chase_plan(
+            sym, info.get("side"), current_price, info.get("entry_route"),
+        )
+        old_limit = float(info.get("price") or info.get("limit_price") or 0.0)
+        if desired_price > 0 and old_limit > 0:
+            anchor_drift_limit = max(current_price * 0.0005, atr * 0.10)
+            if abs(desired_price - old_limit) >= anchor_drift_limit:
+                return True, "MA7 anchor moved"
+        # 防追價單的正確報價由 MA7 決定；只有市價移動、MA7 未動時不做無效撤掛，
+        # 避免白白增加 API 權重。訊號有效性仍由每輪完整重驗負責。
+        return False, "MA7 anchor unchanged"
+    atr_pct = atr / market_ref
+    # 這只決定舊報價何時重算，不增加開倉門檻。
+    drift_limit = max(0.0025, min(0.008, atr_pct * 0.6 if atr_pct > 0 else 0.004))
+    drift = abs(current_price - market_ref) / market_ref
+    if drift >= drift_limit:
+        return True, f"market drift {drift*100:.2f}% >= {drift_limit*100:.2f}%"
+    return False, "price_still_near_reference"
+
+
+def _translated_pending_limit_price(info, current_price):
+    """Move the old limit with the market while preserving its pullback distance."""
+    if info.get("ma_cross_anti_chase", False):
+        _, anchor_price, _ = _ma_cross_anti_chase_plan(
+            info.get("sym"), info.get("side"), current_price,
+            info.get("entry_route"),
+        )
+        if anchor_price > 0:
+            return anchor_price
+    old_limit = float(info.get("price") or info.get("limit_price") or 0.0)
+    old_market = float(info.get("market_reference_price")
+                       or info.get("signal_price") or 0.0)
+    if old_limit <= 0 or old_market <= 0 or current_price <= 0:
+        return 0.0
+    translated = old_limit + (current_price - old_market)
+    if str(info.get("side", "")).lower() == "buy":
+        return min(translated, current_price * 0.9997)
+    return max(translated, current_price * 1.0003)
 
 
 def _find_exchange_position(positions, sym):
@@ -561,7 +661,9 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         anomaly_tags.append("HIGH_FRICTION")
     if max_profit_reached >= 0.005 and max_profit_reached - profit_pct >= 0.005:
         anomaly_tags.append("PEAK_GIVEBACK")
-    if "MA_Wrong_Direction" in str(exit_reason):
+    if any(tag in str(exit_reason) for tag in (
+        "MA_Wrong_Direction", "MA_Active_Risk_Stop", "MA_Early_Momentum_Flip"
+    )):
         anomaly_tags.append("WRONG_DIRECTION")
     if "MA_Disaster_Stop" in str(exit_reason):
         anomaly_tags.append("DISASTER_STOP")
@@ -846,7 +948,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # ——本來該在轉折剛確認時就平倉了結的單子，硬生生被拖成真正的停損虧損出場。
     # [Dynamic_TP_Tier]：分級停利目標刻意設計成低獲利檔位就先落袋（可能低於這裡的
     # 0.35%/1.5% 固定門檻），一樣要放行，不然會重演跟 [MA7_Closed_Break] 一樣的問題。
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA_Peak_Lock]", "[Dynamic_TP_Tier]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Dynamic_TP_Tier]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -892,7 +994,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # 下殺，最後市價成交時已經變成 -0.42% 虧損——跟 HBARUSDT 一模一樣的病根。
         _urgent_exit_reasons = (
             "Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak",
-            "Peak_Volume_Contraction", "MA_Peak_Lock", "MA7_Closed_Break",
+            "Peak_Volume_Contraction", "MA_Peak_Lock", "MA_Profit_Floor", "MA7_Closed_Break",
             "MA7_MA25_Death_Cross", "MA7_MA25_Golden_Cross",
         )
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
@@ -1211,9 +1313,14 @@ async def check_paper_pending_order(sym):
     side = order["side"]
     limit_price = order["limit_price"]
     elapsed = time.time() - order["placed_at"]
-    if elapsed > order["timeout"]:
+    if elapsed > order["timeout"] and not _is_ma_pending_entry(order):
         s["pending_paper_order"] = None
         logger.info(f"⌛ [Paper超時撤單] {sym} {side} @ {limit_price:.6f} 超過 {order['timeout']}秒未成交，已撤單")
+        return
+    setup_ok, setup_reason = _pending_entry_setup_valid(order)
+    if not setup_ok:
+        s["pending_paper_order"] = None
+        logger.info(f"🛑 [Paper訊號失效撤單] {sym} {side}：{setup_reason}")
         return
     filled = (side == 'buy' and p <= limit_price) or (side == 'sell' and p >= limit_price)
     if filled:
@@ -1229,6 +1336,30 @@ async def check_paper_pending_order(sym):
         _fill_paper_order(sym, actual_fill_price)
         return
 
+    reprice, reprice_reason = _pending_entry_reprice_needed(sym, order, p)
+    if reprice:
+        new_limit = _translated_pending_limit_price(order, p)
+        price_ok, price_reason = _entry_price_guard(
+            sym, side, new_limit, p, mode=("ma7_pullback" if order.get("ma_cross_anti_chase", False) else "pullback"),
+            is_rescue_dca=False,
+        )
+        if new_limit > 0 and price_ok:
+            old_limit = limit_price
+            order["limit_price"] = new_limit
+            order["price"] = new_limit
+            order["signal_price"] = p
+            order["market_reference_price"] = p
+            order["placed_at"] = time.time()
+            order["last_reprice_at"] = time.time()
+            order["reprice_count"] = int(order.get("reprice_count", 0)) + 1
+            logger.info(
+                f"🔄 [Paper動態重掛] {sym} {side} 市價已偏離（{reprice_reason}），"
+                f"撤 {old_limit:.6f}、改掛 {new_limit:.6f}"
+            )
+        else:
+            s["pending_paper_order"] = None
+            logger.info(f"🛑 [Paper重掛取消] {sym} 最新價格不適合重掛：{price_reason}")
+
 
 def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None):
     # MA25 回調使用被動限價；已收線交叉與帶量突破使用 IOC 限價追蹤，
@@ -1237,6 +1368,9 @@ def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None
         return "chase"
     if entry_route == "MA25_Pullback":
         return "pullback"
+    # 區間模式：直接用支撐/壓力位精確掛限價，不走 pullback 的 ATR 偏移邏輯
+    if entry_route in ("Range_Support_Long", "Range_Resistance_Short"):
+        return "range_limit"
     return "pullback"
 
 
@@ -1389,6 +1523,19 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🚨 [風控] {sym} 無法取得市場參照價 (ticker失敗且無即時交易紀錄)，為安全起見拒絕執行 (price={price:.6f})")
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被市場價缺失風控攔截，未進入下單")
         return
+
+    _ma_cross_anti_chase = False
+    _ma_cross_anchor_price = 0.0
+    if not is_rescue_dca:
+        _ma_cross_anti_chase, _ma_cross_anchor_price, _ma_cross_reason = (
+            _ma_cross_anti_chase_plan(sym, side, market_price, entry_route)
+        )
+        if _ma_cross_anti_chase:
+            actual_entry_mode = "pullback"
+            logger.info(
+                f"🧲 [MA_Cross防追價] {sym} {side} {_ma_cross_reason}；"
+                f"不追即時價，改掛 MA7 附近 {_ma_cross_anchor_price:.6f}"
+            )
 
     s["last_entry_signal_price"] = price
 
@@ -1574,6 +1721,41 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 _fill_paper_order(sym, fill_price, side=side, qty=base_amt, margin=margin, is_rescue_dca=is_rescue_dca)
                 logger.info(f"✅ [Paper追價成交] {sym} {side} {base_amt:.4f} @ {fill_price:.6f}")
                 return
+            elif actual_entry_mode == 'range_limit':
+                # 區間模式精確限價：直接掛在支撐/壓力位，不使用 pullback 的 ATR 偏移
+                _range_support    = float(s.get("range_support_level",    0.0) or 0.0)
+                _range_resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
+                if side == 'buy' and _range_support > 0:
+                    # 支撐帶內側 +0.02%：避免掉单在支撐正下方
+                    limit_price = _range_support * 1.0002
+                    logger.info(f"🎯 [Range支撐掛單-Paper] {sym} 掛买在支撐位 {_range_support:.6f} +0.02% = {limit_price:.6f}")
+                elif side == 'sell' and _range_resistance > 0:
+                    # 壓力帶內側 -0.02%：避免掉单在壓力正上方
+                    limit_price = _range_resistance * 0.9998
+                    logger.info(f"🎯 [Range壓力掛單-Paper] {sym} 掛賣在壓力位 {_range_resistance:.6f} -0.02% = {limit_price:.6f}")
+                else:
+                    # 區間位資料遺失，降級為當前小幁適度高於市價 (buy) / 低於市價 (sell)的限價
+                    _fallback_offset = 0.9998 if side == 'buy' else 1.0002
+                    limit_price = current_market_price * _fallback_offset
+                    logger.info(f"⚠️ [Range掛單降級-Paper] {sym} 區間位資料遺失，降級小幁限價 {limit_price:.6f}")
+                chase_ok, chase_reason = _entry_signal_chase_guard(
+                    side, price, limit_price, is_first_entry, is_rescue_dca,
+                )
+                if not chase_ok:
+                    logger.info(f"🛑 [SignalChaseGuard] {sym} 區間模式掛單取消：{chase_reason}")
+                    return
+                s["pending_paper_order"] = {
+                    "side": side, "limit_price": limit_price, "qty": base_amt,
+                    "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
+                    "is_rescue_dca": is_rescue_dca, "signal_price": price,
+                    "sym": sym, "entry_route": entry_route, "signal_strength": signal_strength,
+                    "signal_candle_ts": s.get("ma_signal_candle_ts", 0),
+                    "price": limit_price, "market_reference_price": current_market_price,
+                    "last_reprice_at": now, "reprice_count": 0,
+                }
+                direction = "做多" if side == 'buy' else "做空"
+                logger.info(f"⏳ [Paper區間限價掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f})")
+                return
             elif actual_entry_mode == 'pullback':
                 atr = s.get("current_atr", 0.0)
                 if atr <= 0:
@@ -1588,7 +1770,10 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 # 更貼近真正的結構位置。算不到結構價位（資料不足）時才退回原本的 ATR 估算。
                 _struct_support = float(s.get("_entry_support", 0.0) or 0.0)
                 _struct_resistance = float(s.get("_entry_resistance", 0.0) or 0.0)
-                if side == 'buy' and 0 < _struct_support < current_market_price:
+                if _ma_cross_anti_chase:
+                    limit_price = _ma_cross_anchor_price
+                    logger.info(f"🎯 [MA7錨定掛單] {sym} 防追價回調委託 @ {limit_price:.6f}")
+                elif side == 'buy' and 0 < _struct_support < current_market_price:
                     limit_price = _struct_support * 1.0005
                     logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
                 elif side == 'sell' and _struct_resistance > current_market_price > 0:
@@ -1622,6 +1807,11 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
                     "is_rescue_dca": is_rescue_dca, "signal_price": price,
+                    "sym": sym, "entry_route": entry_route, "signal_strength": signal_strength,
+                    "signal_candle_ts": s.get("ma_signal_candle_ts", 0),
+                    "price": limit_price, "market_reference_price": current_market_price,
+                    "last_reprice_at": now, "reprice_count": 0,
+                    "ma_cross_anti_chase": _ma_cross_anti_chase,
                 }
                 direction = "做多" if side == 'buy' else "做空"
                 logger.info(f"⏳ [Paper回踩掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (當前: {current_market_price:.6f}, ATR%:{_atr_pct*100:.2f}%, 深度:{_pb_mult:.2f}×ATR)")
@@ -1639,6 +1829,10 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     "side": side, "limit_price": limit_price, "qty": base_amt,
                     "margin": margin, "placed_at": now, "timeout": DUAL_SHOT_ORDER_TIMEOUT,
                     "is_rescue_dca": is_rescue_dca, "signal_price": price,
+                    "sym": sym, "entry_route": entry_route, "signal_strength": signal_strength,
+                    "signal_candle_ts": s.get("ma_signal_candle_ts", 0),
+                    "price": limit_price, "market_reference_price": current_market_price,
+                    "last_reprice_at": now, "reprice_count": 0,
                 }
                 direction = "做多" if side == 'buy' else "做空"
                 logger.info(f"⏳ [Paper被動掛單] {sym} {direction} {base_amt:.4f} @ {limit_price:.6f} (等待成交)")
@@ -1665,6 +1859,21 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     order_type = 'market'
                     limit_price = None
                     logger.info(f"📌 [市價下單] {sym} 執行市價進場")
+                elif actual_entry_mode == 'range_limit':
+                    # 區間模式精確限價：直接用支撐/壓力位上下各 0.02% 小緩衝
+                    _range_support    = float(s.get("range_support_level",    0.0) or 0.0)
+                    _range_resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
+                    if side == 'buy' and _range_support > 0:
+                        limit_price = round_step(_range_support * 1.0002, tick_size)
+                        logger.info(f"🎯 [Range支撐掛單] {sym} 掛買在支撐位 {_range_support:.6f} +0.02% = {limit_price:.6f}")
+                    elif side == 'sell' and _range_resistance > 0:
+                        limit_price = round_step(_range_resistance * 0.9998, tick_size)
+                        logger.info(f"🎯 [Range壓力掛單] {sym} 掛賣在壓力位 {_range_resistance:.6f} -0.02% = {limit_price:.6f}")
+                    else:
+                        # 區間位資料遺失，降級為實時市價小幁限價
+                        _fallback_offset = 0.9998 if side == 'buy' else 1.0002
+                        limit_price = round_step(market_price * _fallback_offset, tick_size)
+                        logger.info(f"⚠️ [Range掛單降級] {sym} 區間位資料遺失，降級小幁限價 {limit_price:.6f}")
                 elif actual_entry_mode == 'chase':
                     limit_price = ask1 if side == 'buy' else bid1
                     if side == 'buy':
@@ -1700,7 +1909,11 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     _pb_mult = 0.0
 
                     _is_structure_anchored = False
-                    if side == 'buy' and 0 < _struct_support < price:
+                    if _ma_cross_anti_chase:
+                        limit_price = _ma_cross_anchor_price
+                        _is_structure_anchored = True
+                        logger.info(f"🎯 [MA7錨定掛單] {sym} 防追價回調委託 @ {limit_price:.6f}")
+                    elif side == 'buy' and 0 < _struct_support < price:
                         limit_price = _struct_support * 1.0005
                         _is_structure_anchored = True
                         logger.info(f"🎯 [結構錨定掛單] {sym} 掛在支撐位 {_struct_support:.6f} + 0.05% 緩衝 = {limit_price:.6f}")
@@ -1764,7 +1977,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
             order_price_ok, order_price_reason = _entry_price_guard(
                 sym, side, limit_price, market_price,
-                mode=actual_entry_mode, is_rescue_dca=is_rescue_dca,
+                mode=("ma7_pullback" if _ma_cross_anti_chase else actual_entry_mode),
+                is_rescue_dca=is_rescue_dca,
             )
             if not order_price_ok:
                 logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 委託價偏離即時牌價：{order_price_reason}，取消開倉")
@@ -1839,8 +2053,12 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 "price": limit_price or price, "signal_price": price,
                 "timestamp": order_ts, "is_rescue_dca": is_rescue_dca,
                 "entry_route": entry_route, "signal_strength": signal_strength,
+                "signal_candle_ts": s.get("ma_signal_candle_ts", 0),
+                "market_reference_price": market_price,
+                "last_reprice_at": order_ts, "reprice_count": 0,
                 "timeout": _order_timeout,
-                "allow_chase_on_timeout": _is_structure_anchored and not is_rescue_dca,
+                "allow_chase_on_timeout": _is_structure_anchored and not is_rescue_dca and not _ma_cross_anti_chase,
+                "ma_cross_anti_chase": _ma_cross_anti_chase,
                 "chased_once": False,
             }
             logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type}, 逾時: {_order_timeout:.0f}s)")
@@ -1880,7 +2098,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 adverse_ok, adverse_reason = _entry_pending_adverse_guard(
                     sym, side, price, latest_ref_price, is_rescue_dca=is_rescue_dca
                 )
-                if not adverse_ok:
+                if not adverse_ok and not _is_ma_pending_entry(ctx.PENDING_LIMIT_ORDERS.get(order_id, {})):
                     try:
                         await exchange_futures.cancel_order(order_id, sym)
                     except Exception as ce:
@@ -2172,6 +2390,7 @@ async def _chase_retry_pending_entry(info, sym, side, qty):
             "price": reprice, "signal_price": info.get("signal_price") or reprice,
             "timestamp": time.time(), "is_rescue_dca": info.get("is_rescue_dca", False),
             "entry_route": info.get("entry_route"), "signal_strength": info.get("signal_strength"),
+            "signal_candle_ts": info.get("signal_candle_ts", 0),
             "timeout": min(DUAL_SHOT_ORDER_TIMEOUT, 90),
             "allow_chase_on_timeout": False,
             "chased_once": True,
@@ -2186,14 +2405,63 @@ async def _chase_retry_pending_entry(info, sym, side, qty):
         return False
 
 
+async def _relist_pending_entry(info, sym, side, qty, current_price):
+    """Cancel/relist path for a still-valid MA entry whose quote reference moved."""
+    try:
+        new_price = _translated_pending_limit_price(info, current_price)
+        if new_price <= 0:
+            return False
+        prec = await get_contract_precision(sym)
+        new_price = round_step(new_price, prec["tick_size"])
+        qty = round_step(qty, prec["step_size"])
+        if qty <= 0:
+            return False
+        price_ok, price_reason = _entry_price_guard(
+            sym, side, new_price, current_price, mode=("ma7_pullback" if info.get("ma_cross_anti_chase", False) else "pullback"),
+            is_rescue_dca=False,
+        )
+        if not price_ok:
+            logger.info(f"🛑 [動態重掛取消] {sym} 最新委託價不合格：{price_reason}")
+            return False
+        chase_ok, chase_reason = _entry_signal_chase_guard(
+            side, current_price, new_price, is_first_entry=True, is_rescue_dca=False,
+        )
+        if not chase_ok:
+            logger.info(f"🛑 [動態重掛取消] {sym} 最新委託價形成追價：{chase_reason}")
+            return False
+        order = await exchange_futures.create_order(
+            sym, type="limit", side=side, amount=qty, price=new_price,
+            params={"marginMode": "isolated", "timeInForce": "GTC"},
+        )
+        now = time.time()
+        new_info = dict(info)
+        reprice_count = int(info.get("reprice_count", 0)) + 1
+        new_info.update({
+            "sym": sym, "side": side, "qty": qty, "price": new_price,
+            "signal_price": current_price, "market_reference_price": current_price,
+            "timestamp": now, "last_reprice_at": now,
+            "reprice_count": reprice_count,
+            "allow_chase_on_timeout": False, "chased_once": False,
+        })
+        ctx.PENDING_LIMIT_ORDERS[order["id"]] = new_info
+        logger.info(
+            f"🔄 [動態重掛] {sym} {side} 撤舊單後依最新市價 {current_price:.6f}，"
+            f"改掛被動限價 {new_price:.6f} (第 {reprice_count} 次)"
+        )
+        return True
+    except Exception as exc:
+        logger.info(f"⚠️ [動態重掛失敗] {sym}: {exc}")
+        return False
+
+
 async def check_stale_limit_orders():
     """
     超時撤單機制 (Order Timeout Canceller)
-    每 30 秒檢查一次 PENDING_LIMIT_ORDERS。
+    每 3 秒檢查一次 PENDING_LIMIT_ORDERS；MA 掛單偏離時依最新價格重掛。
     超過 MAX_WAIT_SECONDS 仍未撮合的限價進場單自動撤銷。
     """
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(MA_PENDING_MONITOR_INTERVAL_SEC)
         if PAPER_TRADING:
             continue
         for order_id in list(ctx.PENDING_LIMIT_ORDERS.keys()):
@@ -2206,39 +2474,49 @@ async def check_stale_limit_orders():
             side = info.get("side", "")
             original_qty = info.get("qty", 0.0)
             max_wait_seconds = float(info.get("timeout", DUAL_SHOT_ORDER_TIMEOUT))
-            should_cancel = elapsed > max_wait_seconds
-            # 只有「純粹逾時」(訊號沒失效、價格也沒跑掉)才有資格追價再試一次；
-            # 訊號失效或價格已反向偏離的這兩種情況，不應該追價硬進場。
+            dynamic_ma_order = _is_ma_pending_entry(info)
+            # MA 掛單不再因固定秒數到期；持續看結構與價格。舊式／救援單保留逾時。
+            should_cancel = elapsed > max_wait_seconds and not dynamic_ma_order
             chase_eligible = should_cancel
+            reprice_eligible = False
+            latest_ref_price = 0.0
             cancel_reason = (
                 f"已掛單 {elapsed:.1f} 秒 > {max_wait_seconds:.0f}s"
                 if should_cancel else ""
             )
 
-            if not should_cancel:
-                setup_ok, setup_reason = _pending_entry_setup_valid(info)
-                if not setup_ok:
-                    should_cancel = True
-                    chase_eligible = False
-                    cancel_reason = f"進場訊號已失效: {setup_reason}"
+            setup_ok, setup_reason = _pending_entry_setup_valid(info)
+            if not setup_ok:
+                should_cancel = True
+                chase_eligible = False
+                cancel_reason = f"進場訊號已失效: {setup_reason}"
 
-            if not should_cancel:
-                latest_ref_price = 0.0
+            if setup_ok and (dynamic_ma_order or not should_cancel):
                 try:
                     latest_ref_price = await get_reference_price(sym, exchange_futures)
                 except Exception as pe:
-                    logger.info(f"⚠️ [掛單逆向掃描] {sym} 取得最新參考價失敗: {pe}")
+                    logger.info(f"⚠️ [掛單價格掃描] {sym} 取得最新參考價失敗: {pe}")
                 s_check = ctx.STATES.get(sym, {})
                 if latest_ref_price <= 0:
-                    latest_ref_price = float(s_check.get("last_trade_price", 0.0) or s_check.get("close_price", 0.0) or 0.0)
-                adverse_ok, adverse_reason = _entry_pending_adverse_guard(
-                    sym, side, info.get("signal_price") or info.get("price"), latest_ref_price,
-                    is_rescue_dca=info.get("is_rescue_dca", False),
-                )
-                if not adverse_ok:
-                    should_cancel = True
-                    chase_eligible = False
-                    cancel_reason = adverse_reason
+                    latest_ref_price = float(s_check.get("last_trade_price", 0.0)
+                        or s_check.get("close_price", 0.0) or 0.0)
+                if dynamic_ma_order:
+                    reprice_eligible, reprice_reason = _pending_entry_reprice_needed(
+                        sym, info, latest_ref_price,
+                    )
+                    if reprice_eligible:
+                        should_cancel = True
+                        chase_eligible = False
+                        cancel_reason = f"價格偏離，重新掛單: {reprice_reason}"
+                else:
+                    adverse_ok, adverse_reason = _entry_pending_adverse_guard(
+                        sym, side, info.get("signal_price") or info.get("price"),
+                        latest_ref_price, is_rescue_dca=info.get("is_rescue_dca", False),
+                    )
+                    if not adverse_ok:
+                        should_cancel = True
+                        chase_eligible = False
+                        cancel_reason = adverse_reason
 
             if not should_cancel:
                 continue
@@ -2295,7 +2573,11 @@ async def check_stale_limit_orders():
                     )
                 else:
                     chased = False
-                    if chase_eligible and s.get('entry_count', 0) == 0 and abs(s.get('qty', 0.0)) < 1e-6:
+                    if reprice_eligible and filled_qty <= 0.000001 and s.get("entry_count", 0) == 0 and abs(s.get("qty", 0.0)) < 1e-6:
+                        chased = await _relist_pending_entry(
+                            info, sym, side, original_qty, latest_ref_price,
+                        )
+                    if not chased and chase_eligible and s.get('entry_count', 0) == 0 and abs(s.get('qty', 0.0)) < 1e-6:
                         chased = await _chase_retry_pending_entry(info, sym, side, original_qty)
                     if not chased:
                         logger.info(

@@ -85,6 +85,15 @@ def _summarize_entry_diagnosis(trade_eligibility, now: float | None = None):
     return bot_status.get("entry_diagnosis") or "等待訊號"
 
 
+def _prune_entry_diagnoses(active_symbols):
+    """Keep the status payload aligned with the current UI and trading pool."""
+    allowed = set(active_symbols or [])
+    diagnoses = bot_status.get("entry_diagnoses", {})
+    bot_status["entry_diagnoses"] = {
+        sym: record for sym, record in diagnoses.items() if sym in allowed
+    }
+
+
 def normalize_symbol(sym):
     if sym is None:
         return ""
@@ -119,6 +128,23 @@ def _filter_disabled_symbols(symbols):
     return filtered
 
 
+def _prioritize_trade_pool(symbols, profiles):
+    """Put mature tradable markets before observing and watch-only candidates."""
+    original_order = {sym: idx for idx, sym in enumerate(symbols)}
+
+    def priority(sym):
+        profile = profiles.get(sym) or {}
+        return (
+            0 if profile.get("_trade_eligible", False) else
+            1 if profile.get("_radar_strict_eligible", False) else 2,
+            -float(profile.get("_radar_entry_readiness", 0.0) or 0.0),
+            float(profile.get("_radar_rank", 9999) or 9999),
+            original_order[sym],
+        )
+
+    return sorted(symbols, key=priority)
+
+
 def load_symbol_config():
     try:
         with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -127,7 +153,9 @@ def load_symbol_config():
             symbols = normalize_symbol_list(data.get("symbols", []))
         else:
             symbols = normalize_symbol_list(data)
-        return _filter_disabled_symbols(symbols)
+        symbols = _filter_disabled_symbols(symbols)
+        raw_profiles = data.get("profiles", {}) if isinstance(data, dict) else {}
+        return _prioritize_trade_pool(symbols, raw_profiles)
     except Exception:
         return _filter_disabled_symbols(list(DEFAULT_SYMBOLS))
 
@@ -151,10 +179,10 @@ def load_symbol_profiles():
 
 
 def _restore_truncated_radar_pool(symbols):
-    """Top-12 雷達仍保存完整 profiles 時，避免短暫重啟狀態把正式監控池縮成少數幣。
+    """雷達仔保存完整 profiles 時，避免短暫重啟狀態把正式監控池縮成少數幣。
 
-    profiles 會保存雷達排名與交易資格；symbols 偶爾只剩冷卻候補/最後監控幣。
-    啟動時若 profiles 至少有 8 檔、但 symbols 少於 8 檔，依雷達排名恢復最多 12 檔。
+    profiles 會保存雷達排名與交易資格； symbols 偶爾只剰冷卻候補/最後監控幣。
+    啟動時若 profiles 至少有 8 檔、但 symbols 少於 15 檔，依雷達排名恢復最多 25 檔。
     """
     symbols = normalize_symbol_list(symbols)
     profiles = load_symbol_profiles()
@@ -166,11 +194,11 @@ def _restore_truncated_radar_pool(symbols):
         if isinstance(profile, dict)
         and float(profile.get("_radar_atr_pct", 0.0) or 0.0) > 0
     ]
-    ranked = _filter_disabled_symbols(normalize_symbol_list(ranked, max_count=12))
-    if len(symbols) < 8 and len(ranked) >= 8:
+    ranked = _filter_disabled_symbols(normalize_symbol_list(ranked, max_count=25))
+    if len(symbols) < 15 and len(ranked) >= 8:
         restored = list(ranked)
         for sym in symbols:
-            if sym not in restored and len(restored) < 12:
+            if sym not in restored and len(restored) < 25:
                 restored.append(sym)
         add_system_log(
             f"♻️ [啟動幣池修復] symbols 僅 {len(symbols)} 檔，"
@@ -290,6 +318,7 @@ def get_bot_status():
         if actual_symbols:
             bot_status["watch_symbols"] = actual_symbols
             bot_status["active_symbols"] = actual_symbols
+            _prune_entry_diagnoses(actual_symbols)
         bot_status["disabled_symbols"] = load_disabled_symbols()
         config_path = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
         with open(config_path, "r", encoding="utf-8") as f:
@@ -493,11 +522,13 @@ def start_bot(symbols=None, trade_amt: float = None):
 
     symbols = normalize_symbol_list(symbols)
     symbols = _restore_truncated_radar_pool(symbols)
+    symbols = _prioritize_trade_pool(symbols, load_symbol_profiles())
     # 保留有持倉的幣種，避免被換掉
     open_syms = _get_open_position_symbols()
-    for s in open_syms:
-        if s not in symbols:
-            symbols.append(s)
+    for s in reversed(open_syms):
+        if s in symbols:
+            symbols.remove(s)
+        symbols.insert(0, s)
     save_symbol_config(symbols)
 
     if trade_amt is None:

@@ -267,6 +267,14 @@ def compute_range_signal(sym):
         logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] ADX={adx:.1f} 過高，略過區間模式")
         return (None, 0, None)
 
+    # 1.5. ATR 波動比例過濾（高於 6.0% 判定為高波動妖幣，不開區間倉以防突破止損）
+    close_price = candles[-1][4] if candles else 0.0
+    atr_pct = (atr / close_price) if close_price > 0 else 0.0
+    if atr_pct > 0.06:
+        s["entry_block_reason"] = f"ATR波動佔比={atr_pct*100:.2f}% > 6.0%，波動過大，略過區間模式"
+        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] ATR波動比例 ({atr_pct*100:.2f}%) 過高，略過區間模式")
+        return (None, 0, None)
+
     # 2. 辨識水平支撐/壓力帶（只用已收盤 K 棒，排除最後一根）
     completed = candles[:-1]
     support, resistance = _find_horizontal_zones(
