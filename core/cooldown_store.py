@@ -28,7 +28,10 @@ def _write_store(data):
     os.replace(tmp, COOLDOWN_STORE_FILE)
 
 
-def save_cooldown(symbol, status, next_status_time, status_reason="", stop_count=0, first_stop_time=0.0):
+def save_cooldown(
+    symbol, status, next_status_time, status_reason="", stop_count=0,
+    first_stop_time=0.0, last_exit_direction="",
+):
     """記錄冷卻/封禁狀態到磁碟，讓機器人重啟後還能還原剩餘冷卻時間，
     不會因為重啟就把 mark_exit() 剛設好的冷卻清空、提早放行重新進場。"""
     key = _norm_symbol(symbol)
@@ -41,6 +44,7 @@ def save_cooldown(symbol, status, next_status_time, status_reason="", stop_count
         "status_reason": status_reason,
         "stop_count": int(stop_count or 0),
         "first_stop_time": float(first_stop_time or 0.0),
+        "last_exit_direction": str(last_exit_direction or "").lower(),
     }
     _write_store(data)
 

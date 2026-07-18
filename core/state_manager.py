@@ -26,6 +26,7 @@ def _restore_persisted_cooldown(sym, state):
             state["status_reason"] = record.get("status_reason", "")
         state["stop_count"] = int(record.get("stop_count", 0) or 0)
         state["first_stop_time"] = float(record.get("first_stop_time", 0.0) or 0.0)
+        state["last_exit_direction"] = str(record.get("last_exit_direction", "") or "").lower()
     except Exception:
         pass
 
@@ -38,6 +39,7 @@ def build_symbol_state(sym):
         "is_banned": False,
         "sync_required": False,
         "last_exit_time": 0,
+        "last_exit_direction": "",
         "first_seen_time": time.time(),
         "status_reason": "",
         "next_status_time": 0,
@@ -282,6 +284,12 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
     s = ctx.STATES[sym]
     now = time.time()
     s["status"] = "COOLDOWN"
+    # 同方向不得靠快速複核沿用剛失效的波段；此欄位也會寫入冷卻存檔，
+    # 避免程序重啟後遺失最後出場方向而提早再進。
+    s["last_exit_direction"] = str(
+        s.get("last_entry_direction", "")
+        or ("buy" if float(s.get("qty", 0.0) or 0.0) > 0 else "sell")
+    ).lower()
 
     actual_cooldown = 1800 if is_stop_loss else 3600
     if abs(loss_pct) >= 0.02:
@@ -309,6 +317,7 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
     save_cooldown(
         sym, s["status"], s["next_status_time"], s["status_reason"],
         s.get("stop_count", 0), s.get("first_stop_time", 0.0),
+        s.get("last_exit_direction", ""),
     )
 
     if is_stop_loss:

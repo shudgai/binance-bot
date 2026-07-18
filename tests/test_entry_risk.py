@@ -42,12 +42,18 @@ class EntryRiskTests(unittest.TestCase):
         self.assertTrue(openable)
         self.assertIn("TRADING", reason)
 
-    def test_any_regular_cooldown_can_seek_early_reentry_but_ban_cannot(self):
+    def test_cooldown_only_allows_confirmed_opposite_side_early_reentry(self):
         state = {"status": "COOLDOWN", "next_status_time": 2000.0,
-                 "status_reason": "冷卻中 (30分鐘) - [小虧] [MA_Active_Risk_Stop]"}
-        self.assertTrue(_is_confirmable_exit_cooldown(state, now=1000.0))
+                 "status_reason": "冷卻中 (30分鐘) - [微利] [MA_Peak_Lock]",
+                 "last_exit_direction": "buy"}
+        self.assertFalse(_is_confirmable_exit_cooldown(state, now=1000.0, side="buy"))
+        self.assertTrue(_is_confirmable_exit_cooldown(state, now=1000.0, side="sell"))
         state["status"] = "BANNED"
-        self.assertFalse(_is_confirmable_exit_cooldown(state, now=1000.0))
+        self.assertFalse(_is_confirmable_exit_cooldown(state, now=1000.0, side="sell"))
+
+    def test_legacy_cooldown_without_exit_direction_cannot_release_early(self):
+        state = {"status": "COOLDOWN", "next_status_time": 2000.0}
+        self.assertFalse(_is_confirmable_exit_cooldown(state, now=1000.0, side="buy"))
 
     def test_cooldown_reentry_rapidly_rechecks_ma7_ma25_ma99_twice(self):
         sym = "XRPUSDT"
@@ -55,6 +61,7 @@ class EntryRiskTests(unittest.TestCase):
         reset_coin_state(sym)
         STATES[sym].update({
             "status": "COOLDOWN", "next_status_time": time.time() + 600,
+            "last_exit_direction": "sell",
             "qty": 0.0, "close_price": 100.0, "current_atr": 1.0,
             "_expected_funding_cost_pct": 0.0,
         })
@@ -86,6 +93,7 @@ class EntryRiskTests(unittest.TestCase):
         reset_coin_state(sym)
         STATES[sym].update({
             "status": "COOLDOWN", "next_status_time": time.time() + 600,
+            "last_exit_direction": "sell",
             "qty": 0.0, "close_price": 100.0,
         })
         with patch("core.check_entries.compute_signal_strength",

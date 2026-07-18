@@ -89,13 +89,20 @@ def log_decision_summary(
     logger.info(f"🔍 [Decision] {sym} | 決策路徑: {reason}")
 
 
-def _is_confirmable_exit_cooldown(state, now=None):
-    """Any ordinary cooldown may be released after one full pass and two rapid rechecks."""
+def _is_confirmable_exit_cooldown(state, now=None, side=None):
+    """Allow early release only for a confirmed reversal, never same-side re-entry."""
     now = float(time.time() if now is None else now)
-    return (
+    in_cooldown = (
         state.get("status") == "COOLDOWN"
         and now < float(state.get("next_status_time", 0.0) or 0.0)
     )
+    if not in_cooldown:
+        return False
+    if side is None:
+        return True
+    last_exit_direction = str(state.get("last_exit_direction", "") or "").lower()
+    # 舊存檔沒有方向時採安全側：不可提前解除，等原冷卻自然結束。
+    return bool(last_exit_direction) and str(side).lower() != last_exit_direction
 
 
 async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=None, interval=None):
@@ -107,7 +114,7 @@ async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=Non
         if interval > 0:
             await asyncio.sleep(interval)
         s = ctx.STATES.get(sym, {})
-        if not _is_confirmable_exit_cooldown(s):
+        if not _is_confirmable_exit_cooldown(s, side=side):
             return False, "cooldown state changed"
         if abs(float(s.get("qty", 0.0) or 0.0)) > 0.000001:
             return False, "position already exists"
@@ -1007,7 +1014,7 @@ async def check_entries():
                     logger.info(f"🧭 [方向集中度風控] {sym} 目前已有 {_same_dir_count} 筆同方向({side})倉位 >= 上限 {_MAX_SAME_DIRECTION}，{_reason}，且強度 {strength:.1f} < {_DIRECTION_OVERRIDE_STRENGTH}，放棄本次訊號以分散風險")
                     continue
 
-            if _is_confirmable_exit_cooldown(s):
+            if _is_confirmable_exit_cooldown(s, side=side):
                 logger.info(f"🔁 [冷卻快速複核] {sym} 首次完整流程通過，開始兩次即時複核")
                 confirmed, confirm_reason = await _rapid_reconfirm_cooldown_entry(
                     sym, side, route, strength,
@@ -1019,8 +1026,14 @@ async def check_entries():
                 _release_confirmed_exit_cooldown(sym, s)
                 logger.info(
                     f"✅ [冷卻提前解除] {sym} {side} {route} 約 2 秒內三次確認完整條件，"
-                    f"包含 MA7／MA25／MA99，允許重新開倉"
+                    f"包含 MA7／MA25／MA99，確認為反方向新波段，允許重新開倉"
                 )
+            elif s.get("status") == "COOLDOWN":
+                logger.info(
+                    f"⏳ [同方向完整冷卻] {sym} 上次出場方向為 "
+                    f"{s.get('last_exit_direction') or 'unknown'}，拒絕提前以 {side} 重新進場"
+                )
+                continue
 
             remaining_slots -= 1
             if is_range_sig:

@@ -89,7 +89,7 @@ async def update_trade_signal(sym, trade):
         rt_profit = (price - avg_p) / avg_p if _is_long else (avg_p - price) / avg_p
 
         # MA 波段使用專用高點鎖利；下方較緊的通用 TrailTP 仍不套用。
-        if str(s.get("entry_reason", "") or "").lower() in {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}:
+        if str(s.get("entry_reason", "") or "").lower() in {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}:
             from core.exits import update_ma_peak_lock
             peak_hit, peak_lock_price = update_ma_peak_lock(
                 sym, price, _is_long, event_time=ts_value, require_confirmation=True
