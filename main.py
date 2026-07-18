@@ -32,6 +32,12 @@ _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name
 logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _file_handler])
 logger = logging.getLogger(__name__)
 
+# ── SIGTERM 診斷處理器 ──────────────────────────────────────────
+# 用於排查過去發生過的 exit -15 意外重啟，記錄收到 SIGTERM 當下
+# 所有執行緒的堆疊快照，方便之後判斷是外部強制終止還是程式內部問題。
+from core.sigterm_diagnostic import install_sigterm_diagnostic_handler
+install_sigterm_diagnostic_handler()
+
 # 系統狀態頁只由 bot_manager_service 解析 stdout 後寫入。這裡若再掛一個
 # FileBackedSystemLogHandler，同一訊息會由主程序與管理程序各寫一次。
 
