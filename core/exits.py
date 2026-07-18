@@ -140,7 +140,8 @@ def _ma_peak_keep_ratio(peak_profit):
         return 0.90
     if peak_profit >= MA_PEAK_LOCK_MID_PCT:
         return 0.85
-    return 0.75
+    # 0.3%~0.6% 的盈利地板已保留 80%；跨過 0.6% 後不可反而降成 75%。
+    return 0.80
 
 
 def _schedule_ma_exchange_profit_stop(sym):

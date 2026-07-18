@@ -239,7 +239,7 @@ class MALifecycleTests(unittest.TestCase):
 
 
     def test_ma_peak_lock_uses_tighter_tiers_as_profit_grows(self):
-        self.assertEqual(_ma_peak_keep_ratio(0.010), 0.75)
+        self.assertEqual(_ma_peak_keep_ratio(0.010), 0.80)
         self.assertEqual(_ma_peak_keep_ratio(0.020), 0.85)
         self.assertEqual(_ma_peak_keep_ratio(0.030), 0.90)
 
