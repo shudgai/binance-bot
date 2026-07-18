@@ -1629,18 +1629,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被市場價缺失風控攔截，未進入下單")
         return
 
-    _ma_cross_anti_chase = False
-    _ma_cross_anchor_price = 0.0
-    if not is_rescue_dca:
-        _ma_cross_anti_chase, _ma_cross_anchor_price, _ma_cross_reason = (
-            _ma_cross_anti_chase_plan(sym, side, market_price, entry_route)
-        )
-        if _ma_cross_anti_chase:
-            actual_entry_mode = "pullback"
-            logger.info(
-                f"🧲 [MA_Cross防追價] {sym} {side} {_ma_cross_reason}；"
-                f"不追即時價，改掛 MA7 附近 {_ma_cross_anchor_price:.6f}"
-            )
+    # MA7 反追價保護與支撐/阻力錨定掛單是規劃中但從未實作的功能，已於 2026-07-18 清理死代碼，如需要可參考 git commit 68cd3a8 的 commit message 了解原始設計意圖
 
     s["last_entry_signal_price"] = price
 
@@ -1869,30 +1858,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 _atr_pct = atr / current_market_price if current_market_price > 0 else 0.015
                 _pb_mult = ENTRY_PULLBACK_ATR_MULT * (1.5 if _atr_pct > 0.008 else 1.0)
 
-                # 結構錨定掛單（使用者要求）：Entry_Structure_Guard 那關已經算出精確的
-                # 支撐/阻力價位存在 s["_entry_support"]/s["_entry_resistance"]，MA25_Pullback
-                # 本來就是「等回踩」的訊號，直接掛在支撐/阻力上加一點緩衝，比用 ATR 概算距離
-                # 更貼近真正的結構位置。算不到結構價位（資料不足）時才退回原本的 ATR 估算。
-                _struct_support = float(s.get("_entry_support", 0.0) or 0.0)
-                _struct_resistance = float(s.get("_entry_resistance", 0.0) or 0.0)
-                if _ma_cross_anti_chase:
-                    limit_price = _ma_cross_anchor_price
-                    logger.info(f"🎯 [MA7錨定掛單] {sym} 防追價回調委託 @ {limit_price:.6f}")
-                elif side == 'buy' and 0 < _struct_support < current_market_price:
-                    structure_price = _struct_support * 1.0005
-                    limit_price = (
-                        _ma25_confirmed_pullback_price(side, structure_price, current_market_price, atr)
-                        if str(entry_route or "").lower() == "ma25_pullback" else structure_price
-                    )
-                    logger.info(f"🎯 [MA25確認回踩掛單-Paper] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
-                elif side == 'sell' and _struct_resistance > current_market_price > 0:
-                    structure_price = _struct_resistance * 0.9995
-                    limit_price = (
-                        _ma25_confirmed_pullback_price(side, structure_price, current_market_price, atr)
-                        if str(entry_route or "").lower() == "ma25_pullback" else structure_price
-                    )
-                    logger.info(f"🎯 [MA25確認回踩掛單-Paper] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
-                elif side == 'buy':
+                if side == 'buy':
                     target_pb = current_market_price - atr * _pb_mult
                     if len(s.get("ohlcv", [])) >= 2:
                         recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
@@ -2012,37 +1978,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     # 則直接以當時覆寫的 price (即支撐位上限或阻力位下限) 作為掛單價，保證掛在完美的精準阻力/支撐區上。
                     _is_zone_convert = s.get("force_pullback_entry", False)
 
-                    # 結構錨定掛單（使用者要求）：Entry_Structure_Guard 那關已經算出精確的
-                    # 支撐/阻力價位存在 s["_entry_support"]/s["_entry_resistance"]，MA25_Pullback
-                    # 本來就是「等回踩」的訊號，直接掛在支撐/阻力上加一點緩衝，比用 ATR 概算距離
-                    # 更貼近真正的結構位置，優先於下面的舊 ATR 回踩估算使用。
-                    _struct_support = float(s.get("_entry_support", 0.0) or 0.0)
-                    _struct_resistance = float(s.get("_entry_resistance", 0.0) or 0.0)
-                    _atr_pct = s.get("current_atr", 0.0) / price if price > 0 else 0.015
-                    _pb_mult = 0.0
-
                     _is_structure_anchored = False
-                    if _ma_cross_anti_chase:
-                        limit_price = _ma_cross_anchor_price
-                        _is_structure_anchored = True
-                        logger.info(f"🎯 [MA7錨定掛單] {sym} 防追價回調委託 @ {limit_price:.6f}")
-                    elif side == 'buy' and 0 < _struct_support < price:
-                        structure_price = _struct_support * 1.0005
-                        limit_price = (
-                            _ma25_confirmed_pullback_price(side, structure_price, market_price, s.get("current_atr", 0.0))
-                            if str(entry_route or "").lower() == "ma25_pullback" else structure_price
-                        )
-                        _is_structure_anchored = True
-                        logger.info(f"🎯 [MA25確認回踩掛單] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
-                    elif side == 'sell' and _struct_resistance > price > 0:
-                        structure_price = _struct_resistance * 0.9995
-                        limit_price = (
-                            _ma25_confirmed_pullback_price(side, structure_price, market_price, s.get("current_atr", 0.0))
-                            if str(entry_route or "").lower() == "ma25_pullback" else structure_price
-                        )
-                        _is_structure_anchored = True
-                        logger.info(f"🎯 [MA25確認回踩掛單] {sym} 結構價 {structure_price:.6f}，依最新價收近至 {limit_price:.6f}")
-                    elif _is_zone_convert and price > 0:
+                    if _is_zone_convert and price > 0:
                         limit_price = price
                         _is_structure_anchored = True
                         logger.info(f"📌 [邊界精準限價單] {sym} 觸發阻力/支撐精算轉換，直接掛單在臨界價 {limit_price:.6f}")
@@ -2098,7 +2035,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
             order_price_ok, order_price_reason = _entry_price_guard(
                 sym, side, limit_price, market_price,
-                mode=("ma7_pullback" if _ma_cross_anti_chase else actual_entry_mode),
+                mode=actual_entry_mode,
                 is_rescue_dca=is_rescue_dca,
             )
             if not order_price_ok and _is_structure_anchored and limit_price is not None:
@@ -2194,8 +2131,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 "market_reference_price": market_price,
                 "last_reprice_at": order_ts, "reprice_count": 0,
                 "timeout": _order_timeout,
-                "allow_chase_on_timeout": _is_structure_anchored and not is_rescue_dca and not _ma_cross_anti_chase,
-                "ma_cross_anti_chase": _ma_cross_anti_chase,
+                "allow_chase_on_timeout": _is_structure_anchored and not is_rescue_dca,
                 "chased_once": False,
             }
             logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type}, 逾時: {_order_timeout:.0f}s)")
@@ -2591,6 +2527,67 @@ async def _relist_pending_entry(info, sym, side, qty, current_price):
         return False
 
 
+async def _record_missed_limit_fill(sym, side, order_id, info, fetched):
+    """訂單在 check_stale_limit_orders 判定逾時、真正呼叫撤單前就已經完全成交
+    （status='closed'）。原本這裡把 'closed' 跟 'canceled' 一視同仁，直接丟棄
+    追蹤，導致本地 qty/avg_price 從未更新、交易所也沒掛出保護單，一筆真實倉位
+    在最多 60 秒內完全沒人管（直到 periodic_position_reconciliation 才發現），
+    而且那條路徑會把這筆「其實是自己剛成交的單」誤判成重啟接管的舊倉位。
+    這裡補上正式的成交記錄與保護單，讓漏接的成交立刻被納管。"""
+    s = ctx.STATES.get(sym)
+    if s is None:
+        return
+    try:
+        positions = await exchange_futures.fetch_positions([sym])
+    except Exception as exc:
+        logger.info(f"⚠️ [漏接成交同步失敗] {sym} {order_id}: {exc}")
+        return
+    actual_pos, actual_qty = _find_exchange_position(positions, sym)
+    if actual_pos is None:
+        logger.info(f"⚠️ [漏接成交] {sym} 訂單 {order_id} 顯示已成交，但交易所目前查無持倉，略過")
+        return
+
+    now = time.time()
+    entry_price = float(
+        actual_pos.get("entryPrice")
+        or actual_pos.get("info", {}).get("entryPrice")
+        or fetched.get("average") or fetched.get("price") or 0.0
+    )
+    fill_price = float(fetched.get("average") or fetched.get("price") or entry_price or 0.0)
+    is_first_entry = s.get("entry_count", 0) == 0 or s.get("open_time", 0) <= 0
+
+    s["qty"] = actual_qty
+    s["avg_price"] = entry_price or s.get("avg_price", 0.0) or fill_price
+    if is_first_entry:
+        s["open_time"] = now
+        from core.entry_time_store import save_entry_time
+        save_entry_time(sym, now)
+        s["highest_profit_pct"] = 0.0
+        s["max_profit_reached"] = 0.0
+        s["is_breakeven_locked"] = False
+        clear_peak(sym)
+    s["last_buy_time"] = now
+    s["last_entry_time"] = now
+    s["last_entry_price"] = fill_price
+    s["last_entry_direction"] = side
+    s["restored_from_exchange"] = False
+    s["entry_count"] = max(s.get("entry_count", 0), 1)
+    route = info.get("entry_route")
+    if route:
+        s["entry_reason"] = route
+        from core.entry_reason_store import save_entry_reason
+        save_entry_reason(sym, route)
+
+    logger.info(
+        f"⚠️ [漏接成交] {sym} 訂單 {order_id} 在逾時檢查前已完全成交 @ {fill_price:.6f}"
+        f"（qty={actual_qty:.4f}），補記錄為正式倉位並立即掛出保護單"
+    )
+    try:
+        await _ensure_exchange_exit_orders(sym)
+    except Exception as se:
+        logger.info(f"🚨 [漏接成交後掛單失敗] {sym}: {se}")
+
+
 async def check_stale_limit_orders():
     """
     超時撤單機制 (Order Timeout Canceller)
@@ -2671,9 +2668,16 @@ async def check_stale_limit_orders():
                 order_status = fetched.get('status', '')
                 filled_qty = float(fetched.get('filled', 0.0) or 0.0)
 
-                if order_status in ('closed', 'canceled'):
+                if order_status == 'canceled':
                     ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
-                    logger.info(f"ℹ️ [超時撤單] {sym} 訂單 {order_id} 已為 {order_status} 狀態，跳過撤單。")
+                    logger.info(f"ℹ️ [超時撤單] {sym} 訂單 {order_id} 已為 canceled 狀態，跳過撤單。")
+                    continue
+
+                if order_status == 'closed':
+                    # 'closed' 在 ccxt/幣安語意上代表「完全成交」，跟 'canceled' 完全不同，
+                    # 不能同一分支直接丟棄追蹤，否則這筆真實成交會變成沒人管的孤兒倉位。
+                    ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
+                    await _record_missed_limit_fill(sym, side, order_id, info, fetched)
                     continue
 
                 await exchange_futures.cancel_order(order_id, sym)
