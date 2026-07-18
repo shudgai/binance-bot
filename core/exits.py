@@ -131,12 +131,16 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
     if is_long:
         peak_price = avg * (1.0 + confirmed_peak)
         proposed = min(avg * (1.0 + locked_profit), peak_price - atr * MA_PEAK_LOCK_MIN_ATR_GAP)
+        # 避免 ATR 波動度過大時，鎖利目標被過度拉回，確保最少鎖住 60% 峰值利潤
+        proposed = max(proposed, avg * (1.0 + confirmed_peak * 0.60))
         proposed = max(proposed, avg * (1.0 + fee_floor))
         lock_price = max(float(s.get("ma_peak_lock_price", 0.0) or 0.0), proposed)
         crossed = current_price <= lock_price
     else:
         peak_price = avg * (1.0 - confirmed_peak)
         proposed = max(avg * (1.0 - locked_profit), peak_price + atr * MA_PEAK_LOCK_MIN_ATR_GAP)
+        # 避免 ATR 波動度過大時，鎖利目標被過度拉回，確保最少鎖住 60% 峰值利潤
+        proposed = min(proposed, avg * (1.0 - confirmed_peak * 0.60))
         proposed = min(proposed, avg * (1.0 - fee_floor))
         previous = float(s.get("ma_peak_lock_price", 0.0) or 0.0)
         lock_price = min(previous if previous > 0 else float("inf"), proposed)

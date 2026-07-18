@@ -114,7 +114,8 @@
       "Bash(awk -v d1=\"2026-07-16 12:40:00\" -v d2=\"2026-07-16 12:46:36\" '$0 >= d1 && $0 <= d2' logs/bot.log)",
       "Bash(ps -p 2633692 -o pid,cmd)",
       "Bash(awk -v d1=\"2026-07-16 14:17:00\" -v d2=\"2026-07-16 14:22:20\" '$0 >= d1 && $0 <= d2' logs/bot.log)",
-      "Bash(awk -v d1=\"2026-07-16 14:00:00\" -v d2=\"2026-07-16 14:12:15\" '$0 >= d1 && $0 <= d2' logs/bot.log)"
+      "Bash(awk -v d1=\"2026-07-16 14:00:00\" -v d2=\"2026-07-16 14:12:15\" '$0 >= d1 && $0 <= d2' logs/bot.log)",
+      "Bash(awk 'NR<=320 && /^async def |^def /{print NR\": \"$0}' /home/shudgai999/project/binance-bot/core/orders.py)"
     ]
   }
 }
