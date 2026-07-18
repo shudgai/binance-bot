@@ -101,6 +101,29 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy"))
 
+    def test_wick_multiplier_under_routes(self):
+        sym = self._state("buy")
+        # Body is 101.0 - 100.5 = 0.5.
+        # Opposing (upper) wick is 101.6 - 101.0 = 0.6.
+        # Ratio = 0.6 / 0.5 = 1.2x. (Should pass everywhere since it is <= 1.8x)
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 101.6, 100.2, 101.0, 1300.0]
+        self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA_Cross"))
+        self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
+
+        # Body is 101.0 - 100.5 = 0.5.
+        # Opposing (upper) wick is 102.1 - 101.0 = 1.1.
+        # Ratio = 1.1 / 0.5 = 2.2x. (Should pass for MA25_Pullback [<=2.5x] but fail for MA_Cross [<=1.8x])
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.1, 100.2, 101.0, 1300.0]
+        self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA_Cross"))
+        self.assertFalse(is_entry_pin_safe(sym, "buy"))  # default to 1.8x
+        self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
+
+        # Body is 101.0 - 100.5 = 0.5.
+        # Opposing (upper) wick is 102.4 - 101.0 = 1.4.
+        # Ratio = 1.4 / 0.5 = 2.8x. (Should fail everywhere since it is > 2.5x)
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.4, 100.2, 101.0, 1300.0]
+        self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
+
     def test_final_filter_records_opposing_wick_reason(self):
         sym = self._state("buy")
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]

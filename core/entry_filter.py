@@ -122,7 +122,7 @@ def is_entry_volume_confirmed(sym, side):
     return closed_volume >= vol_ma20 * required
 
 
-def is_valid_candle(sym, side):
+def is_valid_candle(sym, side, wick_multiplier=1.8):
     """Reject a completed candle whose opposing wick dominates its body."""
     candles = ctx.STATES[sym].get("ohlcv", [])
     if len(candles) < 2:
@@ -133,8 +133,8 @@ def is_valid_candle(sym, side):
     upper_wick = high - max(candle_open, close)
     lower_wick = min(candle_open, close) - low
     if side == "buy":
-        return upper_wick <= body * 1.8
-    return lower_wick <= body * 1.8
+        return upper_wick <= body * wick_multiplier
+    return lower_wick <= body * wick_multiplier
 
 
 def is_range_wick_safe(sym, side):
@@ -156,7 +156,12 @@ def is_range_wick_safe(sym, side):
     return lower_wick <= body * 3.5
 
 
-def is_entry_pin_safe(sym, side):
+def is_entry_pin_safe(sym, side, route=None):
+    # MA25_Pullback 本質是「觸碰 MA25 後反彈」，天生容易帶影線，
+    # 用跟 Cross/Breakout 相同的 1.8 倍門檻偏嚴，比照區間路由的放寬邏輯，
+    # 給 Pullback 單獨放寬至 2.5 倍；其餘路由維持原本 1.8 倍不變。
+    if route == "MA25_Pullback":
+        return is_valid_candle(sym, side, wick_multiplier=2.5)
     return is_valid_candle(sym, side)
 
 
@@ -274,7 +279,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
     if not is_entry_volume_confirmed(sym, side):
         logger.info(f"🛑 [MA_VOLUME] {sym} {route} 已收線成交量不足")
         return False
-    if not is_entry_pin_safe(sym, side):
+    if not is_entry_pin_safe(sym, side, route=route):
         logger.info(f"🛑 [MA_WICK] {sym} 反向影線過長，取消 {route}")
         s["entry_block_reason"] = f"{route} 反向影線過長，取消進場"
         return False
