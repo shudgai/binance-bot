@@ -46,7 +46,7 @@ class TradeSignalTests(unittest.TestCase):
         sym = self._setup_ma_signal_state(signal_volume=300.0, vol_ma20=1000.0)
         STATES[sym].update({"current_rsi": 55.0, "vol_surge": 2.0})
         self.assertEqual(compute_signal_strength(sym, realtime_trigger=True), (None, 0, None))
-        self.assertIn("已收線量能過低", STATES[sym]["entry_block_reason"])
+        self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
 
     def test_confirmed_golden_cross_opens_long_above_ma99(self):
         sym = self._setup_ma_signal_state()
@@ -72,7 +72,7 @@ class TradeSignalTests(unittest.TestCase):
     def test_cross_without_volume_is_rejected(self):
         sym = self._setup_ma_signal_state(signal_volume=400.0)
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
-        self.assertIn("量能過低", STATES[sym]["entry_block_reason"])
+        self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
 
     def test_ma25_pullback_enters_only_after_bullish_rejection(self):
         sym = self._setup_ma_signal_state(
@@ -106,6 +106,46 @@ class TradeSignalTests(unittest.TestCase):
         )
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
         self.assertIn("平走交織", STATES[sym]["entry_block_reason"])
+
+    def test_ma7_simple_long_trigger(self):
+        # We need golden_cross/death_cross etc. to be false to fall into MA7_Simple.
+        # e.g., ma7 > ma25 and prev_ma7 > prev_ma25 (so golden_cross is false).
+        # We also need long_spreading = False to prevent pullback_long.
+        # long_spreading = ma7 > ma25 and ma7 > prev_ma7 and gap > max(prev_gap, 0.0)
+        # gap = ma7 - ma25 = 101.5 - 101.4 = 0.1
+        # prev_gap = prev_ma7 - prev_ma25 = 101.0 - 100.8 = 0.2
+        # Here gap (0.1) is NOT > max(prev_gap, 0.0) (0.2), so long_spreading is False.
+        # Turn up: prev_slope = prev_ma7 - prev_ma7_2 <= 0 and curr_slope = ma7 - prev_ma7 > 0
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.5, signal_volume=1000.0, vol_ma20=1000.0,
+            ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8
+        )
+        STATES[sym].update({
+            "prev_ma7_2": 101.2,  # prev_slope = 101.0 - 101.2 = -0.2 (<= 0)
+                                  # curr_slope = 101.5 - 101.0 = +0.5 (> 0)
+            "current_rsi": 60.0   # < 75.0
+        })
+        side, strength, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("buy", "MA7_Simple"))
+
+    def test_ma7_simple_short_trigger(self):
+        # Turn down: prev_slope = prev_ma7 - prev_ma7_2 >= 0 and curr_slope = ma7 - prev_ma7 < 0
+        # To prevent pullback_short: short_spreading = False
+        # short_spreading = ma7 < ma25 and ma7 < prev_ma7 and gap < min(prev_gap, 0.0)
+        # gap = ma7 - ma25 = 99.0 - 100.0 = -1.0
+        # prev_gap = prev_ma7 - prev_ma25 = 99.5 - 101.0 = -1.5
+        # gap (-1.0) is NOT < min(prev_gap, 0.0) (-1.5), so short_spreading is False.
+        sym = self._setup_ma_signal_state(
+            signal_open=100.5, signal_close=100.0, signal_volume=1000.0, vol_ma20=1000.0,
+            ma7=99.0, ma25=100.0, prev_ma7=99.5, prev_ma25=101.0
+        )
+        STATES[sym].update({
+            "prev_ma7_2": 99.2,   # prev_slope = 99.5 - 99.2 = +0.3 (>= 0)
+                                  # curr_slope = 99.0 - 99.5 = -0.5 (< 0)
+            "current_rsi": 40.0   # > 25.0
+        })
+        side, strength, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("sell", "MA7_Simple"))
 
     def _setup_range_signal_state(self, signal):
         sym = "XRPUSDT"

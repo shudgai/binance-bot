@@ -107,6 +107,33 @@ def compute_signal_strength(sym, realtime_trigger=False):
     elif pullback_long or pullback_short:
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
     else:
+        # 既有三條路線都沒觸發時，才嘗試簡化路線 (MA7_Simple)
+        prev_ma7_2 = float(s.get("prev_ma7_2", 0.0) or 0.0)
+        prev_slope = prev_ma7 - prev_ma7_2
+        curr_slope = ma7 - prev_ma7
+        turn_up = prev_slope <= 0 and curr_slope > 0
+        turn_down = prev_slope >= 0 and curr_slope < 0
+        bullish_candle = candle_close > candle_open
+        bearish_candle = candle_close < candle_open
+        volume_ok = volume_ratio >= 0.5  # 簡化路線的量能比門檻 (min_volume_ratio = 0.5)
+
+        if turn_up and bullish_candle and volume_ok and current_rsi < 75.0:
+            side, route = "buy", "MA7_Simple"
+            reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
+            s["ma_signal_candle_ts"] = signal_ts
+            logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] buy | {reason}")
+            # 計算強度
+            strength = 25.0 + min(max(volume_ratio - 0.8, 0.0) * 5.0, 5.0)
+            return (side, strength, route)
+        elif turn_down and bearish_candle and volume_ok and current_rsi > 25.0:
+            side, route = "sell", "MA7_Simple"
+            reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
+            s["ma_signal_candle_ts"] = signal_ts
+            logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] sell | {reason}")
+            # 計算強度
+            strength = 25.0 + min(max(volume_ratio - 0.8, 0.0) * 5.0, 5.0)
+            return (side, strength, route)
+
         if volume_ratio < base_limit:
             reason = f"量能不足（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x），暫停交易"
         elif is_flat_chop and (golden_cross or death_cross):

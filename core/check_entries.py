@@ -342,6 +342,7 @@ def compute_indicators(sym):
         s["ma25"] = float(np.mean(completed_closes[-25:]))
         s["ma99"] = float(np.mean(completed_closes[-99:]))
         s["prev_ma7"] = float(np.mean(completed_closes[-8:-1]))
+        s["prev_ma7_2"] = float(np.mean(completed_closes[-9:-2]))
         s["prev_ma25"] = float(np.mean(completed_closes[-26:-1]))
         s["prev_ma99"] = float(np.mean(completed_closes[-100:-1]))
         s["ma_candle_ts"] = int(ohlcv[-2][0])
