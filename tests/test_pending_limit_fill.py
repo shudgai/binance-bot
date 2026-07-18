@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import ctx
 from core.ctx import init_states
-from core.orders import _record_missed_limit_fill
+from core.orders import _clear_previous_position_peak, _record_missed_limit_fill
 from core.state_manager import reset_coin_state
 
 
@@ -25,6 +25,21 @@ class PendingLimitFillTests(unittest.TestCase):
             ctx.STATES.pop(self.sym, None)
         else:
             ctx.STATES[self.sym] = self.original_state
+
+    def test_new_position_lifecycle_clears_persisted_old_peak(self):
+        state = ctx.STATES[self.sym]
+        state.update({
+            "highest_profit_pct": 0.015,
+            "max_profit_reached": 0.015,
+            "ma_peak_saved_pct": 0.015,
+        })
+        with patch("core.orders.clear_peak") as clear_peak:
+            _clear_previous_position_peak(self.sym, state)
+
+        clear_peak.assert_called_once_with(self.sym)
+        self.assertEqual(state["highest_profit_pct"], 0.0)
+        self.assertEqual(state["max_profit_reached"], 0.0)
+        self.assertEqual(state["ma_peak_saved_pct"], 0.0)
 
     def test_partial_fill_is_adopted_as_fresh_position_without_old_peak(self):
         state = ctx.STATES[self.sym]

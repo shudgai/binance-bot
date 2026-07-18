@@ -38,6 +38,14 @@ MA_CROSS_MAX_EXTENSION_ATR_MULT = 0.5
 MA_CROSS_ANCHOR_BUFFER_PCT = 0.0003
 
 
+def _clear_previous_position_peak(sym, state):
+    """Start a new position lifecycle without a prior trade peak on disk or in memory."""
+    state["highest_profit_pct"] = 0.0
+    state["max_profit_reached"] = 0.0
+    state["ma_peak_saved_pct"] = 0.0
+    clear_peak(sym)
+
+
 def should_block_order_flow(side, bids, asks, threshold, paper_trading):
     if side == "buy":
         imbalanced = asks == 0 or bids / asks < threshold
@@ -2424,8 +2432,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
 
             if s["entry_count"] == 1:
                 s["is_breakeven_locked"] = False
-                s["highest_profit_pct"] = 0.0
-                s["max_profit_reached"] = 0.0
+                # 新持倉必須先刪除上一個生命週期的磁碟峰值；否則重啟會誤載舊高點。
+                _clear_previous_position_peak(sym, s)
                 s["first_entry_price"] = fill_price
                 s["entry_strength"] = signal_strength if signal_strength is not None else 0.0
                 s["_lin_trail_armed"] = False

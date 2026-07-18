@@ -243,6 +243,34 @@ class MALifecycleTests(unittest.TestCase):
         self.assertEqual(_ma_peak_keep_ratio(0.020), 0.85)
         self.assertEqual(_ma_peak_keep_ratio(0.030), 0.90)
 
+    def test_ma_micro_profit_floor_arms_after_two_nearby_ticks(self):
+        state = self._position_state(closed_price=100.28)
+        state.update({"highest_profit_pct": 0.0})
+
+        hit, floor = update_ma_peak_lock(
+            self.sym, 100.28, True, event_time=100.0, require_confirmation=True,
+        )
+        self.assertFalse(hit)
+        self.assertEqual(floor, 0.0)
+        self.assertFalse(state["ma_profit_floor_armed"])
+
+        hit, floor = update_ma_peak_lock(
+            self.sym, 100.279, True, event_time=100.5, require_confirmation=True,
+        )
+        self.assertFalse(hit)
+        self.assertTrue(state["ma_profit_floor_armed"])
+        self.assertAlmostEqual(floor, 100.168, places=3)
+
+    def test_ma_micro_profit_floor_stays_off_below_point_two_percent(self):
+        state = self._position_state(closed_price=100.19)
+        state.update({"highest_profit_pct": 0.0019})
+
+        hit, floor = update_ma_peak_lock(self.sym, 100.19, True)
+
+        self.assertFalse(hit)
+        self.assertEqual(floor, 0.0)
+        self.assertFalse(state["ma_profit_floor_armed"])
+
     def test_ma_peak_lock_does_not_arm_below_point_six_percent(self):
         state = self._position_state(closed_price=100.6)
         state["close_price"] = 100.3

@@ -20,13 +20,16 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma
 MA_DISASTER_STOP_PCT = 0.025
 MA_WRONG_DIRECTION_PCT = 0.01
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
-# MA 進場的正常雜訊約 0.2%~0.4%。低於此區間就啟動 PeakLock / DynamicTP，會讓
-# 0.1%~0.2% 的毛利反覆被手續費侵蝕，卻仍容許錯向單等待到 0.6% 以上才退出。
-# 統一使用 0.5% 主動風險線與 0.6% 最低有效停利門檻，先截短虧損，再讓獲利奔跑。
+# MA 進場的正常雜訊約 0.2%~0.4%，因此微利區採較寬鬆的60%保留比例。
+# 低於 0.20% 不啟動鎖利；0.20%~0.30% 使用微利保護，0.30% 以上進入主鎖利層。
+# 主動風險線仍獨立管理錯向部位，避免把微利保護誤當固定價停利。
 MA_ACTIVE_RISK_STOP_PCT = 0.01
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
 MA_MIN_PROFIT_TARGET_PCT = 0.006
+MA_MICRO_PROFIT_ARM_PCT = 0.002
+MA_MICRO_PROFIT_KEEP_RATIO = 0.60
+MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.0005
 MA_PROFIT_FLOOR_ARM_PCT = 0.003
 MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.0015
 MA_PROFIT_FLOOR_CONFIRM_TICKS = 3
@@ -252,15 +255,19 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
     # 兩個可成交價之間；回吐的下一格就是進場價，結果毛利 0、淨損雙邊費用。
     fee_floor = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
     if confirmed_peak < MA_PEAK_LOCK_ARM_PCT:
-        if confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT:
+        if confirmed_peak < MA_MICRO_PROFIT_ARM_PCT:
             _reset_ma_profit_floor_confirmation(s)
             return False, float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-        # [修正] 0.3%~0.6% 中間段：用峰值的 80% 比例追蹤停利，讓停利線隨峰值上移。
-        # 舊版固定用 fee_floor（保本線），導致峰值到 0.3% 時停利線仍只在 ~0.25% 保本附近，
-        # 沒有隨峰值往上走，最終出場在接近 0.00%。
-        mid_keep_ratio = 0.80
+        # 0.20%~0.30% 是微利保護層：保留峰值 60%，並至少涵蓋雙邊費用 + 0.05%。
+        # 0.30%~0.60% 改為保留 80%；兩層都只建立移動地板，不是固定價停利。
+        is_micro_profit = confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT
+        keep_ratio = MA_MICRO_PROFIT_KEEP_RATIO if is_micro_profit else 0.80
+        protective_fee_floor = (
+            ROUND_TRIP_FEE_PCT + MA_MICRO_PROFIT_NET_BUFFER_PCT
+            if is_micro_profit else fee_floor
+        )
         previous_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-        locked_mid = max(fee_floor, confirmed_peak * mid_keep_ratio)
+        locked_mid = max(protective_fee_floor, confirmed_peak * keep_ratio)
         if is_long:
             floor_price = avg * (1.0 + locked_mid)
             # 棘輪：只能往更保護的方向推進（更高）
@@ -986,7 +993,9 @@ async def check_exits(sym):
                     )
                     return
 
-        peak_lock_hit, peak_lock_price = update_ma_peak_lock(sym, p, is_long)
+        peak_lock_hit, peak_lock_price = update_ma_peak_lock(
+            sym, p, is_long, require_confirmation=True,
+        )
         if peak_lock_hit:
             cs = "sell" if is_long else "buy"
             peak_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
