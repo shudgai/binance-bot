@@ -72,6 +72,8 @@ def is_ma_direction_aligned(state, side, route=None):
         return (closed_price < ma99_buffer and ma25 < ma99_buffer
                 and prev_ma7 >= prev_ma25 and ma7 < ma25
                 and ma7 < prev_ma7 and ma25 <= prev_ma25)
+    if normalized_route == "ma7_simple":
+        return ma7 > prev_ma7 if side == "buy" else ma7 < prev_ma7
     if side == "buy":
         # MA25_Pullback / MA_Breakout：不強求完整牛市排列（MA25>MA99），
         # 只要 MA7>MA25、斜率向上，且收盤與 MA25 均在 MA99 的 98% 緩衝帶以上即可。

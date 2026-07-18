@@ -92,6 +92,19 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["prev_ma25"] = 100.2
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
+    def test_ma7_simple_relaxes_alignment_to_only_require_ma7_slope(self):
+        sym = self._state("buy")
+        STATES[sym].update({
+            "ma7": 99.5,
+            "ma25": 100.0,
+            "prev_ma7": 99.0
+        })
+        from core.entry_filter import is_ma_direction_aligned
+        # 一般 MA_Cross 嚴格要求 ma7 > ma25，會被拒絕
+        self.assertFalse(is_ma_direction_aligned(STATES[sym], "buy", route="MA_Cross"))
+        # MA7_Simple 放寬：只要 ma7 > prev_ma7 即可通過
+        self.assertTrue(is_ma_direction_aligned(STATES[sym], "buy", route="MA7_Simple"))
+
     def test_insufficient_closed_volume_is_rejected(self):
         sym = self._state("buy", volume=400.0)
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
