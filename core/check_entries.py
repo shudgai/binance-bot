@@ -449,6 +449,10 @@ async def check_entries():
         # 幣種已被使用者停用，跳過所有進場（但不影響現有持倉的管理）
         if sym in disabled_syms:
             continue
+            
+        from core.config import COIN_PROFILE_CONFIG
+        if COIN_PROFILE_CONFIG.get(sym, {}).get("disable_entry", False):
+            continue
 
         confirmable_cooldown = _is_confirmable_exit_cooldown(s)
         if s["status"] != "ACTIVE" and not confirmable_cooldown:

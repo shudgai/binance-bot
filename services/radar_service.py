@@ -387,6 +387,9 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         'DRAM','EWY','MRVL','MSTR','NVDA','INTC','PAXG','QQQ',
         'MSFT','GOOGL','AMZN','AAPL','TSLA','NFLX',
     ]
+    
+    _USER_EXCLUDED_SYMBOLS = {'BTCUSDT', 'ETHUSDT', 'BNBUSDT'}
+    
     def _is_crypto(sym: str) -> bool:
         # 排除已知股票/ETF/商品關鍵字
         if any(kw in sym for kw in _NON_CRYPTO_KEYWORDS):
@@ -401,6 +404,11 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         # 排除槓桿代幣
         if any(base.endswith(s) for s in ('BULL','BEAR','UP','DOWN','3L','3S','2L','2S')):
             return False
+            
+        # 排除使用者指定不交易的幣種
+        if sym in _USER_EXCLUDED_SYMBOLS:
+            return False
+            
         return True
 
     ranking = [r for r in ranking if _is_crypto(r['symbol'])]
