@@ -292,7 +292,7 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(hit)
         self.assertEqual(state["ma_profit_floor_cross_count"], 1)
 
-        hit, _ = update_ma_peak_lock(self.sym, 100.26, True, event_time=100.5)
+        hit, _ = update_ma_peak_lock(self.sym, 100.29, True, event_time=100.5)
         self.assertFalse(hit)
         self.assertEqual(state["ma_profit_floor_cross_count"], 0)
 
@@ -311,7 +311,7 @@ class MALifecycleTests(unittest.TestCase):
         hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False, event_time=102.1)
 
         self.assertTrue(hit)
-        self.assertAlmostEqual(floor_price, 99.75)
+        self.assertAlmostEqual(floor_price, 99.72)
 
     def test_ma_short_early_momentum_flip_exits_after_two_confirmations(self):
         # [MA_Early_Momentum_Flip] 已合併至 [MA7_Closed_Break]（ma_exit_invalid_count >= 2）
@@ -684,7 +684,7 @@ class MAExchangeStopScheduleTests(unittest.TestCase):
             with patch("core.exits._schedule_ma_exchange_profit_stop") as schedule:
                 hit, floor = update_ma_peak_lock(sym, 100.35, True)
             self.assertFalse(hit)
-            self.assertGreater(floor, 100.0)
+            self.assertAlmostEqual(floor, 100.28)
             schedule.assert_called_once_with(sym)
         finally:
             if original is None:

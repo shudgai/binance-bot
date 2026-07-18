@@ -254,10 +254,10 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         if confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT:
             _reset_ma_profit_floor_confirmation(s)
             return False, float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-        # [修正] 0.3%~0.6% 中間段：用峰值的 70% 比例追蹤停利，讓停利線隨峰值上移。
+        # [修正] 0.3%~0.6% 中間段：用峰值的 80% 比例追蹤停利，讓停利線隨峰值上移。
         # 舊版固定用 fee_floor（保本線），導致峰值到 0.3% 時停利線仍只在 ~0.25% 保本附近，
         # 沒有隨峰值往上走，最終出場在接近 0.00%。
-        mid_keep_ratio = 0.70
+        mid_keep_ratio = 0.80
         previous_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
         locked_mid = max(fee_floor, confirmed_peak * mid_keep_ratio)
         if is_long:
