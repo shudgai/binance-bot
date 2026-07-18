@@ -621,9 +621,43 @@ def start_bot(symbols=None, trade_amt: float = None):
         _entry_file = os.path.basename(getattr(_main_mod, "__file__", "") or "")
         if _entry_file == "main.py":
             def _self_exit_after_handoff():
-                time.sleep(8)
-                add_system_log("♻️ [自我重啟交接] 新行程已啟動接手，本行程即將退出", "warning")
-                os._exit(0)
+                # 原本：time.sleep(8) 後不管新行程死活直接退出，
+                # 已知風險：若新行程啟動失敗（例如卡在 load_markets_helper 又被
+                # 其他清理邏輯誤殺），舊行程仍會照原計畫自殺，造成兩邊都死、
+                # 整個機器人離線且無人接手（實測發生過 12 小時空窗）。
+                # 改為：輪詢確認新行程已成功拿到單例鎖且存活，才安全退出；
+                # 超時仍未確認則放棄退出，繼續運行舊行程頂著，避免真空期。
+                max_wait = 30
+                poll_interval = 1
+                waited = 0
+                handoff_confirmed = False
+                my_pid = os.getpid()
+                while waited < max_wait:
+                    time.sleep(poll_interval)
+                    waited += poll_interval
+                    try:
+                        with open("/tmp/binance_bot_32f2e2ed.lock", "r") as f:
+                            locked_pid_text = f.read().strip()
+                        if not locked_pid_text:
+                            continue
+                        locked_pid = int(locked_pid_text)
+                        if locked_pid != my_pid:
+                            os.kill(locked_pid, 0)  # 存活探測，失敗會拋 ProcessLookupError
+                            handoff_confirmed = True
+                            break
+                    except (ValueError, ProcessLookupError, FileNotFoundError, PermissionError):
+                        continue
+                    except Exception:
+                        continue
+                if handoff_confirmed:
+                    add_system_log("♻️ [自我重啟交接] 新行程已確認接手，本行程即將退出", "warning")
+                    os._exit(0)
+                else:
+                    add_system_log(
+                        f"⚠️ [自我重啟交接失敗] 等待 {max_wait} 秒仍未確認新行程接手，"
+                        f"本行程繼續運行以避免離線空窗，請人工檢查",
+                        "danger",
+                    )
             threading.Thread(target=_self_exit_after_handoff, daemon=True).start()
     except Exception:
         pass

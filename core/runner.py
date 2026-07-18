@@ -493,27 +493,53 @@ async def calibrate_with_exchange(exchange):
                             save_entry_reason(sym, "MA_Restored")
 
 
+                        # 這個 qty 落差是不是機器人自己剛下的單成交了、只是還沒同步進 state，
+                        # 而不是「程序重啟後接管一筆早就存在的舊倉位」？如果 ctx.PENDING_LIMIT_ORDERS
+                        # 裡還有這個 sym 的掛單紀錄，代表這就是自己的單，不該套用磁碟上遺留的舊峰值
+                        # 檔案（實測 LINKUSDT 案例：逾時追價單 30 秒內成交，被這裡誤判成「重啟接管」，
+                        # 套用了上一筆已平倉交易留下的 1.5% 舊峰值，恢復完立刻被判定「已從峰值回落」，
+                        # 移動停利瞬間觸發平倉，倉位形同還沒開始就被停損）。
+                        _own_pending_fill = any(
+                            _info.get("sym") == sym for _info in ctx.PENDING_LIMIT_ORDERS.values()
+                        )
+
                         # ── 重啟峰值保護 ──
                         # 讀取保存過的峰值與交易所當前未實現損益，避免重啟後把真正高點洗掉。
+                        # 若判定是自己剛成交、尚未同步的單，則視為全新倉位，峰值從 0 開始，
+                        # 不讀取／不沿用磁碟上該幣種上一筆交易留下的舊峰值檔案。
                         try:
                             _raw_pnl = float(pos.get('unRealizedProfit') or pos.get('info', {}).get('unRealizedProfit', 0.0))
                             _entry_val = abs(real_qty) * ctx.STATES[sym]["entry_price"]
                             if _entry_val > 0:
                                 # 計算當前無槓桿的實際利潤率
                                 _cur_pct = _raw_pnl / _entry_val
-                                _stored_peak = load_peak(sym)
+                                _stored_peak = 0.0 if _own_pending_fill else load_peak(sym)
                                 _memory_peak = float(ctx.STATES[sym].get("highest_profit_pct", 0.0) or 0.0)
                                 _restored_peak = max(0.0, _cur_pct, _stored_peak, _memory_peak)
                                 ctx.STATES[sym]["highest_profit_pct"] = _restored_peak
-                                ctx.STATES[sym]["has_partial_closed"] = load_partial_take_profit(sym)
-                                if _restored_peak > 0:
-                                    save_peak(sym, _restored_peak)
-                                logger.info(
-                                    f"💾 [重啟峰值保護] {sym} 還原最高獲利峰值: {_restored_peak*100:.3f}% "
-                                    f"(檔案 {_stored_peak*100:.3f}%, 目前 {_cur_pct*100:.3f}%)"
-                                )
+                                ctx.STATES[sym]["has_partial_closed"] = False if _own_pending_fill else load_partial_take_profit(sym)
+                                if _own_pending_fill:
+                                    clear_peak(sym)
+                                    logger.info(
+                                        f"🆕 [CALIBRATION] {sym} 偵測到是自己掛單的成交（尚未同步），"
+                                        f"視為全新倉位，忽略磁碟舊峰值，峰值歸零重新計算：目前 {_cur_pct*100:.3f}%"
+                                    )
+                                else:
+                                    if _restored_peak > 0:
+                                        save_peak(sym, _restored_peak)
+                                    logger.info(
+                                        f"💾 [重啟峰值保護] {sym} 還原最高獲利峰值: {_restored_peak*100:.3f}% "
+                                        f"(檔案 {_stored_peak*100:.3f}%, 目前 {_cur_pct*100:.3f}%)"
+                                    )
                         except Exception as e_pnl:
                             logger.info(f"⚠️ [重啟峰值保護] {sym} 還原盈虧峰值失敗: {e_pnl}")
+
+                        if _own_pending_fill:
+                            for _oid in [
+                                _oid for _oid, _info in ctx.PENDING_LIMIT_ORDERS.items()
+                                if _info.get("sym") == sym
+                            ]:
+                                ctx.PENDING_LIMIT_ORDERS.pop(_oid, None)
 
                         # 重新接管交易所持倉時，重建本筆移動停損基準，禁止沿用上一筆高低點。
                         _peak = max(0.0, float(ctx.STATES[sym].get("highest_profit_pct", 0.0) or 0.0))

@@ -16,7 +16,7 @@ from core.calc import profit_pct as _profit_pct
 
 logger = logging.getLogger(__name__)
 
-MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
+MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}
 MA_DISASTER_STOP_PCT = 0.025
 MA_WRONG_DIRECTION_PCT = 0.01
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800

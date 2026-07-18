@@ -27,7 +27,7 @@ from services.ai_manager import ai_engine
 
 logger = logging.getLogger(__name__)
 
-MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma_restored"}
+MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}
 RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_PENDING_MONITOR_INTERVAL_SEC = 3.0
