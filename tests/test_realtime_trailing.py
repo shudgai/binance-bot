@@ -227,3 +227,30 @@ def test_out_of_order_trade_is_ignored_before_state_mutation():
     assert state["last_trade_price"] == 100.1
     assert state["trade_price_history"] == [100.1]
     assert state["highest_profit_pct"] == 0.0
+
+
+def test_stale_trade_warning_is_throttled_and_reports_merged_count():
+    sym = "SOLUSDT"
+    init_states([sym])
+    reset_coin_state(sym)
+    state = STATES[sym]
+    state.update({
+        "qty": 1.0, "avg_price": 100.0, "open_time": 5000.0,
+        "last_market_trade_time": 0.0,
+    })
+    stale_trade = {"price": 99.9, "amount": 1.0, "timestamp": 4999_000}
+
+    with patch("core.trade_signal.logger.info") as log_info:
+        with patch("core.trade_signal.time.time", return_value=6000.0):
+            for _ in range(50):
+                asyncio.run(update_trade_signal(sym, stale_trade))
+
+        assert log_info.call_count == 1
+        assert state["_stale_trade_log_suppressed"] == 49
+
+        with patch("core.trade_signal.time.time", return_value=6016.0):
+            asyncio.run(update_trade_signal(sym, stale_trade))
+
+        assert log_info.call_count == 2
+        assert "前期間另合併 49 筆" in log_info.call_args.args[0]
+        assert state["_stale_trade_log_suppressed"] == 0

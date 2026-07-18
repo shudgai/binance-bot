@@ -9,6 +9,7 @@ from services import system_log_service as log_service
 from services.system_log_service import add_system_log, clear_system_logs
 from services.bot_manager_service import (
     _prune_entry_diagnoses,
+    _should_emit_bot_web_log,
     _summarize_entry_diagnosis,
     bot_status,
     classify_bot_log_level,
@@ -20,6 +21,8 @@ from services.bot_manager_service import (
 class SystemLogTests(unittest.TestCase):
     def setUp(self):
         clear_system_logs()
+        from services import bot_manager_service as manager
+        manager._web_log_throttle.clear()
 
     def test_daily_reset_keeps_logs_on_normal_startup(self):
         add_system_log("seed log", "info")
@@ -43,6 +46,18 @@ class SystemLogTests(unittest.TestCase):
 
     def test_routine_kline_refresh_is_info(self):
         self.assertEqual(classify_bot_log_level("🔄 [KLines] 已更新市場行情資料"), "info")
+
+    def test_identical_ma_wait_log_is_throttled_for_one_minute(self):
+        text = "⏳ DOTUSDT [MA_Strategy] 等待 MA7／MA25 收線交叉、MA25 回調或帶量突破"
+        self.assertTrue(_should_emit_bot_web_log(text, now=100.0))
+        self.assertFalse(_should_emit_bot_web_log(text, now=159.0))
+        self.assertTrue(_should_emit_bot_web_log(text, now=160.0))
+
+    def test_changed_ma_wait_diagnostic_is_not_hidden(self):
+        first = "⏳ DOTUSDT [MA_Strategy] 量能不足（RVOL=0.30x）"
+        changed = "⏳ DOTUSDT [MA_Strategy] 量能不足（RVOL=0.31x）"
+        self.assertTrue(_should_emit_bot_web_log(first, now=200.0))
+        self.assertTrue(_should_emit_bot_web_log(changed, now=201.0))
 
     def test_real_warning_and_error_levels_are_preserved(self):
         self.assertEqual(classify_bot_log_level("🛡️ 進入冷卻"), "warning")

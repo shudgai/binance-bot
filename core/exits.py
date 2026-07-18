@@ -34,6 +34,56 @@ MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
 
+# MA7 獲利轉彎出場：第一根確認轉彎的收線先落袋 60%，下一根仍往反方向才清倉。
+# 最低毛利需涵蓋雙邊手續費及一小段滑價，避免把接近成本的 MA7 抖動當成停利。
+MA7_PROFIT_TURN_PARTIAL_RATIO = 0.60
+MA7_PROFIT_TURN_MIN_PCT = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
+
+
+def _ma7_closed_turn(candles, is_long):
+    """Return a completed-candle MA7 turn signal and its confirmation data.
+
+    The live candle is deliberately excluded. Long exits require MA7 to change
+    from rising to falling, with a bearish close below MA7; shorts are mirrored.
+    """
+    if len(candles) < 10:
+        return False, {}
+    completed = candles[:-1]
+    if len(completed) < 9:
+        return False, {}
+
+    closes = [float(c[4]) for c in completed]
+    current_ma7 = float(np.mean(closes[-7:]))
+    previous_ma7 = float(np.mean(closes[-8:-1]))
+    previous_previous_ma7 = float(np.mean(closes[-9:-2]))
+    previous_slope = previous_ma7 - previous_previous_ma7
+    current_slope = current_ma7 - previous_ma7
+    latest = completed[-1]
+    candle_open = float(latest[1])
+    candle_high = float(latest[2])
+    candle_low = float(latest[3])
+    candle_close = float(latest[4])
+
+    if is_long:
+        triggered = (
+            previous_slope > 0 and current_slope < 0
+            and candle_close < candle_open and candle_close < current_ma7
+        )
+    else:
+        triggered = (
+            previous_slope < 0 and current_slope > 0
+            and candle_close > candle_open and candle_close > current_ma7
+        )
+    return triggered, {
+        "candle_ts": int(latest[0]),
+        "ma7": current_ma7,
+        "previous_slope": previous_slope,
+        "current_slope": current_slope,
+        "close": candle_close,
+        "low": candle_low,
+        "high": candle_high,
+    }
+
 
 def _meaningful_ma7_break(is_long, closed_price, ma7, ma25, prev_ma7, atr, avg):
     """忽略 MA7/MA25 附近的正常回踩；兩條均線都明顯失守才確認生命週期破壞。"""
@@ -625,6 +675,62 @@ async def check_exits(sym):
         s["highest_profit_pct"] = profit_pct
     current_atr = s.get("current_atr", 0.0)
 
+    entry_reason = str(s.get("entry_reason", "") or "")
+    is_range_route = entry_reason in ("Range_Support_Long", "Range_Resistance_Short")
+
+    if is_range_route:
+        # Range 的結構停損是真突破安全線，仍採盤中立即退出；只有較貼近價格的
+        # Dynamic Trailing 改成收線確認，不能讓延遲機制蓋掉真正的結構破壞。
+        range_sl = float(s.get("range_sl_price", 0.0) or 0.0)
+        range_sl_hit = range_sl > 0 and (
+            (is_long and p <= range_sl) or (not is_long and p >= range_sl)
+        )
+        if range_sl_hit:
+            cs = "sell" if is_long else "buy"
+            logger.info(f"🚨 [Range_Mode_SL] {sym} 觸及區間結構停損 {range_sl:.6f}，立即平倉")
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[Range_SL]", is_stop_loss=True,
+            )
+            return
+
+        # 前一根盤中曾穿越 Dynamic Trailing：只有該根已經成為 completed candle
+        # 後，才用它的收盤價判斷。影線收回保護線內即取消，不做事後追殺。
+        if s.get("range_trailing_pending", False):
+            candles = s.get("ohlcv", [])
+            pending_ts = int(s.get("range_trailing_pending_candle_ts", 0) or 0)
+            pending_stop = float(s.get("range_trailing_pending_stop", 0.0) or 0.0)
+            live_ts = int(candles[-1][0]) if candles else 0
+            if pending_ts > 0 and pending_stop > 0 and live_ts > pending_ts:
+                completed_candle = next(
+                    (candle for candle in reversed(candles[:-1]) if int(candle[0]) == pending_ts),
+                    None,
+                )
+                completed_close = float(completed_candle[4]) if completed_candle else 0.0
+                close_confirmed = completed_close > 0 and (
+                    (is_long and completed_close <= pending_stop)
+                    or (not is_long and completed_close >= pending_stop)
+                )
+                s["range_trailing_pending"] = False
+                s["range_trailing_pending_candle_ts"] = 0
+                s["range_trailing_pending_stop"] = 0.0
+                if close_confirmed:
+                    cs = "sell" if is_long else "buy"
+                    logger.info(
+                        f"🚨 [Range_Trailing_Closed_Confirm] {sym} 前一根收盤 "
+                        f"{completed_close:.6f} 確認穿越保護線 {pending_stop:.6f}，執行平倉"
+                    )
+                    await close_position(
+                        sym, cs, abs(s["qty"]), p, avg,
+                        reason="[Range_Trailing_Closed_Confirm]",
+                        is_stop_loss=(profit_pct <= 0),
+                    )
+                    return
+                logger.info(
+                    f"✅ [Range_Trailing_Wick_Recovered] {sym} 盤中曾穿越 {pending_stop:.6f}，"
+                    f"但收盤 {completed_close:.6f} 已收回，判定為影線並繼續持有"
+                )
+
     # MA 波段以高點回吐鎖利或反向交叉結束；持倉初期若兩根已收線 K 棒確認開錯方向，立即止損。
     route = str(s.get("entry_reason", "") or "").lower()
     if route in MA_ENTRY_ROUTES:
@@ -661,6 +767,70 @@ async def check_exits(sym):
                 sym, cs, abs(s["qty"]), p, avg,
                 reason="[MA_Wrong_Direction_Confirmed]", is_stop_loss=True,
             )
+            return
+
+        # 獲利中的 MA7 轉彎分批出場：只採已收線 K 棒，避免盤中 MA7 抖動誤殺。
+        # 第一根轉彎先平 60%；下一根 MA7 繼續反向，或價格突破訊號棒低/高點，再全平。
+        # 若下一根重新回到原趨勢並站回 MA7，解除等待，讓剩餘部位繼續奔跑。
+        turn_triggered, turn_data = _ma7_closed_turn(candles, is_long)
+        turn_stage = int(s.get("ma7_profit_turn_stage", 0) or 0)
+        turn_signal_ts = int(s.get("ma7_profit_turn_signal_ts", 0) or 0)
+        turn_candle_ts = int(turn_data.get("candle_ts", 0) or 0)
+
+        if turn_stage == 1 and turn_candle_ts > turn_signal_ts:
+            turn_slope = float(turn_data.get("current_slope", 0.0) or 0.0)
+            turn_close = float(turn_data.get("close", 0.0) or 0.0)
+            signal_extreme = float(s.get("ma7_profit_turn_signal_extreme", 0.0) or 0.0)
+            continuation = (
+                (is_long and (turn_slope < 0 or (signal_extreme > 0 and turn_close < signal_extreme)))
+                or (not is_long and (turn_slope > 0 or (signal_extreme > 0 and turn_close > signal_extreme)))
+            )
+            recovered = (
+                (is_long and turn_slope > 0 and turn_close >= float(turn_data.get("ma7", 0.0) or 0.0))
+                or (not is_long and turn_slope < 0 and turn_close <= float(turn_data.get("ma7", 0.0) or 0.0))
+            )
+            if continuation:
+                cs = "sell" if is_long else "buy"
+                logger.info(
+                    f"💰 [MA7_Profit_Turn_Confirmed] {sym} 下一根收線確認 MA7 反轉，"
+                    f"斜率={turn_slope:.8f}、close={turn_close:.6f}，平掉剩餘部位"
+                )
+                await close_position(
+                    sym, cs, abs(s["qty"]), p, avg,
+                    reason="[MA7_Profit_Turn_Confirmed]", is_stop_loss=(profit_pct <= 0),
+                )
+                return
+            if recovered:
+                logger.info(f"↗️ [MA7_Profit_Turn_Recovered] {sym} MA7 恢復原趨勢，保留剩餘部位")
+                s["ma7_profit_turn_stage"] = 0
+                s["ma7_profit_turn_signal_ts"] = 0
+                s["ma7_profit_turn_signal_extreme"] = 0.0
+
+        elif (
+            turn_stage == 0 and turn_triggered
+            and profit_pct >= MA7_PROFIT_TURN_MIN_PCT
+        ):
+            cs = "sell" if is_long else "buy"
+            qty_before = abs(float(s["qty"]))
+            partial_qty = qty_before * MA7_PROFIT_TURN_PARTIAL_RATIO
+            logger.info(
+                f"💰 [MA7_Profit_Turn_Partial] {sym} MA7 收線由"
+                f"{'上轉下' if is_long else '下轉上'}且目前毛利 {profit_pct*100:.2f}%，"
+                f"先平 {MA7_PROFIT_TURN_PARTIAL_RATIO*100:.0f}%"
+            )
+            await close_position(
+                sym, cs, partial_qty, p, avg,
+                reason="[MA7_Profit_Turn_Partial]", is_stop_loss=False,
+            )
+            # 只有數量確實下降且仍有剩餘倉位才進入第二階段；送單失敗時下個 tick 會重試。
+            qty_after = abs(float(s.get("qty", 0.0) or 0.0))
+            if 0.000001 < qty_after < qty_before - 0.000001:
+                s["ma7_profit_turn_stage"] = 1
+                s["ma7_profit_turn_signal_ts"] = turn_candle_ts
+                s["ma7_profit_turn_signal_extreme"] = float(
+                    turn_data.get("low" if is_long else "high", 0.0) or 0.0
+                )
+                s["has_partial_closed"] = True
             return
 
 
@@ -735,23 +905,6 @@ async def check_exits(sym):
             logger.info(f"🛡️ [MA_Disaster_Stop] {sym} 觸及 {MA_DISASTER_STOP_PCT*100:.1f}% 災難止損")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[MA_Disaster_Stop]", is_stop_loss=True)
             return
-
-        # ─── 區間模式專屬止盈/止損 ──────────────────────────────────────────
-        # 檢查是否為區間模式進場，若是，則套用預計算的 tp_price 與 sl_price 進行硬止盈/止損
-        entry_reason = s.get("entry_reason", "")
-        if entry_reason in ("Range_Support_Long", "Range_Resistance_Short"):
-            range_tp = float(s.get("range_tp_price", 0.0) or 0.0)
-            range_sl = float(s.get("range_sl_price", 0.0) or 0.0)
-            
-
-            if range_sl > 0:
-                sl_hit = (is_long and p <= range_sl) or (not is_long and p >= range_sl)
-                if sl_hit:
-                    cs = "sell" if is_long else "buy"
-                    logger.info(f"🚨 [Range_Mode_SL] {sym} 觸及區間止損價 {range_sl:.6f}，執行止損出場")
-                    await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Range_SL]", is_stop_loss=True)
-                    return
-        # ───────────────────────────────────────────────────────────────────
 
         # MA lifecycle exit: a completed-candle MA7 break or opposite MA7/25 cross exits after 2 consecutive confirmations.
         closed_price = float(s.get("ohlcv", [])[-2][4]) if len(s.get("ohlcv", [])) >= 2 else 0.0
@@ -948,22 +1101,47 @@ async def check_exits(sym):
         s["stop_loss"] = 0.0
         ts_price = 0.0
     if ts_price is not None and ts_price > 0:
-        if is_long:
-            if p <= ts_price:
-                _soft_floor = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
-                if s.get("soft_trailing_armed", False) and _soft_floor > 0 and p < _soft_floor:
-                    logger.info(f"⚠️ [Soft_Trailing_Gap] {sym} 現價 {p:.6f} 已跳過淨利底線 {_soft_floor:.6f}，立即退出防止回吐擴大")
-                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} <= 停損價 {ts_price:.6f}")
-                await close_position(sym, 'sell', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=(profit_pct <= 0))
-                return
-        else:
-            if p >= ts_price:
-                _soft_ceiling = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
-                if s.get("soft_trailing_armed", False) and _soft_ceiling > 0 and p > _soft_ceiling:
-                    logger.info(f"⚠️ [Soft_Trailing_Gap] {sym} 現價 {p:.6f} 已跳過淨利底線 {_soft_ceiling:.6f}，立即退出防止回吐擴大")
-                logger.info(f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉：當前價 {p:.6f} >= 停損價 {ts_price:.6f}")
-                await close_position(sym, 'buy', abs(s["qty"]), p, avg, reason="[Dynamic_Trailing]", is_stop_loss=(profit_pct <= 0))
-                return
+        trailing_hit = (is_long and p <= ts_price) or (not is_long and p >= ts_price)
+        if trailing_hit:
+            _soft_limit = float(s.get("soft_trailing_profit_floor", 0.0) or 0.0)
+            soft_gap = s.get("soft_trailing_armed", False) and _soft_limit > 0 and (
+                (is_long and p < _soft_limit) or (not is_long and p > _soft_limit)
+            )
+            if soft_gap:
+                logger.info(
+                    f"⚠️ [Soft_Trailing_Gap] {sym} 現價 {p:.6f} 已跳過淨利保護線 "
+                    f"{_soft_limit:.6f}"
+                )
+
+            if is_range_route:
+                candles = s.get("ohlcv", [])
+                live_candle_ts = int(candles[-1][0]) if candles else 0
+                if live_candle_ts > 0:
+                    old_stop = float(s.get("range_trailing_pending_stop", 0.0) or 0.0)
+                    if old_stop > 0:
+                        pending_stop = max(old_stop, ts_price) if is_long else min(old_stop, ts_price)
+                    else:
+                        pending_stop = float(ts_price)
+                    s["range_trailing_pending"] = True
+                    s["range_trailing_pending_candle_ts"] = live_candle_ts
+                    s["range_trailing_pending_stop"] = pending_stop
+                    logger.info(
+                        f"⏳ [Range_Trailing_Wick_Pending] {sym} 盤中價格 {p:.6f} 穿越 "
+                        f"Dynamic Trailing {pending_stop:.6f}，等待本根 K 棒收線確認"
+                    )
+                    return
+
+            cs = "sell" if is_long else "buy"
+            comparator = "<=" if is_long else ">="
+            logger.info(
+                f"🚨 [Trailing_SL_Trigger] {sym} 觸發移動停損/保本平倉："
+                f"當前價 {p:.6f} {comparator} 停損價 {ts_price:.6f}"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[Dynamic_Trailing]", is_stop_loss=(profit_pct <= 0),
+            )
+            return
 
     # 小幅峰值回吐到負報酬時，不另設超窄 Peak_Giveback 停損；
     # 真正失效交由下方 Rapid_Adverse_Move、ATR 與 Hard_Stop 管理。

@@ -66,6 +66,12 @@ def build_symbol_state(sym):
         "_direction_guard_cooldown_signal_candle_ts": 0,
         "ma_exit_invalid_count": 0,
         "ma_exit_last_candle_ts": 0,
+        "ma7_profit_turn_stage": 0,
+        "ma7_profit_turn_signal_ts": 0,
+        "ma7_profit_turn_signal_extreme": 0.0,
+        "range_trailing_pending": False,
+        "range_trailing_pending_candle_ts": 0,
+        "range_trailing_pending_stop": 0.0,
         "ma_risk_breach_count": 0,
         "ma_momentum_flip_count": 0,
         "ma_peak_lock_armed": False,
@@ -104,6 +110,8 @@ def build_symbol_state(sym):
         "last_trade_side": "",
         "last_trade_time": 0.0,
         "last_market_trade_time": 0.0,
+        "_last_stale_trade_log_at": 0.0,
+        "_stale_trade_log_suppressed": 0,
         "realtime_peak_candidate_price": 0.0,
         "realtime_peak_candidate_profit": 0.0,
         "realtime_peak_candidate_time": 0.0,
@@ -458,6 +466,8 @@ def reset_coin_state(sym):
     s["realtime_peak_candidate_price"] = 0.0
     s["realtime_peak_candidate_profit"] = 0.0
     s["realtime_peak_candidate_time"] = 0.0
+    s["_last_stale_trade_log_at"] = 0.0
+    s["_stale_trade_log_suppressed"] = 0
     clear_peak(sym)
     clear_entry_time(sym)
     clear_entry_reason(sym)
@@ -471,6 +481,12 @@ def reset_coin_state(sym):
     s["early_direction_invalid_count"] = 0
     s["ma_exit_invalid_count"] = 0
     s["ma_exit_last_candle_ts"] = 0
+    s["ma7_profit_turn_stage"] = 0
+    s["ma7_profit_turn_signal_ts"] = 0
+    s["ma7_profit_turn_signal_extreme"] = 0.0
+    s["range_trailing_pending"] = False
+    s["range_trailing_pending_candle_ts"] = 0
+    s["range_trailing_pending_stop"] = 0.0
     s["ma_risk_breach_count"] = 0
     s["ma_momentum_flip_count"] = 0
     s["ma_peak_lock_armed"] = False

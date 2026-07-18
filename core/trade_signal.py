@@ -6,6 +6,28 @@ from core.config import ROUND_TRIP_FEE_PCT
 from core.peak_store import save_peak
 
 logger = logging.getLogger(__name__)
+STALE_TRADE_LOG_INTERVAL_SEC = 15.0
+
+
+def _log_stale_trade_tick(sym, state, ts_value, last_market_ts, open_time):
+    """Throttle reconnect backfill warnings while keeping every stale tick blocked."""
+    now = time.time()
+    last_log_at = float(state.get("_last_stale_trade_log_at", 0.0) or 0.0)
+    if last_log_at and now - last_log_at < STALE_TRADE_LOG_INTERVAL_SEC:
+        state["_stale_trade_log_suppressed"] = int(
+            state.get("_stale_trade_log_suppressed", 0) or 0
+        ) + 1
+        return
+
+    suppressed = int(state.get("_stale_trade_log_suppressed", 0) or 0)
+    suppressed_text = f"；前期間另合併 {suppressed} 筆" if suppressed else ""
+    logger.info(
+        f"⚠️ [Stale_Trade_Tick] {sym} 忽略亂序/進場前成交 "
+        f"event={ts_value:.3f} last={last_market_ts:.3f} open={open_time:.3f}"
+        f"{suppressed_text}"
+    )
+    state["_last_stale_trade_log_at"] = now
+    state["_stale_trade_log_suppressed"] = 0
 
 
 async def update_trade_signal(sym, trade):
@@ -27,10 +49,7 @@ async def update_trade_signal(sym, trade):
     if (last_market_ts and ts_value < last_market_ts) or (
         abs(s.get("qty", 0.0)) > 0.000001 and open_time and ts_value < open_time
     ):
-        logger.info(
-            f"⚠️ [Stale_Trade_Tick] {sym} 忽略亂序/進場前成交 "
-            f"event={ts_value:.3f} last={last_market_ts:.3f} open={open_time:.3f}"
-        )
+        _log_stale_trade_tick(sym, s, ts_value, last_market_ts, open_time)
         return
     s["last_market_trade_time"] = ts_value
 

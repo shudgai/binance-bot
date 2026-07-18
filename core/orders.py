@@ -1037,7 +1037,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # ——本來該在轉折剛確認時就平倉了結的單子，硬生生被拖成真正的停損虧損出場。
     # [Dynamic_TP_Tier]：分級停利目標刻意設計成低獲利檔位就先落袋（可能低於這裡的
     # 0.35%/1.5% 固定門檻），一樣要放行，不然會重演跟 [MA7_Closed_Break] 一樣的問題。
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Dynamic_TP_Tier]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Dynamic_TP_Tier]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1082,9 +1082,10 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # MA_Peak_Lock 觸發時打算鎖利 +1.2%，因為走限價追價流程等了幾秒，價格加速
         # 下殺，最後市價成交時已經變成 -0.42% 虧損——跟 HBARUSDT 一模一樣的病根。
         _urgent_exit_reasons = (
-            "Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "TrailTP_Peak",
+            "Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "Range_Trailing_Closed_Confirm", "TrailTP_Peak",
             "Peak_Volume_Contraction", "MA_Peak_Lock", "MA_Profit_Floor", "MA7_Closed_Break",
             "MA7_MA25_Death_Cross", "MA7_MA25_Golden_Cross",
+            "MA7_Profit_Turn_Partial", "MA7_Profit_Turn_Confirmed",
         )
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:

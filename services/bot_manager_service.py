@@ -27,6 +27,9 @@ bot_status = {
 }
 
 bot_processes = {}  # {symbol: subprocess.Popen}
+_intentional_stop_processes = set()
+_web_log_throttle = {}
+ROUTINE_WAIT_LOG_INTERVAL_SEC = 60.0
 _restart_order_cache = {"checked_at": 0.0, "orders": None}
 RESTART_ORDER_CACHE_SEC = 5.0
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
@@ -106,6 +109,31 @@ def normalize_symbol(sym):
     if not sym.endswith("USDT"):
         sym = f"{sym}USDT"
     return sym
+
+
+def _should_emit_bot_web_log(text: str, now: float | None = None) -> bool:
+    """Throttle identical routine waiting messages without hiding changed diagnostics."""
+    text = str(text or "").strip()
+    if not (text.startswith("⏳") and "[MA_Strategy]" in text):
+        return True
+    now = float(time.time() if now is None else now)
+    last = float(_web_log_throttle.get(text, 0.0) or 0.0)
+    if last > 0 and now - last < ROUTINE_WAIT_LOG_INTERVAL_SEC:
+        return False
+    _web_log_throttle[text] = now
+    return True
+
+
+def _mark_intentional_stop(pid: int) -> None:
+    if not pid:
+        return
+    from core.sigterm_diagnostic import intentional_stop_marker_path
+    marker = intentional_stop_marker_path(pid)
+    try:
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write("expected\n")
+    except OSError:
+        pass
 
 
 def normalize_symbol_list(symbols, max_count=23):
@@ -421,7 +449,9 @@ def read_bot_output(proc, sym):
                 except Exception:
                     pass
             elif line.startswith("@@COIN_DEBUG@@"):
-                add_system_log(line.replace("@@COIN_DEBUG@@", "").strip(), "info")
+                web_line = line.replace("@@COIN_DEBUG@@", "").strip()
+                if _should_emit_bot_web_log(web_line):
+                    add_system_log(web_line, "info")
             else:
                 # 過濾掉每輪掃描的 debug 雜訊（🔍 條件檢測），只保留有意義的事件
                 _skip_prefixes = ("🔍", "[__multi__]", "[__multi__] 🔍", "----")
@@ -432,8 +462,13 @@ def read_bot_output(proc, sym):
                     add_system_log(f"[{sym}] {line}", level)
     proc.stdout.close()
     proc.wait()
+    intentional_stop = id(proc) in _intentional_stop_processes
+    _intentional_stop_processes.discard(id(proc))
     
-    if proc.returncode == 4:
+    if intentional_stop:
+        if os.getenv("BOT_DEBUG_LOGS") == "1":
+            add_system_log(f"ℹ️ [系統守護] 機器人({sym})依管理指令正常停止", "info")
+    elif proc.returncode == 4:
         # 單幣熔斷停牌 (Exit Code 4)
         from services.radar_service import replace_dead_coin, blacklist_coin
         blacklist_coin(sym, duration_sec=24*3600)
@@ -666,6 +701,8 @@ def _kill_single_bot(symbol: str):
     global bot_processes
     if symbol in bot_processes and bot_processes[symbol]:
         proc = bot_processes[symbol]
+        _intentional_stop_processes.add(id(proc))
+        _mark_intentional_stop(getattr(proc, "pid", 0))
         try:
             proc.terminate()
             proc.wait(timeout=2)
@@ -704,6 +741,7 @@ def kill_bot():
             try:
                 pid = int(pid_str)
                 if pid != my_pid:
+                    _mark_intentional_stop(pid)
                     os.kill(pid, 15)
             except (ValueError, ProcessLookupError, PermissionError):
                 pass

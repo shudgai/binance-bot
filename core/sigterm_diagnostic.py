@@ -10,6 +10,7 @@ SIGTERM 診斷處理器
 """
 
 import signal
+import os
 import sys
 import traceback
 import threading
@@ -17,6 +18,11 @@ import logging
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def intentional_stop_marker_path(pid: int) -> str:
+    """Marker shared with the parent watchdog for an expected SIGTERM."""
+    return f"/tmp/binance_bot_intentional_stop_{int(pid)}"
 
 
 def _dump_all_thread_stacks() -> str:
@@ -45,6 +51,17 @@ def install_sigterm_diagnostic_handler(dump_to_file: bool = True):
     """
 
     def _handler(signum, frame):
+        marker = intentional_stop_marker_path(os.getpid())
+        if os.path.exists(marker):
+            try:
+                os.remove(marker)
+            except OSError:
+                pass
+            logger.info("ℹ️ [SIGTERM] 管理程序要求停止，正常結束")
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.raise_signal(signal.SIGTERM)
+            return
+
         snapshot = _dump_all_thread_stacks()
         logger.error(f"⚠️ [SIGTERM_DIAG] 收到 SIGTERM，程式即將終止。堆疊快照：\n{snapshot}")
 

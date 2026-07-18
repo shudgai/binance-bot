@@ -1,4 +1,5 @@
 import unittest
+import io
 from unittest.mock import patch
 
 from services import bot_manager_service as manager
@@ -13,6 +14,28 @@ class BotRestartSafetyTests(unittest.TestCase):
         manager.bot_status["is_running"] = self.original_running
         manager.bot_processes.clear()
         manager.bot_processes.update(self.original_processes)
+        manager._intentional_stop_processes.clear()
+
+    def test_intentional_sigterm_is_not_reported_or_restarted_as_crash(self):
+        class FakeProc:
+            returncode = -15
+
+            def __init__(self):
+                self.stdout = io.StringIO("")
+
+            def wait(self):
+                return self.returncode
+
+        proc = FakeProc()
+        manager.bot_status["is_running"] = True
+        manager.bot_processes["__multi__"] = proc
+        manager._intentional_stop_processes.add(id(proc))
+        with patch.object(manager, "add_system_log") as log_mock, \
+             patch.object(manager.threading, "Thread") as thread_mock:
+            manager.read_bot_output(proc, "__multi__")
+
+        self.assertFalse(any("意外停止" in str(call) for call in log_mock.call_args_list))
+        thread_mock.assert_not_called()
 
     def test_only_live_entry_orders_block_restart(self):
         orders = [
