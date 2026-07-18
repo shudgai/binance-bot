@@ -115,7 +115,18 @@
       "Bash(ps -p 2633692 -o pid,cmd)",
       "Bash(awk -v d1=\"2026-07-16 14:17:00\" -v d2=\"2026-07-16 14:22:20\" '$0 >= d1 && $0 <= d2' logs/bot.log)",
       "Bash(awk -v d1=\"2026-07-16 14:00:00\" -v d2=\"2026-07-16 14:12:15\" '$0 >= d1 && $0 <= d2' logs/bot.log)",
-      "Bash(awk 'NR<=320 && /^async def |^def /{print NR\": \"$0}' /home/shudgai999/project/binance-bot/core/orders.py)"
+      "Bash(awk 'NR<=320 && /^async def |^def /{print NR\": \"$0}' /home/shudgai999/project/binance-bot/core/orders.py)",
+      "Bash(python3 -m pytest tests/test_exchange_calibration.py -q)",
+      "Bash(./venv/bin/python -m pytest tests/test_exchange_calibration.py -q)",
+      "Bash(./venv/bin/python -m pytest tests/ -q)",
+      "Bash(./venv/bin/python -c ' *)",
+      "Bash(systemctl --user list-units --type=service)",
+      "Bash(git diff *)",
+      "Read(//home/shudgai999/project/binance-bot/**)",
+      "Bash(sudo ss -ltnp)",
+      "Bash(kill -15 4010574)",
+      "Bash(systemctl --user show binance-api.service -p NRestarts)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('is_running:', d['is_running']\\); print\\('active_symbols:', d['active_symbols']\\)\")"
     ]
   }
 }
