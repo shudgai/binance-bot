@@ -42,7 +42,10 @@ def init_states(symbols=None):
     ALL_SYMBOLS.extend(symbols)
     _, profiles = load_symbol_config()
     import core.symbol_profile as sp
-    sp.SYMBOL_PROFILES = profiles
+    # 保留同一個 dict 物件，讓已用 ``from ... import SYMBOL_PROFILES`` 的模組
+    # 也能立即看到最新雷達資格；重新賦值會讓那些模組永遠握著舊空表。
+    sp.SYMBOL_PROFILES.clear()
+    sp.SYMBOL_PROFILES.update(profiles)
     for sym in ALL_SYMBOLS:
         STATES[sym] = build_symbol_state(sym)
     apply_all_symbol_profiles()

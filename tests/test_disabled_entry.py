@@ -28,6 +28,7 @@ def test_auto_radar_switch_excludes_user_symbols(mock_prioritize, mock_get_atr, 
 
     from services.radar_service import auto_radar_switch
     with patch("services.radar_service.save_symbol_config") as mock_save, \
+         patch("services.radar_service._save_radar_profiles"), \
          patch("services.radar_service.start_bot") as mock_start:
          
         auto_radar_switch(force_start=False)

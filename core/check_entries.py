@@ -30,6 +30,19 @@ COOLDOWN_REENTRY_RAPID_RECHECKS = 2
 COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC = 1.0
 
 
+def _radar_entry_block_reason(profile):
+    """Return an entry block reason; missing radar data must fail closed."""
+    if not profile:
+        return "尚無雷達交易資格"
+    if not bool(profile.get("_trade_eligible", False)):
+        return str(profile.get("_trade_eligibility_reason") or "雷達觀察中")
+    return ""
+
+
+def _radar_signal_block_message(sym, route, reason):
+    return f"{sym}: 偵測到 {route} 訊號，但{reason}，不送單"
+
+
 def _range_exit_prices(price, support, resistance, atr, side):
     """Build range exits with enough room between the actual fill and structural stop."""
     price = float(price)
@@ -125,8 +138,9 @@ async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=Non
         fresh_strength = float(fresh_signal[1] or 0.0)
 
         radar_profile = SYMBOL_PROFILES.get(sym, {})
-        if radar_profile and not bool(radar_profile.get("_trade_eligible", False)):
-            return False, f"radar eligibility lost on rapid check {attempt}"
+        radar_block_reason = _radar_entry_block_reason(radar_profile)
+        if radar_block_reason and str(route or "").lower() != "ma7_simple":
+            return False, f"radar eligibility lost on rapid check {attempt}: {radar_block_reason}"
         macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
         if not macro_ok:
             return False, macro_reason
@@ -469,13 +483,13 @@ async def check_entries():
         current_direction = "buy" if s["qty"] > 0 else "sell" if s["qty"] < 0 else None
 
         # 雷達監控池與可交易池分離。既有持倉仍正常管理；只有新開倉會被觀察期攔截。
+        radar_block_reason = ""
         if not has_position:
             from core.symbol_profile import SYMBOL_PROFILES
             _radar_profile = SYMBOL_PROFILES.get(sym, {})
-            if _radar_profile and not bool(_radar_profile.get("_trade_eligible", False)):
-                _eligibility_reason = _radar_profile.get("_trade_eligibility_reason", "雷達觀察中")
-                set_entry_diagnosis(f"{sym}: {_eligibility_reason}")
-                continue
+            radar_block_reason = _radar_entry_block_reason(_radar_profile)
+            if radar_block_reason:
+                set_entry_diagnosis(f"{sym}: {radar_block_reason}")
 
         # 開倉錯誤冷卻（例如幣安 -1007 送出狀態未知）：確認交易所端真的沒有新倉位後，
         # 短暫暫停這個幣種，避免立刻用同樣的條件反覆撞在同一個逾時問題上。
@@ -523,7 +537,7 @@ async def check_entries():
                     adx = float(s.get("adx", 0.0) or 0.0)
                     block_reason = ma_block_reason if adx >= 25.0 else range_block_reason
                     s["entry_block_reason"] = block_reason
-                    set_entry_diagnosis(f"{sym}: {block_reason}")
+                    set_entry_diagnosis(f"{sym}: {radar_block_reason or block_reason}")
                     
                     # 模式切換確認日誌
                     log_decision_summary(
@@ -536,13 +550,24 @@ async def check_entries():
                     continue
             else:
                 block_reason = s.get("entry_block_reason") or "暫無有效訊號"
-                set_entry_diagnosis(f"{sym}: {block_reason}")
+                set_entry_diagnosis(f"{sym}: {radar_block_reason or block_reason}")
                 continue
         else:
             from core.idle_tracker import idle_tracker
             idle_tracker.mark_active(sym, "MA_Strategy")
         
         side, strength, route = side_strength
+
+        # 先辨識訊號再回報雷達阻擋，避免介面把「觀察到訊號」誤寫成「準備送單」。
+        # 雷達資料缺失也採安全側拒絕，不能因空 dict 繞過交易資格。
+        # MA7_Simple 路線刻意設計為「MA7 一轉折就進場」，使用者明確要求不受
+        # 雷達資格審核（連續兩次確認+30分鐘觀察期）限制，直接放行。
+        if radar_block_reason and str(route or "").lower() != "ma7_simple":
+            diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
+            s["entry_block_reason"] = radar_block_reason
+            set_entry_diagnosis(diagnosis)
+            logger.info(f"🛑 [Radar_Eligibility] {diagnosis}")
+            continue
 
         # 模式切換確認日誌（順利產生訊號進場時）
         adx = float(s.get("adx", 0.0) or 0.0)
@@ -820,8 +845,11 @@ async def check_entries():
             continue
         if abs(s.get("qty", 0.0)) > 0.000001:
             continue
-        if radar_profile and not bool(radar_profile.get("_trade_eligible", False)):
-            logger.info(f"🛑 [Final_Entry_Guard] {sym} 雷達資格已失效")
+        radar_block_reason = _radar_entry_block_reason(radar_profile)
+        if radar_block_reason and str(route or "").lower() != "ma7_simple":
+            diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
+            set_entry_diagnosis(diagnosis)
+            logger.info(f"🛑 [Final_Entry_Guard] {diagnosis}")
             continue
         radar_direction = radar_profile.get("_radar_entry_direction", "none")
         radar_readiness = float(radar_profile.get("_radar_entry_readiness", 0.0) or 0.0)

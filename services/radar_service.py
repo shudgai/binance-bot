@@ -157,6 +157,11 @@ def _save_radar_profiles(profiles: dict):
         data["profiles"] = profiles
         with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        # auto_radar_switch 也會在交易主程序內免重啟執行；寫檔後同步更新
+        # 原 dict，避免 UI 已是新資格、交易核心卻仍使用舊資格。
+        import core.symbol_profile as _symbol_profile
+        _symbol_profile.SYMBOL_PROFILES.clear()
+        _symbol_profile.SYMBOL_PROFILES.update(profiles)
     except Exception as e:
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 

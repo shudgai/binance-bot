@@ -78,7 +78,9 @@ class EntryRiskTests(unittest.TestCase):
                                        return_value=(1.0, 1.0, 1.0, 2.0)):
                                 with patch("core.check_entries._ma_candidate_quality",
                                            return_value=(True, "ok", 5.0)):
-                                    with patch("core.symbol_profile.SYMBOL_PROFILES", {}):
+                                    with patch("core.symbol_profile.SYMBOL_PROFILES", {
+                                        sym: {"_trade_eligible": True},
+                                    }):
                                         result = asyncio.run(_rapid_reconfirm_cooldown_entry(
                                             sym, "buy", "MA_Cross", 25.0,
                                             checks=2, interval=0,
@@ -86,6 +88,23 @@ class EntryRiskTests(unittest.TestCase):
         self.assertEqual(result, (True, "three confirmations passed"))
         self.assertEqual(signal_mock.call_count, 2)
         self.assertEqual(ma_mock.call_count, 2)
+
+    def test_cooldown_reentry_fails_closed_without_radar_profile(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        reset_coin_state(sym)
+        STATES[sym].update({
+            "status": "COOLDOWN", "next_status_time": time.time() + 600,
+            "last_exit_direction": "sell", "qty": 0.0,
+        })
+        with patch("core.check_entries.compute_signal_strength",
+                   return_value=("buy", 25.0, "MA_Cross")), \
+             patch("core.symbol_profile.SYMBOL_PROFILES", {}):
+            confirmed, reason = asyncio.run(_rapid_reconfirm_cooldown_entry(
+                sym, "buy", "MA_Cross", 25.0, checks=1, interval=0,
+            ))
+        self.assertFalse(confirmed)
+        self.assertIn("尚無雷達交易資格", reason)
 
     def test_cooldown_reentry_stops_when_direction_changes(self):
         sym = "XRPUSDT"
