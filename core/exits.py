@@ -148,7 +148,7 @@ def _ma_peak_keep_ratio(peak_profit):
 
 
 def _schedule_ma_exchange_profit_stop(sym):
-    """非阻塞地把新形成或上移的 MA 盈利底線同步至交易所。"""
+    """非阻塞同步 MA 鎖利；同步期間的新價位不可遺失。"""
     if PAPER_TRADING:
         return
     state = ctx.STATES.get(sym, {})
@@ -161,14 +161,20 @@ def _schedule_ma_exchange_profit_stop(sym):
         return
     previous = _MA_EXCHANGE_STOP_SYNC_TASKS.get(sym)
     if previous is not None and not previous.done():
+        state["_ma_exchange_stop_sync_pending"] = True
         return
 
     async def _sync():
-        try:
-            from core.orders import _sync_ma_exchange_profit_stop
-            await _sync_ma_exchange_profit_stop(sym)
-        except Exception as exc:
-            logger.info(f"⚠️ [MA交易所鎖利同步失敗] {sym}: {exc}")
+        from core.orders import _sync_ma_exchange_profit_stop
+        while True:
+            state["_ma_exchange_stop_sync_pending"] = False
+            try:
+                await _sync_ma_exchange_profit_stop(sym)
+            except Exception as exc:
+                logger.info(f"⚠️ [MA交易所鎖利同步失敗] {sym}: {exc}")
+                return
+            if not state.get("_ma_exchange_stop_sync_pending", False):
+                return
 
     _MA_EXCHANGE_STOP_SYNC_TASKS[sym] = loop.create_task(_sync())
 
@@ -284,6 +290,20 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         # 「price <= floor」只有在真正跌穿 floor 時才成立；若 current_price 還在 floor 上方，
         # crossed=False，讓利潤繼續跑。
         crossed = current_price <= floor_price if is_long else current_price >= floor_price
+        # 鎖利線是為了保住淨利，不可在價格已跳空越過底線、連雙邊費用都無法
+        # 涵蓋時，仍等待數秒確認後追價虧損平倉。此時把出場權交回 MA 轉折及
+        # 災難停損；若價格重新回到可獲利區，鎖利線仍可再次正常生效。
+        if crossed and profit <= ROUND_TRIP_FEE_PCT:
+            _reset_ma_profit_floor_confirmation(s)
+            if not s.get("ma_profit_floor_missed", False):
+                logger.info(
+                    f"⚠️ [MA_Profit_Floor_Missed] {sym} 價格已跳過鎖利線且"
+                    f"扣雙邊費用後無淨利，不以鎖利理由追價平倉"
+                )
+            s["ma_profit_floor_missed"] = True
+            return False, floor_price
+        if not crossed:
+            s["ma_profit_floor_missed"] = False
         return _ma_profit_floor_cross_confirmed(sym, crossed, is_long, now), floor_price
 
     locked_profit = max(fee_floor, confirmed_peak * _ma_peak_keep_ratio(confirmed_peak))

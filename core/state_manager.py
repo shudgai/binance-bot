@@ -80,6 +80,8 @@ def build_symbol_state(sym):
         "ma_profit_floor_price": 0.0,
         "ma_profit_floor_cross_count": 0,
         "ma_profit_floor_cross_since": 0.0,
+        "ma_profit_floor_missed": False,
+        "_ma_exchange_stop_sync_pending": False,
         "ma_peak_saved_pct": 0.0,
         "macd_line": 0.0,
         "macd_signal": 0.0,
@@ -497,6 +499,8 @@ def reset_coin_state(sym):
     s["ma_profit_floor_price"] = 0.0
     s["ma_profit_floor_cross_count"] = 0
     s["ma_profit_floor_cross_since"] = 0.0
+    s["ma_profit_floor_missed"] = False
+    s["_ma_exchange_stop_sync_pending"] = False
     s["ma_peak_saved_pct"] = 0.0
     s["stop_loss"] = 0.0
     s["pending_side"] = None

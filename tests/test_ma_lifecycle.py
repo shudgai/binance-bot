@@ -8,6 +8,7 @@ import numpy as np
 from core import ctx
 from core.check_entries import compute_indicators
 from core.exits import (_ma_peak_keep_ratio, _ma7_simple_turn_break,
+    _schedule_ma_exchange_profit_stop,
     _meaningful_ma7_break, check_exits, update_ma_peak_lock,
     update_trailing_stop)
 from core.state_manager import build_symbol_state
@@ -311,6 +312,20 @@ class MALifecycleTests(unittest.TestCase):
                 self.assertFalse(close_mock.call_args.kwargs["is_stop_loss"])
 
         asyncio.run(run())
+
+    def test_short_profit_floor_does_not_chase_after_net_profit_is_gone(self):
+        state = self._position_state(closed_price=100.02)
+        state.update({"qty": -1.0, "highest_profit_pct": 0.0032})
+
+        for event_time in (100.0, 101.0, 104.0):
+            hit, floor = update_ma_peak_lock(
+                self.sym, 100.02, False, event_time=event_time,
+            )
+            self.assertFalse(hit)
+
+        self.assertAlmostEqual(floor, 99.744, places=3)
+        self.assertEqual(state["ma_profit_floor_cross_count"], 0)
+        self.assertTrue(state["ma_profit_floor_missed"])
 
     def test_ma_profit_floor_reclaim_cancels_pending_exit(self):
         state = self._position_state(closed_price=100.24)
@@ -714,6 +729,36 @@ class MAExchangeStopScheduleTests(unittest.TestCase):
             self.assertFalse(hit)
             self.assertAlmostEqual(floor, 100.28)
             schedule.assert_called_once_with(sym)
+        finally:
+            if original is None:
+                ctx.STATES.pop(sym, None)
+            else:
+                ctx.STATES[sym] = original
+
+    def test_exchange_stop_sync_coalesces_update_arriving_while_running(self):
+        sym = "MASTOPPENDINGUSDT"
+        original = ctx.STATES.get(sym)
+        state = build_symbol_state(sym)
+        state["exchange_stop_order_id"] = "disaster-1"
+        ctx.STATES[sym] = state
+
+        async def run():
+            calls = 0
+
+            async def sync(_sym):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    _schedule_ma_exchange_profit_stop(sym)
+
+            with patch("core.orders._sync_ma_exchange_profit_stop", side_effect=sync):
+                _schedule_ma_exchange_profit_stop(sym)
+                from core import exits as exits_module
+                await exits_module._MA_EXCHANGE_STOP_SYNC_TASKS[sym]
+            self.assertEqual(calls, 2)
+
+        try:
+            asyncio.run(run())
         finally:
             if original is None:
                 ctx.STATES.pop(sym, None)
