@@ -260,5 +260,22 @@ class EntryFilterTests(unittest.TestCase):
         self.assertFalse(json.loads(kwargs["data"])["chat_template_kwargs"]["enable_thinking"])
 
 
+def test_ma7_simple_in_route_whitelists():
+    """
+    驗證 MA7_Simple 已同步加入兩處白名單來源：
+    entry_filter.py 的 MA_ENTRY_ROUTES（供 is_entry_allowed 使用，694/839 呼叫點）
+    check_entries.py 的 allowed_routes（822 Final_Entry_Guard，現已直接引用同一常數）
+    """
+    from core.entry_filter import MA_ENTRY_ROUTES, RANGE_ENTRY_ROUTES
+
+    assert "MA7_Simple" in MA_ENTRY_ROUTES
+
+    # 模擬 check_entries.py:820 現在的組合邏輯，確認兩處不會再次分歧
+    allowed_routes = MA_ENTRY_ROUTES + tuple(RANGE_ENTRY_ROUTES)
+    assert "MA7_Simple" in allowed_routes
+    assert "MA_Cross" in allowed_routes
+    assert "Range_Support_Long" in allowed_routes
+
+
 if __name__ == "__main__":
     unittest.main()

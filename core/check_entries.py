@@ -797,7 +797,7 @@ async def check_entries():
 
     # 候選可能來自上一根 K 的 pending 或回踩佇列；下單前重新驗證最新狀態。
     from core.symbol_profile import SYMBOL_PROFILES
-    from core.entry_filter import RANGE_ENTRY_ROUTES
+    from core.entry_filter import RANGE_ENTRY_ROUTES, MA_ENTRY_ROUTES
     validated_candidates = []
     for sym, side, strength, route, is_range_sig in candidates:
         s = ctx.STATES[sym]
@@ -817,7 +817,8 @@ async def check_entries():
             continue
 
         # 路由白名單：MA 路由和區間路由都允許
-        allowed_routes = ("MA_Cross", "MA_Breakout", "MA25_Pullback") + tuple(RANGE_ENTRY_ROUTES)
+        # 改為直接引用 MA_ENTRY_ROUTES，避免與 entry_filter.py 的定義重複維護、悄悄不一致
+        allowed_routes = MA_ENTRY_ROUTES + tuple(RANGE_ENTRY_ROUTES)
         if route not in allowed_routes:
             logger.info(f"🛑 [Final_Entry_Guard] {sym} 未知路由：{route}")
             continue
