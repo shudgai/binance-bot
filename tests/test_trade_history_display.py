@@ -11,6 +11,8 @@ def test_real_trade_history_has_unique_stable_row_ids(tmp_path, monkeypatch):
         "entry_timestamp_ms": 1784373400523,
         "symbol": "XRPUSDT",
         "profit_pct": -0.001,
+        "gross_profit_pct": 0.0001,
+        "side": "buy",
         "actual_entry": 1.0871,
         "actual_exit": 1.0872,
         "qty": 102.4,
@@ -28,6 +30,10 @@ def test_real_trade_history_has_unique_stable_row_ids(tmp_path, monkeypatch):
         "history:XRPUSDT:2746951952:exit",
     ]
     assert len({trade["id"] for trade in trades}) == 2
+    assert trades[0]["isBuyer"] is True
+    assert trades[1]["isBuyer"] is False
+    paired = api._attach_round_trip_fees(trades)
+    assert round(paired[1]["net_pnl"], 5) == -0.07704
 
 
 def test_trade_table_uses_composite_key_and_taipei_timezone():

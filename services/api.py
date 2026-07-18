@@ -793,8 +793,14 @@ def _get_real_trades():
                 continue
             seen_closes[close_key] = exit_time_ms
             
-            # 判斷多空方向
-            if profit_pct >= 0:
+            # 新紀錄直接保存進場方向；舊紀錄才以價差與損益符號回推。
+            # 淨利可能因手續費由正轉負，不能再只靠 profit_pct 判斷方向。
+            recorded_side = str(t.get("side") or "").lower()
+            if recorded_side in ("buy", "long"):
+                is_long = True
+            elif recorded_side in ("sell", "short"):
+                is_long = False
+            elif profit_pct >= 0:
                 is_long = (ax > ae)
             else:
                 is_long = (ax < ae)

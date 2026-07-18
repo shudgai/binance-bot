@@ -819,6 +819,11 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
     total_friction = slippage_cost + fees
     total_value = actual_entry * qty if (actual_entry > 0 and qty > 0) else 1.0
     friction_rate = (total_friction / total_value) * 100 if total_value > 0 else 0.0
+    # 交易所 realizedPnl 與價格報酬都不含 commission；歷史績效必須以扣除
+    # 本次完整進出場手續費後的淨報酬為準。保留 gross 欄位供滑價分析。
+    gross_profit_pct = float(profit_pct or 0.0)
+    fee_rate = (float(fees or 0.0) / total_value) if total_value > 0 else 0.0
+    profit_pct = gross_profit_pct - fee_rate
 
     # --- 新增：AI 經驗摘要生成邏輯 ---
     pnl_tag = "[大賺]" if profit_pct > 0.01 else "[微利]" if profit_pct > 0.002 else "[打平]" if profit_pct > -0.002 else "[小虧]" if profit_pct > -0.01 else "[大虧]"
@@ -851,6 +856,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "entry_reason": entry_reason or "UNKNOWN",
         "exit_reason": exit_reason,
         "profit_pct": round(profit_pct, 4),
+        "gross_profit_pct": round(gross_profit_pct, 4),
         "max_profit_reached": round(max_profit_reached, 4),
         "atr_at_exit": round(current_atr, 6),
         "market_mode": "High_Vol" if current_atr > 0.005 else "Low_Vol",
@@ -862,6 +868,7 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         "qty": round(qty, 4),
         "slippage": round(total_slippage, 6),
         "friction_rate": round(friction_rate, 4),
+        "side": str(side or "").lower(),
         "theoretical_profit": round(((expected_exit - expected_entry)/expected_entry * (1.0 if str(side).lower() == "buy" else -1.0)) if expected_entry > 0 else 0.0, 4),
         "ai_summary": summary,
         "ai_anomaly_tags": anomaly_tags,
@@ -870,7 +877,9 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
     if exchange_close_id is not None:
         trade_data["exchange_close_id"] = str(exchange_close_id)
     if realized_pnl_usdt is not None:
-        trade_data["realized_pnl_usdt"] = round(float(realized_pnl_usdt), 8)
+        gross_realized_pnl = float(realized_pnl_usdt)
+        trade_data["realized_pnl_usdt"] = round(gross_realized_pnl, 8)
+        trade_data["net_realized_pnl_usdt"] = round(gross_realized_pnl - float(fees or 0.0), 8)
 
     if os.path.exists(history_file):
         with open(history_file, 'r', encoding='utf-8') as f:
@@ -1262,6 +1271,27 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
             logger.info(f"⚠️ [手續費查詢失敗] {sym}: {_fee_e}")
             _real_fees = 0.0
 
+    _position_value = real_avg * qty
+    _net_profit_pct = profit_pct - ((_real_fees / _position_value) if _position_value > 0 else 0.0)
+    if _net_profit_pct > 0.01:
+        _net_pnl_tag = "[大賺]"
+    elif _net_profit_pct > 0.002:
+        _net_pnl_tag = "[微利]"
+    elif _net_profit_pct > -0.002:
+        _net_pnl_tag = "[打平]"
+    elif _net_profit_pct > -0.01:
+        _net_pnl_tag = "[小虧]"
+    else:
+        _net_pnl_tag = "[大虧]"
+    full_reason = f"{_net_pnl_tag} {reason}".strip()
+    s["last_exit_reason"] = full_reason
+    if not is_stop_loss and profit_pct >= -0.001 and _net_profit_pct < -0.001:
+        if close_side == "sell":
+            s["last_loss_time_long"] = time.time()
+        else:
+            s["last_loss_time_short"] = time.time()
+        s["consecutive_losses"] = s.get("consecutive_losses", 0) + 1
+
     record_trade_result(
         symbol=sym,
         entry_reason=s.get("entry_reason", "UNKNOWN"),
@@ -1281,9 +1311,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
 
     from core.config import DAILY_LOSS_LIMIT_PCT
     try:
-        accrue_daily_realized_pnl(profit_pct, real_avg * qty)
-        if profit_pct < 0:
-            logger.info(f"[每日熔斷追蹤] {sym} 虧損 {profit_pct*100:.2f}% | 今日累計: {_bal._DAILY_REALIZED_LOSS*100:.2f}% / {DAILY_LOSS_LIMIT_PCT*100:.1f}%")
+        accrue_daily_realized_pnl(_net_profit_pct, real_avg * qty)
+        if _net_profit_pct < 0:
+            logger.info(f"[每日熔斷追蹤] {sym} 淨虧損 {_net_profit_pct*100:.2f}% | 今日累計: {_bal._DAILY_REALIZED_LOSS*100:.2f}% / {DAILY_LOSS_LIMIT_PCT*100:.1f}%")
     except Exception as _e:
         logger.info(f"[每日熔斷追蹤失敗] {_e}")
 
@@ -1294,7 +1324,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         await _cancel_exchange_exit_order(sym, "exchange_stop_order_id", "止損")
         await _cancel_exchange_exit_order(sym, "exchange_take_profit_order_id", "停利")
 
-        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=profit_pct)
+        mark_exit(sym, is_stop_loss=is_stop_loss, reason=full_reason, loss_pct=_net_profit_pct)
         clear_peak(sym)
         reset_coin_state(sym)
     else:

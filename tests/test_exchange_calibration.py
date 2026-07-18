@@ -220,6 +220,9 @@ class ExchangeCalibrationTests(unittest.TestCase):
         self.assertFalse(second)
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["realized_pnl_usdt"], -10.0)
+        self.assertEqual(history[0]["net_realized_pnl_usdt"], -10.2)
+        self.assertEqual(history[0]["gross_profit_pct"], -0.05)
+        self.assertEqual(history[0]["profit_pct"], -0.051)
 
 
     def test_live_position_calibration_ensures_exchange_exit_orders(self):
