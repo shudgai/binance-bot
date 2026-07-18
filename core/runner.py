@@ -574,6 +574,10 @@ async def calibrate_with_exchange(exchange):
                 finally:
                     state[key] = None
             reset_coin_state(sym)
+            # 平倉後通知 idle_tracker 清除孤兒紀錄。
+            # 必須在 reset_coin_state 之後：此時 qty 已歸零，不會有讀到舊 qty 的競態窗口。
+            from core.idle_tracker import idle_tracker as _idle_tracker
+            _idle_tracker.confirm_position_closed(sym)
 
     except Exception as e:
         logger.info(f"⚠️ [CALIBRATION_FAIL] 無法連線交易所校準: {e}")
@@ -904,21 +908,52 @@ async def periodic_momentum_swap():
                         or ctx.STATES.get(sym, {}).get("is_ordering", False)
                         or ctx.STATES.get(sym, {}).get("pending_side")
                     ]
-                    
+
+                    # 閒置分流：策略卡住超過閾值的幣種，依持倉狀況分成兩類
+                    from core.idle_tracker import idle_tracker as _idle_tracker
+                    from core.config import RANGE_MODE_ENABLED
+                    _total_strategies = 2 if RANGE_MODE_ENABLED else 1
+                    _idle_symbols = _idle_tracker.get_idle_symbols(
+                        list(ctx.ALL_SYMBOLS), _total_strategies
+                    )
+                    _local_pos_checker = lambda sym: (
+                        abs(ctx.STATES.get(sym, {}).get("qty", 0.0)) > 0.000001
+                    )
+                    _safe_to_remove, _hold_for_exit = _idle_tracker.get_removable_symbols(
+                        _idle_symbols, _local_pos_checker
+                    )
+                    if _safe_to_remove:
+                        logger.info(
+                            f"♻️ [IdleTracker] 無持倉閒置幣種移出監控池：{_safe_to_remove}"
+                        )
+                        for _sym in _safe_to_remove:
+                            _idle_tracker.reset(_sym)
+                    if _hold_for_exit:
+                        logger.info(
+                            f"🔒 [IdleTracker] 有持倉閒置幣種轉孤兒清單，僅做出場管理：{_hold_for_exit}"
+                        )
+                    # 孤兒倉位（有持倉的閒置幣）與 protected 同等待遇——保留在池中直到平倉
+                    protected = list(dict.fromkeys(protected + _hold_for_exit))
+
                     # 動態汰換機制 (Defensive Eviction)
                     evicted = []
                     selected_list = list(selected)
                     for sym in list(selected_list):
                         if sym in protected:
                             continue
+                        # 直接剔除已被標記為無持倉閒置的幣種
+                        if sym in _safe_to_remove:
+                            selected_list.remove(sym)
+                            evicted.append(sym)
+                            continue
                         state = ctx.STATES.get(sym, {})
                         age = time.time() - state.get("first_seen_time", 0)
                         if age > 1800 and state.get("personality") == "calm" and state.get("vol_surge", 0.0) < 0.5:
                             selected_list.remove(sym)
                             evicted.append(sym)
-                    
+
                     if evicted:
-                        logger.info(f"🗑️ [動態汰換] 剔除無效監控幣種 (Calm + 低量能): {', '.join(evicted)}")
+                        logger.info(f"🗑️ [動態汰換] 剔除無效監控幣種 (Calm + 低量能 / 閒置無倉): {', '.join(evicted)}")
 
                     new_pool = list(dict.fromkeys(selected_list[:TRADE_POOL_SIZE] + protected))
                     profiles = load_symbol_profiles()

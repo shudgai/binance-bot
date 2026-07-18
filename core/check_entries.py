@@ -474,7 +474,13 @@ async def check_entries():
         if not has_position and open_count >= dynamic_max_positions:
             continue
 
-        # MA25 回調由已收線 MA 路由直接產生，不再使用舊 EMA20 等待佇列。
+        # 孤兒倉位閘門：該幣種策略不適配已被判定為 idle，有持倉者轉入孤兒清單。
+        # 孤兒幣只做出場管理（由主迴圈的 check_exits 負責），不再跑任何新訊號判斷。
+        # ── 出場管理由 runner.py check_exits 在主迴圈正常執行，無需在這裡額外呼叫。
+        from core.idle_tracker import idle_tracker as _orphan_gate_tracker
+        if sym in _orphan_gate_tracker.get_orphaned_positions():
+            logger.debug(f"⏭️ [孤兒倉位] {sym} 已列為孤兒，跳過新進場判斷，僅做出場管理")
+            continue
 
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
