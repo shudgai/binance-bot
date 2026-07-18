@@ -678,7 +678,10 @@ async def check_entries():
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
         _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY
-        if _atr_pct_5m < _min_atr_pct_5m:
+        # MA7_Simple 路線刻意設計為「MA7 一轉折就進場」，不做即時波動底線檢查——
+        # 使用者明確要求只要 MA7 谷底/頭部轉折，即直接放行，
+        # 由 MA7_Simple 自身的量能與 RSI 極端值過濾負責基本把關。
+        if str(route or "").lower() != "ma7_simple" and _atr_pct_5m < _min_atr_pct_5m:
             _mode_name = "區間" if is_range_signal else "MA"
             logger.info(
                 f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < "
