@@ -31,6 +31,7 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma
 RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
 MA_DISASTER_STOP_PCT = 0.015
 MA_PENDING_MONITOR_INTERVAL_SEC = 3.0
+MA7_SIMPLE_PENDING_MAX_SEC = 20.0
 MA_PENDING_REPRICE_COOLDOWN_SEC = 6.0
 MA_CROSS_MAX_EXTENSION_PCT = 0.0025
 MA_CROSS_MAX_EXTENSION_ATR_MULT = 0.5
@@ -118,6 +119,25 @@ def _enforce_bracket_rr(avg, stop_price, take_profit_price, is_long, tick_size, 
     return stop_price, take_profit_price
 
 
+def _ma_exchange_stop_target(state, avg, is_long, hard_stop, current_price=0.0):
+    """選出最強且尚未被行情穿越的 MA 交易所端保護價。"""
+    candidates = []
+    if state.get("ma_profit_floor_armed", False):
+        candidates.append(float(state.get("ma_profit_floor_price", 0.0) or 0.0))
+    if state.get("ma_peak_lock_armed", False):
+        candidates.append(float(state.get("ma_peak_lock_price", 0.0) or 0.0))
+    candidates = [price for price in candidates if price > 0]
+    if not candidates:
+        return float(hard_stop)
+    target = max(candidates) if is_long else min(candidates)
+    profit_side = target > avg if is_long else target < avg
+    not_already_crossed = (
+        current_price <= 0
+        or (target < current_price if is_long else target > current_price)
+    )
+    return target if profit_side and not_already_crossed else float(hard_stop)
+
+
 async def _replace_exchange_exit_orders(sym):
     if PAPER_TRADING:
         return
@@ -192,9 +212,15 @@ async def _replace_exchange_exit_orders(sym):
         else:
             logger.info(f"⚠️ [Range_Exchange_Bracket] {sym} 區間 TP/SL 遺失或方向錯誤，使用通用保護單")
 
-    # MA 波段固定使用 1.5% 災難止損；不可再被 TP/RR 或均線錨點縮窄。
+    # MA 波段先保留 1.5% 災難止損；盈利底線形成後提升為交易所端鎖利。
     if is_ma_route:
-        stop_price = round_step(hard_stop, prec["tick_size"])
+        current_price = float(
+            s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0
+        )
+        stop_price = _ma_exchange_stop_target(
+            s, avg, is_long, hard_stop, current_price=current_price,
+        )
+        stop_price = round_step(stop_price, prec["tick_size"])
 
     # 防禦性保底：進場已經會把數量夾在 MARKET_LOT_SIZE 上限之內（見 execute_order），
     # 這裡理論上不該再超過，但攤平救援等會改變 qty 的路徑萬一漏夾，用同一個上限保底，
@@ -222,6 +248,43 @@ async def _replace_exchange_exit_orders(sym):
     )
     s["exchange_take_profit_order_id"] = tp_order["id"]
     logger.info(f"🎯 [交易所挂單] {sym} 成功挂出 Take Profit Market 停利單 @ {take_profit_price} (數量: {qty})")
+
+
+async def _sync_ma_exchange_profit_stop(sym):
+    """先建立新單再撤舊單，將 MA 盈利底線同步成交易所端保護。"""
+    if PAPER_TRADING:
+        return
+    s = ctx.STATES.get(sym)
+    if not s:
+        return
+    qty = abs(float(s.get("qty", 0.0) or 0.0))
+    avg = float(s.get("avg_price", 0.0) or 0.0)
+    if qty <= 0.000001 or avg <= 0:
+        return
+    is_long = float(s.get("qty", 0.0)) > 0
+    hard_stop = avg * (1.0 - MA_DISASTER_STOP_PCT if is_long else 1.0 + MA_DISASTER_STOP_PCT)
+    current_price = float(
+        s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0
+    )
+    target = _ma_exchange_stop_target(
+        s, avg, is_long, hard_stop, current_price=current_price,
+    )
+    if abs(target - hard_stop) <= avg * 0.000001:
+        return
+    prec = await get_contract_precision(sym)
+    target = round_step(target, prec["tick_size"])
+    close_side = "sell" if is_long else "buy"
+    old_order_id = s.get("exchange_stop_order_id")
+    new_order = await exchange_futures.create_order(
+        sym, type="STOP_MARKET", side=close_side, amount=qty,
+        params={"stopPrice": target, "reduceOnly": True},
+    )
+    s["exchange_stop_order_id"] = new_order["id"]
+    if old_order_id and str(old_order_id) != str(new_order["id"]):
+        await _cancel_exchange_exit_order_id(sym, old_order_id, "舊MA保護止損")
+    logger.info(
+        f"🔒 [MA交易所鎖利] {sym} 已同步 STOP_MARKET @ {target}"
+    )
 
 
 async def _fetch_open_exchange_exit_orders(sym):
@@ -264,8 +327,15 @@ async def _ensure_exchange_exit_orders(sym):
     close_side = "SELL" if s["qty"] > 0 else "BUY"
     route = str(s.get("entry_reason", "") or "").lower()
     is_ma_route = route in MA_ENTRY_ROUTES
-    expected_ma_stop = float(s["avg_price"]) * (
+    avg = float(s["avg_price"])
+    hard_ma_stop = avg * (
         1.0 - MA_DISASTER_STOP_PCT if s["qty"] > 0 else 1.0 + MA_DISASTER_STOP_PCT
+    )
+    current_price = float(
+        s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0
+    )
+    expected_ma_stop = _ma_exchange_stop_target(
+        s, avg, s["qty"] > 0, hard_ma_stop, current_price=current_price,
     )
     candidates = {"stop": [], "take_profit": []}
     all_exit_orders = []
@@ -2636,6 +2706,14 @@ async def _record_missed_limit_fill(sym, side, order_id, info, fetched, position
         logger.info(f"🚨 [漏接成交後掛單失敗] {sym}: {se}")
 
 
+def _pending_entry_time_expired(info, elapsed, max_wait_seconds):
+    """MA7 轉折掛單短效；其他動態結構掛單仍可持續重掛。"""
+    route_key = str(info.get("entry_route", "") or "").lower()
+    if route_key == "ma7_simple":
+        return elapsed > MA7_SIMPLE_PENDING_MAX_SEC
+    return elapsed > max_wait_seconds and not _is_dynamic_pending_entry(info)
+
+
 async def check_stale_limit_orders():
     """
     超時撤單機制 (Order Timeout Canceller)
@@ -2657,8 +2735,15 @@ async def check_stale_limit_orders():
             original_qty = info.get("qty", 0.0)
             max_wait_seconds = float(info.get("timeout", DUAL_SHOT_ORDER_TIMEOUT))
             dynamic_strategy_order = _is_dynamic_pending_entry(info)
-            # MA 掛單不再因固定秒數到期；持續看結構與價格。舊式／救援單保留逾時。
-            should_cancel = elapsed > max_wait_seconds and not dynamic_strategy_order
+            route_key = str(info.get("entry_route", "") or "").lower()
+            ma7_simple_expired = (
+                route_key == "ma7_simple" and elapsed > MA7_SIMPLE_PENDING_MAX_SEC
+            )
+            # MA7_Simple 是當下轉折，不能像 MA25 結構價一樣永久等待。
+            # 舊掛單曾在訊號反轉 2 分半後才成交，因此僅保留短暫回踩窗口。
+            should_cancel = _pending_entry_time_expired(
+                info, elapsed, max_wait_seconds,
+            )
             chase_eligible = should_cancel
             reprice_eligible = False
             latest_ref_price = 0.0
@@ -2666,6 +2751,9 @@ async def check_stale_limit_orders():
                 f"已掛單 {elapsed:.1f} 秒 > {max_wait_seconds:.0f}s"
                 if should_cancel else ""
             )
+            if ma7_simple_expired:
+                cancel_reason = f"MA7 轉折掛單已超過 {MA7_SIMPLE_PENDING_MAX_SEC:.0f}s 有效期"
+                chase_eligible = False
 
             setup_ok, setup_reason = _pending_entry_setup_valid(info)
             if not setup_ok:
@@ -2673,7 +2761,7 @@ async def check_stale_limit_orders():
                 chase_eligible = False
                 cancel_reason = f"進場訊號已失效: {setup_reason}"
 
-            if setup_ok and (dynamic_strategy_order or not should_cancel):
+            if setup_ok and not should_cancel:
                 try:
                     latest_ref_price = await get_reference_price(sym, exchange_futures)
                 except Exception as pe:

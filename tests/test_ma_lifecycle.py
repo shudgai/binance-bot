@@ -668,3 +668,26 @@ class SlowMarketAtrCheckTests(unittest.TestCase):
                 str(variant or "").lower() != "ma7_simple" and _atr_pct_5m < _min_atr_pct_5m
             )
             self.assertFalse(blocked, f"route={variant!r} should bypass SLOW_MARKET check")
+
+
+class MAExchangeStopScheduleTests(unittest.TestCase):
+    def test_new_profit_floor_schedules_exchange_stop_sync(self):
+        sym = "MASTOPUSDT"
+        original = ctx.STATES.get(sym)
+        state = build_symbol_state(sym)
+        state.update({
+            "qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
+            "highest_profit_pct": 0.0035, "exchange_stop_order_id": "disaster-1",
+        })
+        ctx.STATES[sym] = state
+        try:
+            with patch("core.exits._schedule_ma_exchange_profit_stop") as schedule:
+                hit, floor = update_ma_peak_lock(sym, 100.35, True)
+            self.assertFalse(hit)
+            self.assertGreater(floor, 100.0)
+            schedule.assert_called_once_with(sym)
+        finally:
+            if original is None:
+                ctx.STATES.pop(sym, None)
+            else:
+                ctx.STATES[sym] = original

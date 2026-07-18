@@ -36,6 +36,7 @@ MA_PEAK_LOCK_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
+_MA_EXCHANGE_STOP_SYNC_TASKS = {}
 
 # MA7 獲利轉彎出場：第一根確認轉彎的收線先落袋 60%，下一根仍往反方向才清倉。
 # 最低毛利需涵蓋雙邊手續費及一小段滑價，避免把接近成本的 MA7 抖動當成停利。
@@ -142,6 +143,32 @@ def _ma_peak_keep_ratio(peak_profit):
     return 0.75
 
 
+def _schedule_ma_exchange_profit_stop(sym):
+    """非阻塞地把新形成或上移的 MA 盈利底線同步至交易所。"""
+    if PAPER_TRADING:
+        return
+    state = ctx.STATES.get(sym, {})
+    if not state.get("exchange_stop_order_id"):
+        # 初始保護單尚未建立時交由 _ensure_exchange_exit_orders 一次完成。
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    previous = _MA_EXCHANGE_STOP_SYNC_TASKS.get(sym)
+    if previous is not None and not previous.done():
+        return
+
+    async def _sync():
+        try:
+            from core.orders import _sync_ma_exchange_profit_stop
+            await _sync_ma_exchange_profit_stop(sym)
+        except Exception as exc:
+            logger.info(f"⚠️ [MA交易所鎖利同步失敗] {sym}: {exc}")
+
+    _MA_EXCHANGE_STOP_SYNC_TASKS[sym] = loop.create_task(_sync())
+
+
 def _reset_ma_profit_floor_confirmation(state):
     state["ma_profit_floor_cross_count"] = 0
     state["ma_profit_floor_cross_since"] = 0.0
@@ -231,6 +258,7 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         # 舊版固定用 fee_floor（保本線），導致峰值到 0.3% 時停利線仍只在 ~0.25% 保本附近，
         # 沒有隨峰值往上走，最終出場在接近 0.00%。
         mid_keep_ratio = 0.70
+        previous_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
         locked_mid = max(fee_floor, confirmed_peak * mid_keep_ratio)
         if is_long:
             floor_price = avg * (1.0 + locked_mid)
@@ -242,6 +270,8 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
             floor_price = min(prev_floor if prev_floor > 0 else float("inf"), floor_price)
         s["ma_profit_floor_armed"] = True
         s["ma_profit_floor_price"] = floor_price
+        if abs(floor_price - previous_floor) > avg * 0.000001:
+            _schedule_ma_exchange_profit_stop(sym)
         # [保護] 若當前利潤明顯高於 floor（代表價格在 floor 上方往上走），不要觸發出場。
         # 「price <= floor」只有在真正跌穿 floor 時才成立；若 current_price 還在 floor 上方，
         # crossed=False，讓利潤繼續跑。
@@ -266,8 +296,11 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         previous = float(s.get("ma_peak_lock_price", 0.0) or 0.0)
         lock_price = min(previous if previous > 0 else float("inf"), proposed)
         crossed = current_price >= lock_price
+    previous_lock = float(s.get("ma_peak_lock_price", 0.0) or 0.0)
     s["ma_peak_lock_armed"] = True
     s["ma_peak_lock_price"] = lock_price
+    if abs(lock_price - previous_lock) > avg * 0.000001:
+        _schedule_ma_exchange_profit_stop(sym)
     return crossed, lock_price
 
 

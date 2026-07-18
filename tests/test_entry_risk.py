@@ -18,7 +18,8 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
     _entry_signal_chase_guard, _pending_entry_reprice_needed,
     _translated_pending_limit_price, _ma_cross_anti_chase_plan, _is_dynamic_pending_entry,
     _reanchor_rejected_passive_price, _entry_price_guard,
-    _ma25_confirmed_pullback_price, _range_exit_bracket)
+    _ma25_confirmed_pullback_price, _range_exit_bracket,
+    _ma_exchange_stop_target, _pending_entry_time_expired)
 
 
 class EntryRiskTests(unittest.TestCase):
@@ -451,6 +452,42 @@ class EntryRiskTests(unittest.TestCase):
         stop, take_profit = _enforce_bracket_rr(100.0, 103.0, 98.0, False, 0.1, min_rr=1.5)
         self.assertEqual(stop, 103.0)
         self.assertGreaterEqual(100.0 - take_profit, (stop - 100.0) * 1.5)
+
+
+    def test_ma7_simple_pending_order_expires_after_twenty_seconds(self):
+        info = {"entry_route": "MA7_Simple", "strategy_type": "ma"}
+        self.assertFalse(_pending_entry_time_expired(info, 20.0, 120.0))
+        self.assertTrue(_pending_entry_time_expired(info, 20.01, 120.0))
+
+    def test_structural_ma_pending_order_keeps_dynamic_lifetime(self):
+        info = {"entry_route": "MA25_Pullback", "strategy_type": "ma"}
+        self.assertFalse(_pending_entry_time_expired(info, 300.0, 120.0))
+
+    def test_ma_exchange_stop_promotes_confirmed_profit_floor(self):
+        state = {
+            "ma_profit_floor_armed": True,
+            "ma_profit_floor_price": 100.25,
+            "ma_peak_lock_armed": False,
+        }
+        self.assertEqual(
+            _ma_exchange_stop_target(state, 100.0, True, 98.5, current_price=100.4),
+            100.25,
+        )
+        self.assertEqual(
+            _ma_exchange_stop_target(state, 100.0, True, 98.5, current_price=100.2),
+            98.5,
+        )
+
+    def test_ma_exchange_stop_is_symmetric_for_short(self):
+        state = {
+            "ma_profit_floor_armed": True,
+            "ma_profit_floor_price": 99.75,
+            "ma_peak_lock_armed": False,
+        }
+        self.assertEqual(
+            _ma_exchange_stop_target(state, 100.0, False, 101.5, current_price=99.6),
+            99.75,
+        )
 
 
 if __name__ == "__main__":
