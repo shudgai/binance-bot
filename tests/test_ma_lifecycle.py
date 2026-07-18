@@ -115,6 +115,7 @@ class MALifecycleTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_early_momentum_confirmation_counts_once_per_closed_candle(self):
+        # ma_momentum_flip_count 已重命名為 ma_exit_invalid_count
         state = self._position_state(closed_price=98.8)
         state.update({
             "close_price": 99.7,
@@ -128,21 +129,25 @@ class MALifecycleTests(unittest.TestCase):
                 await check_exits(self.sym)
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
-                self.assertEqual(state.get("ma_momentum_flip_count"), 1)
+                self.assertEqual(state.get("ma_exit_invalid_count"), 1)
 
         asyncio.run(run())
 
     def test_confirmed_wrong_direction_exits_before_disaster_stop(self):
-        state = self._position_state(closed_price=99.2)
+        # MA_WRONG_DIRECTION_PCT = 1%；price 98.9 對 avg 100.0 = -1.1%，可觸發
+        # 兩根均為 bearish（close < open），且 both_closed_after_entry 需成立
+        state = self._position_state(closed_price=98.8)
         opened = time.time() - 700
         opened_ms = int(opened * 1000)
         state.update({
             "open_time": opened,
-            "close_price": 99.3,
+            "close_price": 98.9,
+            "avg_price": 100.0,
+            "vol_ma20": 100.0,
             "ohlcv": [
-                [opened_ms, 100.0, 100.1, 99.6, 99.7, 100.0],
-                [opened_ms + 300000, 99.7, 99.8, 99.1, 99.2, 100.0],
-                [opened_ms + 600000, 99.2, 99.4, 99.1, 99.3, 1.0],
+                [opened_ms, 100.0, 100.1, 99.5, 99.5, 120.0],   # bearish, after entry
+                [opened_ms + 300000, 99.5, 99.6, 98.7, 98.8, 120.0],  # bearish, after entry
+                [opened_ms + 600000, 98.8, 99.0, 98.7, 98.9, 1.0],   # live candle
             ],
         })
 
@@ -178,8 +183,9 @@ class MALifecycleTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_disaster_stop_remains_as_last_resort(self):
+        # MA_DISASTER_STOP_PCT = 2.5%；avg=100.0，需 close_price <= 97.5 才觸發
         state = self._position_state(closed_price=99.5)
-        state["close_price"] = 98.4
+        state["close_price"] = 97.4
 
         async def run():
             close_mock = AsyncMock()
@@ -259,6 +265,7 @@ class MALifecycleTests(unittest.TestCase):
         self.assertAlmostEqual(floor_price, 99.75)
 
     def test_ma_short_early_momentum_flip_exits_after_two_confirmations(self):
+        # [MA_Early_Momentum_Flip] 已合併至 [MA7_Closed_Break]（ma_exit_invalid_count >= 2）
         state = self._position_state(closed_price=101.2, ma7=100.1, ma25=101.0)
         state.update({
             "qty": -1.0, "close_price": 101.2,
@@ -275,11 +282,12 @@ class MALifecycleTests(unittest.TestCase):
                 state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 await check_exits(self.sym)
                 close_mock.assert_called_once()
-                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Early_Momentum_Flip]")
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Closed_Break]")
 
         asyncio.run(run())
 
     def test_ma_long_early_momentum_flip_is_symmetric(self):
+        # [MA_Early_Momentum_Flip] 已合併至 [MA7_Closed_Break]（ma_exit_invalid_count >= 2）
         state = self._position_state(closed_price=98.8, ma7=99.9, ma25=99.0)
         state.update({
             "close_price": 98.8, "open_time": time.time() - 120,
@@ -295,11 +303,12 @@ class MALifecycleTests(unittest.TestCase):
                 state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 await check_exits(self.sym)
                 close_mock.assert_called_once()
-                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Early_Momentum_Flip]")
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Closed_Break]")
 
         asyncio.run(run())
 
     def test_ma_early_momentum_flip_confirmation_resets_when_structure_recovers(self):
+        # ma_momentum_flip_count 已重命名為 ma_exit_invalid_count
         state = self._position_state(closed_price=101.2, ma7=100.1, ma25=101.0)
         state.update({
             "qty": -1.0, "close_price": 101.2,
@@ -311,20 +320,20 @@ class MALifecycleTests(unittest.TestCase):
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
-                self.assertEqual(state["ma_momentum_flip_count"], 1)
+                self.assertEqual(state["ma_exit_invalid_count"], 1)
                 state["ma_candle_ts"] = first_candle_ts + 300000
                 state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 state["ohlcv"][-2][4] = 100.0
                 state["close_price"] = 100.0
                 await check_exits(self.sym)
-                self.assertEqual(state["ma_momentum_flip_count"], 0)
+                self.assertEqual(state["ma_exit_invalid_count"], 0)
                 state["ma_candle_ts"] = first_candle_ts + 600000
                 state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 state["ohlcv"][-2][4] = 101.2
                 state["close_price"] = 101.2
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
-                self.assertEqual(state["ma_momentum_flip_count"], 1)
+                self.assertEqual(state["ma_exit_invalid_count"], 1)
 
         asyncio.run(run())
 
@@ -344,18 +353,22 @@ class MALifecycleTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_ma_active_risk_stop_requires_two_breaches(self):
-        state = self._position_state(closed_price=99.4)
-        state.update({"close_price": 99.4, "open_time": time.time() - 120, "current_rsi": 55.0})
+    def test_ma_lifecycle_exit_requires_two_breaches(self):
+        # [MA_Active_Risk_Stop] 已合併至 [MA7_Closed_Break] 機制（ma_exit_invalid_count >= 2）
+        # ma7=100.0 > ma25=99.0，long 倉位；closed_price=98.8 < ma25=99.0（ma7_broken）
+        state = self._position_state(closed_price=98.8)
+        state.update({"close_price": 98.8, "open_time": time.time() - 120, "current_rsi": 55.0})
 
         async def run():
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
+                state["ma_candle_ts"] = state["ma_candle_ts"] + 300000
+                state["ohlcv"][-2][0] = state["ma_candle_ts"]
                 await check_exits(self.sym)
                 close_mock.assert_called_once()
-                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Active_Risk_Stop]")
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Closed_Break]")
 
         asyncio.run(run())
 
