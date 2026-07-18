@@ -640,7 +640,7 @@ async def check_entries():
             direction_ok = candle_close > candle_open if side == "buy" else candle_close < candle_open
             volume_price_sync = direction_ok and current_vol >= prev_vol * 0.70
 
-            if route in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
+            if route in ("MA_Cross", "MA_Breakout", "MA25_Pullback", "MA7_Simple"):
                 if not liquidity_check and profile.get("min_signal_strength", 10.0) > 10.0:
                     s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：流動性不足 (估算24H交易額: {h24_quote_volume_est:,.0f} < 1,000,000)")
@@ -1140,10 +1140,11 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
             return False, range_reason
         return True, "range setup valid"
 
-    if route not in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
+    from core.entry_filter import MA_ENTRY_ROUTES
+    if route not in MA_ENTRY_ROUTES:
         return False, "non-MA route disabled"
 
-    if route in ("MA_Cross", "MA_Breakout", "MA25_Pullback"):
+    if route in MA_ENTRY_ROUTES:
         from core.entry_filter import is_ma_direction_aligned
         if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
