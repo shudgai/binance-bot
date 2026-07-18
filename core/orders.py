@@ -1630,7 +1630,21 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被市場價缺失風控攔截，未進入下單")
         return
 
-    # MA7 反追價保護與支撐/阻力錨定掛單是規劃中但從未實作的功能，已於 2026-07-18 清理死代碼，如需要可參考 git commit 68cd3a8 的 commit message 了解原始設計意圖
+    # MA_Cross 若已離開 MA7 太遠，不再用高分 chase 追在延伸段；改掛回 MA7 反抽位。
+    # 這項保護只作用在首倉，救援 DCA 維持原本的價格改善規則。
+    _ma_cross_anti_chase = False
+    _ma_cross_anchor = 0.0
+    if not is_rescue_dca:
+        _ma_cross_anti_chase, _ma_cross_anchor, _ma_cross_reason = _ma_cross_anti_chase_plan(
+            sym, side, market_price, entry_route,
+        )
+        if _ma_cross_anti_chase:
+            actual_entry_mode = "pullback"
+            logger.info(
+                f"🧲 [MA_Cross_AntiChase] {sym} {side} {_ma_cross_reason}；"
+                f"不追價，等待 MA7 反抽位 {_ma_cross_anchor:.6f}"
+            )
+
 
     s["last_entry_signal_price"] = price
 
@@ -1877,6 +1891,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         limit_price = min(limit_price, current_market_price + atr * (_pb_mult * 3))
                     else:
                         limit_price = target_pb
+                if _ma_cross_anti_chase and _ma_cross_anchor > 0:
+                    limit_price = _ma_cross_anchor
+                    logger.info(f"🧲 [MA7反抽掛單-Paper] {sym} 等待 MA7 結構價 {limit_price:.6f}，不追延伸段")
                 chase_ok, chase_reason = _entry_signal_chase_guard(
                     side, price, limit_price, is_first_entry, is_rescue_dca,
                 )
@@ -1978,6 +1995,8 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     # 如果是由 entry_filter 觸發的 SUPPORT_ZONE_LIMIT_CONVERT 或 RESISTANCE_ZONE_LIMIT_CONVERT，
                     # 則直接以當時覆寫的 price (即支撐位上限或阻力位下限) 作為掛單價，保證掛在完美的精準阻力/支撐區上。
                     _is_zone_convert = s.get("force_pullback_entry", False)
+                    _atr_pct = 0.0
+                    _pb_mult = 0.0
 
                     _is_structure_anchored = False
                     if _is_zone_convert and price > 0:
@@ -2012,6 +2031,10 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                                 limit_price = min(limit_price, price + atr * (_pb_mult * 3.5))
                             else:
                                 limit_price = target_pb
+                    if _ma_cross_anti_chase and _ma_cross_anchor > 0:
+                        limit_price = _ma_cross_anchor
+                        _is_structure_anchored = True
+                        logger.info(f"🧲 [MA7反抽掛單] {sym} 等待 MA7 結構價 {limit_price:.6f}，不追延伸段")
                     limit_price = round_step(limit_price, tick_size)
                     logger.info(f"📌 [回踩限價掛單] {sym} 限價掛單價 {limit_price:.6f} (信號市價: {price:.6f}, ATR%:{_atr_pct*100:.2f}%, 追低乘數:{_pb_mult:.2f})")
                 else:
@@ -2132,7 +2155,9 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 "market_reference_price": market_price,
                 "last_reprice_at": order_ts, "reprice_count": 0,
                 "timeout": _order_timeout,
-                "allow_chase_on_timeout": _is_structure_anchored and not is_rescue_dca,
+                "allow_chase_on_timeout": (_is_structure_anchored and not is_rescue_dca
+                                           and not _ma_cross_anti_chase),
+                "ma_cross_anti_chase": _ma_cross_anti_chase,
                 "chased_once": False,
             }
             logger.info(f"⏳ [限價單挂出] {sym} {side} {base_amt:.4f} @ {limit_price} (ID: {order_id}, 類型: {order_type}, 逾時: {_order_timeout:.0f}s)")
@@ -2528,9 +2553,10 @@ async def _relist_pending_entry(info, sym, side, qty, current_price):
         return False
 
 
-async def _record_missed_limit_fill(sym, side, order_id, info, fetched):
-    """訂單在 check_stale_limit_orders 判定逾時、真正呼叫撤單前就已經完全成交
-    （status='closed'）。原本這裡把 'closed' 跟 'canceled' 一視同仁，直接丟棄
+async def _record_missed_limit_fill(sym, side, order_id, info, fetched, positions=None):
+    """訂單在 check_stale_limit_orders 判定逾時、真正呼叫撤單前已經成交
+    （包含 closed 全成與 canceled 部分成交）。原本這裡把成交後的 canceled
+    當成完全未成交，直接丟棄
     追蹤，導致本地 qty/avg_price 從未更新、交易所也沒掛出保護單，一筆真實倉位
     在最多 60 秒內完全沒人管（直到 periodic_position_reconciliation 才發現），
     而且那條路徑會把這筆「其實是自己剛成交的單」誤判成重啟接管的舊倉位。
@@ -2538,11 +2564,12 @@ async def _record_missed_limit_fill(sym, side, order_id, info, fetched):
     s = ctx.STATES.get(sym)
     if s is None:
         return
-    try:
-        positions = await exchange_futures.fetch_positions([sym])
-    except Exception as exc:
-        logger.info(f"⚠️ [漏接成交同步失敗] {sym} {order_id}: {exc}")
-        return
+    if positions is None:
+        try:
+            positions = await exchange_futures.fetch_positions([sym])
+        except Exception as exc:
+            logger.info(f"⚠️ [漏接成交同步失敗] {sym} {order_id}: {exc}")
+            return
     actual_pos, actual_qty = _find_exchange_position(positions, sym)
     if actual_pos is None:
         logger.info(f"⚠️ [漏接成交] {sym} 訂單 {order_id} 顯示已成交，但交易所目前查無持倉，略過")
@@ -2565,7 +2592,18 @@ async def _record_missed_limit_fill(sym, side, order_id, info, fetched):
         save_entry_time(sym, now)
         s["highest_profit_pct"] = 0.0
         s["max_profit_reached"] = 0.0
+        s["ma_peak_saved_pct"] = 0.0
+        s["ma_peak_lock_armed"] = False
+        s["ma_peak_lock_price"] = 0.0
+        s["ma_profit_floor_armed"] = False
+        s["ma_profit_floor_price"] = 0.0
+        s["ma_profit_floor_cross_count"] = 0
+        s["ma_profit_floor_cross_since"] = 0.0
+        s["realtime_peak_candidate_price"] = 0.0
+        s["realtime_peak_candidate_profit"] = 0.0
+        s["realtime_peak_candidate_time"] = 0.0
         s["is_breakeven_locked"] = False
+        s.pop("dynamic_exit_manager", None)
         clear_peak(sym)
     s["last_buy_time"] = now
     s["last_entry_time"] = now
@@ -2573,6 +2611,15 @@ async def _record_missed_limit_fill(sym, side, order_id, info, fetched):
     s["last_entry_direction"] = side
     s["restored_from_exchange"] = False
     s["entry_count"] = max(s.get("entry_count", 0), 1)
+    s["first_entry_price"] = fill_price if is_first_entry else s.get("first_entry_price", fill_price)
+    s["entry_strength"] = float(info.get("signal_strength", 0.0) or 0.0)
+    s["entry_atr"] = max(float(s.get("current_atr", 0.0) or 0.0), float(s["avg_price"]) * 0.005)
+    s.setdefault("entries", []).append({
+        "price": fill_price, "qty": abs(actual_qty), "time": now, "side": side,
+    })
+    s["pending_side"] = None
+    s["pending_time"] = 0
+    s["status"] = "ACTIVE"
     route = info.get("entry_route")
     if route:
         s["entry_reason"] = route
@@ -2580,7 +2627,7 @@ async def _record_missed_limit_fill(sym, side, order_id, info, fetched):
         save_entry_reason(sym, route)
 
     logger.info(
-        f"⚠️ [漏接成交] {sym} 訂單 {order_id} 在逾時檢查前已完全成交 @ {fill_price:.6f}"
+        f"⚠️ [漏接成交] {sym} 訂單 {order_id} 已有成交 @ {fill_price:.6f}"
         f"（qty={actual_qty:.4f}），補記錄為正式倉位並立即掛出保護單"
     )
     try:
@@ -2670,15 +2717,20 @@ async def check_stale_limit_orders():
                 filled_qty = float(fetched.get('filled', 0.0) or 0.0)
 
                 if order_status == 'canceled':
+                    if filled_qty > 0.000001:
+                        await _record_missed_limit_fill(sym, side, order_id, info, fetched)
                     ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
-                    logger.info(f"ℹ️ [超時撤單] {sym} 訂單 {order_id} 已為 canceled 狀態，跳過撤單。")
+                    logger.info(
+                        f"ℹ️ [超時撤單] {sym} 訂單 {order_id} 已為 canceled 狀態"
+                        f"（成交 {filled_qty:.4f}/{original_qty:.4f}），跳過重複撤單。"
+                    )
                     continue
 
                 if order_status == 'closed':
                     # 'closed' 在 ccxt/幣安語意上代表「完全成交」，跟 'canceled' 完全不同，
                     # 不能同一分支直接丟棄追蹤，否則這筆真實成交會變成沒人管的孤兒倉位。
-                    ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                     await _record_missed_limit_fill(sym, side, order_id, info, fetched)
+                    ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                     continue
 
                 await exchange_futures.cancel_order(order_id, sym)
@@ -2692,26 +2744,17 @@ async def check_stale_limit_orders():
             except Exception as ce:
                 logger.info(f"⚠️ [超時撤單失敗] {sym} {order_id}: {ce}")
 
-            ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
-
             try:
                 positions = await exchange_futures.fetch_positions([sym])
-                actual_pos = next(
-                    (p for p in positions
-                     if p.get('symbol') == sym and abs(float(p.get('contracts', 0) or 0)) > 0),
-                    None
-                )
+                actual_pos, _ = _find_exchange_position(positions, sym)
                 s = ctx.STATES.get(sym)
                 if not s:
+                    ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)
                     continue
 
                 if actual_pos:
-                    actual_qty = float(actual_pos.get('contracts', 0) or 0)
-                    side_sign = 1 if actual_pos.get('side', '') == 'long' else -1
-                    s["qty"] = actual_qty * side_sign
-                    logger.info(
-                        f"📊 [持倉同步] {sym} 撤銷後實際持倉: {s['qty']:.4f} "
-                        f"(原始預期: {original_qty:.4f})"
+                    await _record_missed_limit_fill(
+                        sym, side, order_id, info, fetched, positions=positions,
                     )
                 else:
                     chased = False
@@ -2734,3 +2777,8 @@ async def check_stale_limit_orders():
 
             except Exception as pe:
                 logger.info(f"⚠️ [持倉同步失敗] {sym}: {pe}")
+
+            finally:
+                # 保留追蹤直到成交接管完成；校準程序看見它時就不會把這筆新成交
+                # 誤判為重啟前的舊倉位，載入上一筆交易的歷史盈利峰值。
+                ctx.PENDING_LIMIT_ORDERS.pop(order_id, None)

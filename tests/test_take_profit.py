@@ -639,6 +639,39 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
+    def test_ma7_simple_near_breakeven_waits_for_ma7_turn_not_stagnation(self):
+        from unittest.mock import patch, AsyncMock
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": -1.0,
+            "avg_price": 1.0871,
+            "close_price": 1.0872,
+            "open_time": time.time() - 4700,
+            "entry_reason": "MA7_Simple",
+            "entry_count": 1,
+            "current_atr": 0.001286,
+            "current_rsi": 50.0,
+            "highest_profit_pct": 0.0017,
+            "current_vol": 100.0,
+            "vol_ma20": 100.0,
+            # 尚未形成反向 MA7 轉彎資料；不能因持倉超時而平倉或攤平。
+            "ma7": 0.0,
+            "ma25": 0.0,
+            "ohlcv": [[0, 1.0871, 1.0873, 1.0870, 1.0872, 100.0]],
+        })
+
+        async def run_check():
+            with patch("core.orders.close_position", AsyncMock()) as close_mock, \
+                 patch("core.exits._attempt_forced_rescue", AsyncMock(return_value=False)) as rescue_mock:
+                await check_exits(sym)
+                close_mock.assert_not_called()
+                rescue_mock.assert_not_called()
+
+        asyncio.run(run_check())
+
 
 if __name__ == "__main__":
     unittest.main()

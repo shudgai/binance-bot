@@ -8,6 +8,7 @@ from core.check_entries import (
     check_entries,
     _radar_entry_block_reason,
     _radar_signal_block_message,
+    _radar_direction_block_reason,
 )
 
 
@@ -57,6 +58,67 @@ class RadarEntryDiagnosisTests(unittest.TestCase):
 
     def test_ma_cross_is_still_blocked_by_radar(self):
         self.assertFalse(self._reaches_guard_after_radar("MA_Cross"))
+
+    def test_mature_range_route_can_use_range_specific_atr_band(self):
+        profile = {
+            "_trade_eligible": False,
+            "_radar_atr_pct": 12.0,
+            "_radar_one_h_vol_pct": 2.0,
+            "_radar_change_pct": 8.0,
+            "_radar_observation_mature": True,
+        }
+        self.assertEqual(_radar_entry_block_reason(profile, "Range_Support_Long"), "")
+        self.assertIn("MA ATR 12.00% 高於 8.00%", _radar_entry_block_reason(profile, "MA_Cross"))
+
+    def test_range_bypasses_observation_but_not_range_volatility_limits(self):
+        profile = {
+            "_trade_eligible": False,
+            "_trade_eligibility_reason": "觀察中：等待第二次雷達確認",
+            "_radar_atr_pct": 12.0,
+            "_radar_one_h_vol_pct": 2.0,
+            "_radar_change_pct": 8.0,
+            "_radar_observation_mature": False,
+            "_radar_confirmations": 1,
+        }
+        self.assertEqual(_radar_entry_block_reason(profile, "Range_Support_Long"), "")
+
+        profile["_radar_one_h_vol_pct"] = 5.0
+        self.assertIn(
+            "Range 1H 波動 5.00% 高於 3.50%",
+            _radar_entry_block_reason(profile, "Range_Support_Long"),
+        )
+
+    def test_range_ignores_slower_trend_radar_direction(self):
+        profile = {"_radar_entry_direction": "short", "_radar_entry_readiness": 0.90}
+        self.assertEqual(
+            _radar_direction_block_reason(profile, "buy", "Range_Support_Long"), "",
+        )
+
+    def test_actual_breakout_cannot_borrow_ma_classification(self):
+        profile = {
+            "_trade_eligible": True,
+            "_radar_atr_pct": 7.0,
+            "_radar_one_h_vol_pct": 3.0,
+            "_radar_change_pct": 5.0,
+            "_radar_observation_mature": True,
+        }
+        self.assertEqual(_radar_entry_block_reason(profile, "MA_Cross"), "")
+        self.assertIn("Breakout ATR 7.00% 高於 5.00%", _radar_entry_block_reason(profile, "MA_Breakout"))
+
+    def test_ma7_simple_uses_live_turn_instead_of_slower_radar_direction(self):
+        profile = {"_radar_entry_direction": "short", "_radar_entry_readiness": 0.90}
+        self.assertEqual(
+            _radar_direction_block_reason(profile, "buy", "MA7_Simple"), "",
+        )
+
+    def test_other_routes_keep_strong_radar_direction_guard(self):
+        profile = {"_radar_entry_direction": "short", "_radar_entry_readiness": 0.90}
+        self.assertEqual(
+            _radar_direction_block_reason(profile, "buy", "MA_Cross"),
+            "訊號 buy 與雷達 short 不一致",
+        )
+        profile["_radar_entry_readiness"] = 0.79
+        self.assertEqual(_radar_direction_block_reason(profile, "buy", "MA_Cross"), "")
 
     def test_missing_profile_fails_closed(self):
         self.assertEqual(_radar_entry_block_reason({}), "尚無雷達交易資格")

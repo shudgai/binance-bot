@@ -19,6 +19,8 @@ from services.radar_service import (
     MIN_1H_VOL_PCT_FOR_ENTRY,
     MAX_1H_VOL_PCT_FOR_ENTRY,
     prioritize_entry_ready,
+    radar_eligibility,
+    is_strict_radar_eligible,
 )
 from services.binance_service import calculate_entry_readiness
 
@@ -43,6 +45,30 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
     assert MAX_1H_VOL_PCT_FOR_ENTRY == 2.8
+
+
+def test_radar_limits_are_classified_by_future_symbol_setup():
+    ma_row = {
+        "atr_pct": 7.0, "one_h_vol_pct": 3.0, "change_pct": 5.0,
+        "entry_setup": "cross",
+    }
+    assert is_strict_radar_eligible(ma_row)
+    assert radar_eligibility(ma_row, "MA_Cross")[:1] == (True,)
+
+    breakout_ok, breakout_reason, breakout_class = radar_eligibility(ma_row, "MA_Breakout")
+    assert not breakout_ok
+    assert breakout_class == "strict"
+    assert "Breakout ATR 7.00% 高於 5.00%" in breakout_reason
+
+
+def test_range_uses_local_strategy_band_and_missing_1h_is_explicit():
+    range_row = {"atr_pct": 12.0, "one_h_vol_pct": 2.0, "change_pct": 8.0}
+    assert radar_eligibility(range_row, "Range_Support_Long")[:1] == (True,)
+
+    missing_row = {"atr_pct": 4.0, "one_h_vol_pct": 0.0, "change_pct": 1.0}
+    ok, reason, _ = radar_eligibility(missing_row, "MA_Cross")
+    assert not ok
+    assert "1H 波動資料不足" in reason
 
 
 def test_entry_slots_follow_capital_tiers():

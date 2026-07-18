@@ -11,7 +11,9 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.signal_engine import (compute_signal_strength, compute_range_signal,
     _find_horizontal_zones)
-from core.check_entries import check_entries, _entry_structure_quality, _ma_candidate_quality
+from core.check_entries import (check_entries, _entry_structure_quality,
+    _ma_candidate_quality, _range_candidate_quality,
+    _ma25_pullback_sample_bonus, _ma_cross_sample_bonus)
 
 
 class TradeSignalTests(unittest.TestCase):
@@ -74,6 +76,37 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
         self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
 
+    def test_clean_ma99_aligned_cross_accepts_eth_like_half_rvol(self):
+        sym = self._setup_ma_signal_state(
+            signal_volume=520.0, vol_ma20=1000.0, ma99=99.0,
+        )
+        side, _, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("buy", "MA_Cross"))
+
+    def test_half_rvol_cross_on_wrong_ma99_side_remains_blocked(self):
+        sym = self._setup_ma_signal_state(
+            signal_volume=520.0, vol_ma20=1000.0, ma99=102.0,
+        )
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+    def test_thin_golden_cross_is_rejected_for_insufficient_direction_confirmation(self):
+        sym = self._setup_ma_signal_state(
+            signal_open=100.2, signal_close=100.4, signal_low=100.3,
+            signal_volume=800.0, ma7=100.003, ma25=100.0, ma99=99.0,
+            prev_ma7=99.9, prev_ma25=100.0,
+        )
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+        self.assertIn("方向確認不足", STATES[sym]["entry_block_reason"])
+
+    def test_thin_death_cross_is_rejected_for_insufficient_direction_confirmation(self):
+        sym = self._setup_ma_signal_state(
+            signal_open=99.8, signal_close=99.6, signal_high=99.7,
+            signal_volume=800.0, ma7=99.997, ma25=100.0, ma99=101.0,
+            prev_ma7=100.1, prev_ma25=100.0,
+        )
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+        self.assertIn("方向確認不足", STATES[sym]["entry_block_reason"])
+
     def test_ma25_pullback_enters_only_after_bullish_rejection(self):
         sym = self._setup_ma_signal_state(
             signal_open=100.1, signal_close=100.3, signal_low=99.9,
@@ -127,6 +160,23 @@ class TradeSignalTests(unittest.TestCase):
         })
         side, strength, route = compute_signal_strength(sym)
         self.assertEqual((side, route), ("buy", "MA7_Simple"))
+
+    def test_ma7_simple_weak_volume_is_kept_but_ranked_below_us_like_signal(self):
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.5, signal_volume=500.0, vol_ma20=1000.0,
+            ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
+        )
+        STATES[sym].update({"prev_ma7_2": 101.2, "current_rsi": 60.0})
+        weak_side, weak_strength, weak_route = compute_signal_strength(sym)
+
+        STATES[sym]["ohlcv"][-2][5] = 830.0
+        strong_side, strong_strength, strong_route = compute_signal_strength(sym)
+
+        self.assertEqual((weak_side, weak_route), ("buy", "MA7_Simple"))
+        self.assertEqual((strong_side, strong_route), ("buy", "MA7_Simple"))
+        self.assertAlmostEqual(weak_strength, 23.5)
+        self.assertAlmostEqual(strong_strength, 25.15)
+        self.assertGreater(strong_strength, weak_strength)
 
     def test_ma7_simple_short_trigger(self):
         # Turn down: prev_slope = prev_ma7 - prev_ma7_2 >= 0 and curr_slope = ma7 - prev_ma7 < 0
@@ -208,6 +258,46 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(STATES[sym]["range_support_level"], 99.0)
         self.assertEqual(STATES[sym]["range_resistance_level"], 103.0)
 
+    def test_kaito_like_range_setup_gets_priority_without_becoming_a_gate(self):
+        sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 750.0])
+        state = STATES[sym]
+        state.update({"adx": 10.6, "current_rsi": 41.6})
+
+        preferred = _range_candidate_quality(state, "buy", 20.8, 2.99, 0.0095)
+        self.assertAlmostEqual(preferred, 27.8)
+        self.assertAlmostEqual(state["_range_sample_bonus"], 7.0)
+
+        state.update({"adx": 25.0, "current_rsi": 54.0})
+        state["ohlcv"][-2][5] = 600.0
+        ordinary = _range_candidate_quality(state, "buy", 20.8, 1.2, 0.0081)
+        self.assertAlmostEqual(ordinary, 20.8)
+        self.assertGreater(preferred, ordinary)
+
+    def test_t_like_ma25_pullback_gets_priority_without_becoming_a_gate(self):
+        state = {
+            "adx": 73.3, "current_rsi": 59.2, "ma99": 0.004140,
+        }
+        preferred = _ma25_pullback_sample_bonus(state, "buy", 30.0, 0.004210, 11.42)
+        self.assertAlmostEqual(preferred, 6.5)
+        self.assertAlmostEqual(state["_ma25_sample_bonus"], 6.5)
+
+        state.update({"adx": 20.0, "current_rsi": 50.0})
+        ordinary = _ma25_pullback_sample_bonus(state, "buy", 25.0, 0.004100, 0.6)
+        self.assertAlmostEqual(ordinary, 0.0)
+        self.assertGreater(preferred, ordinary)
+
+    def test_strong_ma_cross_sample_is_ranked_above_ordinary_cross(self):
+        state = {"adx": 45.0, "current_rsi": 40.0, "ma99": 101.0}
+        preferred = _ma_cross_sample_bonus(state, "sell", 30.0, 99.0, 1.81)
+        self.assertAlmostEqual(preferred, 6.5)
+        self.assertAlmostEqual(state["_ma_cross_sample_bonus"], 6.5)
+
+        state.update({"adx": 20.0, "current_rsi": 50.0})
+        ordinary = _ma_cross_sample_bonus(state, "sell", 25.0, 102.0, 0.6)
+        self.assertAlmostEqual(ordinary, 0.5)
+        self.assertGreater(preferred, ordinary)
+
+
     def _setup_liquidity_discount_state(self, vol_ma20):
         sym = self._setup_ma_signal_state(
             signal_open=100.0, signal_close=99.0, signal_low=98.8,
@@ -262,7 +352,11 @@ class TradeSignalTests(unittest.TestCase):
         async def run_check():
             mock_exec = AsyncMock(return_value=None)
             with patch("core.orders.execute_order", mock_exec), \
-                 patch("core.balance.is_daily_loss_halted", return_value=False), \
+                 patch("core.check_entries.is_daily_loss_halted", return_value=False), \
+                 patch("core.check_entries.get_open_position_count", return_value=0), \
+                 patch("core.check_entries.get_last_same_side_loss_time", return_value=0.0), \
+                 patch("core.check_entries._load_disabled_symbols", return_value=set()), \
+                 patch("core.idle_tracker.idle_tracker.get_orphaned_positions", return_value=[]), \
                  patch("core.check_entries.is_entry_allowed", return_value=True), \
                  patch("core.check_entries.is_entry_candidate_still_valid", return_value=(True, "ok")), \
                  patch("core.check_entries._calc_sl_tp", return_value=(0.4, 1.0, 2.0, 2.0)), \
@@ -284,7 +378,11 @@ class TradeSignalTests(unittest.TestCase):
         async def run_check():
             mock_exec = AsyncMock(return_value=None)
             with patch("core.orders.execute_order", mock_exec), \
-                 patch("core.balance.is_daily_loss_halted", return_value=False), \
+                 patch("core.check_entries.is_daily_loss_halted", return_value=False), \
+                 patch("core.check_entries.get_open_position_count", return_value=0), \
+                 patch("core.check_entries.get_last_same_side_loss_time", return_value=0.0), \
+                 patch("core.check_entries._load_disabled_symbols", return_value=set()), \
+                 patch("core.idle_tracker.idle_tracker.get_orphaned_positions", return_value=[]), \
                  patch("core.check_entries.is_entry_allowed", return_value=True), \
                  patch("core.check_entries.is_entry_candidate_still_valid", return_value=(True, "ok")), \
                  patch("core.check_entries._calc_sl_tp", return_value=(0.4, 1.0, 2.0, 2.0)), \

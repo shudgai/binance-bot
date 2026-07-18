@@ -625,7 +625,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="t in sortedTrades" :key="t.id">
+                            <tr v-for="t in sortedTrades" :key="tradeRowKey(t)">
                                 <td>{{ formatTradeTime(t.time) }}</td>
                                 <td style="font-weight: bold;">{{ t.symbol?.replace(':USDT', '')?.replace('USDT', '') }}</td>
                                 <td>
@@ -1241,8 +1241,19 @@ createApp({
         const formatTradeTime = (ts) => {
             if (!ts) return '-';
             // ts is already in milliseconds from paper_state.json / backend
-            return new Date(ts).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+            return new Date(Number(ts)).toLocaleString('zh-TW', {
+                timeZone: 'Asia/Taipei', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            });
         };
+
+        // API 的本機歷史紀錄過去沒有 id，且交易所 trade id 也只保證在單一幣種內唯一。
+        // 使用完整複合 key，避免 Vue 更新/排序時重用錯誤列，出現價格已更新但日期仍是舊列的混搭。
+        const tradeRowKey = (trade) => [
+            trade.id ?? '', trade.order_id ?? '', trade.symbol ?? '',
+            Number(trade.time) || 0, trade.is_close ? 'close' : 'entry',
+            Number(trade.price) || 0, Number(trade.qty) || 0
+        ].join('|');
 
         const formatLiveTradeTime = (ts) => {
             if (!ts) return '-';
@@ -2237,7 +2248,7 @@ createApp({
             formattedMainPrice, mainPriceClass,
             currentCurrency, currentCurrencySymbol, twdRate,
             toggleCurrency, setActiveCoin,
-            formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
+            formatMiniPrice, formatCurrencyVal, formatTradeTime, formatLiveTradeTime, tradeRowKey, getActiveCoinLabel, getQuoteAsset, formatQuoteBalance,
             bot, position, trades, sortedTrades, liveTrades, error,
             toggleBot, isPlacingOrder, placeMarketBuy, placeMarketShort, placeMarketSell, closeActivePosition, closePositionBySymbol, closeAllPositions, closeTradePosition, canCloseTrade, isOpenTrade, getTradeCurrentPrice, getTradeUnrealizedPnl, getTradeUnrealizedPnlDisplay, getTradeUnrealizedPnlPercent, getTradeUnrealizedPnlPercentActual, totalUnrealizedPnl, getClosedPair, getTradeOutcomeDisplay, limitPrice,
             cancelAllOrders, cancelOrders, autoSnipeBestCoin, logs, consoleRef, clearLogs, copyLogs, logRowClass,

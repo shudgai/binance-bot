@@ -65,7 +65,11 @@ def test_ma_profit_floor_closes_on_realtime_trade_tick():
     })
 
     with patch("core.orders.close_position", AsyncMock()) as close:
-        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0}))
+        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0, "timestamp": 1_000_000}))
+        close.assert_not_awaited()
+        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0, "timestamp": 1_000_500}))
+        close.assert_not_awaited()
+        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0, "timestamp": 1_001_100}))
 
     close.assert_awaited_once()
     assert close.await_args.kwargs["reason"] == "[MA_Profit_Floor]"
@@ -85,7 +89,11 @@ def test_ma7_simple_short_profit_floor_closes_on_realtime_trade_tick():
     })
 
     with patch("core.orders.close_position", AsyncMock()) as close:
-        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0}))
+        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0, "timestamp": 2_000_000}))
+        close.assert_not_awaited()
+        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0, "timestamp": 2_000_500}))
+        close.assert_not_awaited()
+        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0, "timestamp": 2_001_100}))
 
     close.assert_awaited_once()
     assert close.await_args.kwargs["reason"] == "[MA_Profit_Floor]"

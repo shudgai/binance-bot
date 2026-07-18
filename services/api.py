@@ -804,9 +804,13 @@ def _get_real_trades():
                 if t.get("realized_pnl_usdt") is not None
                 else ((ax - ae) * qty if is_long else (ae - ax) * qty)
             )
+            pair_id = str(t.get("exchange_close_id") or (
+                f"{sym}:{entry_time_ms}:{exit_time_ms}:{ae:.12g}:{ax:.12g}:{qty:.12g}"
+            ))
             
             # 入場 trade 紀錄
             trades.append({
+                "id": f"history:{pair_id}:entry",
                 "symbol": sym,
                 "price": ae,
                 "qty": qty,
@@ -819,6 +823,7 @@ def _get_real_trades():
             
             # 出場 trade 紀錄
             trades.append({
+                "id": f"history:{pair_id}:exit",
                 "symbol": sym,
                 "price": ax,
                 "qty": qty,

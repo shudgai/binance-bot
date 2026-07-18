@@ -30,13 +30,48 @@ FOLLOW_SYMBOLS_FROM = _resolve_follow_symbols_from()
 # 來源清單會寫入本地 bot_symbols.json，並保留本地持倉幣種。
 
 
+def _radar_route_class(route: str | None) -> str:
+    route_key = str(route or "").lower()
+    if route_key in ("range", "range_support_long", "range_resistance_short"):
+        return "range"
+    if route_key in ("ma_cross", "cross", "ma25_pullback", "trend_wait"):
+        return "ma"
+    return "strict"
+
+
+def radar_eligibility(row: dict, route: str | None = None) -> tuple[bool, str, str]:
+    """依實際策略分類雷達波動資格，並回傳可供介面顯示的精確原因。"""
+    route_class = _radar_route_class(route or row.get("entry_setup"))
+    atr_pct = float(row.get("atr_pct", row.get("_radar_atr_pct", 0.0)) or 0.0)
+    one_h = float(row.get("one_h_vol_pct", row.get("_radar_one_h_vol_pct", 0.0)) or 0.0)
+    change_pct = abs(float(row.get("change_pct", row.get("_radar_change_pct", 0.0)) or 0.0))
+
+    if route_class == "range":
+        max_atr, max_one_h, label = MAX_ATR_PCT_FOR_RANGE_ENTRY, MAX_1H_VOL_PCT_FOR_RANGE_ENTRY, "Range"
+    elif route_class == "ma":
+        max_atr, max_one_h, label = MAX_ATR_PCT_FOR_MA_ENTRY, MAX_1H_VOL_PCT_FOR_MA_ENTRY, "MA"
+    else:
+        max_atr, max_one_h, label = MAX_ATR_PCT_FOR_ENTRY, MAX_1H_VOL_PCT_FOR_ENTRY, "Breakout"
+
+    if atr_pct <= 0 or one_h <= 0:
+        missing = "ATR" if atr_pct <= 0 else "1H 波動"
+        return False, f"僅監控：{missing}資料不足，等待下次雷達更新", route_class
+    if atr_pct < MIN_ATR_PCT_FOR_ENTRY:
+        return False, f"僅監控：{label} ATR {atr_pct:.2f}% 低於 {MIN_ATR_PCT_FOR_ENTRY:.2f}%", route_class
+    if atr_pct > max_atr:
+        return False, f"僅監控：{label} ATR {atr_pct:.2f}% 高於 {max_atr:.2f}%", route_class
+    if one_h < MIN_1H_VOL_PCT_FOR_ENTRY:
+        return False, f"僅監控：{label} 1H 波動 {one_h:.2f}% 低於 {MIN_1H_VOL_PCT_FOR_ENTRY:.2f}%", route_class
+    if one_h > max_one_h:
+        return False, f"僅監控：{label} 1H 波動 {one_h:.2f}% 高於 {max_one_h:.2f}%", route_class
+    if change_pct > MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY:
+        return False, f"僅監控：24H 漲跌 {change_pct:.2f}% 超過 {MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY:.2f}%", route_class
+    return True, f"{label} 波動資格通過", route_class
+
+
 def is_strict_radar_eligible(row: dict) -> bool:
-    """Single source of truth for automatic, manual and UI ATR eligibility."""
-    return bool(
-        MIN_ATR_PCT_FOR_ENTRY <= float(row.get("atr_pct", 0.0) or 0.0) <= MAX_ATR_PCT_FOR_ENTRY
-        and MIN_1H_VOL_PCT_FOR_ENTRY <= float(row.get("one_h_vol_pct", 0.0) or 0.0) <= MAX_1H_VOL_PCT_FOR_ENTRY
-        and abs(float(row.get("change_pct", 0.0) or 0.0)) <= MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
-    )
+    """自動、手動與 UI 共用；依雷達辨識到的 setup 套用分類門檻。"""
+    return radar_eligibility(row)[0]
 
 
 def prioritize_entry_ready(rows):
@@ -180,10 +215,13 @@ RADAR_SELECT_COUNT = 25
 HOT_MOVERS_COUNT   = 0
 CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
 
-# 動能篩選門檻（15 檔交易池版）：
-#   ATR 2.5%~7.2%：保留中高動能，允許 NEAR/ADA/AAVE 這類高流動性強波動候選進池。
-#   1h 波動 0.42%~2.8%：條件變嚴後放寬候選池，但仍排除完全不動的死水幣。
-from core.config import MIN_ATR_PCT_FOR_ENTRY, MAX_ATR_PCT_FOR_ENTRY, MIN_1H_VOL_PCT_FOR_ENTRY, MAX_1H_VOL_PCT_FOR_ENTRY, MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
+# 雷達門檻依策略分類：Breakout 維持嚴格；MA 適度放寬；Range 由局部結構風控。
+# 共用最低波動與 24H 極端漲跌保護，實際送單前再依真正 route 重驗。
+from core.config import (MIN_ATR_PCT_FOR_ENTRY, MAX_ATR_PCT_FOR_ENTRY,
+    MIN_1H_VOL_PCT_FOR_ENTRY, MAX_1H_VOL_PCT_FOR_ENTRY,
+    MAX_ATR_PCT_FOR_MA_ENTRY, MAX_1H_VOL_PCT_FOR_MA_ENTRY,
+    MAX_ATR_PCT_FOR_RANGE_ENTRY, MAX_1H_VOL_PCT_FOR_RANGE_ENTRY,
+    MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY)
 
 MIN_ATR_PCT_FOR_ENTRY = MIN_ATR_PCT_FOR_ENTRY
 MAX_ATR_PCT_FOR_ENTRY = MAX_ATR_PCT_FOR_ENTRY
@@ -452,13 +490,17 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         profile = _compute_dynamic_profile(sym, row["atr_pct"], row["price"], idx + 1, len(selected_rows))
         previous = previous_profiles.get(sym, {}) if isinstance(previous_profiles, dict) else {}
         strict_now = sym in strict_symbols
-        strict_before = bool(previous.get("_radar_strict_eligible", False))
-        confirmations = int(previous.get("_radar_confirmations", 0) or 0) + 1 if strict_now and strict_before else (1 if strict_now else 0)
-        first_seen = float(previous.get("_radar_candidate_since", now) or now) if strict_now and strict_before else now
+        strict_ok, strict_reason, route_class = radar_eligibility(row)
+        # Range 可能要等 1m 支撐／壓力成形後才辨識；先以 Range 上限累積觀察期，
+        # 實際送單時仍會依真正 route 重新檢查，不讓高波動 Breakout 借道放行。
+        observation_now = strict_ok or radar_eligibility(row, "Range")[0]
+        observation_before = bool(previous.get("_radar_observation_eligible", previous.get("_radar_strict_eligible", False)))
+        confirmations = int(previous.get("_radar_confirmations", 0) or 0) + 1 if observation_now and observation_before else (1 if observation_now else 0)
+        first_seen = float(previous.get("_radar_candidate_since", now) or now) if observation_now and observation_before else now
         observed_sec = max(0.0, now - first_seen)
         trade_eligible = strict_now and confirmations >= 2 and observed_sec >= 1800
         if not strict_now:
-            reason = "僅監控：未通過嚴格 ATR／1H 波動條件"
+            reason = strict_reason
         elif confirmations < 2:
             reason = "觀察中：等待第二次雷達確認"
         elif observed_sec < 1800:
@@ -467,8 +509,14 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
             reason = "可交易：連續兩次雷達合格且觀察滿 30 分鐘"
         profile.update({
             "_radar_strict_eligible": strict_now,
+            "_radar_observation_eligible": observation_now,
+            "_radar_observation_mature": confirmations >= 2 and observed_sec >= 1800,
             "_radar_confirmations": confirmations,
             "_radar_candidate_since": first_seen,
+            "_radar_route_class": route_class,
+            "_radar_atr_pct": float(row.get("atr_pct", 0.0) or 0.0),
+            "_radar_one_h_vol_pct": float(row.get("one_h_vol_pct", 0.0) or 0.0),
+            "_radar_change_pct": float(row.get("change_pct", 0.0) or 0.0),
             "_radar_entry_readiness": float(row.get("entry_readiness_score", 0.0) or 0.0),
             "_radar_entry_direction": row.get("entry_direction", "none"),
             "_trade_eligible": trade_eligible,

@@ -30,10 +30,34 @@ COOLDOWN_REENTRY_RAPID_RECHECKS = 2
 COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC = 1.0
 
 
-def _radar_entry_block_reason(profile):
-    """Return an entry block reason; missing radar data must fail closed."""
+def _radar_entry_block_reason(profile, route=None):
+    """依實際訊號 route 重驗雷達分類；舊 profile 維持安全側相容。"""
     if not profile:
         return "尚無雷達交易資格"
+    if str(route or "").lower() == "ma7_simple":
+        return ""
+
+    has_classified_data = (
+        "_radar_atr_pct" in profile and "_radar_one_h_vol_pct" in profile
+    )
+    if route and has_classified_data:
+        from services.radar_service import radar_eligibility
+        route_ok, route_reason, route_class = radar_eligibility(profile, route)
+        if not route_ok:
+            return route_reason
+        # Range 已由已收線支撐／壓力、低 ADX、量能與 RR 做局部確認；
+        # 邊界機會短，不再等待較慢雷達的第二次確認與 30 分鐘成熟期。
+        if route_class == "range":
+            return ""
+        if not bool(profile.get("_radar_observation_mature", False)):
+            confirmations = int(profile.get("_radar_confirmations", 0) or 0)
+            if confirmations < 2:
+                return "觀察中：等待第二次雷達確認"
+            first_seen = float(profile.get("_radar_candidate_since", time.time()) or time.time())
+            remaining = max(0, int((1800 - max(0.0, time.time() - first_seen)) / 60) + 1)
+            return f"觀察中：尚需 {remaining} 分鐘"
+        return ""
+
     if not bool(profile.get("_trade_eligible", False)):
         return str(profile.get("_trade_eligibility_reason") or "雷達觀察中")
     return ""
@@ -41,6 +65,19 @@ def _radar_entry_block_reason(profile):
 
 def _radar_signal_block_message(sym, route, reason):
     return f"{sym}: 偵測到 {route} 訊號，但{reason}，不送單"
+
+
+def _radar_direction_block_reason(profile, side, route):
+    """MA7_Simple 以即時轉折為準；其他路線保留高可信雷達方向保護。"""
+    route_key = str(route or "").lower()
+    if route_key == "ma7_simple" or route_key in ("range", "range_support_long", "range_resistance_short"):
+        return ""
+    radar_direction = profile.get("_radar_entry_direction", "none")
+    radar_readiness = float(profile.get("_radar_entry_readiness", 0.0) or 0.0)
+    expected_side = "buy" if radar_direction == "long" else "sell" if radar_direction == "short" else None
+    if expected_side and radar_readiness >= 0.80 and side != expected_side:
+        return f"訊號 {side} 與雷達 {radar_direction} 不一致"
+    return ""
 
 
 def _range_exit_prices(price, support, resistance, atr, side):
@@ -138,7 +175,7 @@ async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=Non
         fresh_strength = float(fresh_signal[1] or 0.0)
 
         radar_profile = SYMBOL_PROFILES.get(sym, {})
-        radar_block_reason = _radar_entry_block_reason(radar_profile)
+        radar_block_reason = _radar_entry_block_reason(radar_profile, route)
         if radar_block_reason and str(route or "").lower() != "ma7_simple":
             return False, f"radar eligibility lost on rapid check {attempt}: {radar_block_reason}"
         macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
@@ -253,6 +290,58 @@ def _entry_structure_quality(sym, side, route, price):
     return valid, reason, score
 
 
+def _ma25_pullback_sample_bonus(state, side, strength, price, volume_ratio):
+    """加權接近 TUSDT 成功樣本的 MA25 回踩，不改成硬性進場門檻。"""
+    adx = float(state.get("adx", state.get("current_adx", 0.0)) or 0.0)
+    rsi = float(state.get("current_rsi", 50.0) or 50.0)
+    ma99 = float(state.get("ma99", 0.0) or 0.0)
+
+    bonus = 0.0
+    if adx >= 30.0:
+        bonus += 1.5
+    if float(volume_ratio) >= 1.0:
+        bonus += 2.0
+    if (
+        (side == "buy" and 51.0 <= rsi < 70.0)
+        or (side == "sell" and 30.0 < rsi <= 49.0)
+    ):
+        bonus += 1.0
+    if ma99 > 0 and ((side == "buy" and price > ma99) or (side == "sell" and price < ma99)):
+        bonus += 1.0
+    if float(strength) >= 28.0:
+        bonus += 1.0
+
+    state["_ma25_sample_bonus"] = round(bonus, 4)
+    return round(bonus, 4)
+
+
+def _ma_cross_sample_bonus(state, side, strength, price, volume_ratio):
+    """加權 ETH／PEPE／SOL／TAO 型 MA 交叉，不取消既有安全門檻。"""
+    adx = float(state.get("adx", state.get("current_adx", 0.0)) or 0.0)
+    rsi = float(state.get("current_rsi", 50.0) or 50.0)
+    ma99 = float(state.get("ma99", 0.0) or 0.0)
+
+    bonus = 0.0
+    if ma99 > 0 and ((side == "buy" and price > ma99) or (side == "sell" and price < ma99)):
+        bonus += 1.5
+    if float(volume_ratio) >= 1.0:
+        bonus += 2.0
+    elif float(volume_ratio) >= 0.5:
+        bonus += 0.5
+    if (
+        (side == "buy" and 51.0 <= rsi < 70.0)
+        or (side == "sell" and 30.0 < rsi <= 49.0)
+    ):
+        bonus += 1.0
+    if float(strength) >= 28.0:
+        bonus += 1.0
+    if adx >= 30.0:
+        bonus += 1.0
+
+    state["_ma_cross_sample_bonus"] = round(bonus, 4)
+    return round(bonus, 4)
+
+
 def _ma_candidate_quality(sym, side, strength, route, price):
     s = ctx.STATES[sym]
     structure_ok, structure_reason, structure_score = _entry_structure_quality(sym, side, route, price)
@@ -270,8 +359,46 @@ def _ma_candidate_quality(sym, side, strength, route, price):
     from services.ai_manager import ai_engine
     learning_adjustment = ai_engine.get_candidate_quality_adjustment(sym, route)
     s["_ai_learning_adjustment"] = learning_adjustment
-    quality = float(strength) + structure_score + gap_score + volume_score + route_bonus + learning_adjustment
+    sample_bonus = 0.0
+    s["_ma25_sample_bonus"] = 0.0
+    s["_ma_cross_sample_bonus"] = 0.0
+    if route == "MA25_Pullback":
+        sample_bonus = _ma25_pullback_sample_bonus(
+            s, side, strength, price, volume_ratio
+        )
+    elif route == "MA_Cross":
+        sample_bonus = _ma_cross_sample_bonus(
+            s, side, strength, price, volume_ratio
+        )
+    quality = float(strength) + structure_score + gap_score + volume_score + route_bonus + learning_adjustment + sample_bonus
     return True, "ok", round(quality, 4)
+
+
+def _range_candidate_quality(state, side, strength, range_rr, range_net_pct):
+    """優先排序接近 KAITO 成功樣本的區間訊號，不把偏好改成硬門檻。"""
+    candles = state.get("ohlcv", [])
+    closed_volume = float(candles[-2][5]) if len(candles) >= 2 else 0.0
+    vol_ma20 = float(state.get("vol_ma20", 0.0) or 0.0)
+    volume_ratio = closed_volume / vol_ma20 if vol_ma20 > 0 else 0.0
+    adx = float(state.get("adx", 99.0) or 99.0)
+    rsi = float(state.get("current_rsi", 50.0) or 50.0)
+
+    bonus = 0.0
+    if adx < 20.0:
+        bonus += 1.5
+    if volume_ratio >= 0.75:
+        bonus += 1.5
+    if (side == "buy" and 38.0 <= rsi <= 50.0) or (side == "sell" and 50.0 <= rsi <= 62.0):
+        bonus += 1.0
+    if float(range_net_pct) >= 0.009:
+        bonus += 1.0
+    if float(range_rr) >= 2.0:
+        bonus += 2.0
+
+    state["_range_sample_bonus"] = round(bonus, 4)
+    state["_range_entry_rr"] = round(float(range_rr), 4)
+    state["_range_entry_net_pct"] = round(float(range_net_pct), 6)
+    return round(float(strength) + bonus, 4)
 
 
 async def _funding_rate_guard(sym, side):
@@ -557,6 +684,8 @@ async def check_entries():
             idle_tracker.mark_active(sym, "MA_Strategy")
         
         side, strength, route = side_strength
+
+        radar_block_reason = _radar_entry_block_reason(_radar_profile, route)
 
         # 先辨識訊號再回報雷達阻擋，避免介面把「觀察到訊號」誤寫成「準備送單」。
         # 雷達資料缺失也採安全側拒絕，不能因空 dict 繞過交易資格。
@@ -845,17 +974,15 @@ async def check_entries():
             continue
         if abs(s.get("qty", 0.0)) > 0.000001:
             continue
-        radar_block_reason = _radar_entry_block_reason(radar_profile)
+        radar_block_reason = _radar_entry_block_reason(radar_profile, route)
         if radar_block_reason and str(route or "").lower() != "ma7_simple":
             diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
             set_entry_diagnosis(diagnosis)
             logger.info(f"🛑 [Final_Entry_Guard] {diagnosis}")
             continue
-        radar_direction = radar_profile.get("_radar_entry_direction", "none")
-        radar_readiness = float(radar_profile.get("_radar_entry_readiness", 0.0) or 0.0)
-        expected_side = "buy" if radar_direction == "long" else "sell" if radar_direction == "short" else None
-        if expected_side and radar_readiness >= 0.80 and side != expected_side:
-            logger.info(f"🛑 [Final_Entry_Guard] {sym} 訊號 {side} 與雷達 {radar_direction} 不一致")
+        radar_direction_reason = _radar_direction_block_reason(radar_profile, side, route)
+        if radar_direction_reason:
+            logger.info(f"🛑 [Final_Entry_Guard] {sym} {radar_direction_reason}")
             continue
 
         # 路由白名單：MA 路由和區間路由都允許
@@ -936,10 +1063,27 @@ async def check_entries():
             if not quality_ok:
                 logger.info(f"🛑 [Entry_Structure_Guard] {sym} {quality_reason}，放棄進場")
                 continue
+            if route == "MA25_Pullback" and s.get("_ma25_sample_bonus", 0.0) > 0:
+                logger.info(
+                    f"📈 [MA25_Sample_Priority] {sym} 品質={quality_score:.2f} "
+                    f"(T型樣本加分={s['_ma25_sample_bonus']:.2f})"
+                )
+            if route == "MA_Cross" and s.get("_ma_cross_sample_bonus", 0.0) > 0:
+                logger.info(
+                    f"📈 [MA_Cross_Sample_Priority] {sym} 品質={quality_score:.2f} "
+                    f"(成功交叉樣本加分={s['_ma_cross_sample_bonus']:.2f})"
+                )
             s["_entry_quality_score"] = quality_score
         else:
-            # 區間模式的品質分：直接使用區間訊號強度作為排序依據
-            s["_entry_quality_score"] = strength
+            # KAITO 型成功樣本（低 ADX、有量、合理 RSI、淨空間及 RR 充足）
+            # 取得排序加分；未完全符合者仍保留原本的進場資格。
+            s["_entry_quality_score"] = _range_candidate_quality(
+                s, side, strength, range_rr, range_net_pct
+            )
+            logger.info(
+                f"📈 [Range_Sample_Priority] {sym} 品質={s['_entry_quality_score']:.2f} "
+                f"(基礎={strength:.2f}, 樣本加分={s['_range_sample_bonus']:.2f})"
+            )
 
         validated_candidates.append((sym, side, strength, route, is_range_sig))
 

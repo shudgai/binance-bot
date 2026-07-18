@@ -3,7 +3,8 @@ import time
 
 from core import ctx
 from core.balance import is_daily_loss_halted
-from core.config import COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE, get_entry_strictness_profile
+from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
+                         MA_CROSS_MIN_GAP_PCT, get_entry_strictness_profile)
 from core.state_manager import is_symbol_locked
 
 logger = logging.getLogger(__name__)
@@ -64,14 +65,16 @@ def is_ma_direction_aligned(state, side, route=None):
     normalized_route = str(route or "").lower()
     if side == "buy" and normalized_route == "ma_cross":
         ma99_buffer = ma99 * 0.99
+        gap_confirmed = (ma7 - ma25) / closed_price >= MA_CROSS_MIN_GAP_PCT
         return (closed_price > ma99_buffer and ma25 > ma99_buffer
                 and prev_ma7 <= prev_ma25 and ma7 > ma25
-                and ma7 > prev_ma7 and ma25 >= prev_ma25)
+                and ma7 > prev_ma7 and ma25 >= prev_ma25 and gap_confirmed)
     if side == "sell" and normalized_route == "ma_cross":
         ma99_buffer = ma99 * 1.01
+        gap_confirmed = (ma25 - ma7) / closed_price >= MA_CROSS_MIN_GAP_PCT
         return (closed_price < ma99_buffer and ma25 < ma99_buffer
                 and prev_ma7 >= prev_ma25 and ma7 < ma25
-                and ma7 < prev_ma7 and ma25 <= prev_ma25)
+                and ma7 < prev_ma7 and ma25 <= prev_ma25 and gap_confirmed)
     if normalized_route == "ma7_simple":
         return ma7 > prev_ma7 if side == "buy" else ma7 < prev_ma7
     if side == "buy":
@@ -124,6 +127,26 @@ def is_entry_volume_confirmed(sym, side):
     return closed_volume >= vol_ma20 * required
 
 
+def _opposing_wick_ratio(sym, side):
+    """Return the completed signal candle opposing-wick/body ratio."""
+    candles = ctx.STATES[sym].get("ohlcv", [])
+    if len(candles) < 2:
+        return float("inf")
+    candle_open, high, low, close = map(float, candles[-2][1:5])
+    body = max(abs(close - candle_open), close * 0.0001)
+    wick = high - max(candle_open, close) if side == "buy" else min(candle_open, close) - low
+    return max(wick, 0.0) / body
+
+
+def _entry_wick_multiplier(route):
+    route_key = str(route or "").lower()
+    if route_key == "ma7_simple":
+        return 3.5
+    if route_key == "ma25_pullback":
+        return 2.5
+    return 1.8
+
+
 def is_valid_candle(sym, side, wick_multiplier=1.8):
     """Reject a completed candle whose opposing wick dominates its body."""
     candles = ctx.STATES[sym].get("ohlcv", [])
@@ -159,12 +182,10 @@ def is_range_wick_safe(sym, side):
 
 
 def is_entry_pin_safe(sym, side, route=None):
-    # MA25_Pullback 本質是「觸碰 MA25 後反彈」，天生容易帶影線，
-    # 用跟 Cross/Breakout 相同的 1.8 倍門檻偏嚴，比照區間路由的放寬邏輯，
-    # 給 Pullback 單獨放寬至 2.5 倍；其餘路由維持原本 1.8 倍不變。
-    if route == "MA25_Pullback":
-        return is_valid_candle(sym, side, wick_multiplier=2.5)
-    return is_valid_candle(sym, side)
+    # MA7_Simple 是轉折早期訊號，正常測試賣壓/買壓容易留下影線；1.8x 會讓一次性
+    # 轉折被取消後再也追不上後續斜率，因此放寬至 3.5x，只拒絕極端否定。
+    # MA25_Pullback 同樣容許回踩影線至 2.5x；Cross/Breakout 維持 1.8x。
+    return is_valid_candle(sym, side, wick_multiplier=_entry_wick_multiplier(route))
 
 
 def has_strong_local_momentum_override(route, strength):
@@ -282,8 +303,14 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
         logger.info(f"🛑 [MA_VOLUME] {sym} {route} 已收線成交量不足")
         return False
     if not is_entry_pin_safe(sym, side, route=route):
-        logger.info(f"🛑 [MA_WICK] {sym} 反向影線過長，取消 {route}")
-        s["entry_block_reason"] = f"{route} 反向影線過長，取消進場"
+        wick_ratio = _opposing_wick_ratio(sym, side)
+        wick_limit = _entry_wick_multiplier(route)
+        logger.info(
+            f"🛑 [MA_WICK] {sym} 反向影線 {wick_ratio:.2f}x > {wick_limit:.1f}x，取消 {route}"
+        )
+        s["entry_block_reason"] = (
+            f"{route} 反向影線 {wick_ratio:.2f}x > {wick_limit:.1f}x，取消進場"
+        )
         return False
 
     atr = float(s.get("current_atr", 0.0) or 0.0)

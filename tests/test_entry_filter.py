@@ -92,6 +92,15 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["prev_ma25"] = 100.2
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
+    def test_final_direction_guard_rejects_thin_ma_cross(self):
+        from core.entry_filter import is_ma_direction_aligned
+        sym = self._state("buy")
+        STATES[sym].update({
+            "ma7": 100.003, "ma25": 100.0,
+            "prev_ma7": 99.9, "prev_ma25": 100.0,
+        })
+        self.assertFalse(is_ma_direction_aligned(STATES[sym], "buy", route="MA_Cross"))
+
     def test_ma7_simple_relaxes_alignment_to_only_require_ma7_slope(self):
         sym = self._state("buy")
         STATES[sym].update({
@@ -133,15 +142,29 @@ class EntryFilterTests(unittest.TestCase):
 
         # Body is 101.0 - 100.5 = 0.5.
         # Opposing (upper) wick is 102.4 - 101.0 = 1.4.
-        # Ratio = 1.4 / 0.5 = 2.8x. (Should fail everywhere since it is > 2.5x)
+        # Ratio = 1.4 / 0.5 = 2.8x. Pullback仍拒絕，但 MA7_Simple 視為正常轉折震盪。
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.4, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
+        self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA7_Simple"))
+
+        # 3.6x 已是極端反向影線，MA7_Simple 仍必須拒絕。
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.8, 100.2, 101.0, 1300.0]
+        self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA7_Simple"))
+
+    def test_ma7_simple_short_uses_symmetric_relaxed_wick_limit(self):
+        sym = self._state("sell")
+        # body=0.5、下影線=1.4，2.8x 應放行；1.8 則為 3.6x，仍拒絕。
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 100.6, 98.6, 100.0, 1300.0]
+        self.assertTrue(is_entry_pin_safe(sym, "sell", route="MA7_Simple"))
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 100.6, 98.2, 100.0, 1300.0]
+        self.assertFalse(is_entry_pin_safe(sym, "sell", route="MA7_Simple"))
 
     def test_final_filter_records_opposing_wick_reason(self):
         sym = self._state("buy")
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
-        self.assertIn("反向影線過長", STATES[sym]["entry_block_reason"])
+        self.assertIn("反向影線", STATES[sym]["entry_block_reason"])
+        self.assertIn("8.00x > 1.8x", STATES[sym]["entry_block_reason"])
 
 
     def test_disabled_btc_macro_guard_allows_alt_to_follow_local_signal(self):

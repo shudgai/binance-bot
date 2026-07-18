@@ -7,8 +7,9 @@ import numpy as np
 
 from core import ctx
 from core.check_entries import compute_indicators
-from core.exits import (_ma_peak_keep_ratio, _meaningful_ma7_break, check_exits,
-    update_ma_peak_lock, update_trailing_stop)
+from core.exits import (_ma_peak_keep_ratio, _ma7_simple_turn_break,
+    _meaningful_ma7_break, check_exits, update_ma_peak_lock,
+    update_trailing_stop)
 from core.state_manager import build_symbol_state
 
 
@@ -89,6 +90,32 @@ class MALifecycleTests(unittest.TestCase):
         self.assertTrue(_meaningful_ma7_break(
             True, 98.8, 100.0, 99.0, 99.9, 0.5, 100.0
         )[0])
+
+    def test_ma7_simple_short_ignores_price_only_break_while_ma7_still_falls(self):
+        broken, _ = _ma7_simple_turn_break(
+            False, 74.98, 74.90, 0.043571, 74.87,
+            False, {"current_slope": -0.01}, 0,
+        )
+        self.assertFalse(broken)
+
+    def test_ma7_simple_short_requires_turn_then_continuation(self):
+        first, _ = _ma7_simple_turn_break(
+            False, 74.98, 74.90, 0.043571, 74.87,
+            True, {"current_slope": 0.01}, 0,
+        )
+        continued, _ = _ma7_simple_turn_break(
+            False, 75.02, 74.93, 0.043571, 74.87,
+            False, {"current_slope": 0.015}, 1,
+        )
+        self.assertTrue(first)
+        self.assertTrue(continued)
+
+    def test_ma7_simple_does_not_join_an_old_adverse_slope_without_new_turn(self):
+        broken, _ = _ma7_simple_turn_break(
+            False, 74.98, 74.90, 0.043571, 74.87,
+            False, {"current_slope": 0.01}, 0,
+        )
+        self.assertFalse(broken)
 
     def test_doge_and_sui_shallow_ma25_undercuts_do_not_exit(self):
         self.assertFalse(_meaningful_ma7_break(
@@ -243,7 +270,9 @@ class MALifecycleTests(unittest.TestCase):
 
     def test_ma_profit_floor_exits_before_meaningful_profit_becomes_loss(self):
         state = self._position_state(closed_price=100.24)
-        state.update({"close_price": 100.24, "highest_profit_pct": 0.0035})
+        state.update({"close_price": 100.24, "highest_profit_pct": 0.0035,
+                      "ma_profit_floor_cross_count": 2,
+                      "ma_profit_floor_cross_since": time.time() - 1.1})
 
         async def run():
             close_mock = AsyncMock()
@@ -255,11 +284,31 @@ class MALifecycleTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_ma_profit_floor_reclaim_cancels_pending_exit(self):
+        state = self._position_state(closed_price=100.24)
+        state.update({"close_price": 100.24, "highest_profit_pct": 0.0035})
+
+        hit, _ = update_ma_peak_lock(self.sym, 100.24, True, event_time=100.0)
+        self.assertFalse(hit)
+        self.assertEqual(state["ma_profit_floor_cross_count"], 1)
+
+        hit, _ = update_ma_peak_lock(self.sym, 100.26, True, event_time=100.5)
+        self.assertFalse(hit)
+        self.assertEqual(state["ma_profit_floor_cross_count"], 0)
+
+        hit, _ = update_ma_peak_lock(self.sym, 100.24, True, event_time=102.0)
+        self.assertFalse(hit)
+        self.assertEqual(state["ma_profit_floor_cross_count"], 1)
+
     def test_ma_short_profit_floor_is_symmetric(self):
         state = self._position_state(closed_price=99.76, ma7=99.0, ma25=100.0)
         state.update({"qty": -1.0, "close_price": 99.76, "highest_profit_pct": 0.0035})
 
-        hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False)
+        hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False, event_time=100.0)
+        self.assertFalse(hit)
+        hit, _ = update_ma_peak_lock(self.sym, 99.76, False, event_time=100.5)
+        self.assertFalse(hit)
+        hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False, event_time=102.1)
 
         self.assertTrue(hit)
         self.assertAlmostEqual(floor_price, 99.75)

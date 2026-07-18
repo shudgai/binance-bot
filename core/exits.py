@@ -29,6 +29,9 @@ MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
 MA_MIN_PROFIT_TARGET_PCT = 0.006
 MA_PROFIT_FLOOR_ARM_PCT = 0.003
 MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.0015
+MA_PROFIT_FLOOR_CONFIRM_TICKS = 3
+MA_PROFIT_FLOOR_CONFIRM_SEC = 1.0
+MA_PROFIT_FLOOR_TREND_CONFIRM_SEC = 2.0
 MA_PEAK_LOCK_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
@@ -106,6 +109,30 @@ def _meaningful_ma7_break(is_long, closed_price, ma7, ma25, prev_ma7, atr, avg):
     return beyond_buffer and ma25_lost, break_buffer
 
 
+def _ma7_simple_turn_break(
+    is_long, closed_price, ma7, atr, avg,
+    turn_triggered, turn_data, invalid_count,
+):
+    """MA7_Simple exits follow an actual opposite MA7 turn, not price alone."""
+    closed_price = float(closed_price or 0.0)
+    ma7 = float(ma7 or 0.0)
+    atr = float(atr or 0.0)
+    avg = float(avg or 0.0)
+    if min(closed_price, ma7, avg) <= 0:
+        return False, 0.0
+
+    break_buffer = max(atr * 0.15, avg * 0.0005)
+    current_slope = float((turn_data or {}).get("current_slope", 0.0) or 0.0)
+    turn_started = bool(turn_triggered) or int(invalid_count or 0) > 0
+    if is_long:
+        adverse_slope = current_slope < 0
+        beyond_buffer = closed_price < ma7 - break_buffer
+    else:
+        adverse_slope = current_slope > 0
+        beyond_buffer = closed_price > ma7 + break_buffer
+    return turn_started and adverse_slope and beyond_buffer, break_buffer
+
+
 def _ma_peak_keep_ratio(peak_profit):
     # 使用者要求適度收緊，儘量鎖在接近當下高點的位置，減少獲利回吐幅度。
     if peak_profit >= MA_PEAK_LOCK_HIGH_PCT:
@@ -113,6 +140,49 @@ def _ma_peak_keep_ratio(peak_profit):
     if peak_profit >= MA_PEAK_LOCK_MID_PCT:
         return 0.85
     return 0.75
+
+
+def _reset_ma_profit_floor_confirmation(state):
+    state["ma_profit_floor_cross_count"] = 0
+    state["ma_profit_floor_cross_since"] = 0.0
+
+
+def _ma_profit_floor_cross_confirmed(sym, crossed, is_long, now):
+    """Require a persistent multi-tick floor breach; reclaim cancels the pending exit."""
+    state = ctx.STATES[sym]
+    previous_count = int(state.get("ma_profit_floor_cross_count", 0) or 0)
+    if not crossed:
+        if previous_count:
+            logger.info(f"✅ [MA_Profit_Floor_Reclaim] {sym} 已重新站回鎖利線，取消出場確認")
+        _reset_ma_profit_floor_confirmation(state)
+        return False
+
+    since = float(state.get("ma_profit_floor_cross_since", 0.0) or 0.0)
+    if previous_count <= 0 or since <= 0 or now < since:
+        since = now
+        count = 1
+        state["ma_profit_floor_cross_since"] = since
+        logger.info(f"⏳ [MA_Profit_Floor_Confirm] {sym} 首次穿越鎖利線，等待連續成交確認")
+    else:
+        count = previous_count + 1
+    state["ma_profit_floor_cross_count"] = count
+
+    ma7 = float(state.get("ma7", 0.0) or 0.0)
+    prev_ma7 = float(state.get("prev_ma7", ma7) or ma7)
+    trend_still_favorable = (
+        ma7 > 0 and prev_ma7 > 0
+        and ((ma7 > prev_ma7) if is_long else (ma7 < prev_ma7))
+    )
+    required_sec = (MA_PROFIT_FLOOR_TREND_CONFIRM_SEC if trend_still_favorable
+                    else MA_PROFIT_FLOOR_CONFIRM_SEC)
+    confirmed = (count >= MA_PROFIT_FLOOR_CONFIRM_TICKS
+                 and now - since >= required_sec)
+    if confirmed:
+        logger.info(
+            f"🛑 [MA_Profit_Floor_Confirmed] {sym} 連續 {count} 筆且維持 "
+            f"{now - since:.1f}s 穿越鎖利線，確認出場"
+        )
+    return confirmed
 
 
 def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_confirmation=False):
@@ -125,10 +195,10 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
 
     profit = (current_price - avg) / avg if is_long else (avg - current_price) / avg
     confirmed_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    now = float(event_time if event_time is not None else time.time())
     if require_confirmation and profit > confirmed_peak:
         candidate = float(s.get("realtime_peak_candidate_profit", 0.0) or 0.0)
         candidate_time = float(s.get("realtime_peak_candidate_time", 0.0) or 0.0)
-        now = float(event_time if event_time is not None else time.time())
         tolerance = max(0.0005, min(0.002, (atr / avg) * 0.25))
         if candidate > confirmed_peak and 0 <= now - candidate_time <= 1.0 and abs(profit - candidate) <= tolerance:
             confirmed_peak = max(candidate, profit)
@@ -155,6 +225,7 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
     fee_floor = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
     if confirmed_peak < MA_PEAK_LOCK_ARM_PCT:
         if confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT:
+            _reset_ma_profit_floor_confirmation(s)
             return False, float(s.get("ma_profit_floor_price", 0.0) or 0.0)
         # [修正] 0.3%~0.6% 中間段：用峰值的 70% 比例追蹤停利，讓停利線隨峰值上移。
         # 舊版固定用 fee_floor（保本線），導致峰值到 0.3% 時停利線仍只在 ~0.25% 保本附近，
@@ -175,7 +246,7 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         # 「price <= floor」只有在真正跌穿 floor 時才成立；若 current_price 還在 floor 上方，
         # crossed=False，讓利潤繼續跑。
         crossed = current_price <= floor_price if is_long else current_price >= floor_price
-        return crossed, floor_price
+        return _ma_profit_floor_cross_confirmed(sym, crossed, is_long, now), floor_price
 
     locked_profit = max(fee_floor, confirmed_peak * _ma_peak_keep_ratio(confirmed_peak))
     if is_long:
@@ -913,9 +984,18 @@ async def check_exits(sym):
                 (is_long and prev_ma7 >= prev_ma25 and ma7 < ma25) or
                 (not is_long and prev_ma7 <= prev_ma25 and ma7 > ma25)
             )
-            ma7_broken, ma7_break_buffer = _meaningful_ma7_break(
-                is_long, closed_price, ma7, ma25, prev_ma7, current_atr, avg
-            )
+            if route == "ma7_simple":
+                # MA7_Simple 是依 MA7 底部/頂部轉彎進場，出場也必須對稱地確認
+                # MA7 已朝反方向轉彎並連續延伸；不能只因價格兩根收在線的另一側，
+                # 就套用其他 MA 路由的雙均線跌破規則停損。
+                ma7_broken, ma7_break_buffer = _ma7_simple_turn_break(
+                    is_long, closed_price, ma7, current_atr, avg,
+                    turn_triggered, turn_data, s.get("ma_exit_invalid_count", 0),
+                )
+            else:
+                ma7_broken, ma7_break_buffer = _meaningful_ma7_break(
+                    is_long, closed_price, ma7, ma25, prev_ma7, current_atr, avg
+                )
 
             if s.get("ma_exit_last_candle_ts") != ma_candle_ts:
                 s["ma_exit_last_candle_ts"] = ma_candle_ts
@@ -1186,10 +1266,11 @@ async def check_exits(sym):
     # 縮短後：無峰值弱動能 48 分鐘（原 80 分鐘）；有峰值強動能 243 分鐘（原 405 分鐘）。
     # 保留「有峰值再多給 1.5 倍」的邏輯，只砍「從未回到有利側的卡住倉位」。
     _st_time_decay_limit = int(_st_base_limit * 1.2 * (1.5 if _st_had_peak else 1.0))
+    _ma7_turn_managed = route == "ma7_simple"
     # 使用者要求擴大範圍：不只虧損/持平的單子要超時了結，「有獲利但一直沒有再創新高、
     # 時間拖很久」的單子也一樣——與其耗著等一個已經不再發展的小獲利，不如先落袋，把
     # 倉位空出來讓新訊號進場。虧損那邊維持停損標記；獲利那邊改標記一般平倉，不算停損。
-    if hold_sec > _st_time_decay_limit:
+    if hold_sec > _st_time_decay_limit and not _ma7_turn_managed:
         
         # 檢查是否在「獲利區間」且「沒創新高」
         # 這裡加入針對獲利單的 Peak Stagnation 檢查：
@@ -1260,6 +1341,8 @@ async def check_exits(sym):
     _NO_PEAK_TIMEOUT_SEC = 1800   # 30 分鐘
     _NO_PEAK_HARD_SL_PCT = 0.008  # 0.8%
     if (
+        not _ma7_turn_managed
+        and
         not s.get("is_breakeven_locked", False)
         and float(s.get("highest_profit_pct", 0.0) or 0.0) < 0.003
         and hold_sec >= _NO_PEAK_TIMEOUT_SEC
@@ -1278,7 +1361,13 @@ async def check_exits(sym):
     # 持倉超過 60 分鐘、還沒攤平過、目前仍在虧損（不管有沒有接近停損線），就評估
     # 攤平一次，讓均價貼近市價，早點有機會平倉、不要一直佔著交易槽位。跟接刀防呆
     # 共用同一套判斷（_attempt_forced_rescue 內建），急跌/急漲中不會硬攤。
-    if hold_sec >= 3600 and profit_pct < 0 and s.get("entry_count", 0) == 1 and not s.get("is_ordering"):
+    if (
+        not _ma7_turn_managed
+        and hold_sec >= 3600
+        and profit_pct < 0
+        and s.get("entry_count", 0) == 1
+        and not s.get("is_ordering")
+    ):
         if await _attempt_forced_rescue(sym, s, is_long, p):
             return
 
@@ -1294,7 +1383,12 @@ async def check_exits(sym):
         # 而不是在已經要停損的當下才硬加碼，反而放大虧損（曾實際發生：攤平價幾乎
         # 貼著原始停損線，加碼後部位變大、停損線卻被新均價往下拖，最終虧損翻倍）。
         _rescue_eval_pct = _hard_sl * 0.75
-        if s.get("entry_count", 0) == 1 and not s.get("is_ordering") and profit_pct <= -_rescue_eval_pct:
+        if (
+            not _ma7_turn_managed
+            and s.get("entry_count", 0) == 1
+            and not s.get("is_ordering")
+            and profit_pct <= -_rescue_eval_pct
+        ):
             if await _attempt_forced_rescue(sym, s, is_long, p):
                 return
 

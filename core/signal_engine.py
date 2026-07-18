@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 
-from core.config import ENTRY_SURGE_THRESHOLD
+from core.config import ENTRY_SURGE_THRESHOLD, MA_CROSS_MIN_GAP_PCT
 
 def compute_signal_strength(sym, realtime_trigger=False):
     """Generate entries exclusively from completed-candle MA7/25/99 setups."""
@@ -54,25 +54,31 @@ def compute_signal_strength(sym, realtime_trigger=False):
     # 否則新 K 棒剛開始時 vol_surge 接近 0 會誤擋有效訊號，也可能被未收線瞬時量誤放行。
     is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
 
-    # MA_Cross 沒有像 pullback/breakout 那樣的 long_spreading/short_spreading（gap
-    # 持續擴大）當作防雜訊條件，只要方向對了、哪怕 MA7/MA25 只是貼在一起原地反覆
-    # 交叉也算數。只在「gap 幾乎是零 且 兩條 MA 斜率都幾乎是零」這種最極端的平走
-    # 盤整同時出現時才擋（三個條件都要成立），門檻沿用舊版盤整過濾的數值，盡量
-    # 不影響正常有動能的交叉，只濾掉最沒意義的原地雜訊交叉。
+    # MA7／MA25 必須在交叉後拉開最小距離；只有斜率、但兩線仍幾乎重疊時，方向
+    # 尚未真正成立。0.005% 可擋 DOGE 類極薄交叉，同時保留既有成功樣本的間距。
     ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
     ma7_slope = abs(ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
     ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
     is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
+    cross_direction_confirmed = ma_gap_pct >= MA_CROSS_MIN_GAP_PCT
 
     # 交叉路線：MA7 x MA25 金叉/死叉，只需確認 K 棒方向與非極端 RSI
+    # ETH 成功樣本只有 0.52x RVOL：若交叉已站在 MA99 正確方向且波動未失控，
+    # 允許 0.50x～0.60x 進入候選；錯誤 MA99 方向仍維持原本 0.60x 門檻。
+    cross_long_volume_ok = volume_ratio >= base_limit or (
+        volume_ratio >= 0.5 and above_ma99 and atr_pct <= 5.0
+    )
+    cross_short_volume_ok = volume_ratio >= base_limit or (
+        volume_ratio >= 0.5 and below_ma99 and atr_pct <= 5.0
+    )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
-                  and volume_ratio >= base_limit and current_rsi < 70
-                  and not is_flat_chop)
+                  and cross_long_volume_ok and current_rsi < 70
+                  and cross_direction_confirmed and not is_flat_chop)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
                    and (candle_close < candle_open or is_realtime_strong)
-                   and volume_ratio >= base_limit and current_rsi > 30
-                   and not is_flat_chop)
+                   and cross_short_volume_ok and current_rsi > 30
+                   and cross_direction_confirmed and not is_flat_chop)
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
@@ -117,25 +123,33 @@ def compute_signal_strength(sym, realtime_trigger=False):
         bearish_candle = candle_close < candle_open
         volume_ok = volume_ratio >= 0.5  # 簡化路線的量能比門檻 (min_volume_ratio = 0.5)
 
-        if turn_up and bullish_candle and volume_ok and current_rsi < 75.0:
+        if (turn_up and bullish_candle and volume_ok and current_rsi < 75.0
+                and not (golden_cross or death_cross)):
             side, route = "buy", "MA7_Simple"
             reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
             s["ma_signal_candle_ts"] = signal_ts
             logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] buy | {reason}")
-            # 計算強度
-            strength = 25.0 + min(max(volume_ratio - 0.8, 0.0) * 5.0, 5.0)
+            # USUSDT 成功樣本的 RVOL 約 0.83x。保留 0.5x 的最低觸發能力，
+            # 但讓 0.5x～0.8x 的弱量轉折確實降分，避免與有量轉折同為 25 分。
+            volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
+            strength = 25.0 + volume_adjustment
             return (side, strength, route)
-        elif turn_down and bearish_candle and volume_ok and current_rsi > 25.0:
+        elif (turn_down and bearish_candle and volume_ok and current_rsi > 25.0
+                and not (golden_cross or death_cross)):
             side, route = "sell", "MA7_Simple"
             reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
             s["ma_signal_candle_ts"] = signal_ts
             logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] sell | {reason}")
-            # 計算強度
-            strength = 25.0 + min(max(volume_ratio - 0.8, 0.0) * 5.0, 5.0)
+            # 空單採對稱評分：弱量仍可觀察，但排序必須低於有量轉折。
+            volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
+            strength = 25.0 + volume_adjustment
             return (side, strength, route)
 
         if volume_ratio < base_limit:
             reason = f"量能不足（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x），暫停交易"
+        elif (golden_cross or death_cross) and not cross_direction_confirmed:
+            reason = (f"MA7／MA25 交叉間距僅 {ma_gap_pct*100:.4f}% < "
+                      f"{MA_CROSS_MIN_GAP_PCT*100:.4f}%，方向確認不足")
         elif is_flat_chop and (golden_cross or death_cross):
             reason = "MA7／MA25 平走交織，屬盤整假訊號區"
         elif current_rsi >= 70 and ma7 > ma25:
