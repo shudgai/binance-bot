@@ -1581,15 +1581,24 @@ def get_atr_ranked_coins(symbols=None, limit=10, blacklist=None):
                 q_vol = 0.0
             # Market quality plus live entry readiness. This keeps ATR selection aligned
             # with the actual entry engine instead of choosing yesterday's volatile coin.
+            # readiness_component 內建的 volume_ratio 子分只佔它自己 10%（換算到總分
+            # 不到 5%），90% 都是結構位置（MA排列、靠不靠近前高低點）——這些條件在
+            # 盤整安靜期一樣能成立，選進來的幣「結構就緒」但沒有真的量能推動，實際
+            # 進場後常常在鎖利/止損線附近反覆拉鋸，變成一連串小虧（實測 HYPEUSDT/
+            # ADAUSDT 案例）。把即時量能比獨立拉成一個頂層「活躍度」因子並加重
+            # one_h_component 權重，降低結構就緒度的主導地位，讓選幣更看重「現在是
+            # 不是真的在動」，不只是「結構位置對不對」。
             one_h_component = min(max(one_h_vol, 0.0), 2.5) / 2.5
             atr_component = min(max(atr_pct, 0.0), 6.0) / 6.0
             volume_component = min(q_vol / 100_000_000, 1.0)
             readiness_component = float(readiness.get("score", 0.0) or 0.0)
+            activity_component = min(max(float(readiness.get("volume_ratio", 0.0) or 0.0), 0.0) / 1.5, 1.0)
             score = (
                 atr_component * 0.25
-                + one_h_component * 0.20
+                + one_h_component * 0.30
                 + volume_component * 0.10
-                + readiness_component * 0.45
+                + activity_component * 0.15
+                + readiness_component * 0.20
             )
             ranked.append({
                 "symbol": sym,
