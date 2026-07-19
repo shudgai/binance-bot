@@ -1122,9 +1122,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # 兩次收線跌破（信號正確），但當下利潤只有 0.02%~0.04%，被這裡的 0.35% 門檻連續
     # 攔截了 4 次、每次都不放行，一直拖到價格真的轉負才被迫用 is_stop_loss=True 補放行
     # ——本來該在轉折剛確認時就平倉了結的單子，硬生生被拖成真正的停損虧損出場。
-    # [Dynamic_TP_Tier]：分級停利目標刻意設計成低獲利檔位就先落袋（可能低於這裡的
-    # 0.35%/1.5% 固定門檻），一樣要放行，不然會重演跟 [MA7_Closed_Break] 一樣的問題。
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Dynamic_TP_Tier]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1481,7 +1479,6 @@ def _fill_paper_order(sym, fill_price, side=None, qty=None, margin=0.0, is_rescu
             s["_lin_trail_armed"] = False
             s["_lin_trail_activation_price"] = 0.0
             s["_lin_trail_activation_stop"] = 0.0
-            s["_dyn_tp_base_distance"] = 1.5 * float(s.get("entry_atr", 0.0) or 0.0)
         _import_update_trailing_stop()(sym, fill_price, side == 'buy')
         # 金字塔加碼（同方向、更好價位）才鎖定在首筆進場價保本；
         # 救援攤平 (Rescue DCA) 是在更差價位補倉攤低成本，鎖在首筆價格等於讓新均價毫無喘息空間，
@@ -2469,7 +2466,6 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 s["_lin_trail_armed"] = False
                 s["_lin_trail_activation_price"] = 0.0
                 s["_lin_trail_activation_stop"] = 0.0
-                s["_dyn_tp_base_distance"] = 1.5 * float(s.get("entry_atr", 0.0) or 0.0)
 
             _import_update_trailing_stop()(sym, fill_price, side == 'buy')
 

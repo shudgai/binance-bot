@@ -100,6 +100,30 @@ def test_ma7_simple_short_profit_floor_closes_on_realtime_trade_tick():
     assert close.await_args.kwargs["is_stop_loss"] is False
 
 
+def test_range_realtime_trailing_waits_for_closed_candle():
+    sym = "RANGEUSDT"
+    init_states([sym])
+    reset_coin_state(sym)
+    state = STATES[sym]
+    state.update({
+        "qty": 1.0, "avg_price": 100.0,
+        "entry_reason": "Range_Support_Long",
+        "current_atr": 0.1, "highest_profit_pct": 0.005,
+        "trailing_highest": 100.5, "trailing_stop_price": 100.3,
+        "stop_loss": 100.3, "trade_price_history": [100.4],
+        "trade_qty_history": [1.0],
+        "ohlcv": [[123000, 100.4, 100.5, 100.2, 100.4, 10.0]],
+    })
+
+    with patch("core.orders.close_position", AsyncMock()) as close:
+        asyncio.run(update_trade_signal(sym, {"price": 100.29, "amount": 1.0}))
+
+    close.assert_not_awaited()
+    assert state["range_trailing_pending"] is True
+    assert state["range_trailing_pending_candle_ts"] == 123000
+    assert state["range_trailing_pending_stop"] >= 100.3
+
+
 def test_realtime_trade_does_not_close_before_soft_activation():
     sym = "XRPUSDT"
     init_states([sym])

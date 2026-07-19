@@ -464,13 +464,11 @@ class MALifecycleTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_ma_dynamic_tp_does_not_take_sub_point_six_percent_profit(self):
+    def test_ma_route_does_not_exit_without_peak_lock_cross(self):
         state = self._position_state(closed_price=100.3)
         state.update({
             "close_price": 100.3,
             "highest_profit_pct": 0.003,
-            "max_profit_reached": 0.003,
-            "_dyn_tp_base_distance": 0.5,
         })
 
         async def run():
@@ -492,6 +490,22 @@ class MALifecycleTests(unittest.TestCase):
         })
 
         update_trailing_stop(self.sym, 100.3, True)
+
+        self.assertEqual(state["trailing_stop_price"], 0.0)
+        self.assertFalse(state.get("is_breakeven_locked", False))
+        self.assertFalse(state.get("soft_trailing_armed", False))
+
+    def test_ma_common_trailing_never_arms_above_point_six_percent(self):
+        state = self._position_state(closed_price=101.2)
+        state.update({
+            "close_price": 101.2,
+            "highest_profit_pct": 0.012,
+            "trailing_highest": 101.2,
+            "trailing_activation_atr": 0.5,
+            "trailing_distance_atr": 1.0,
+        })
+
+        update_trailing_stop(self.sym, 101.2, True)
 
         self.assertEqual(state["trailing_stop_price"], 0.0)
         self.assertFalse(state.get("is_breakeven_locked", False))

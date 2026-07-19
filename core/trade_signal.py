@@ -163,50 +163,14 @@ async def update_trade_signal(sym, trade):
             s["realtime_peak_candidate_profit"] = 0.0
             s["realtime_peak_candidate_time"] = 0.0
 
-        # 0.6% 以下保留發展空間；達 0.6% 才即時鎖定成本與摩擦緩衝。
-        if confirmed_peak >= 0.006 and not s.get("is_breakeven_locked", False):
-            _buf = 0.001
-            _be = avg_p * (1 + _buf) if _is_long else avg_p * (1 - _buf)
-            _sl_now = s.get("stop_loss", 0)
-            if _is_long and (_sl_now == 0 or _be > _sl_now):
-                s["stop_loss"] = _be
-                s["is_breakeven_locked"] = True
-                logger.info(f"⚡ [即時保本] {sym} 即時確認達到 {confirmed_peak*100:.2f}%，SL 鎖定 {_be:.4f}")
-            elif not _is_long and (_sl_now == 0 or _be < _sl_now):
-                s["stop_loss"] = _be
-                s["is_breakeven_locked"] = True
-                logger.info(f"⚡ [即時保本] {sym} 即時確認達到 {confirmed_peak*100:.2f}%，SL 鎖定 {_be:.4f}")
+        # 通用路線只呼叫 exits.update_trailing_stop() 這個唯一價格來源；
+        # 即時層不再自行維護另一套回吐百分比。未確認的單筆尖峰不更新停利線。
+        from core.exits import GENERIC_TRAILING_ARM_PCT, update_trailing_stop
+        if confirmed_peak >= GENERIC_TRAILING_ARM_PCT:
+            update_trailing_stop(sym, price, _is_long, update_peak=False)
 
-        # ── TrailTP 即時同步至 stop_loss（每個 trade tick 執行）──
-        _atr_rt = s.get("current_atr", 0.0)
-        if _atr_rt > 0 and price > 0:
-            _ts_atr_pct_rt = _atr_rt / price
-            _lev_rt = s.get("leverage", 4)
-            _hp_rt = s.get("highest_profit_pct", 0.0)
-            _ts_act_rt = 0.006 if _hp_rt < 0.012 else max(0.020 / _lev_rt, _ts_atr_pct_rt * 0.3)
-            if _hp_rt > 0.03:       _ts_ret_rt = 0.003
-            elif _hp_rt > 0.015:    _ts_ret_rt = 0.004
-            elif _hp_rt >= 0.006:   _ts_ret_rt = 0.005
-            else:                   _ts_ret_rt = min(max(0.0015, _hp_rt * 0.5), 0.005) if _hp_rt > 0 else 0.002
-            if _hp_rt >= _ts_act_rt:
-                if _is_long:
-                    _ttp_sl = s.get("trailing_highest", avg_p) * (1 - _ts_ret_rt)
-                    if _hp_rt < 0.006:
-                        _ttp_sl = max(_ttp_sl, avg_p * 1.0011)
-                    if _ttp_sl > s.get("stop_loss", 0):
-                        s["stop_loss"] = _ttp_sl
-                        s["trailing_stop_price"] = max(s.get("trailing_stop_price", 0), _ttp_sl)
-                else:
-                    _ttp_sl = s.get("trailing_lowest", avg_p) * (1 + _ts_ret_rt)
-                    if _hp_rt < 0.006:
-                        _ttp_sl = min(_ttp_sl, avg_p * 0.9989)
-                    _cur_sl_rt = s.get("stop_loss", 0)
-                    if _cur_sl_rt == 0 or _ttp_sl < _cur_sl_rt:
-                        s["stop_loss"] = _ttp_sl
-                        _cur_ts_rt = s.get("trailing_stop_price", 0)
-                        s["trailing_stop_price"] = min(_cur_ts_rt if _cur_ts_rt > 0 else float("inf"), _ttp_sl)
-
-        # 成交流每個 tick 直接檢查移動停利穿越，不再等待主退出循環。
+        # 成交流每個 tick 檢查同一條 trailing_stop_price。Range 只登記穿越，
+        # 實際出場仍由主循環等待 K 棒收線確認。
         _rt_ts = float(s.get("trailing_stop_price", 0.0) or 0.0)
         _rt_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
         _rt_crossed = (
@@ -214,6 +178,25 @@ async def update_trade_signal(sym, trade):
             and ((_is_long and price <= _rt_ts) or (not _is_long and price >= _rt_ts))
         )
         if _rt_crossed and not s.get("_is_closing", False):
+            route_key = str(s.get("entry_reason", "") or "").lower()
+            if route_key in {"range_support_long", "range_resistance_short"}:
+                candles = s.get("ohlcv", [])
+                live_candle_ts = int(candles[-1][0]) if candles else 0
+                if live_candle_ts > 0:
+                    old_stop = float(s.get("range_trailing_pending_stop", 0.0) or 0.0)
+                    pending_stop = (
+                        max(old_stop, _rt_ts) if old_stop > 0 and _is_long
+                        else min(old_stop, _rt_ts) if old_stop > 0
+                        else _rt_ts
+                    )
+                    s["range_trailing_pending"] = True
+                    s["range_trailing_pending_candle_ts"] = live_candle_ts
+                    s["range_trailing_pending_stop"] = pending_stop
+                    logger.info(
+                        f"⏳ [Realtime_Range_Trailing_Pending] {sym} 即時價格 {price:.6f} "
+                        f"穿越保護線 {pending_stop:.6f}，等待本根 K 棒收線確認"
+                    )
+                return
             # 停利線一旦被穿越就必須退出。舊邏輯在跳價後若目前毛利已低於費用安全線，
             # 反而拒絕平倉，會把已鎖定的小利繼續拖成虧損（XLM 0.37% 峰值案例）。
             # 費用安全線只用來決定停利線位置，不能在穿越後變成「禁止止盈」。

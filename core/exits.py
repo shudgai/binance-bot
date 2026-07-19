@@ -39,6 +39,7 @@ MA_PEAK_LOCK_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
+GENERIC_TRAILING_ARM_PCT = 0.0045
 _MA_EXCHANGE_STOP_SYNC_TASKS = {}
 
 # MA7 獲利轉彎出場：第一根確認轉彎的收線先落袋 60%，下一根仍往反方向才清倉。
@@ -478,7 +479,7 @@ from core.calc import profit_pct as _profit_pct
 logger = logging.getLogger(__name__)
 
 
-def update_trailing_stop(sym, current_price, is_long):
+def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     """
     實作非對稱移動停損 (Asymmetric Trailing Stop)
     當價格創新高/新低時，上移停損點，且加入保本緩衝區防止被雜訊洗出場。
@@ -513,8 +514,9 @@ def update_trailing_stop(sym, current_price, is_long):
 
     profit_pct = _profit_pct(current_price, avg_price, is_long)
     _prev_peak = s.get("highest_profit_pct", 0.0)
-    s["highest_profit_pct"] = max(_prev_peak, profit_pct)
-    if s["highest_profit_pct"] > _prev_peak:
+    if update_peak:
+        s["highest_profit_pct"] = max(_prev_peak, profit_pct)
+    if update_peak and s["highest_profit_pct"] > _prev_peak:
         # 即時把新高點存檔，而不是只在重啟時呼叫
         # save_peak，兩次重啟之間爬到的真正高點從未落地，若中途又重啟（例如部署修改），
         # 峰值記憶會被打回重啟當下的價位，讓所有靠 highest_profit_pct 判斷的鎖利機制
@@ -523,12 +525,11 @@ def update_trailing_stop(sym, current_price, is_long):
         from core.peak_store import save_peak
         save_peak(sym, s["highest_profit_pct"])
 
-    # MA 波段有自己的 0.6% 啟動門檻與 PeakLock。峰值未達門檻前，不允許較緊的
-    # 通用 Dynamic Trailing（一般幣約 0.25% 即啟動）先把停損推到獲利側，否則會
-    # 繞過 MA_MIN_PROFIT_TARGET_PCT，重演 LDOUSDT 峰值 0.43% 就提早平倉的情況。
-    # MA7/25 失效、MA 0.5% 主動風險線、Hard Stop 與交易所災難單均由其他路徑保留。
+    # MA 路線的價格型停利只由 update_ma_peak_lock() 管理。通用 trailing 在此永遠
+    # 不參與，避免主循環與即時 tick 各自產生不同回吐線。
+    # MA7/25 生命週期、錯向風控及交易所災難止損仍由各自的風險路徑保留。
     route = str(s.get("entry_reason", "") or "").lower()
-    if route in MA_ENTRY_ROUTES and s["highest_profit_pct"] < MA_MIN_PROFIT_TARGET_PCT:
+    if route in MA_ENTRY_ROUTES:
         trailing_stop = float(s.get("trailing_stop_price", 0.0) or 0.0)
         stop_loss = float(s.get("stop_loss", 0.0) or 0.0)
         trailing_is_profit_side = trailing_stop > 0 and (
@@ -553,7 +554,7 @@ def update_trailing_stop(sym, current_price, is_long):
             s["soft_trailing_profit_floor"] = 0.0
             logger.info(
                 f"♻️ [MA_Trailing_Reset] {sym} 峰值 {s['highest_profit_pct']*100:.2f}% "
-                f"未達 {MA_MIN_PROFIT_TARGET_PCT*100:.2f}%，移除過早的通用獲利追蹤線"
+                f"使用專用 MA PeakLock，移除重疊的通用獲利追蹤線"
             )
         return False, s.get("trailing_stop_price", 0.0)
 
@@ -569,7 +570,7 @@ def update_trailing_stop(sym, current_price, is_long):
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     _hp_soft = s.get("highest_profit_pct", 0.0)
-    if profit_pct > breakeven_threshold:
+    if _hp_soft > breakeven_threshold:
         should_log_breakeven = not bool(s.get("is_breakeven_locked", False))
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
@@ -647,7 +648,7 @@ def update_trailing_stop(sym, current_price, is_long):
         # 現價、瞬間誤砍，實測驗證過 0.20% 有安全空間）。回吐容忍度不再是固定值，改
         # 回吐容忍度依 ATR 波動環境調整，避免依賴已移除的 MACD 交易規則。
         # Soft Trailing 啟動門檻拉高至 0.45%，給予利潤足夠的奔跑與震盪空間
-        if 0.0045 <= _hp_soft:
+        if GENERIC_TRAILING_ARM_PCT <= _hp_soft:
             atr_history_v = s.get("atr_history", [])
             atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
             is_low_vol_exit = atr_val <= atr_24h_avg_v if atr_24h_avg_v > 0 else False
@@ -724,7 +725,7 @@ def update_trailing_stop(sym, current_price, is_long):
             trail_sl = min(trail_sl, _linear_trail_candidate)
 
         # 空單對稱版：Soft Trailing 啟動門檻拉高至 0.45%
-        if 0.0045 <= _hp_soft:
+        if GENERIC_TRAILING_ARM_PCT <= _hp_soft:
             atr_history_v = s.get("atr_history", [])
             atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
             is_low_vol_exit = atr_val <= atr_24h_avg_v if atr_24h_avg_v > 0 else False
@@ -966,53 +967,7 @@ async def check_exits(sym):
             return
 
 
-        # 動態分級追蹤止盈 (Trailing Stop)：
-        # 先更新該倉位歷史最高利潤
-        max_profit = max(float(s.get("max_profit_reached", 0.0) or 0.0), profit_pct)
-        s["max_profit_reached"] = max_profit
-
-        _dyn_tp_base = float(s.get("_dyn_tp_base_distance", 0.0) or 0.0)
-        if _dyn_tp_base > 0 and avg > 0:
-            # 根據「最高利潤」所處的區間決定倍數
-            # 使用者要求適度收緊回撤容忍度，儘量鎖在接近當下高點的位置。
-            if max_profit >= 0.010:
-                _tp_tier_mult = 1.00
-                _fallback_ratio = 0.35  # 獲利很大時，容忍 35% 的區間回撤
-            elif max_profit >= 0.006:
-                _tp_tier_mult = 0.75
-                _fallback_ratio = 0.30  # 容忍 30% 的回撤
-            elif max_profit >= 0.004:
-                _tp_tier_mult = 0.55
-                _fallback_ratio = 0.25  # 容忍 25% 的回撤
-            else:
-                _tp_tier_mult = 0.35
-                _fallback_ratio = 0.20  # 微利時，容忍 20% 的回撤 (見好就收)
-
-            # ATR 很小時舊公式可低至 0.18%，實盤 XLM 峰值僅 0.27% 就出場。MA 波段至少
-            # 先走出 0.6% 才算有效獲利，避免交易成本吞掉大量小額停利。
-            _dyn_tp_target_pct = max(
-                (_dyn_tp_base * _tp_tier_mult) / avg,
-                MA_MIN_PROFIT_TARGET_PCT,
-            )
-            
-            # 當「最高利潤」達到該檔位的啟動門檻，啟動追蹤止盈
-            if max_profit >= _dyn_tp_target_pct:
-                # 計算允許的最大回落空間 (相對於起點的比例)
-                _allowed_fallback = _dyn_tp_target_pct * _fallback_ratio
-                
-                # 如果當前利潤從最高點回落超過容忍度，就平倉
-                if (max_profit - profit_pct) >= _allowed_fallback:
-                    cs = "sell" if is_long else "buy"
-                    logger.info(
-                        f"🎯 [Dynamic_TP_Tier] {sym} 最高獲利達 {max_profit*100:.2f}% (門檻 {_dyn_tp_target_pct*100:.2f}%)，"
-                        f"回落超過容許值 {_allowed_fallback*100:.2f}%，追蹤止盈於 {profit_pct*100:.2f}%"
-                    )
-                    await close_position(
-                        sym, cs, abs(s["qty"]), p, avg,
-                        reason="[Dynamic_TP_Tier]", is_stop_loss=False,
-                    )
-                    return
-
+        # MA 路線只使用同一套 PeakLock／ProfitFloor。
         peak_lock_hit, peak_lock_price = update_ma_peak_lock(
             sym, p, is_long, require_confirmation=True,
         )
