@@ -23,6 +23,12 @@ MA_WRONG_DIRECTION_WINDOW_SEC = 1800
 # MA 進場的正常雜訊約 0.2%~0.4%，因此微利區採較寬鬆的60%保留比例。
 # 低於 0.20% 不啟動鎖利；0.20%~0.30% 使用微利保護，0.30% 以上進入主鎖利層。
 # 主動風險線仍獨立管理錯向部位，避免把微利保護誤當固定價停利。
+#
+# 這裡曾經一度收緊到 0.15%/70%（想解決回吐問題），但實測發現太早鎖住反而把
+# 還在正常波動範圍內的單提前剪斷（例：LTCUSDT 才漲到 +0.25% 就被鎖住，隨後
+# 1 秒內的快速反轉又追上鎖利價，反而由小賺變小虧）。真正該負責抓「這是真反轉
+# 還是正常雜訊」的，交給 check_realtime_sell_pressure() 看即時成交流方向去判斷，
+# 而不是靠這條價格門檻越收越緊。門檻本身改回原始寬鬆值，只當最後防線。
 MA_ACTIVE_RISK_STOP_PCT = 0.01
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
@@ -40,6 +46,20 @@ MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 0.5
 GENERIC_TRAILING_ARM_PCT = 0.0045
+
+# 即時賣壓/買壓出場：鎖利線是等「價格」跌破才反應，本質上一定會落後於真正的
+# 反轉。即時成交流（taker 主動買/賣）比價格更早反映風向轉變，因此在已有基本
+# 浮盈的前提下，若逆勢方向成交量明顯主導，提前出場，減少等鎖利線被價格穿越
+# 才出場所造成的回吐。刻意不跟 MA_MICRO_PROFIT_ARM_PCT 綁在一起、門檻設得
+# 更低：這是獨立的「真訊號」防線（看實際成交方向，不是看價格門檻），就算
+# 峰值還沒到鎖利線會啟動的門檻，只要出現真的逆勢量能主導也該提前反應；會不
+# 會誤觸交給下面的連續確認 (confirm ticks) 把單筆雜訊濾掉，不是靠拉高門檻。
+SELL_PRESSURE_MIN_PROFIT_PCT = 0.0012
+SELL_PRESSURE_WINDOW = 12
+SELL_PRESSURE_MIN_SAMPLES = 6
+SELL_PRESSURE_ADVERSE_RATIO = 0.70
+SELL_PRESSURE_CONFIRM_TICKS = 3
+SELL_PRESSURE_CONFIRM_SEC = 2.0
 _MA_EXCHANGE_STOP_SYNC_TASKS = {}
 
 # MA7 獲利轉彎出場：第一根確認轉彎的收線先落袋 60%，下一根仍往反方向才清倉。
@@ -221,6 +241,95 @@ def _ma_profit_floor_cross_confirmed(sym, crossed, is_long, now):
             f"{now - since:.1f}s 穿越鎖利線，確認出場"
         )
     return confirmed
+
+
+SELL_PRESSURE_DEBUG_LOG_INTERVAL_SEC = 3.0
+
+
+def _reset_sell_pressure_confirmation(sym, state, now=None):
+    previous_count = int(state.get("sell_pressure_cross_count", 0) or 0)
+    if previous_count > 0:
+        since = float(state.get("sell_pressure_cross_since", 0.0) or 0.0)
+        held_sec = max(0.0, float(now if now is not None else time.time()) - since) if since > 0 else 0.0
+        logger.info(
+            f"↩️ [SellPressure_Reset] {sym} 累積 {previous_count} 筆確認後中斷"
+            f"（維持 {held_sec:.1f}s 未達 {SELL_PRESSURE_CONFIRM_TICKS} 筆/"
+            f"{SELL_PRESSURE_CONFIRM_SEC:.0f}s 門檻），成交流轉回平衡或浮盈已消失"
+        )
+    state["sell_pressure_cross_count"] = 0
+    state["sell_pressure_cross_since"] = 0.0
+
+
+def _sell_pressure_confirmed(sym, qualifies, now):
+    """比照 MA_Profit_Floor 的多筆連續確認模式，避免單一筆大單造成誤判。"""
+    state = ctx.STATES[sym]
+    if not qualifies:
+        _reset_sell_pressure_confirmation(sym, state, now)
+        return False
+
+    previous_count = int(state.get("sell_pressure_cross_count", 0) or 0)
+    since = float(state.get("sell_pressure_cross_since", 0.0) or 0.0)
+    if previous_count <= 0 or since <= 0 or now < since:
+        since = now
+        count = 1
+        state["sell_pressure_cross_since"] = since
+    else:
+        count = previous_count + 1
+    state["sell_pressure_cross_count"] = count
+
+    confirmed = (count >= SELL_PRESSURE_CONFIRM_TICKS
+                 and now - since >= SELL_PRESSURE_CONFIRM_SEC)
+    return confirmed
+
+
+def check_realtime_sell_pressure(sym, is_long, current_price, event_time=None):
+    """持倉已有基本浮盈時，偵測即時成交流是否出現逆勢方向量能主導（賣壓/買壓），
+    比等鎖利線被價格穿越更早示警，用來對抗「賺了卻沒守住」的獲利回吐。
+
+    只看成交流方向，不判斷出多凶猛；夠不夠格出場交給連續確認 (confirm ticks)
+    把單筆大單雜訊濾掉。
+    """
+    state = ctx.STATES.get(sym)
+    if not state:
+        return False
+    avg = float(state.get("avg_price", 0.0) or 0.0)
+    if avg <= 0 or current_price <= 0:
+        return False
+
+    profit = (current_price - avg) / avg if is_long else (avg - current_price) / avg
+    peak = float(state.get("highest_profit_pct", 0.0) or 0.0)
+    now = float(event_time if event_time is not None else time.time())
+
+    # 還沒有基本浮盈、或現在已經不賺錢了：不是這個機制要處理的情境，
+    # 保留給鎖利線／MA 生命週期／災難止損各自的規則判斷。
+    if peak < SELL_PRESSURE_MIN_PROFIT_PCT or profit <= 0:
+        _reset_sell_pressure_confirmation(sym, state, now)
+        return False
+
+    window = list(state.get("trade_side_history", []) or [])[-SELL_PRESSURE_WINDOW:]
+    if len(window) < SELL_PRESSURE_MIN_SAMPLES:
+        return False
+
+    total_volume = sum(abs(x) for x in window)
+    if total_volume <= 0:
+        return False
+    adverse_volume = sum(abs(x) for x in window if (x < 0 if is_long else x > 0))
+    ratio = adverse_volume / total_volume
+    qualifies = ratio >= SELL_PRESSURE_ADVERSE_RATIO
+
+    # 診斷用：不管有沒有過門檻都定期記錄實際算出來的比值，方便事後回頭比對
+    # 「這次差多少沒觸發」。用時間節流避免快速行情下洗版。
+    last_log_at = float(state.get("_sell_pressure_debug_log_at", 0.0) or 0.0)
+    if now - last_log_at >= SELL_PRESSURE_DEBUG_LOG_INTERVAL_SEC:
+        state["_sell_pressure_debug_log_at"] = now
+        count = int(state.get("sell_pressure_cross_count", 0) or 0)
+        logger.info(
+            f"🔬 [SellPressure_Ratio] {sym} 逆勢量占比 {ratio*100:.1f}% "
+            f"(門檻 {SELL_PRESSURE_ADVERSE_RATIO*100:.0f}%, 樣本 {len(window)}/{SELL_PRESSURE_WINDOW}, "
+            f"浮盈 {profit*100:.2f}%, 峰值 {peak*100:.2f}%, 已累積確認 {count} 筆)"
+        )
+
+    return _sell_pressure_confirmed(sym, qualifies, now)
 
 
 def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_confirmation=False):
@@ -792,6 +901,8 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
 async def check_exits(sym):
     from core.orders import close_position, execute_order
     s = ctx.STATES[sym]
+    if s.get("_external_close_record_pending", False):
+        return
     if s.get("adjusted_this_tick", False):
         return
     if abs(s["qty"]) < 0.000001 or s["avg_price"] <= 0:

@@ -3,6 +3,7 @@ import asyncio
 import time
 import json
 import os
+import fcntl
 from datetime import datetime
 
 from core import ctx
@@ -881,27 +882,40 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         trade_data["realized_pnl_usdt"] = round(gross_realized_pnl, 8)
         trade_data["net_realized_pnl_usdt"] = round(gross_realized_pnl - float(fees or 0.0), 8)
 
-    if os.path.exists(history_file):
-        with open(history_file, 'r', encoding='utf-8') as f:
-            try:
-                history = json.load(f)
-                if not isinstance(history, list): history = []
-            except: history = []
-    else:
-        history = []
-
-    if exchange_close_id is not None and any(
-        str(item.get("exchange_close_id")) == str(exchange_close_id)
-        for item in history
-    ):
-        logger.info(f"ℹ️ [ExternalClose] {symbol} 平倉成交 {exchange_close_id} 已記錄，略過重複寫入")
-        return False
-
-    history.append(trade_data)
-
+    # API 與交易機器人是兩個獨立程序，原本同時「讀整份 JSON -> append -> 覆寫」
+    # 會發生 lost update，後寫者會把前一筆剛寫好的交易蓋掉。鎖住完整的
+    # read-modify-write，並用原子替換避免前端讀到只寫了一半的 JSON。
+    history_dir = os.path.dirname(os.path.abspath(history_file))
+    os.makedirs(history_dir, exist_ok=True)
+    lock_file = f"{history_file}.lock"
+    temp_file = f"{history_file}.tmp.{os.getpid()}"
     try:
-        with open(history_file, 'w', encoding='utf-8') as f:
-            json.dump(history, f, indent=4, ensure_ascii=False)
+        with open(lock_file, "a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            if os.path.exists(history_file):
+                with open(history_file, "r", encoding="utf-8") as history_handle:
+                    try:
+                        history = json.load(history_handle)
+                        if not isinstance(history, list):
+                            history = []
+                    except (json.JSONDecodeError, OSError):
+                        history = []
+            else:
+                history = []
+
+            if exchange_close_id is not None and any(
+                str(item.get("exchange_close_id")) == str(exchange_close_id)
+                for item in history
+            ):
+                logger.info(f"ℹ️ [ExternalClose] {symbol} 平倉成交 {exchange_close_id} 已記錄，略過重複寫入")
+                return False
+
+            history.append(trade_data)
+            with open(temp_file, "w", encoding="utf-8") as temp_handle:
+                json.dump(history, temp_handle, indent=4, ensure_ascii=False)
+                temp_handle.flush()
+                os.fsync(temp_handle.fileno())
+            os.replace(temp_file, history_file)
         logger.info(f"📝 [AI Memory] 已記錄 {symbol} 並產生摘要: {summary}")
         try:
             ai_engine.schedule_auto_review_if_due(len(history))
@@ -910,7 +924,13 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         return True
     except Exception as e:
         logger.info(f"⚠️ [AI Memory] 紀錄失敗: {e}")
-        return False
+        try:
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
+        except OSError:
+            pass
+        # None=真正寫入失敗；False 只代表同一 exchange_close_id 已存在。
+        return None
 
 
 async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
@@ -1040,6 +1060,9 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
 
 async def close_position(sym, close_side, qty, price, avg_price, reason="", is_stop_loss=False):
     s = ctx.STATES[sym]
+    if s.get("_external_close_record_pending", False):
+        logger.info(f"⏳ [ExternalClose] {sym} 交易所已無倉位，正等待平倉成交寫入歷史，不重複送出平倉單")
+        return
     await _close_position_inner(sym, close_side, qty, price, avg_price, reason, is_stop_loss)
 
 
@@ -1197,12 +1220,14 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
                     logger.info(f"⚠️ [平倉失敗後對帳失敗] {sym}: {sync_err}")
                     return
                 if abs(real_qty) < 0.000001:
-                    logger.info(f"🔄 [平倉失敗後對帳] {sym} 交易所實際已無倉位，視為已平倉並清理本地狀態")
+                    # 市價/交易所保護單可能已成交，但本次送單回報 ReduceOnly。此時不能
+                    # 直接 reset：1000PEPE 曾因此清掉數量、均價與進場原因，下一輪對帳
+                    # 已無資料可把真實平倉補進 trade_history。保留快照交由 60 秒對帳
+                    # 取得成交、寫入歷史後再統一清理。
+                    logger.info(f"🔄 [平倉失敗後對帳] {sym} 交易所實際已無倉位，保留本地快照等待成交同步")
                     await _cancel_exchange_exit_order(sym, "exchange_stop_order_id", "止損")
                     await _cancel_exchange_exit_order(sym, "exchange_take_profit_order_id", "停利")
-                    mark_exit(sym, is_stop_loss=is_stop_loss, reason=reason, loss_pct=profit_pct)
-                    clear_peak(sym)
-                    reset_coin_state(sym)
+                    s["_external_close_record_pending"] = True
                 else:
                     logger.info(f"🔄 [平倉失敗後對帳] {sym} 交易所實際倉位為 {real_qty}，同步本地數量後待下次重新評估")
                     s["qty"] = real_qty
@@ -2120,9 +2145,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                         _offset_ratio = 0.9995 if _sig_str >= 22.0 else 0.999
                         _opp_offset_ratio = 1.0005 if _sig_str >= 22.0 else 1.001
 
+                        # MA7_Simple 只有 20 秒有效期（見 MA7_SIMPLE_PENDING_MAX_SEC），若再往
+                        # 近期K線低/高點延伸掛單，經常掛在 20 秒內碰不到的價位，訊號一直觸發卻
+                        # 從未成交。這條路線只用 ATR 回踩距離本身，不額外追近期K線極值。
+                        _use_recent_extreme = route_key != "ma7_simple"
                         if side == 'buy':
                             target_pb = price - atr * _pb_mult
-                            if len(s.get("ohlcv", [])) >= 2:
+                            if _use_recent_extreme and len(s.get("ohlcv", [])) >= 2:
                                 recent_low = min(s["ohlcv"][-1][3], s["ohlcv"][-2][3])
                                 limit_price = min(target_pb, recent_low * _offset_ratio)
                                 limit_price = max(limit_price, price - atr * (_pb_mult * 3.5))
@@ -2130,7 +2159,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                                 limit_price = target_pb
                         else:
                             target_pb = price + atr * _pb_mult
-                            if len(s.get("ohlcv", [])) >= 2:
+                            if _use_recent_extreme and len(s.get("ohlcv", [])) >= 2:
                                 recent_high = max(s["ohlcv"][-1][2], s["ohlcv"][-2][2])
                                 limit_price = max(target_pb, recent_high * _opp_offset_ratio)
                                 limit_price = min(limit_price, price + atr * (_pb_mult * 3.5))

@@ -38,6 +38,7 @@ def build_symbol_state(sym):
         "error_strikes": 0,
         "is_banned": False,
         "sync_required": False,
+        "_external_close_record_pending": False,
         "last_exit_time": 0,
         "last_exit_direction": "",
         "first_seen_time": time.time(),
@@ -121,6 +122,10 @@ def build_symbol_state(sym):
         "realtime_peak_candidate_time": 0.0,
         "trade_qty_history": [],
         "trade_price_history": [],
+        "trade_side_history": [],
+        "sell_pressure_cross_count": 0,
+        "sell_pressure_cross_since": 0.0,
+        "_sell_pressure_debug_log_at": 0.0,
         "trade_signal_strength": 0.0,
         "trade_signal_reason": "",
         "pending_side": None,
@@ -459,6 +464,7 @@ def reset_coin_state(sym):
     from core.entry_time_store import clear_entry_time
     from core.entry_reason_store import clear_entry_reason
     s = ctx.STATES[sym]
+    s["_external_close_record_pending"] = False
     s["qty"] = 0.0
     s["avg_price"] = 0.0
     s["entries"] = []
@@ -500,6 +506,10 @@ def reset_coin_state(sym):
     s["ma_profit_floor_cross_count"] = 0
     s["ma_profit_floor_cross_since"] = 0.0
     s["ma_profit_floor_missed"] = False
+    s["sell_pressure_cross_count"] = 0
+    s["sell_pressure_cross_since"] = 0.0
+    s["_sell_pressure_debug_log_at"] = 0.0
+    s["trade_side_history"] = []
     s["_ma_exchange_stop_sync_pending"] = False
     s["ma_peak_saved_pct"] = 0.0
     s["stop_loss"] = 0.0

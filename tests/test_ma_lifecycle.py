@@ -10,7 +10,7 @@ from core.check_entries import compute_indicators
 from core.exits import (_ma_peak_keep_ratio, _ma7_simple_turn_break,
     _schedule_ma_exchange_profit_stop,
     _meaningful_ma7_break, check_exits, update_ma_peak_lock,
-    update_trailing_stop)
+    update_trailing_stop, check_realtime_sell_pressure)
 from core.state_manager import build_symbol_state
 
 
@@ -271,6 +271,64 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(hit)
         self.assertEqual(floor, 0.0)
         self.assertFalse(state["ma_profit_floor_armed"])
+
+    def test_sell_pressure_stays_off_without_profit_peak(self):
+        state = self._position_state(closed_price=100.0)
+        state.update({"avg_price": 100.0, "highest_profit_pct": 0.0})
+        state["trade_side_history"] = [-1.0] * 10
+
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.0)
+
+        self.assertFalse(hit)
+
+    def test_sell_pressure_stays_off_with_too_few_samples(self):
+        state = self._position_state(closed_price=100.0)
+        state.update({"avg_price": 100.0, "highest_profit_pct": 0.003})
+        state["trade_side_history"] = [-1.0, -1.0, -1.0]
+
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.0)
+
+        self.assertFalse(hit)
+
+    def test_sell_pressure_stays_off_when_flow_is_balanced(self):
+        state = self._position_state(closed_price=100.0)
+        state.update({"avg_price": 100.0, "highest_profit_pct": 0.003})
+        state["trade_side_history"] = [1.0, -1.0, 1.0, -1.0, 1.0, -1.0]
+
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.0)
+
+        self.assertFalse(hit)
+
+    def test_sell_pressure_requires_persistent_confirmation(self):
+        state = self._position_state(closed_price=100.0)
+        state.update({"avg_price": 100.0, "highest_profit_pct": 0.003})
+        state["trade_side_history"] = [-2.0, -2.0, -2.0, -2.0, -2.0, 1.0]
+
+        # First qualifying tick only starts the confirmation window.
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.0)
+        self.assertFalse(hit)
+
+        # Second tick, still inside the minimum confirmation window.
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.5)
+        self.assertFalse(hit)
+
+        # Third tick, now past SELL_PRESSURE_CONFIRM_SEC since the first hit.
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=3.2)
+        self.assertTrue(hit)
+
+    def test_sell_pressure_reclaims_when_flow_turns_balanced(self):
+        state = self._position_state(closed_price=100.0)
+        state.update({"avg_price": 100.0, "highest_profit_pct": 0.003})
+        state["trade_side_history"] = [-2.0, -2.0, -2.0, -2.0, -2.0, 1.0]
+
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.0)
+        self.assertFalse(hit)
+
+        # Flow reclaims to balanced before confirmation completes: counter resets.
+        state["trade_side_history"] = [1.0, -1.0, 1.0, -1.0, 1.0, -1.0]
+        hit = check_realtime_sell_pressure(self.sym, True, 100.2, event_time=1.5)
+        self.assertFalse(hit)
+        self.assertEqual(state["sell_pressure_cross_count"], 0)
 
     def test_ma_peak_lock_does_not_arm_below_point_six_percent(self):
         state = self._position_state(closed_price=100.6)

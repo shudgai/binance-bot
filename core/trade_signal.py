@@ -66,13 +66,19 @@ async def update_trade_signal(sym, trade):
             _lc[3] = min(_lc[3], price)
             
     s["last_trade_qty"] = amount
-    s["last_trade_side"] = str(trade.get("side", "buy") or "buy")
+    trade_side = str(trade.get("side", "buy") or "buy")
+    s["last_trade_side"] = trade_side
     s["last_trade_time"] = ts_value
     s["trade_price_history"].append(price)
     s["trade_qty_history"].append(amount)
+    # 帶方向的成交量：taker 買方吃賣一記正值、taker 賣方砸買一記負值，
+    # 供 check_realtime_sell_pressure 判斷即時成交流是否出現逆勢方向的量能主導。
+    s.setdefault("trade_side_history", []).append(amount if trade_side == "buy" else -amount)
 
     if len(s["trade_price_history"]) > 20:
         s["trade_price_history"] = s["trade_price_history"][-20:]
+    if len(s["trade_side_history"]) > 20:
+        s["trade_side_history"] = s["trade_side_history"][-20:]
     if len(s["trade_qty_history"]) > 20:
         s["trade_qty_history"] = s["trade_qty_history"][-20:]
 
@@ -109,18 +115,32 @@ async def update_trade_signal(sym, trade):
 
         # MA 波段使用專用高點鎖利；下方較緊的通用 TrailTP 仍不套用。
         if str(s.get("entry_reason", "") or "").lower() in {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}:
-            from core.exits import update_ma_peak_lock
+            from core.exits import update_ma_peak_lock, check_realtime_sell_pressure
             peak_hit, peak_lock_price = update_ma_peak_lock(
                 sym, price, _is_long, event_time=ts_value, require_confirmation=True
             )
-            if peak_hit and not s.get("_is_closing", False):
+            # 鎖利線要等價格真的跌破才反應，一定落後於反轉。價格還沒跌破鎖利線時，
+            # 額外看即時成交流有沒有出現逆勢方向量能主導，提前示警、少一點回吐。
+            pressure_hit = False
+            if not peak_hit:
+                pressure_hit = check_realtime_sell_pressure(
+                    sym, _is_long, price, event_time=ts_value,
+                )
+            if (peak_hit or pressure_hit) and not s.get("_is_closing", False):
                 from core.orders import close_position
                 close_side = "sell" if _is_long else "buy"
-                reason = "[MA_Peak_Lock]" if s.get("ma_peak_lock_armed", False) else "[MA_Profit_Floor]"
-                logger.info(
-                    f"⚡ [Realtime_{reason.strip('[]')}] {sym} 即時價格 {price:.6f} "
-                    f"穿越高點鎖利 {peak_lock_price:.6f}，結束本段波段"
-                )
+                if peak_hit:
+                    reason = "[MA_Peak_Lock]" if s.get("ma_peak_lock_armed", False) else "[MA_Profit_Floor]"
+                    logger.info(
+                        f"⚡ [Realtime_{reason.strip('[]')}] {sym} 即時價格 {price:.6f} "
+                        f"穿越高點鎖利 {peak_lock_price:.6f}，結束本段波段"
+                    )
+                else:
+                    reason = "[Sell_Pressure_Exit]" if _is_long else "[Buy_Pressure_Exit]"
+                    logger.info(
+                        f"⚡ [Realtime_Order_Flow_Reversal] {sym} 浮盈 {rt_profit*100:.2f}% "
+                        f"期間偵測到逆勢方向成交量主導，提前結束本段波段"
+                    )
                 await close_position(
                     sym, close_side, abs(s["qty"]), price, avg_p,
                     reason=reason, is_stop_loss=False,

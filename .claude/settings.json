@@ -126,7 +126,15 @@
       "Bash(sudo ss -ltnp)",
       "Bash(kill -15 4010574)",
       "Bash(systemctl --user show binance-api.service -p NRestarts)",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('is_running:', d['is_running']\\); print\\('active_symbols:', d['active_symbols']\\)\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('is_running:', d['is_running']\\); print\\('active_symbols:', d['active_symbols']\\)\")",
+      "Bash(./venv/bin/python3 -)",
+      "Bash(./venv/bin/python3 -c ' *)",
+      "Bash(python3 -m py_compile core/peak_store.py core/orders.py core/exits.py core/runner.py core/state_manager.py)",
+      "Bash(awk '$0 >= \"2026-07-19 11:06\"' logs/bot.log)",
+      "Bash(python3 peak_giveback_stats.py)",
+      "Bash(python3 -m pytest tests/test_pending_limit_fill.py tests/test_entry_risk.py tests/test_realtime_trailing.py tests/test_ma_lifecycle.py -q)",
+      "Bash(.venv/bin/python3 -m pytest tests/test_pending_limit_fill.py tests/test_entry_risk.py tests/test_realtime_trailing.py tests/test_ma_lifecycle.py -q)",
+      "Bash(ps -o pid,lstart -p 235898)"
     ]
   }
 }

@@ -114,6 +114,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
     else:
         # 既有三條路線都沒觸發時，才嘗試簡化路線 (MA7_Simple)
+        #
+        # 實測（peak_giveback_stats.py + trade_history.json）：MA7_Simple 40 筆只有
+        # 20% 勝率，是所有路線裡最差、單一路線就吃掉全部虧損過半。原因是它唯一
+        # 沒有要求 MA25 中期趨勢配合方向（其他三條路線都要求 long/short_spreading
+        # 或 long/short_stack），等於允許在 MA25 明顯走跌時，只因 MA7 這條最快的
+        # 均線單根蠟燭翻頭向上就做多——這種逆著中期趨勢的早期轉折，本質上更容易
+        # 只是雜訊，不是真反轉。這裡補上「MA25 不能是逆勢方向」的最低限度要求，
+        # 量能門檻也拉齊到跟其他路線一樣的 0.6x（原本 0.5x 比全部路線都寬鬆，
+        # 等於連平均以下的量都放行）。
         prev_ma7_2 = float(s.get("prev_ma7_2", 0.0) or 0.0)
         prev_slope = prev_ma7 - prev_ma7_2
         curr_slope = ma7 - prev_ma7
@@ -121,20 +130,24 @@ def compute_signal_strength(sym, realtime_trigger=False):
         turn_down = prev_slope >= 0 and curr_slope < 0
         bullish_candle = candle_close > candle_open
         bearish_candle = candle_close < candle_open
-        volume_ok = volume_ratio >= 0.5  # 簡化路線的量能比門檻 (min_volume_ratio = 0.5)
+        volume_ok = volume_ratio >= base_limit
+        ma25_not_against_long = ma25 >= prev_ma25
+        ma25_not_against_short = ma25 <= prev_ma25
 
         if (turn_up and bullish_candle and volume_ok and current_rsi < 75.0
+                and ma25_not_against_long
                 and not (golden_cross or death_cross)):
             side, route = "buy", "MA7_Simple"
             reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
             s["ma_signal_candle_ts"] = signal_ts
             logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] buy | {reason}")
-            # USUSDT 成功樣本的 RVOL 約 0.83x。保留 0.5x 的最低觸發能力，
-            # 但讓 0.5x～0.8x 的弱量轉折確實降分，避免與有量轉折同為 25 分。
+            # USUSDT 成功樣本的 RVOL 約 0.83x。保留門檻邊緣的最低觸發能力，
+            # 但讓門檻附近的弱量轉折確實降分，避免與有量轉折同為 25 分。
             volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
             strength = 25.0 + volume_adjustment
             return (side, strength, route)
         elif (turn_down and bearish_candle and volume_ok and current_rsi > 25.0
+                and ma25_not_against_short
                 and not (golden_cross or death_cross)):
             side, route = "sell", "MA7_Simple"
             reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"

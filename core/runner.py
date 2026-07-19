@@ -294,10 +294,13 @@ async def _record_external_position_close(exchange, sym, state):
         entry_timestamp_ms=opened_ms if opened_ms else None,
         side="buy" if old_qty > 0 else "sell",
     )
-    if recorded:
+    # True=剛寫入，False=相同 exchange_close_id 已存在；兩者都已安全保存。
+    # None 才代表實際寫檔失敗。
+    if recorded is not None:
         clear_peak(sym)
-        logger.info(f"🧾 [ExternalClose] {sym} 已同步交易所平倉 {exit_reason}：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
-    return exit_reason if recorded else None
+        if recorded:
+            logger.info(f"🧾 [ExternalClose] {sym} 已同步交易所平倉 {exit_reason}：損益 {realized_pnl:.4f} USDT，手續費 {fees:.4f} USDT")
+    return exit_reason if recorded is not None else None
 
 
 async def _infer_exchange_open_time(exchange, sym):
@@ -586,6 +589,17 @@ async def calibrate_with_exchange(exchange):
                 logger.info(f"⏳ [CALIBRATION] {sym} 機器人自己正在平倉中，本輪跳過外部平倉判定，避免重複記錄")
                 continue
             external_reason = await _record_external_position_close(exchange, sym, state)
+            if not external_reason:
+                # 成交明細可能尚未在 API 可見，或本機歷史暫時無法寫入。保留本地
+                # 數量/均價/進場原因快照，下一輪 60 秒對帳重試；close_position 的
+                # guard 會阻止期間對已不存在的交易所倉位重複平倉。
+                state["_external_close_record_pending"] = True
+                logger.info(
+                    f"⏳ [ExternalClose] {sym} 平倉成交尚未成功寫入歷史，"
+                    "保留本地快照並於下一輪對帳重試"
+                )
+                continue
+            state["_external_close_record_pending"] = False
             logger.info(f"🔄 [CALIBRATION] {sym} 本地仍有持倉 {state.get('qty', 0.0):.4f}，但交易所已無倉位；清理本地狀態與交易所退出單追蹤")
             from core.state_manager import mark_exit
             mark_exit(sym, is_stop_loss=(external_reason == "[External_Stop_Loss]"), reason=external_reason or "[External_Close]")

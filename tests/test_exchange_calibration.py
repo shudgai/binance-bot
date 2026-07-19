@@ -91,6 +91,7 @@ class ExchangeCalibrationTests(unittest.TestCase):
         exchange.fetch_positions.return_value = []
 
         with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.runner._record_external_position_close", new=AsyncMock(return_value="[External_Close]")), \
              patch("core.orders._cancel_exchange_exit_order_id", new=AsyncMock()) as cancel_exit:
             asyncio.run(calibrate_with_exchange(exchange))
 
@@ -118,6 +119,7 @@ class ExchangeCalibrationTests(unittest.TestCase):
         cancel_exit = AsyncMock(side_effect=[RuntimeError("unknown order"), None])
 
         with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.runner._record_external_position_close", new=AsyncMock(return_value="[External_Close]")), \
              patch("core.orders._cancel_exchange_exit_order_id", new=cancel_exit):
             asyncio.run(calibrate_with_exchange(exchange))
 
@@ -125,6 +127,26 @@ class ExchangeCalibrationTests(unittest.TestCase):
         self.assertEqual(state["qty"], 0.0)
         self.assertIsNone(state["exchange_stop_order_id"])
         self.assertIsNone(state["exchange_take_profit_order_id"])
+
+    def test_failed_external_close_record_keeps_snapshot_for_retry(self):
+        state = ctx.STATES[self.sym]
+        state["qty"] = -2.0
+        state["avg_price"] = 100.0
+        state["entry_reason"] = "test-entry"
+
+        exchange = AsyncMock()
+        exchange.fetch_positions.return_value = []
+
+        with patch("core.runner.PAPER_TRADING", False), \
+             patch("core.runner._record_external_position_close", new=AsyncMock(return_value=None)), \
+             patch("core.orders._cancel_exchange_exit_order_id", new=AsyncMock()) as cancel_exit:
+            asyncio.run(calibrate_with_exchange(exchange))
+
+        self.assertEqual(state["qty"], -2.0)
+        self.assertEqual(state["avg_price"], 100.0)
+        self.assertEqual(state["entry_reason"], "test-entry")
+        self.assertTrue(state["_external_close_record_pending"])
+        cancel_exit.assert_not_awaited()
 
     def test_external_manual_close_records_exchange_realized_pnl_before_reset(self):
         state = ctx.STATES[self.sym]

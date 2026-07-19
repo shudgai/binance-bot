@@ -162,8 +162,10 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual((side, route), ("buy", "MA7_Simple"))
 
     def test_ma7_simple_weak_volume_is_kept_but_ranked_below_us_like_signal(self):
+        # 量能門檻已從 0.5x 拉齊到跟其他路線一樣的 0.6x（見 signal_engine.py 說明），
+        # 這裡用 0.65x（門檻之上但仍偏弱）驗證「能過但排序較低」的行為還在。
         sym = self._setup_ma_signal_state(
-            signal_open=100.0, signal_close=100.5, signal_volume=500.0, vol_ma20=1000.0,
+            signal_open=100.0, signal_close=100.5, signal_volume=650.0, vol_ma20=1000.0,
             ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
         )
         STATES[sym].update({"prev_ma7_2": 101.2, "current_rsi": 60.0})
@@ -174,9 +176,30 @@ class TradeSignalTests(unittest.TestCase):
 
         self.assertEqual((weak_side, weak_route), ("buy", "MA7_Simple"))
         self.assertEqual((strong_side, strong_route), ("buy", "MA7_Simple"))
-        self.assertAlmostEqual(weak_strength, 23.5)
+        self.assertAlmostEqual(weak_strength, 24.25)
         self.assertAlmostEqual(strong_strength, 25.15)
         self.assertGreater(strong_strength, weak_strength)
+
+    def test_ma7_simple_below_point_six_volume_is_rejected(self):
+        # 原本 MA7_Simple 量能門檻 0.5x 比其他路線都寬鬆；拉齊到 0.6x 後，
+        # 0.5x 這種低於平均量的轉折應該直接被拒絕，不再是「排序較低但仍放行」。
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.5, signal_volume=500.0, vol_ma20=1000.0,
+            ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
+        )
+        STATES[sym].update({"prev_ma7_2": 101.2, "current_rsi": 60.0})
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+    def test_ma7_simple_long_rejected_when_ma25_falling(self):
+        # MA7 單根蠟燭翻頭向上，但 MA25 中期趨勢還在跌：不該放行，
+        # 這正是拖垮 MA7_Simple 勝率的主因（20% 勝率、單路線吃掉過半虧損）。
+        # ma25 下跌同時讓 long_stack 為 False，所以也不會誤落到 Pullback/Breakout。
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.5, signal_volume=1000.0, vol_ma20=1000.0,
+            ma7=101.7, ma25=101.4, prev_ma7=101.6, prev_ma25=101.5,
+        )
+        STATES[sym].update({"prev_ma7_2": 101.65, "current_rsi": 60.0})
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
 
     def test_ma7_simple_short_trigger(self):
         # Turn down: prev_slope = prev_ma7 - prev_ma7_2 >= 0 and curr_slope = ma7 - prev_ma7 < 0
