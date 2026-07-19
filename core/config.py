@@ -262,7 +262,12 @@ ENTRY_STRICTNESS_PROFILES = {
         "volume_ratio": 0.85,
         "pin_threshold": 1.5,
         "min_body_ratio": 0.45,
-        "min_signal_strength": 15.0,
+        # 實測近期 MA25_Pullback/MA7_Simple 進場的訊號強度普遍落在 23~30，舊值 15.0
+        # 遠低於這個區間，等於形同虛設——不管盤面活不活躍，幾乎每次觸發的訊號都
+        # 輕鬆超標，這個門檻從沒真正擋下過任何一筆（HYPEUSDT 23.89、NEARUSDT 25.00
+        # 都在盤整安靜期進場後小虧出場）。拉到 22.0，讓門檻真的能濾掉這個區間內
+        # 偏弱的訊號，只留下夠強的才准進場。
+        "min_signal_strength": 22.0,
         "rsi_long_floor": 32.0,
         "rsi_short_floor": 30.0,
         "rsi_long_ceiling": 75.0,
