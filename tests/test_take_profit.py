@@ -602,6 +602,34 @@ class TakeProfitTests(unittest.TestCase):
         self.assertEqual(s["qty"], 1.0)
         self.assertFalse(mock_exchange.create_order.called)
 
+    def test_sell_pressure_exit_bypasses_min_profit_gate(self):
+        # 實測 XRPUSDT 案例：賣壓機制在浮盈 0.29%~0.30%（低於 0.35% 門檻）想出場，
+        # 卻被一般的最低利潤門檻攔下，2~3 秒後才由反應更慢的交易所端鎖利單接手，
+        # 成交在更差的價位。[Sell_Pressure_Exit]/[Buy_Pressure_Exit] 必須跟
+        # [MA_Peak_Lock]/[MA_Profit_Floor] 一樣在白名單裡，才不會被同一道門檻卡住。
+        from core.orders import close_position
+        sym = "XRPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s["qty"] = 1.0
+        s["avg_price"] = 100.0
+        s["close_price"] = 100.3  # 0.30% profit, below the 0.35% fee_buffer gate
+
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        mock_exchange = AsyncMock()
+        mock_exchange.create_order.return_value = {
+            "id": "1", "status": "closed", "average": 100.3, "price": 100.3,
+        }
+        with patch("core.orders.exchange_futures", mock_exchange), \
+             patch("core.orders.PAPER_TRADING", False):
+            asyncio.run(close_position(
+                sym, "sell", 1.0, 100.3, 100.0, reason="[Sell_Pressure_Exit]",
+            ))
+
+        self.assertTrue(mock_exchange.create_order.called)
+
     def test_high_point_stagnation_exit(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
