@@ -118,58 +118,22 @@ def calculate_trailing_stop(current_price, entry_price, high_price, atr, trail_p
         return trailing_stop
     return None
 
-def is_strong_selling_pressure(current_price, prev_price, current_volume, avg_volume, price_drop_threshold=0.015):
+def is_strong_selling_pressure(current_price, prev_price, current_volume, avg_volume, atr, price_drop_multiplier=1.5):
     """
     判斷是否為「強烈賣壓」，而非正常的價格回調
     :param current_price: 當前價格
     :param prev_price: 上一個 K 線價格
     :param current_volume: 當前成交量
     :param avg_volume: 平均成交量
-    :param price_drop_threshold: 價格跌幅門檻 (例如 1.5%)
-    :return: Boolean
-    """
-    price_change = (prev_price - current_price) / prev_price
-    
-    # 條件 1: 價格跌幅超過門檻
-    price_drop = price_change > price_drop_threshold
-    
-    # 條件 2: 當前成交量明顯高於平均成交量 (例如高出 1.5 倍)
-    volume_spike = current_volume > (avg_volume * 1.5)
-    
-    # 只有當「價格跌」且「量能大」同時成立時，才判定為強烈賣壓
-    return price_drop and volume_spike
-
-def calculate_trailing_stop(current_price, entry_price, high_price, atr, trail_pct=0.02):
-    """
-    計算移動止損價格
-    :param current_price: 當前價格
-    :param entry_price: 進場價格
-    :param high_price: 持倉期間的最高價
     :param atr: 當前 ATR
-    :param trail_pct: 移動止損比例 (例如 0.02 代表 2%)
-    :return: 建議的止損價格
-    """
-    # 只有當價格已經有盈利時，才開始啟動移動止損
-    if current_price > entry_price:
-        # 止損線 = 持倉最高點 - (最高點 * 比例)
-        trailing_stop = high_price * (1 - trail_pct)
-        return trailing_stop
-    return None
-
-def is_strong_selling_pressure(current_price, prev_price, current_volume, avg_volume, price_drop_threshold=0.015):
-    """
-    判斷是否為「強烈賣壓」，而非正常的價格回調
-    :param current_price: 當前價格
-    :param prev_price: 上一個 K 線價格
-    :param current_volume: 當前成交量
-    :param avg_volume: 平均成交量
-    :param price_drop_threshold: 價格跌幅門檻 (例如 1.5%)
+    :param price_drop_multiplier: 價格跌幅門檻倍數 (基於 ATR)
     :return: Boolean
     """
     price_change = (prev_price - current_price) / prev_price
     
-    # 條件 1: 價格跌幅超過門檻
-    price_drop = price_change > price_drop_threshold
+    # 條件 1: 價格跌幅超過動態門檻 (基於 ATR)
+    dynamic_threshold = atr * price_drop_multiplier
+    price_drop = price_change > dynamic_threshold
     
     # 條件 2: 當前成交量明顯高於平均成交量 (例如高出 1.5 倍)
     volume_spike = current_volume > (avg_volume * 1.5)
@@ -229,24 +193,25 @@ def _enforce_bracket_rr(avg, stop_price, take_profit_price, is_long, tick_size, 
 
 def _ma_exchange_stop_target(state, avg, is_long, hard_stop, current_price=0.0):
     """選出最強且尚未被行情穿越的 MA 交易所端保護價。"""
+    # 1. 獲利平倉檢查 (Take Profit with Buffer)
+    # 如果已經達到獲利目標，則將止損設為當前價格（觸發立即平倉）
+    if check_take_profit(current_price, avg):
+        return current_price
+
     candidates = []
     if state.get("ma_profit_floor_armed", False):
         candidates.append(float(state.get("ma_profit_floor_price", 0.0) or 0.0))
     if state.get("ma_peak_lock_armed", False):
         candidates.append(float(state.get("ma_peak_lock_price", 0.0) or 0.0))
-    candidates = [price for price in candidates if price > 0]
     
     # --- 整合移動止損 (Trailing Stop) ---
     # 從 state 獲取最高價 (peak)
     high_price = float(state.get("ma_peak_saved_pct", 0.0) * avg if state.get("ma_peak_saved_pct") else 0.0)
-    # 如果 state 裡沒有直接存 peak 價格，則嘗試從 peak_store 或其他欄位獲取
     if high_price == 0:
-        # 這裡假設 state["max_profit_reached"] 是相對 avg 的百分比，或者我們直接從 state 拿 peak
-        # 為了簡單起見，我們直接從 state 拿一個假設的最高價，或者用 hard_stop 作為保底
+        # 如果 state 裡沒有直接存 peak 價格，則嘗試從 peak_store 或其他欄位獲取
         pass
 
     # 如果有可用的 peak，計算移動止損
-    # 這裡使用用戶提供的 2% 比例
     ts_price = calculate_trailing_stop(current_price, avg, high_price, 0.0, trail_pct=0.02)
     if ts_price and ts_price > 0:
         candidates.append(ts_price)
@@ -262,16 +227,17 @@ def _ma_exchange_stop_target(state, avg, is_long, hard_stop, current_price=0.0):
     )
     
     # --- 整合強烈賣壓確認 (Volume-Confirmed Exit) ---
-    # 這裡用於判斷是否因為「假賣壓」而過早觸發止損
-    # 需要 current_volume 和 avg_volume，從 state 或指標中獲取
+    # 如果價格已經穿越了目標止損位，但「非強烈賣壓」（可能是市場噪音），
+    # 則退回到災難止損位，以防止過早平倉。
     curr_vol = float(state.get("current_vol", 0.0) or 0.0)
     avg_vol = float(state.get("vol_ma12", 0.0) or 0.0)
     prev_price = float(state.get("prev_close", 0.0) or 0.0)
     
-    if is_long and current_price < target and is_strong_selling_pressure(current_price, prev_price, curr_vol, avg_vol):
-        # 如果是強烈賣壓，我們可能想讓止損稍微寬鬆一點，或者堅持目前的 target
-        # 這裡選擇維持 target，因為強烈賣壓已經是我們想平倉的理由了
-        pass
+    if profit_side and not_already_crossed:
+        # 價格已經在目標止損位之外
+        if not is_strong_selling_pressure(current_price, prev_price, curr_vol, avg_vol, atr=state.get("current_atr", 0.0)):
+            # 不是強烈賣壓，判定為噪音，退回到災難止損
+            return float(hard_stop)
 
     return target if profit_side and not_already_crossed else float(hard_stop)
 
@@ -1245,10 +1211,6 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         logger.info(f"[WARN_ZERO_PRICE] {sym} 平倉價格補救為 {price:.6f}")
     if abs(s["qty"]) < 0.000001:
         return
-    pk = paper_key(sym)
-    qty = min(abs(qty), abs(s["qty"]))
-    if qty < 0.000001:
-        return
 
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
@@ -1282,7 +1244,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # [MA7_Profit_Turn_Giveback] 同理補進來：峰值回吐超過一半時觸發，浮盈可能還是
     # 正的但低於 0.35%（實測 BCHUSDT 峰值 0.44% 只保留一半也才 0.22%），一樣不能
     # 被這道門檻卡住、逼它眼睜睜看著繼續回吐。
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA7_Profit_Turn_Giveback]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Sell_Pressure_Exit]", "[Buy_Pressure_Exit]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[Hard_Profit_Cap]", "[Stagnation_Stop]", "[Stagnation_Timeout]", "[Trend_Follow]", "[Breakeven_Stop]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA7_Profit_Turn_Giveback]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Sell_Pressure_Exit]", "[Buy_Pressure_Exit]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1554,9 +1516,9 @@ def check_total_equity_protection():
             if p <= 0.0:
                 p = avg
             if qty > 0:
-                pnl = (p - avg) * abs(qty)
+                pnl = (p - avg) * qty
             else:
-                pnl = (avg - p) * abs(qty)
+                pnl = (avg - p) * qty
             total_unrealized_pnl += pnl
 
     if not has_positions:
@@ -1948,6 +1910,22 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             s["_direction_guard_cooldown_until"] = time.time() + 300
             s["_direction_guard_cooldown_signal_candle_ts"] = int(s.get("ma_signal_candle_ts", 0) or 0)
             s["_direction_guard_reject_count"] = 0
+            logger.info(f"🚫 [EntryDirectionGuard_放棄] {sym} 連續 {_DG_MAX_REJECTS} 次方向守門失敗，放棄這波訊號，暫停 5 分鐘避免追價進場")
+        return
+    s["_direction_guard_reject_count"] = 0
+
+    pending_ok, pending_reason = _entry_pending_adverse_guard(sym, side, price, market_price, is_rescue_dca=is_rescue_dca)
+    if not pending_ok:
+        logger.info(f"🛑 [EntryAdverseGuard] {sym} {side} 當前價已逆向偏離訊號價：{pending_reason}，取消開倉")
+        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被逆向偏離攔截，未進入下單")
+        return
+
+    price_ok, price_reason = _entry_price_guard(
+        sym, side, price, market_price,
+        mode=actual_entry_mode, is_rescue_dca=is_rescue_dca,
+    )
+    if not price_ok:
+        logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 訊號價與即時牌價偏離：{price_reason}，
             logger.info(f"🚫 [EntryDirectionGuard_放棄] {sym} 連續 {_DG_MAX_REJECTS} 次方向守門失敗，放棄這波訊號，暫停 5 分鐘避免追價進場")
         return
     s["_direction_guard_reject_count"] = 0
@@ -2539,14 +2517,6 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     if not rescue_ok:
                         logger.info(f"🛑 [RescueDCAIneffective] {sym} 二次追價取消：{rescue_reason}")
                         remaining_amt = 0.0
-                if remaining_amt > 0.000001:
-                    chase_ok, chase_reason = _entry_signal_chase_guard(
-                        side, price, reprice, is_first_entry, is_rescue_dca,
-                    )
-                    if not chase_ok:
-                        logger.info(f"🛑 [SignalChaseGuard] {sym} 首倉二次追價取消：{chase_reason}")
-                        remaining_amt = 0.0
-
                 if remaining_amt > 0.000001:
                     try:
                         order2 = await exchange_futures.create_order(
