@@ -1201,11 +1201,15 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
         # Peak_Giveback 是同一類時間敏感出場，之前漏掉沒加，實測 LINKUSDT 案例：
         # MA_Peak_Lock 觸發時打算鎖利 +1.2%，因為走限價追價流程等了幾秒，價格加速
         # 下殺，最後市價成交時已經變成 -0.42% 虧損——跟 HBARUSDT 一模一樣的病根。
+        # [Sell_Pressure_Exit]/[Buy_Pressure_Exit] 補進來：這兩個是即時成交流判斷
+        # 出反轉才觸發，時效性跟 Peak_Giveback 同一等級，同樣不能為了多鎖一點價差
+        # 去走限價追價流程，否則反而讓「該早點出場」的機制變成出場最慢的那個。
         _urgent_exit_reasons = (
             "Peak_Giveback", "Stagnation_Stop", "Dynamic_Trailing", "Range_Trailing_Closed_Confirm", "TrailTP_Peak",
             "Peak_Volume_Contraction", "MA_Peak_Lock", "MA_Profit_Floor", "MA7_Closed_Break",
             "MA7_MA25_Death_Cross", "MA7_MA25_Golden_Cross",
             "MA7_Profit_Turn_Partial", "MA7_Profit_Turn_Confirmed",
+            "Sell_Pressure_Exit", "Buy_Pressure_Exit",
         )
         _is_urgent_exit = any(r in reason for r in _urgent_exit_reasons)
         try:

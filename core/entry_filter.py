@@ -78,10 +78,14 @@ def is_ma_direction_aligned(state, side, route=None):
     if normalized_route == "ma7_simple":
         # 跟 signal_engine.py 的 MA7_Simple 觸發條件對齊：MA7 轉折方向要對，
         # 且 MA25 中期趨勢不能是明顯逆勢（原本這裡完全沒檢查 MA25，等於允許
-        # 在 MA25 走跌時只因 MA7 單根蠟燭翻頭向上就放行做多）。
+        # 在 MA25 走跌時只因 MA7 單根蠟燭翻頭向上就放行做多），ADX 也不能是
+        # 剛暴衝上來的尖刺行情（同一套 ADX_SPIKE_GUARD_PCT 門檻）。
+        adx = float(state.get("adx", 0.0) or 0.0)
+        prev_adx = float(state.get("prev_adx", 0.0) or 0.0)
+        adx_not_spiking = (adx - prev_adx) <= 15.0
         if side == "buy":
-            return ma7 > prev_ma7 and ma25 >= prev_ma25
-        return ma7 < prev_ma7 and ma25 <= prev_ma25
+            return ma7 > prev_ma7 and ma25 >= prev_ma25 and adx_not_spiking
+        return ma7 < prev_ma7 and ma25 <= prev_ma25 and adx_not_spiking
     if side == "buy":
         # MA25_Pullback / MA_Breakout：不強求完整牛市排列（MA25>MA99），
         # 只要 MA7>MA25、斜率向上，且收盤與 MA25 均在 MA99 的 98% 緩衝帶以上即可。

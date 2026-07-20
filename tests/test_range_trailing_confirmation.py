@@ -51,51 +51,46 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
         })
         return state
 
-    async def test_intracandle_range_trailing_breach_is_deferred(self):
+    async def test_first_breach_does_not_close_immediately(self):
+        # 停利線第一次被穿越只累積確認筆數，不等整根 K 棒收線，但也不能單筆
+        # 雜訊就出場——見 RANGE_TRAILING_CONFIRM_TICKS/SEC。空單的停利線在
+        # avg 下方，「穿越」代表現價回升到 >= 停利線（回吐），不是跌破。
         state = self._short_state()
+        state["close_price"] = 99.6  # crossed back above the 99.5 stop
         with patch("core.exits.update_trailing_stop", return_value=(False, 99.5)), \
              patch("core.orders.close_position", AsyncMock()) as close_mock:
             await check_exits(self.sym)
 
         close_mock.assert_not_awaited()
-        self.assertTrue(state["range_trailing_pending"])
-        self.assertEqual(state["range_trailing_pending_candle_ts"], 60000)
-        self.assertEqual(state["range_trailing_pending_stop"], 99.5)
+        self.assertEqual(state["range_trailing_cross_count"], 1)
 
-    async def test_upper_wick_that_closes_back_below_stop_keeps_short_open(self):
+    async def test_wick_that_recovers_resets_confirmation(self):
+        # 盤中曾穿越、確認筆數還在累積中，但下一筆成交流已經回到停利線有利側
+        # （現價 < 停利線），應該立刻重置確認，不留殘值誤觸下一次穿越。
         state = self._short_state()
         state.update({
-            "close_price": 99.2,
-            "range_trailing_pending": True,
-            "range_trailing_pending_candle_ts": 60000,
-            "range_trailing_pending_stop": 99.5,
-            "ohlcv": [
-                _candle(0, 100.0, 100.0, 99.8, 99.9),
-                # ZEC 型態：盤中上刺停損，但收盤重新回到空單有利側。
-                _candle(60000, 99.0, 100.2, 98.0, 99.2),
-                _candle(120000, 99.2, 99.3, 99.1, 99.2),
-            ],
+            "close_price": 99.3,  # back on the profitable side of 99.5
+            "range_trailing_cross_count": 2,
+            "range_trailing_cross_since": time.time() - 0.3,
         })
         with patch("core.exits.update_trailing_stop", return_value=(False, 99.5)), \
              patch("core.orders.close_position", AsyncMock()) as close_mock:
             await check_exits(self.sym)
 
         close_mock.assert_not_awaited()
-        self.assertFalse(state["range_trailing_pending"])
+        self.assertEqual(state["range_trailing_cross_count"], 0)
 
-    async def test_completed_close_beyond_stop_exits_range_short(self):
+    async def test_persistent_breach_across_confirm_window_exits_range_short(self):
+        # 已經連續確認 2 筆、且第一筆確認距今已超過確認秒數：這一筆價格仍在
+        # 穿越狀態，應該直接確認出場，不必等整根 K 棒收線。
         state = self._short_state()
         state.update({
-            "range_trailing_pending": True,
-            "range_trailing_pending_candle_ts": 60000,
-            "range_trailing_pending_stop": 99.5,
-            "ohlcv": [
-                _candle(0, 100.0, 100.0, 99.8, 99.9),
-                _candle(60000, 99.0, 100.2, 98.0, 99.7),
-                _candle(120000, 99.7, 100.0, 99.6, 99.8),
-            ],
+            "close_price": 99.6,
+            "range_trailing_cross_count": 2,
+            "range_trailing_cross_since": time.time() - 1.1,
         })
-        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+        with patch("core.exits.update_trailing_stop", return_value=(False, 99.5)), \
+             patch("core.orders.close_position", AsyncMock()) as close_mock:
             await check_exits(self.sym)
 
         close_mock.assert_awaited_once()

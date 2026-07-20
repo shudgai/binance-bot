@@ -62,6 +62,8 @@ def build_symbol_state(sym):
         "prev_ma7": 0.0,
         "prev_ma25": 0.0,
         "prev_ma99": 0.0,
+        "adx": 0.0,
+        "prev_adx": 0.0,
         "ma_candle_ts": 0,
         "ma_signal_candle_ts": 0,
         "_direction_guard_cooldown_signal_candle_ts": 0,
@@ -70,9 +72,8 @@ def build_symbol_state(sym):
         "ma7_profit_turn_stage": 0,
         "ma7_profit_turn_signal_ts": 0,
         "ma7_profit_turn_signal_extreme": 0.0,
-        "range_trailing_pending": False,
-        "range_trailing_pending_candle_ts": 0,
-        "range_trailing_pending_stop": 0.0,
+        "range_trailing_cross_count": 0,
+        "range_trailing_cross_since": 0.0,
         "ma_risk_breach_count": 0,
         "ma_momentum_flip_count": 0,
         "ma_peak_lock_armed": False,
@@ -494,9 +495,8 @@ def reset_coin_state(sym):
     s["ma7_profit_turn_stage"] = 0
     s["ma7_profit_turn_signal_ts"] = 0
     s["ma7_profit_turn_signal_extreme"] = 0.0
-    s["range_trailing_pending"] = False
-    s["range_trailing_pending_candle_ts"] = 0
-    s["range_trailing_pending_stop"] = 0.0
+    s["range_trailing_cross_count"] = 0
+    s["range_trailing_cross_since"] = 0.0
     s["ma_risk_breach_count"] = 0
     s["ma_momentum_flip_count"] = 0
     s["ma_peak_lock_armed"] = False

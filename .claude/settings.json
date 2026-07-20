@@ -134,7 +134,11 @@
       "Bash(python3 peak_giveback_stats.py)",
       "Bash(python3 -m pytest tests/test_pending_limit_fill.py tests/test_entry_risk.py tests/test_realtime_trailing.py tests/test_ma_lifecycle.py -q)",
       "Bash(.venv/bin/python3 -m pytest tests/test_pending_limit_fill.py tests/test_entry_risk.py tests/test_realtime_trailing.py tests/test_ma_lifecycle.py -q)",
-      "Bash(ps -o pid,lstart -p 235898)"
+      "Bash(ps -o pid,lstart -p 235898)",
+      "Bash(python3 -m py_compile core/exits.py core/trade_signal.py core/state_manager.py core/orders.py)",
+      "Bash(.venv/bin/python3 -m pytest tests/test_range_trailing_confirmation.py -q)",
+      "Bash(.venv/bin/python3 -m pytest tests/test_realtime_trailing.py -q)",
+      "Bash(python3 -m py_compile core/signal_engine.py core/entry_filter.py core/check_entries.py core/state_manager.py)"
     ]
   }
 }

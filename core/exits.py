@@ -70,6 +70,14 @@ SELL_PRESSURE_MIN_SAMPLES = 6
 SELL_PRESSURE_ADVERSE_RATIO = 0.70
 SELL_PRESSURE_CONFIRM_TICKS = 3
 SELL_PRESSURE_CONFIRM_SEC = 2.0
+
+# 區間移動停利穿越確認：原本要等整根 K 棒收線才確認出場（5 分鐘線就是等最多
+# 5 分鐘），比 MA 路線的鎖利確認（1~2 秒）慢了兩個數量級。實測 FILUSDT 案例：
+# 進場後沒多久就被穿越保護線，等一整根 K 棒收線確認完畢，本來就很薄的獲利被
+# 磨到只剩 0.02%。改成跟 MA_Profit_Floor 同一套「連續多筆/秒數確認」，不再
+# 綁定 K 棒週期。
+RANGE_TRAILING_CONFIRM_TICKS = MA_PROFIT_FLOOR_CONFIRM_TICKS
+RANGE_TRAILING_CONFIRM_SEC = MA_PROFIT_FLOOR_CONFIRM_SEC
 _MA_EXCHANGE_STOP_SYNC_TASKS = {}
 
 # MA7 獲利轉彎出場：第一根確認轉彎的收線先落袋 60%，下一根仍往反方向才清倉。
@@ -340,6 +348,34 @@ def check_realtime_sell_pressure(sym, is_long, current_price, event_time=None):
         )
 
     return _sell_pressure_confirmed(sym, qualifies, now)
+
+
+def _reset_range_trailing_confirmation(state):
+    state["range_trailing_cross_count"] = 0
+    state["range_trailing_cross_since"] = 0.0
+
+
+def _range_trailing_cross_confirmed(sym, crossed, now):
+    """區間移動停利穿越確認：比照 MA_Profit_Floor 的連續多筆/秒數確認，取代
+    原本要等整根 K 棒收線才確認出場的做法（見上方常數定義的說明）。"""
+    state = ctx.STATES[sym]
+    if not crossed:
+        _reset_range_trailing_confirmation(state)
+        return False
+
+    previous_count = int(state.get("range_trailing_cross_count", 0) or 0)
+    since = float(state.get("range_trailing_cross_since", 0.0) or 0.0)
+    if previous_count <= 0 or since <= 0 or now < since:
+        since = now
+        count = 1
+        state["range_trailing_cross_since"] = since
+    else:
+        count = previous_count + 1
+    state["range_trailing_cross_count"] = count
+
+    confirmed = (count >= RANGE_TRAILING_CONFIRM_TICKS
+                 and now - since >= RANGE_TRAILING_CONFIRM_SEC)
+    return confirmed
 
 
 def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_confirmation=False):
@@ -948,42 +984,24 @@ async def check_exits(sym):
             )
             return
 
-        # 前一根盤中曾穿越 Dynamic Trailing：只有該根已經成為 completed candle
-        # 後，才用它的收盤價判斷。影線收回保護線內即取消，不做事後追殺。
-        if s.get("range_trailing_pending", False):
-            candles = s.get("ohlcv", [])
-            pending_ts = int(s.get("range_trailing_pending_candle_ts", 0) or 0)
-            pending_stop = float(s.get("range_trailing_pending_stop", 0.0) or 0.0)
-            live_ts = int(candles[-1][0]) if candles else 0
-            if pending_ts > 0 and pending_stop > 0 and live_ts > pending_ts:
-                completed_candle = next(
-                    (candle for candle in reversed(candles[:-1]) if int(candle[0]) == pending_ts),
-                    None,
-                )
-                completed_close = float(completed_candle[4]) if completed_candle else 0.0
-                close_confirmed = completed_close > 0 and (
-                    (is_long and completed_close <= pending_stop)
-                    or (not is_long and completed_close >= pending_stop)
-                )
-                s["range_trailing_pending"] = False
-                s["range_trailing_pending_candle_ts"] = 0
-                s["range_trailing_pending_stop"] = 0.0
-                if close_confirmed:
-                    cs = "sell" if is_long else "buy"
-                    logger.info(
-                        f"🚨 [Range_Trailing_Closed_Confirm] {sym} 前一根收盤 "
-                        f"{completed_close:.6f} 確認穿越保護線 {pending_stop:.6f}，執行平倉"
-                    )
-                    await close_position(
-                        sym, cs, abs(s["qty"]), p, avg,
-                        reason="[Range_Trailing_Closed_Confirm]",
-                        is_stop_loss=(profit_pct <= 0),
-                    )
-                    return
-                logger.info(
-                    f"✅ [Range_Trailing_Wick_Recovered] {sym} 盤中曾穿越 {pending_stop:.6f}，"
-                    f"但收盤 {completed_close:.6f} 已收回，判定為影線並繼續持有"
-                )
+        # 移動停利穿越：連續多筆/秒數確認即出場，不再等整根 K 棒收線
+        # （見 RANGE_TRAILING_CONFIRM_TICKS/SEC 定義說明）。
+        ts_price = float(s.get("trailing_stop_price", 0.0) or 0.0)
+        trailing_crossed = ts_price > 0 and (
+            (is_long and p <= ts_price) or (not is_long and p >= ts_price)
+        )
+        if _range_trailing_cross_confirmed(sym, trailing_crossed, time.time()):
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"🚨 [Range_Trailing_Closed_Confirm] {sym} 現價 {p:.6f} 持續穿越保護線 "
+                f"{ts_price:.6f}，確認出場"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[Range_Trailing_Closed_Confirm]",
+                is_stop_loss=(profit_pct <= 0),
+            )
+            return
 
     # MA 波段以高點回吐鎖利或反向交叉結束；持倉初期若兩根已收線 K 棒確認開錯方向，立即止損。
     route = str(s.get("entry_reason", "") or "").lower()
@@ -1333,22 +1351,11 @@ async def check_exits(sym):
                 )
 
             if is_range_route:
-                candles = s.get("ohlcv", [])
-                live_candle_ts = int(candles[-1][0]) if candles else 0
-                if live_candle_ts > 0:
-                    old_stop = float(s.get("range_trailing_pending_stop", 0.0) or 0.0)
-                    if old_stop > 0:
-                        pending_stop = max(old_stop, ts_price) if is_long else min(old_stop, ts_price)
-                    else:
-                        pending_stop = float(ts_price)
-                    s["range_trailing_pending"] = True
-                    s["range_trailing_pending_candle_ts"] = live_candle_ts
-                    s["range_trailing_pending_stop"] = pending_stop
-                    logger.info(
-                        f"⏳ [Range_Trailing_Wick_Pending] {sym} 盤中價格 {p:.6f} 穿越 "
-                        f"Dynamic Trailing {pending_stop:.6f}，等待本根 K 棒收線確認"
-                    )
-                    return
+                # Range 路線的移動停利穿越確認已經在 check_exits 前段用
+                # _range_trailing_cross_confirmed()（連續多筆/秒數）處理過；
+                # 這裡不用重複判斷，也不能直接落地用 [Dynamic_Trailing] 立即
+                # 出場，否則會繞過還沒確認完成的計數、變回單筆雜訊就出場。
+                return
 
             cs = "sell" if is_long else "buy"
             comparator = "<=" if is_long else ">="

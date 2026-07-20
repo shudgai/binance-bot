@@ -201,6 +201,32 @@ class TradeSignalTests(unittest.TestCase):
         STATES[sym].update({"prev_ma7_2": 101.65, "current_rsi": 60.0})
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
 
+    def test_ma7_simple_rejected_when_adx_just_spiked(self):
+        # 實測 LINKUSDT 案例：ADX 15 秒內從 7.7 暴衝到 35.4，同一輪掃描就冒出
+        # MA7_Simple 訊號，其實只是單根尖刺行情，不是真正累積出來的趨勢。
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.5, signal_volume=1000.0, vol_ma20=1000.0,
+            ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
+        )
+        STATES[sym].update({
+            "prev_ma7_2": 101.2, "current_rsi": 60.0,
+            "adx": 35.4, "prev_adx": 7.7,
+        })
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+    def test_ma7_simple_allowed_when_adx_builds_up_gradually(self):
+        # 對照組：ADX 是緩慢累積上來的（相鄰兩輪掃描差距小），不該被誤擋。
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.5, signal_volume=1000.0, vol_ma20=1000.0,
+            ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
+        )
+        STATES[sym].update({
+            "prev_ma7_2": 101.2, "current_rsi": 60.0,
+            "adx": 30.4, "prev_adx": 27.3,
+        })
+        side, _, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("buy", "MA7_Simple"))
+
     def test_ma7_simple_short_trigger(self):
         # Turn down: prev_slope = prev_ma7 - prev_ma7_2 >= 0 and curr_slope = ma7 - prev_ma7 < 0
         # To prevent pullback_short: short_spreading = False

@@ -623,10 +623,15 @@ class TakeProfitTests(unittest.TestCase):
             "id": "1", "status": "closed", "average": 100.3, "price": 100.3,
         }
         with patch("core.orders.exchange_futures", mock_exchange), \
-             patch("core.orders.PAPER_TRADING", False):
+             patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders.record_trade_result") as record_mock:
             asyncio.run(close_position(
                 sym, "sell", 1.0, 100.3, 100.0, reason="[Sell_Pressure_Exit]",
             ))
+
+        # 平倉流程真的會走到 record_trade_result() 寫入 data/trade_history.json；
+        # 這裡只驗證有沒有被呼叫，不能讓它真的寫進正式檔案污染實際交易紀錄。
+        record_mock.assert_called_once()
 
         self.assertTrue(mock_exchange.create_order.called)
 

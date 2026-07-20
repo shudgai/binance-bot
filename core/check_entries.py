@@ -557,6 +557,9 @@ def compute_indicators(sym):
         s["prev_macd_line"] = p_line
         s["prev_macd_signal"] = p_sig
     if len(closes) >= 15:
+        # 記錄上一輪掃描的 ADX，供 MA7_Simple 判斷這次讀數是穩定累積上來的，
+        # 還是這一兩輪掃描間突然暴衝（通常是單根尖刺行情，不是真正的趨勢）。
+        s["prev_adx"] = float(s.get("adx", 0.0) or 0.0)
         s["adx"] = calculate_adx(highs, lows, closes, 14)
     if len(closes) >= 20:
         up, mid, low = calculate_bollinger_bands(closes)

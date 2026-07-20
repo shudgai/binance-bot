@@ -189,34 +189,36 @@ async def update_trade_signal(sym, trade):
         if confirmed_peak >= GENERIC_TRAILING_ARM_PCT:
             update_trailing_stop(sym, price, _is_long, update_peak=False)
 
-        # 成交流每個 tick 檢查同一條 trailing_stop_price。Range 只登記穿越，
-        # 實際出場仍由主循環等待 K 棒收線確認。
+        # 成交流每個 tick 檢查同一條 trailing_stop_price。Range 路線改成跟 MA
+        # 路線一樣的連續多筆/秒數確認（見 RANGE_TRAILING_CONFIRM_TICKS/SEC），
+        # 不再等整根 K 棒收線才出場。
         _rt_ts = float(s.get("trailing_stop_price", 0.0) or 0.0)
         _rt_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
         _rt_crossed = (
             _rt_peak >= 0.003 and _rt_ts > 0
             and ((_is_long and price <= _rt_ts) or (not _is_long and price >= _rt_ts))
         )
-        if _rt_crossed and not s.get("_is_closing", False):
-            route_key = str(s.get("entry_reason", "") or "").lower()
-            if route_key in {"range_support_long", "range_resistance_short"}:
-                candles = s.get("ohlcv", [])
-                live_candle_ts = int(candles[-1][0]) if candles else 0
-                if live_candle_ts > 0:
-                    old_stop = float(s.get("range_trailing_pending_stop", 0.0) or 0.0)
-                    pending_stop = (
-                        max(old_stop, _rt_ts) if old_stop > 0 and _is_long
-                        else min(old_stop, _rt_ts) if old_stop > 0
-                        else _rt_ts
-                    )
-                    s["range_trailing_pending"] = True
-                    s["range_trailing_pending_candle_ts"] = live_candle_ts
-                    s["range_trailing_pending_stop"] = pending_stop
-                    logger.info(
-                        f"⏳ [Realtime_Range_Trailing_Pending] {sym} 即時價格 {price:.6f} "
-                        f"穿越保護線 {pending_stop:.6f}，等待本根 K 棒收線確認"
-                    )
+        route_key = str(s.get("entry_reason", "") or "").lower()
+        _is_range_route = route_key in {"range_support_long", "range_resistance_short"}
+
+        if _is_range_route:
+            from core.exits import _range_trailing_cross_confirmed
+            _range_confirmed = _range_trailing_cross_confirmed(sym, _rt_crossed, ts_value)
+            if not _range_confirmed or s.get("_is_closing", False):
                 return
+            from core.orders import close_position
+            close_side = "sell" if _is_long else "buy"
+            logger.info(
+                f"⚡ [Realtime_Range_Trailing_Confirm] {sym} 即時價格 {price:.6f} "
+                f"持續穿越保護線 {_rt_ts:.6f}，確認出場"
+            )
+            await close_position(
+                sym, close_side, abs(s["qty"]), price, avg_p,
+                reason="[Range_Trailing_Closed_Confirm]", is_stop_loss=(rt_profit <= 0),
+            )
+            return
+
+        if _rt_crossed and not s.get("_is_closing", False):
             # 停利線一旦被穿越就必須退出。舊邏輯在跳價後若目前毛利已低於費用安全線，
             # 反而拒絕平倉，會把已鎖定的小利繼續拖成虧損（XLM 0.37% 峰值案例）。
             # 費用安全線只用來決定停利線位置，不能在穿越後變成「禁止止盈」。

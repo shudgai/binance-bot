@@ -21,6 +21,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
     prev_ma7 = float(s.get("prev_ma7", 0.0) or 0.0)
     prev_ma25 = float(s.get("prev_ma25", 0.0) or 0.0)
     vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+    adx = float(s.get("adx", 0.0) or 0.0)
+    prev_adx = float(s.get("prev_adx", 0.0) or 0.0)
     if len(candles) < 22 or min(ma7, ma25, ma99, prev_ma7, prev_ma25, vol_ma20) <= 0:
         s["entry_block_reason"] = "MA7／MA25／MA99 或成交量資料尚未完成"
         return (None, 0, None)
@@ -133,9 +135,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
         volume_ok = volume_ratio >= base_limit
         ma25_not_against_long = ma25 >= prev_ma25
         ma25_not_against_short = ma25 <= prev_ma25
+        # 實測 LINKUSDT 案例：ADX 在短短 15 秒內從 7.7 暴衝到 35.4，同一輪掃描
+        # 就翻出 MA7_Simple 訊號，看起來像扎實趨勢，其實只是單根尖刺行情帶動，
+        # 進場後浮盈只到 +0.41% 就反轉停損。正常累積出來的趨勢，ADX 不會在
+        # 相鄰兩次掃描（約 10 秒）間跳這麼多，用這個過濾掉尖刺型態的假訊號。
+        ADX_SPIKE_GUARD_PCT = 15.0
+        adx_not_spiking = (adx - prev_adx) <= ADX_SPIKE_GUARD_PCT
 
         if (turn_up and bullish_candle and volume_ok and current_rsi < 75.0
-                and ma25_not_against_long
+                and ma25_not_against_long and adx_not_spiking
                 and not (golden_cross or death_cross)):
             side, route = "buy", "MA7_Simple"
             reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
@@ -147,7 +155,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
             strength = 25.0 + volume_adjustment
             return (side, strength, route)
         elif (turn_down and bearish_candle and volume_ok and current_rsi > 25.0
-                and ma25_not_against_short
+                and ma25_not_against_short and adx_not_spiking
                 and not (golden_cross or death_cross)):
             side, route = "sell", "MA7_Simple"
             reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}"
