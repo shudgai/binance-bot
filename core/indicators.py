@@ -165,7 +165,7 @@ def _calc_sl_tp(sym, side, s, p, route="a"):
     # Layer-C: Forced R:R Floor
     min_tp_dist = risk_dist * EXIT_RR_MULTIPLIER
     if tp_dist < min_tp_dist:
-        logger.info(f"⚠️ [R:R_Adjustment] {sym} 原本停利距離 {tp_dist:.4f} 太近 (< 風險×{EXIT_RR_MULTIPLIER})，已強制拉開至 {min_tp_dist:.4f} (保證 R:R >= {EXIT_RR_MULTIPLIER})")
+        logger.debug(f"⚠️ [R:R_Adjustment] {sym} 原本停利距離 {tp_dist:.4f} 太近 (< 風險×{EXIT_RR_MULTIPLIER})，已強制拉開至 {min_tp_dist:.4f} (保證 R:R >= {EXIT_RR_MULTIPLIER})")
         tp_dist = min_tp_dist
 
     # Layer-D: Structure-Aware TP Convergence（使用者要求）
