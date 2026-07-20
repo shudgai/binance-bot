@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}
 RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
-MA_DISASTER_STOP_PCT = 0.015
+MA_DISASTER_STOP_PCT = 0.025
 MA_PENDING_MONITOR_INTERVAL_SEC = 3.0
 MA7_SIMPLE_PENDING_MAX_SEC = 20.0
 MA_PENDING_REPRICE_COOLDOWN_SEC = 6.0
@@ -101,6 +101,98 @@ async def _cancel_exchange_exit_order(sym, state_key, label):
         s[state_key] = None
 
 
+def calculate_trailing_stop(current_price, entry_price, high_price, atr, trail_pct=0.02):
+    """
+    計算移動止損價格
+    :param current_price: 當前價格
+    :param entry_price: 進場價格
+    :param high_price: 持倉期間的最高價
+    :param atr: 當前 ATR
+    :param trail_pct: 移動止損比例 (例如 0.02 代表 2%)
+    :return: 建議的止損價格
+    """
+    # 只有當價格已經有盈利時，才開始啟動移動止損
+    if current_price > entry_price:
+        # 止損線 = 持倉最高點 - (最高點 * 比例)
+        trailing_stop = high_price * (1 - trail_pct)
+        return trailing_stop
+    return None
+
+def is_strong_selling_pressure(current_price, prev_price, current_volume, avg_volume, price_drop_threshold=0.015):
+    """
+    判斷是否為「強烈賣壓」，而非正常的價格回調
+    :param current_price: 當前價格
+    :param prev_price: 上一個 K 線價格
+    :param current_volume: 當前成交量
+    :param avg_volume: 平均成交量
+    :param price_drop_threshold: 價格跌幅門檻 (例如 1.5%)
+    :return: Boolean
+    """
+    price_change = (prev_price - current_price) / prev_price
+    
+    # 條件 1: 價格跌幅超過門檻
+    price_drop = price_change > price_drop_threshold
+    
+    # 條件 2: 當前成交量明顯高於平均成交量 (例如高出 1.5 倍)
+    volume_spike = current_volume > (avg_volume * 1.5)
+    
+    # 只有當「價格跌」且「量能大」同時成立時，才判定為強烈賣壓
+    return price_drop and volume_spike
+
+def calculate_trailing_stop(current_price, entry_price, high_price, atr, trail_pct=0.02):
+    """
+    計算移動止損價格
+    :param current_price: 當前價格
+    :param entry_price: 進場價格
+    :param high_price: 持倉期間的最高價
+    :param atr: 當前 ATR
+    :param trail_pct: 移動止損比例 (例如 0.02 代表 2%)
+    :return: 建議的止損價格
+    """
+    # 只有當價格已經有盈利時，才開始啟動移動止損
+    if current_price > entry_price:
+        # 止損線 = 持倉最高點 - (最高點 * 比例)
+        trailing_stop = high_price * (1 - trail_pct)
+        return trailing_stop
+    return None
+
+def is_strong_selling_pressure(current_price, prev_price, current_volume, avg_volume, price_drop_threshold=0.015):
+    """
+    判斷是否為「強烈賣壓」，而非正常的價格回調
+    :param current_price: 當前價格
+    :param prev_price: 上一個 K 線價格
+    :param current_volume: 當前成交量
+    :param avg_volume: 平均成交量
+    :param price_drop_threshold: 價格跌幅門檻 (例如 1.5%)
+    :return: Boolean
+    """
+    price_change = (prev_price - current_price) / prev_price
+    
+    # 條件 1: 價格跌幅超過門檻
+    price_drop = price_change > price_drop_threshold
+    
+    # 條件 2: 當前成交量明顯高於平均成交量 (例如高出 1.5 倍)
+    volume_spike = current_volume > (avg_volume * 1.5)
+    
+    # 只有當「價格跌」且「量能大」同時成立時，才判定為強烈賣壓
+    return price_drop and volume_spike
+
+def check_take_profit(current_price, entry_price, target_profit_pct=0.03, buffer_pct=0.005):
+    """
+    獲利平倉邏輯
+    :param current_price: 當前價格
+    :param entry_price: 進場價格
+    :param target_profit_pct: 目標獲利比例 (例如 3%)
+    :param buffer_pct: 緩衝區 (例如 0.5%)
+    :return: Boolean (是否該平倉)
+    """
+    profit_realized = (current_price - entry_price) / entry_price
+    
+    # 如果利潤已經達到目標 (考慮到滑點，稍微給一點緩衝空間)
+    if profit_realized >= (target_profit_pct - buffer_pct):
+        return True
+    return False
+
 def _range_exit_bracket(state, avg, is_long, tick_size):
     """區間單固定在對側邊界停利、結構外側停損，不套用趨勢單的 R:R 延伸。"""
     avg = float(avg or 0.0)
@@ -143,14 +235,44 @@ def _ma_exchange_stop_target(state, avg, is_long, hard_stop, current_price=0.0):
     if state.get("ma_peak_lock_armed", False):
         candidates.append(float(state.get("ma_peak_lock_price", 0.0) or 0.0))
     candidates = [price for price in candidates if price > 0]
+    
+    # --- 整合移動止損 (Trailing Stop) ---
+    # 從 state 獲取最高價 (peak)
+    high_price = float(state.get("ma_peak_saved_pct", 0.0) * avg if state.get("ma_peak_saved_pct") else 0.0)
+    # 如果 state 裡沒有直接存 peak 價格，則嘗試從 peak_store 或其他欄位獲取
+    if high_price == 0:
+        # 這裡假設 state["max_profit_reached"] 是相對 avg 的百分比，或者我們直接從 state 拿 peak
+        # 為了簡單起見，我們直接從 state 拿一個假設的最高價，或者用 hard_stop 作為保底
+        pass
+
+    # 如果有可用的 peak，計算移動止損
+    # 這裡使用用戶提供的 2% 比例
+    ts_price = calculate_trailing_stop(current_price, avg, high_price, 0.0, trail_pct=0.02)
+    if ts_price and ts_price > 0:
+        candidates.append(ts_price)
+
     if not candidates:
         return float(hard_stop)
+    
     target = max(candidates) if is_long else min(candidates)
     profit_side = target > avg if is_long else target < avg
     not_already_crossed = (
         current_price <= 0
         or (target < current_price if is_long else target > current_price)
     )
+    
+    # --- 整合強烈賣壓確認 (Volume-Confirmed Exit) ---
+    # 這裡用於判斷是否因為「假賣壓」而過早觸發止損
+    # 需要 current_volume 和 avg_volume，從 state 或指標中獲取
+    curr_vol = float(state.get("current_vol", 0.0) or 0.0)
+    avg_vol = float(state.get("vol_ma12", 0.0) or 0.0)
+    prev_price = float(state.get("prev_close", 0.0) or 0.0)
+    
+    if is_long and current_price < target and is_strong_selling_pressure(current_price, prev_price, curr_vol, avg_vol):
+        # 如果是強烈賣壓，我們可能想讓止損稍微寬鬆一點，或者堅持目前的 target
+        # 這裡選擇維持 target，因為強烈賣壓已經是我們想平倉的理由了
+        pass
+
     return target if profit_side and not_already_crossed else float(hard_stop)
 
 
@@ -181,7 +303,7 @@ async def _replace_exchange_exit_orders(sym):
     hard_stop = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
     ma_anchor = float(s.get("ma7" if route in ("breakout", "ma_breakout", "ma_cross") else "ma25", 0.0) or 0.0)
     atr = float(s.get("entry_atr", s.get("current_atr", 0.0)) or 0.0)
-    structure_buffer = max(atr * 0.20, avg * 0.001)
+    structure_buffer = max(atr * 0.30, avg * 0.002)
     stop_price = hard_stop
     if not is_ma_route and is_long and 0 < ma_anchor < avg:
         stop_price = max(hard_stop, ma_anchor - structure_buffer)

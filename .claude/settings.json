@@ -139,7 +139,10 @@
       "Bash(.venv/bin/python3 -m pytest tests/test_range_trailing_confirmation.py -q)",
       "Bash(.venv/bin/python3 -m pytest tests/test_realtime_trailing.py -q)",
       "Bash(python3 -m py_compile core/signal_engine.py core/entry_filter.py core/check_entries.py core/state_manager.py)",
-      "Bash(.venv/bin/python3 -m pytest tests/test_ma7_profit_turn.py -q)"
+      "Bash(.venv/bin/python3 -m pytest tests/test_ma7_profit_turn.py -q)",
+      "Bash(tee /tmp/compile_check.txt)",
+      "Bash(tee /tmp/compile_check2.txt)",
+      "Bash(.venv/bin/python3 -m pytest tests/test_entry_filter.py::EntryFilterTests::test_insufficient_closed_volume_is_rejected tests/test_ma_lifecycle.py::MALifecycleTests::test_ma_peak_lock_does_not_arm_below_point_six_percent tests/test_ma_lifecycle.py::MALifecycleTests::test_profit_lock_still_disabled_at_point_three_percent tests/test_trade_signal.py::TradeSignalTests::test_range_long_opens_after_bullish_support_rejection -q)"
     ]
   }
 }

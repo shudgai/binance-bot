@@ -787,9 +787,9 @@ async def check_entries():
         # 30，只有真的靠額外量能加分（volume_ratio>=1.8x）才拿得到豁免，一般訊號
         # 必須真的通過量能/價格確認才能進場。
         _strong_participation_strength = 30.0
-        # 參與度乘數整體降低：0.30/0.35/0.40（原 0.35/0.40/0.45），
+        # 參與度乘數整體降低：0.30/0.35/0.35（原 0.35/0.40/0.45），
         # 與 base_limit=0.50 的放寬方向一致
-        _d_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.40)
+        _d_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.35)
         if volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
@@ -803,7 +803,7 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.40)
+            _rvol_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.35)
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
@@ -827,7 +827,8 @@ async def check_entries():
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
                 if not volume_price_sync:
-                    strong_volume_override = strength >= _strong_participation_strength and current_vol >= vol_ma20 * 0.45
+                    # 放寬量能要求：強度夠高時，只要量能達 0.35x 即可，基礎門檻放寬
+                    strong_volume_override = strength >= _strong_participation_strength and current_vol >= vol_ma20 * 0.35
                     if not strong_volume_override:
                         s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
                         logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 量價不協同，無跟進量支持，放棄進場")
@@ -847,7 +848,7 @@ async def check_entries():
 
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
-        _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY
+        _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY * 0.80
         # MA7_Simple 路線刻意設計為「MA7 一轉折就進場」，不做即時波動底線檢查——
         # 使用者明確要求只要 MA7 谷底/頭部轉折，即直接放行，
         # 由 MA7_Simple 自身的量能與 RSI 極端值過濾負責基本把關。
