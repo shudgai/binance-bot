@@ -178,8 +178,8 @@ SYMBOL_EXIT_OVERRIDES = {
     },
 }
 
-MAX_POSITIONS = 3
-COOLDOWN_SEC = 900
+MAX_POSITIONS = 5
+COOLDOWN_SEC = 300
 
 DAILY_LOSS_LIMIT_PCT = 0.10
 
@@ -221,7 +221,7 @@ TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 MIN_5M_ATR_PCT_FOR_MA_ENTRY = float(os.getenv("MIN_5M_ATR_PCT_FOR_MA_ENTRY", ROUND_TRIP_FEE_PCT + 0.0002))
 # 虧損出場後避免同一幣種立刻沿用已失效的同方向訊號再次進場；個別幣種仍可覆蓋。
-DEFAULT_LOSS_REENTRY_COOLDOWN_SEC = int(os.getenv("DEFAULT_LOSS_REENTRY_COOLDOWN_SEC", 3600))
+DEFAULT_LOSS_REENTRY_COOLDOWN_SEC = int(os.getenv("DEFAULT_LOSS_REENTRY_COOLDOWN_SEC", 900))
 
 # 全域調整：進場方式改回 7dceb33 的 auto 模式，依訊號強度自動選 pullback/chase/market
 # （原本被改成強制全部用 pullback，不管訊號多強都要等拉回才進場，實測 AVAXUSDT
