@@ -124,15 +124,16 @@ def is_entry_volume_confirmed(sym, side):
         return False
     closed_volume = float(candles[-2][5])
     route = str(s.get("entry_reason", "") or "")
-    # 調降門檻以對齊全域放寬的 0.50x 基線與 CONFLUENCE_FAIL 的 0.40x-0.45x
+    # 與 signal_engine.py 的 base_limit=0.50 與 check_entries.py 的
+    # _d_multiplier 方向一致，整體放寬各路由的已收線量能門樻
     if route == "MA_Cross":
-        required = 0.45
+        required = 0.40   # 原 0.45
     elif route == "MA_Breakout":
-        required = 0.6
+        required = 0.55   # 原 0.6
     elif route in RANGE_ENTRY_ROUTES:
-        required = 0.75  # 提高區間模式成交量門檻，避免在低成交量/弱支撐下進場接刀
+        required = 0.65  # 提高區間模式成交量門樻，避免在低成交量/弱支擐下進場接刀
     else:
-        required = 0.4
+        required = 0.35   # MA7_Simple / MA25_Pullback 原 0.4
     return closed_volume >= vol_ma20 * required
 
 

@@ -53,10 +53,11 @@ def compute_signal_strength(sym, realtime_trigger=False):
     personality = s.get("personality", "calm")
     atr_pct = float(s.get("atr_pct", 0.0))
 
-    # 動態量能閾值 — 放寬至 0.6x，只需基本流動性確認
-    base_limit = 0.6
+    # 動態量能閾值 — 放寬至 0.50x，與 ENTRY_SURGE_THRESHOLD 對齊
+    # 0.50x 已有 ETH 成功樣本（RVOL 0.52x）支撐，本次統一基線
+    base_limit = 0.50
     if atr_pct > 5.0:
-        base_limit = 1.0  # 波動失控時稍微收緊
+        base_limit = 0.85  # 波動失控時稍微收緊（原 1.0，稍降以保留一定彈性）
     breakout_limit = base_limit * 1.5
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
@@ -78,10 +79,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
     # ETH 成功樣本只有 0.52x RVOL：若交叉已站在 MA99 正確方向且波動未失控，
     # 允許 0.50x～0.60x 進入候選；錯誤 MA99 方向仍維持原本 0.60x 門檻。
     cross_long_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.5 and above_ma99 and atr_pct <= 5.0
+        volume_ratio >= 0.45 and above_ma99 and atr_pct <= 5.0
     )
     cross_short_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.5 and below_ma99 and atr_pct <= 5.0
+        volume_ratio >= 0.45 and below_ma99 and atr_pct <= 5.0
     )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
@@ -152,7 +153,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
         ADX_SPIKE_GUARD_PCT = 15.0
         adx_not_spiking = (adx - prev_adx) <= ADX_SPIKE_GUARD_PCT
 
-        if (turn_up and bullish_candle and volume_ok and current_rsi < 75.0
+        if (turn_up and bullish_candle and volume_ok and current_rsi < 78.0
                 and ma25_not_against_long and adx_not_spiking
                 and not (golden_cross or death_cross)):
             side, route = "buy", "MA7_Simple"
@@ -164,7 +165,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
             volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
             strength = 25.0 + volume_adjustment
             return (side, strength, route)
-        elif (turn_down and bearish_candle and volume_ok and current_rsi > 25.0
+        elif (turn_down and bearish_candle and volume_ok and current_rsi > 22.0
                 and ma25_not_against_short and adx_not_spiking
                 and not (golden_cross or death_cross)):
             side, route = "sell", "MA7_Simple"

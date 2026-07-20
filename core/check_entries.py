@@ -54,7 +54,8 @@ def _radar_entry_block_reason(profile, route=None):
             if confirmations < 2:
                 return "觀察中：等待第二次雷達確認"
             first_seen = float(profile.get("_radar_candidate_since", time.time()) or time.time())
-            remaining = max(0, int((1800 - max(0.0, time.time() - first_seen)) / 60) + 1)
+            # 將觀察成熟期從 30 分鐘縮短為 15 分鐘，加快新幣進入可交易狀態
+            remaining = max(0, int((900 - max(0.0, time.time() - first_seen)) / 60) + 1)
             return f"觀察中：尚需 {remaining} 分鐘"
         return ""
 
@@ -786,7 +787,9 @@ async def check_entries():
         # 30，只有真的靠額外量能加分（volume_ratio>=1.8x）才拿得到豁免，一般訊號
         # 必須真的通過量能/價格確認才能進場。
         _strong_participation_strength = 30.0
-        _d_multiplier = 0.35 if strength >= _strong_participation_strength else (0.40 if _is_low_vol_ce else 0.45)
+        # 參與度乘數整體降低：0.30/0.35/0.40（原 0.35/0.40/0.45），
+        # 與 base_limit=0.50 的放寬方向一致
+        _d_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.40)
         if volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
@@ -800,7 +803,7 @@ async def check_entries():
             prev_vol = s["ohlcv"][-3][5] if len(s["ohlcv"]) > 2 else s["ohlcv"][-2][5]
             price_change = cp - s["ohlcv"][-2][1]
 
-            _rvol_multiplier = 0.35 if strength >= _strong_participation_strength else (0.40 if _is_low_vol_ce else 0.45)
+            _rvol_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.40)
             rvol_check = current_vol > (vol_ma20 * _rvol_multiplier)
 
             h24_quote_volume_est = vol_ma20 * cp * 288
