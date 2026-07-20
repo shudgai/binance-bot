@@ -244,7 +244,10 @@ class MALifecycleTests(unittest.TestCase):
         self.assertEqual(_ma_peak_keep_ratio(0.020), 0.85)
         self.assertEqual(_ma_peak_keep_ratio(0.030), 0.90)
 
-    def test_ma_micro_profit_floor_arms_after_two_nearby_ticks(self):
+    def test_ma_micro_profit_floor_disabled_up_to_peak_lock_threshold(self):
+        # 小峰值鎖利層已停用（見 exits.py 說明）：MA_MICRO_PROFIT_ARM_PCT 現在
+        # 直接等於 MA_PEAK_LOCK_ARM_PCT，0.6% 以下的浮盈不再武裝任何價格鎖利線，
+        # 出場交給賣壓／MA結構破壞判斷，讓浮盈有機會跟著趨勢跑。
         state = self._position_state(closed_price=100.28)
         state.update({"highest_profit_pct": 0.0})
 
@@ -259,8 +262,8 @@ class MALifecycleTests(unittest.TestCase):
             self.sym, 100.279, True, event_time=100.5, require_confirmation=True,
         )
         self.assertFalse(hit)
-        self.assertTrue(state["ma_profit_floor_armed"])
-        self.assertAlmostEqual(floor, 100.168, places=3)
+        self.assertEqual(floor, 0.0)
+        self.assertFalse(state["ma_profit_floor_armed"])
 
     def test_ma_micro_profit_floor_stays_off_below_point_two_percent(self):
         state = self._position_state(closed_price=100.19)
@@ -344,75 +347,44 @@ class MALifecycleTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_ma_profit_floor_arms_at_point_three_percent_without_tight_trailing(self):
+    def test_profit_lock_still_disabled_at_point_three_percent(self):
+        # 0.3% 一樣落在停用區間內（門檻已提高到 0.6%），不武裝任何鎖利線。
         state = self._position_state(closed_price=100.3)
         state.update({"close_price": 100.3, "highest_profit_pct": 0.003})
 
         hit, floor_price = update_ma_peak_lock(self.sym, 100.3, True)
 
         self.assertFalse(hit)
-        self.assertTrue(state["ma_profit_floor_armed"])
+        self.assertFalse(state["ma_profit_floor_armed"])
         self.assertFalse(state["ma_peak_lock_armed"])
-        self.assertAlmostEqual(floor_price, 100.25)
+        self.assertEqual(floor_price, 0.0)
 
-    def test_ma_profit_floor_exits_before_meaningful_profit_becomes_loss(self):
-        state = self._position_state(closed_price=100.24)
-        state.update({"close_price": 100.24, "highest_profit_pct": 0.0035,
-                      "ma_profit_floor_cross_count": 2,
-                      "ma_profit_floor_cross_since": time.time() - 1.1})
+    def test_ma_peak_lock_exits_once_price_crosses_lock_line(self):
+        # 0.8% 峰值已跨過 MA_PEAK_LOCK_ARM_PCT（0.6%），交由主鎖利層（MA_Peak_Lock）
+        # 接手；這一層是即時判斷「現價是否已跌破鎖利線」，不像已停用的舊
+        # MA_Profit_Floor 微利層需要多筆確認。
+        state = self._position_state(closed_price=100.5)
+        state.update({"close_price": 100.5, "highest_profit_pct": 0.008})
 
         async def run():
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
                 close_mock.assert_called_once()
-                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Profit_Floor]")
+                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Peak_Lock]")
                 self.assertFalse(close_mock.call_args.kwargs["is_stop_loss"])
 
         asyncio.run(run())
 
-    def test_short_profit_floor_does_not_chase_after_net_profit_is_gone(self):
-        state = self._position_state(closed_price=100.02)
-        state.update({"qty": -1.0, "highest_profit_pct": 0.0032})
-
-        for event_time in (100.0, 101.0, 104.0):
-            hit, floor = update_ma_peak_lock(
-                self.sym, 100.02, False, event_time=event_time,
-            )
-            self.assertFalse(hit)
-
-        self.assertAlmostEqual(floor, 99.744, places=3)
-        self.assertEqual(state["ma_profit_floor_cross_count"], 0)
-        self.assertTrue(state["ma_profit_floor_missed"])
-
-    def test_ma_profit_floor_reclaim_cancels_pending_exit(self):
-        state = self._position_state(closed_price=100.24)
-        state.update({"close_price": 100.24, "highest_profit_pct": 0.0035})
-
-        hit, _ = update_ma_peak_lock(self.sym, 100.24, True, event_time=100.0)
-        self.assertFalse(hit)
-        self.assertEqual(state["ma_profit_floor_cross_count"], 1)
-
-        hit, _ = update_ma_peak_lock(self.sym, 100.29, True, event_time=100.5)
-        self.assertFalse(hit)
-        self.assertEqual(state["ma_profit_floor_cross_count"], 0)
-
-        hit, _ = update_ma_peak_lock(self.sym, 100.24, True, event_time=102.0)
-        self.assertFalse(hit)
-        self.assertEqual(state["ma_profit_floor_cross_count"], 1)
-
-    def test_ma_short_profit_floor_is_symmetric(self):
+    def test_ma_short_peak_lock_is_symmetric(self):
+        # 主鎖利層（>= 0.6% 峰值）沿用既有邏輯，這裡確認空單方向對稱正確。
         state = self._position_state(closed_price=99.76, ma7=99.0, ma25=100.0)
-        state.update({"qty": -1.0, "close_price": 99.76, "highest_profit_pct": 0.0035})
+        state.update({"qty": -1.0, "close_price": 99.76, "highest_profit_pct": 0.008})
 
-        hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False, event_time=100.0)
-        self.assertFalse(hit)
-        hit, _ = update_ma_peak_lock(self.sym, 99.76, False, event_time=100.5)
-        self.assertFalse(hit)
-        hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False, event_time=102.1)
+        hit, floor_price = update_ma_peak_lock(self.sym, 99.76, False)
 
         self.assertTrue(hit)
-        self.assertAlmostEqual(floor_price, 99.72)
+        self.assertAlmostEqual(floor_price, 99.45)
 
     def test_ma_short_early_momentum_flip_exits_after_two_confirmations(self):
         # [MA_Early_Momentum_Flip] 已合併至 [MA7_Closed_Break]（ma_exit_invalid_count >= 2）
@@ -787,19 +759,20 @@ class SlowMarketAtrCheckTests(unittest.TestCase):
 
 class MAExchangeStopScheduleTests(unittest.TestCase):
     def test_new_profit_floor_schedules_exchange_stop_sync(self):
+        # 峰值需跨過 MA_PEAK_LOCK_ARM_PCT（0.6%）才會武裝主鎖利層並同步交易所端停損。
         sym = "MASTOPUSDT"
         original = ctx.STATES.get(sym)
         state = build_symbol_state(sym)
         state.update({
             "qty": 1.0, "avg_price": 100.0, "current_atr": 0.1,
-            "highest_profit_pct": 0.0035, "exchange_stop_order_id": "disaster-1",
+            "highest_profit_pct": 0.008, "exchange_stop_order_id": "disaster-1",
         })
         ctx.STATES[sym] = state
         try:
             with patch("core.exits._schedule_ma_exchange_profit_stop") as schedule:
-                hit, floor = update_ma_peak_lock(sym, 100.35, True)
+                hit, floor = update_ma_peak_lock(sym, 100.7, True)
             self.assertFalse(hit)
-            self.assertAlmostEqual(floor, 100.28)
+            self.assertAlmostEqual(floor, 100.64)
             schedule.assert_called_once_with(sym)
         finally:
             if original is None:

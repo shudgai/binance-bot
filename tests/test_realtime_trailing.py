@@ -52,51 +52,45 @@ def test_ma_wave_position_uses_dedicated_realtime_peak_lock():
     assert state["ma_peak_lock_armed"] is True
 
 
-def test_ma_profit_floor_closes_on_realtime_trade_tick():
+def test_ma_peak_lock_closes_on_realtime_trade_tick():
+    # 小峰值鎖利層（MA_Profit_Floor）已停用，0.8% 峰值改由主鎖利層
+    # （MA_Peak_Lock）接手，且不需要多筆確認，單一 tick 跌破鎖利線即出場。
     sym = "ETHUSDT"
     init_states([sym])
     reset_coin_state(sym)
     state = STATES[sym]
     state.update({
         "qty": 1.0, "avg_price": 100.0, "entry_reason": "MA_Cross",
-        "current_atr": 0.1, "highest_profit_pct": 0.0035,
-        "trailing_highest": 100.35, "trade_price_history": [100.2],
+        "current_atr": 0.1, "highest_profit_pct": 0.008,
+        "trailing_highest": 100.8, "trade_price_history": [100.7],
         "trade_qty_history": [1.0],
     })
 
     with patch("core.orders.close_position", AsyncMock()) as close:
-        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0, "timestamp": 1_000_000}))
-        close.assert_not_awaited()
-        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0, "timestamp": 1_000_500}))
-        close.assert_not_awaited()
-        asyncio.run(update_trade_signal(sym, {"price": 100.24, "amount": 1.0, "timestamp": 1_001_100}))
+        asyncio.run(update_trade_signal(sym, {"price": 100.5, "amount": 1.0, "timestamp": 1_000_000}))
 
     close.assert_awaited_once()
-    assert close.await_args.kwargs["reason"] == "[MA_Profit_Floor]"
+    assert close.await_args.kwargs["reason"] == "[MA_Peak_Lock]"
     assert close.await_args.kwargs["is_stop_loss"] is False
 
 
-def test_ma7_simple_short_profit_floor_closes_on_realtime_trade_tick():
+def test_ma7_simple_short_peak_lock_closes_on_realtime_trade_tick():
     sym = "ARBUSDT"
     init_states([sym])
     reset_coin_state(sym)
     state = STATES[sym]
     state.update({
         "qty": -1.0, "avg_price": 100.0, "entry_reason": "MA7_Simple",
-        "current_atr": 0.1, "highest_profit_pct": 0.0035,
-        "trailing_lowest": 99.65, "trade_price_history": [99.70],
+        "current_atr": 0.1, "highest_profit_pct": 0.008,
+        "trailing_lowest": 99.2, "trade_price_history": [99.3],
         "trade_qty_history": [1.0],
     })
 
     with patch("core.orders.close_position", AsyncMock()) as close:
-        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0, "timestamp": 2_000_000}))
-        close.assert_not_awaited()
-        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0, "timestamp": 2_000_500}))
-        close.assert_not_awaited()
-        asyncio.run(update_trade_signal(sym, {"price": 99.76, "amount": 1.0, "timestamp": 2_001_100}))
+        asyncio.run(update_trade_signal(sym, {"price": 99.5, "amount": 1.0, "timestamp": 2_000_000}))
 
     close.assert_awaited_once()
-    assert close.await_args.kwargs["reason"] == "[MA_Profit_Floor]"
+    assert close.await_args.kwargs["reason"] == "[MA_Peak_Lock]"
     assert close.await_args.kwargs["is_stop_loss"] is False
 
 

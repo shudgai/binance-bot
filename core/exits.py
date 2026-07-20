@@ -20,24 +20,34 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma
 MA_DISASTER_STOP_PCT = 0.025
 MA_WRONG_DIRECTION_PCT = 0.01
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
-# MA 進場的正常雜訊約 0.2%~0.4%，因此微利區採較寬鬆的60%保留比例。
-# 低於 0.20% 不啟動鎖利；0.20%~0.30% 使用微利保護，0.30% 以上進入主鎖利層。
-# 主動風險線仍獨立管理錯向部位，避免把微利保護誤當固定價停利。
+# 微利價格鎖利層（0.2%~0.6% 峰值）已停用：實測 FILUSDT（ADX 55、扎實趨勢單）
+# 峰值只到 +0.22% 就被這層鎖死，交易所端同步的 STOP_MARKET 隨後被急速反轉的
+# 滑價打穿，小賺變小虧；而且無論鎖多緊，都是「見好就收一點點」，跟後面行情
+# 有沒有真的繼續完全無關——本質上是拿一個固定價格門檻去猜「這是真反轉還是
+# 正常雜訊」，猜不準。
 #
-# 這裡曾經一度收緊到 0.15%/70%（想解決回吐問題），但實測發現太早鎖住反而把
-# 還在正常波動範圍內的單提前剪斷（例：LTCUSDT 才漲到 +0.25% 就被鎖住，隨後
-# 1 秒內的快速反轉又追上鎖利價，反而由小賺變小虧）。真正該負責抓「這是真反轉
-# 還是正常雜訊」的，交給 check_realtime_sell_pressure() 看即時成交流方向去判斷，
-# 而不是靠這條價格門檻越收越緊。門檻本身改回原始寬鬆值，只當最後防線。
+# 現在小峰值（< MA_PEAK_LOCK_ARM_PCT）不再武裝任何價格鎖利線，client 端跟
+# 交易所端都不會在這個區間掛出保護性停損（_ma_exchange_stop_target 找不到
+# armed 的 floor/peak_lock 時會退回災難停損價，見 orders.py）。真正該負責抓
+# 「這是真反轉還是正常雜訊」的，交給 check_realtime_sell_pressure() 看即時
+# 成交流方向、以及 MA7_Closed_Break/Death_Cross/Golden_Cross 等結構破壞判斷，
+# 讓浮盈有機會跟著趨勢跑；代價是萬一賣壓沒抓到真反轉，回吐幅度會比原本更大，
+# 最終防線退回到 MA_DISASTER_STOP_PCT。跨過 MA_PEAK_LOCK_ARM_PCT（0.6%，已是
+# 有意義的實際獲利）之後，才進入下面原有的主鎖利層繼續運作。
 MA_ACTIVE_RISK_STOP_PCT = 0.01
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
 MA_MIN_PROFIT_TARGET_PCT = 0.006
-MA_MICRO_PROFIT_ARM_PCT = 0.002
+MA_MICRO_PROFIT_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
 MA_MICRO_PROFIT_KEEP_RATIO = 0.60
-MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.0005
+# 實測 FILUSDT 案例：鎖利價同步到交易所端 STOP_MARKET 後，行情急速反轉時，
+# 停損單觸發後市價成交實際滑價達 0.29%（0.7235 觸發 -> 0.7214 成交），遠大於
+# 原本只留 0.05% 的緩衝，導致理論上鎖住的小賺變成實際虧損。兩層緩衝都拉高到
+# 0.20%，讓「手續費 0.10% + 緩衝 0.20%」= 0.30% 的總門檻能扛住這種急反轉滑價，
+# 不再是滑一下就穿。
+MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.002
 MA_PROFIT_FLOOR_ARM_PCT = 0.003
-MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.0015
+MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.002
 MA_PROFIT_FLOOR_CONFIRM_TICKS = 3
 MA_PROFIT_FLOOR_CONFIRM_SEC = 1.0
 MA_PROFIT_FLOOR_TREND_CONFIRM_SEC = 2.0
