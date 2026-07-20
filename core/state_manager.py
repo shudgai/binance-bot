@@ -54,6 +54,7 @@ def build_symbol_state(sym):
         "atr_history": [],
         "atr_ma20": 0.0,
         "current_rsi": 50.0,
+        "prev_rsi": 50.0,
         "ema20": 0.0,
         "ema50": 0.0,
         "ma7": 0.0,

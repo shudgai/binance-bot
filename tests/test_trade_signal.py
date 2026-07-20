@@ -307,6 +307,22 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(STATES[sym]["range_support_level"], 99.0)
         self.assertEqual(STATES[sym]["range_resistance_level"], 103.0)
 
+    def test_range_long_rejected_when_rsi_still_falling_fast(self):
+        # 實測 ADAUSDT 案例：支撐反彈訊號觸發當下 RSI=50，但不到一分鐘內連續
+        # 幾輪掃描 RSI 一路殺到 29.4，代表賣壓根本沒停，進場後直接跌破支撐，
+        # 從未反彈過（峰值 0%）。
+        sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
+        STATES[sym].update({"current_rsi": 29.4, "prev_rsi": 50.0})
+        with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
+            self.assertEqual(compute_range_signal(sym), (None, 0, None))
+
+    def test_range_long_allowed_when_rsi_stable(self):
+        sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
+        STATES[sym].update({"current_rsi": 48.0, "prev_rsi": 50.0})
+        with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
+            side, _, route = compute_range_signal(sym)
+        self.assertEqual((side, route), ("buy", "Range_Support_Long"))
+
     def test_kaito_like_range_setup_gets_priority_without_becoming_a_gate(self):
         sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 750.0])
         state = STATES[sym]

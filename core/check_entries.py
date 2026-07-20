@@ -514,6 +514,9 @@ def compute_indicators(sym):
             s["atr_history"] = s["atr_history"][-1440:]
         s["atr_ma20"] = float(np.mean(s["atr_history"][-20:])) if len(s["atr_history"]) >= 20 else s["current_atr"]
     if len(closes) > RSI_PERIOD:
+        # 記錄上一輪掃描的 RSI，供區間模式判斷這次的支撐反彈/壓力拒絕，
+        # 是動能已經真的止穩，還是這一兩輪掃描間還在快速下墜/急拉中。
+        s["prev_rsi"] = float(s.get("current_rsi", 50.0) or 50.0)
         deltas = np.diff(closes[-(RSI_PERIOD + 1):])
         gains = deltas[deltas > 0].mean() if np.any(deltas > 0) else 1e-10
         if np.any(deltas < 0):

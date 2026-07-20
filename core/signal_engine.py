@@ -320,6 +320,7 @@ def compute_range_signal(sym):
     atr = float(s.get("current_atr", 0.0) or 0.0)
     adx = float(s.get("adx", 0.0) or 0.0)
     rsi = float(s.get("current_rsi", 50.0) or 50.0)
+    prev_rsi = float(s.get("prev_rsi", 50.0) or 50.0)
     vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
 
     if atr <= 0 or vol_ma20 <= 0:
@@ -383,6 +384,15 @@ def compute_range_signal(sym):
     bullish_rejection = candle_close > candle_open or lower_wick >= body * 1.2
     bearish_rejection = candle_close < candle_open or upper_wick >= body * 1.2
 
+    # 實測 ADAUSDT 案例：支撐反彈訊號觸發時 RSI=50.0，看似正常，但短短不到
+    # 一分鐘內連續幾輪掃描 RSI 一路殺到 33.3、29.4，代表當下賣壓根本還沒停，
+    # 進場後價格直接跌破支撐、從未反彈（峰值 0%）。原本只檢查 RSI 是否低於
+    # 55/高於 45 這種靜態門檻，抓不到「動能還在惡化中」的情況。這裡改成同時
+    # 要求 RSI 沒有在最近一兩輪掃描間快速朝反方向惡化。
+    RANGE_RSI_MOMENTUM_GUARD_PCT = 8.0
+    rsi_not_still_falling = (prev_rsi - rsi) <= RANGE_RSI_MOMENTUM_GUARD_PCT
+    rsi_not_still_rising = (rsi - prev_rsi) <= RANGE_RSI_MOMENTUM_GUARD_PCT
+
     # 5. 做多條件：低點碰支撐帶 且 收盤回彈至支撐上方 且 RSI < 55
     long_signal = (
         support is not None
@@ -390,6 +400,7 @@ def compute_range_signal(sym):
         and candle_close >= support                  # 收盤回彈至支撐上方
         and bullish_rejection                        # 收陽或足夠長下影確認拒跌
         and rsi < 55.0                               # 排除超買後的假支撐
+        and rsi_not_still_falling                     # 排除賣壓還在惡化中的假支撐
     )
 
     # 6. 做空條件：高點碰壓力帶 且 收盤回落至壓力下方 且 RSI > 45
@@ -399,6 +410,7 @@ def compute_range_signal(sym):
         and candle_close <= resistance               # 收盤回落至壓力下方
         and bearish_rejection                        # 收陰或足夠長上影確認拒漲
         and rsi > 45.0                               # 排除超賣後的假壓力
+        and rsi_not_still_rising                      # 排除買壓還在惡化中的假壓力
     )
 
     if not long_signal and not short_signal:

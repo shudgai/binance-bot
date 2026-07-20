@@ -123,6 +123,31 @@ class EntryFilterTests(unittest.TestCase):
         })
         self.assertFalse(is_ma_direction_aligned(STATES[sym], "buy", route="MA7_Simple"))
 
+    def test_range_support_long_final_gate_rejects_falling_rsi(self):
+        from core.entry_filter import is_range_direction_valid
+        sym = self._state("buy")
+        STATES[sym].update({
+            "close_price": 99.1,
+            "range_support_level": 99.0,
+            "range_resistance_level": 103.0,
+            "current_rsi": 29.4, "prev_rsi": 50.0,
+        })
+        ok, reason = is_range_direction_valid(sym, "buy", "Range_Support_Long")
+        self.assertFalse(ok)
+        self.assertIn("賣壓未止穩", reason)
+
+    def test_range_support_long_final_gate_allows_stable_rsi(self):
+        from core.entry_filter import is_range_direction_valid
+        sym = self._state("buy")
+        STATES[sym].update({
+            "close_price": 99.1,
+            "range_support_level": 99.0,
+            "range_resistance_level": 103.0,
+            "current_rsi": 48.0, "prev_rsi": 50.0,
+        })
+        ok, _ = is_range_direction_valid(sym, "buy", "Range_Support_Long")
+        self.assertTrue(ok)
+
     def test_insufficient_closed_volume_is_rejected(self):
         sym = self._state("buy", volume=400.0)
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))

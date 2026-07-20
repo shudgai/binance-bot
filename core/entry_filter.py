@@ -223,6 +223,13 @@ def is_range_direction_valid(sym, side, route):
     edge_tolerance = max(atr * 2.0, width * 0.40) if atr > 0 else width * 0.40
     breakout_tolerance = atr * 0.5 if atr > 0 else price * 0.005
 
+    # 跟 signal_engine.py 的 RSI 動能過濾對齊：訊號產生後到這裡送單前，賣壓/
+    # 買壓若還在快速惡化中，即使價格還沒跌破容忍帶，也不該放行（實測 ADAUSDT
+    # 案例：RSI 不到一分鐘從 50 殺到 29，價格幾乎沒動但根本沒有真的止穩）。
+    rsi = float(s.get("current_rsi", 50.0) or 50.0)
+    prev_rsi = float(s.get("prev_rsi", 50.0) or 50.0)
+    RANGE_RSI_MOMENTUM_GUARD_PCT = 8.0
+
     if route == "Range_Support_Long":
         if side != "buy":
             return False, "支撐路由方向必須為 buy"
@@ -230,6 +237,8 @@ def is_range_direction_valid(sym, side, route):
             return False, f"現價 {price:.4f} 已跌穿支撐帶 {support:.4f} 過深，取消區間多單"
         if price > support + edge_tolerance:
             return False, f"現價已離開支撐邊界，偏離 {((price-support)/price)*100:.2f}%"
+        if (prev_rsi - rsi) > RANGE_RSI_MOMENTUM_GUARD_PCT:
+            return False, f"RSI 仍在快速下探（{prev_rsi:.1f}→{rsi:.1f}），賣壓未止穩"
         return True, "range_support_ok"
 
     if route == "Range_Resistance_Short":
@@ -239,6 +248,8 @@ def is_range_direction_valid(sym, side, route):
             return False, f"現價 {price:.4f} 已突破壓力帶 {resistance:.4f} 過深，取消區間空單"
         if price < resistance - edge_tolerance:
             return False, f"現價已離開壓力邊界，偏離 {((resistance-price)/price)*100:.2f}%"
+        if (rsi - prev_rsi) > RANGE_RSI_MOMENTUM_GUARD_PCT:
+            return False, f"RSI 仍在快速拉升（{prev_rsi:.1f}→{rsi:.1f}），買壓未止穩"
         return True, "range_resistance_ok"
 
     return False, f"非區間路由：{route}"
