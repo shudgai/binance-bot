@@ -37,6 +37,13 @@ MA_PENDING_REPRICE_COOLDOWN_SEC = 6.0
 MA_CROSS_MAX_EXTENSION_PCT = 0.0025
 MA_CROSS_MAX_EXTENSION_ATR_MULT = 0.5
 MA_CROSS_ANCHOR_BUFFER_PCT = 0.0003
+# 實測 AVAXUSDT 案例：區間進場原本只留 0.02% 緩衝（幾乎貼著壓力/支撐線進場），
+# 結構停損卻是相對「壓力/支撐位」抓 0.5x ATR，等於進場價到停損的實際距離只
+# 比半個 ATR 多一點點——對正常波動的幣，一根雜訊影線就可能觸發，不需要真的
+# 突破。緩衝拉大到 0.15%，讓進場價本身就多留一點空間，且因為停損仍是相對
+# 壓力/支撐位計算，緩衝越大代表進場到停損的實際距離也越大，不會反而放大
+# 單筆虧損上限。
+RANGE_ENTRY_EDGE_BUFFER_PCT = 0.0015
 
 
 def _clear_previous_position_peak(sym, state):
@@ -672,8 +679,8 @@ def _pending_entry_reprice_needed(sym, info, current_price, now=None):
         support = float(s.get("range_support_level", 0.0) or 0.0)
         resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
         desired_price = (
-            support * 1.0002 if route == "range_support_long"
-            else resistance * 0.9998
+            support * (1 + RANGE_ENTRY_EDGE_BUFFER_PCT) if route == "range_support_long"
+            else resistance * (1 - RANGE_ENTRY_EDGE_BUFFER_PCT)
         )
         old_limit = float(info.get("price") or info.get("limit_price") or 0.0)
         if desired_price <= 0 or old_limit <= 0:
@@ -710,9 +717,9 @@ def _translated_pending_limit_price(info, current_price):
         s = ctx.STATES.get(info.get("sym"), {})
         if route == "range_support_long":
             support = float(s.get("range_support_level", 0.0) or 0.0)
-            return support * 1.0002 if support > 0 else 0.0
+            return support * (1 + RANGE_ENTRY_EDGE_BUFFER_PCT) if support > 0 else 0.0
         resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
-        return resistance * 0.9998 if resistance > 0 else 0.0
+        return resistance * (1 - RANGE_ENTRY_EDGE_BUFFER_PCT) if resistance > 0 else 0.0
     if info.get("ma_cross_anti_chase", False):
         _, anchor_price, _ = _ma_cross_anti_chase_plan(
             info.get("sym"), info.get("side"), current_price,
@@ -1970,13 +1977,13 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                 _range_support    = float(s.get("range_support_level",    0.0) or 0.0)
                 _range_resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
                 if side == 'buy' and _range_support > 0:
-                    # 支撐帶內側 +0.02%：避免掉单在支撐正下方
-                    limit_price = _range_support * 1.0002
-                    logger.info(f"🎯 [Range支撐掛單-Paper] {sym} 掛买在支撐位 {_range_support:.6f} +0.02% = {limit_price:.6f}")
+                    # 支撐帶內側留緩衝：避免貼著支撐正上方進場、正常雜訊就碰到結構停損
+                    limit_price = _range_support * (1 + RANGE_ENTRY_EDGE_BUFFER_PCT)
+                    logger.info(f"🎯 [Range支撐掛單-Paper] {sym} 掛买在支撐位 {_range_support:.6f} +{RANGE_ENTRY_EDGE_BUFFER_PCT*100:.2f}% = {limit_price:.6f}")
                 elif side == 'sell' and _range_resistance > 0:
-                    # 壓力帶內側 -0.02%：避免掉单在壓力正上方
-                    limit_price = _range_resistance * 0.9998
-                    logger.info(f"🎯 [Range壓力掛單-Paper] {sym} 掛賣在壓力位 {_range_resistance:.6f} -0.02% = {limit_price:.6f}")
+                    # 壓力帶內側留緩衝：避免貼著壓力正下方進場、正常雜訊就碰到結構停損
+                    limit_price = _range_resistance * (1 - RANGE_ENTRY_EDGE_BUFFER_PCT)
+                    logger.info(f"🎯 [Range壓力掛單-Paper] {sym} 掛賣在壓力位 {_range_resistance:.6f} -{RANGE_ENTRY_EDGE_BUFFER_PCT*100:.2f}% = {limit_price:.6f}")
                 else:
                     # 區間位資料遺失，降級為當前小幁適度高於市價 (buy) / 低於市價 (sell)的限價
                     _fallback_offset = 0.9998 if side == 'buy' else 1.0002
@@ -2092,15 +2099,16 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
                     limit_price = None
                     logger.info(f"📌 [市價下單] {sym} 執行市價進場")
                 elif actual_entry_mode == 'range_limit':
-                    # 區間模式精確限價：直接用支撐/壓力位上下各 0.02% 小緩衝
+                    # 區間模式精確限價：支撐/壓力位上下各留 RANGE_ENTRY_EDGE_BUFFER_PCT
+                    # 緩衝，避免貼著邊界進場、實際到結構停損的距離只剩半個 ATR 多一點。
                     _range_support    = float(s.get("range_support_level",    0.0) or 0.0)
                     _range_resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
                     if side == 'buy' and _range_support > 0:
-                        limit_price = round_step(_range_support * 1.0002, tick_size)
-                        logger.info(f"🎯 [Range支撐掛單] {sym} 掛買在支撐位 {_range_support:.6f} +0.02% = {limit_price:.6f}")
+                        limit_price = round_step(_range_support * (1 + RANGE_ENTRY_EDGE_BUFFER_PCT), tick_size)
+                        logger.info(f"🎯 [Range支撐掛單] {sym} 掛買在支撐位 {_range_support:.6f} +{RANGE_ENTRY_EDGE_BUFFER_PCT*100:.2f}% = {limit_price:.6f}")
                     elif side == 'sell' and _range_resistance > 0:
-                        limit_price = round_step(_range_resistance * 0.9998, tick_size)
-                        logger.info(f"🎯 [Range壓力掛單] {sym} 掛賣在壓力位 {_range_resistance:.6f} -0.02% = {limit_price:.6f}")
+                        limit_price = round_step(_range_resistance * (1 - RANGE_ENTRY_EDGE_BUFFER_PCT), tick_size)
+                        logger.info(f"🎯 [Range壓力掛單] {sym} 掛賣在壓力位 {_range_resistance:.6f} -{RANGE_ENTRY_EDGE_BUFFER_PCT*100:.2f}% = {limit_price:.6f}")
                     else:
                         # 區間位資料遺失，降級為實時市價小幁限價
                         _fallback_offset = 0.9998 if side == 'buy' else 1.0002

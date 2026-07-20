@@ -290,7 +290,7 @@ class EntryRiskTests(unittest.TestCase):
         needed, reason = _pending_entry_reprice_needed(sym, info, 99.2, now=1006.0)
         self.assertTrue(needed)
         self.assertEqual(reason, "range anchor moved")
-        self.assertAlmostEqual(_translated_pending_limit_price(info, 99.2), 99.0198)
+        self.assertAlmostEqual(_translated_pending_limit_price(info, 99.2), 99.1485)
 
     def test_pending_range_order_is_cancelled_after_leaving_boundary(self):
         sym = "XRPUSDT"
