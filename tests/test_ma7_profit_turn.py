@@ -99,3 +99,59 @@ class MA7ProfitTurnTests(unittest.IsolatedAsyncioTestCase):
             await check_exits(self.sym)
             close_mock.assert_awaited_once()
             self.assertAlmostEqual(close_mock.call_args.args[2], 4.0)
+
+    async def test_giveback_past_half_of_peak_exits_immediately_without_waiting_for_turn(self):
+        # 實測 BCHUSDT 案例：峰值墊到 0.44%，但 MA7_Profit_Turn_Partial 完全不
+        # 參考峰值，每次都貼著成本價出場。這裡驗證浮盈已經回吐超過峰值一半時，
+        # 不必等 MA7 收線轉彎確認，直接出清剩餘部位。
+        state = ctx.STATES[self.sym]
+        state.update({
+            "qty": 10.0,
+            "avg_price": 100.0,
+            "close_price": 100.2,  # profit 0.2%, below half of the 0.6% peak
+            "current_atr": 0.5,
+            "current_vol": 100.0,
+            "vol_ma20": 100.0,
+            "open_time": time.time() - 600,
+            "entry_reason": "MA7_Simple",
+            "highest_profit_pct": 0.006,
+            "ma7": 100.0,
+            "ma25": 99.0,
+            "prev_ma7": 100.1,
+            "prev_ma25": 99.0,
+            "ma_candle_ts": 8000,
+            "ohlcv": self._long_turn_candles(),
+        })
+
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        close_mock.assert_awaited_once()
+        self.assertAlmostEqual(close_mock.call_args.args[2], 10.0)
+        self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Profit_Turn_Giveback]")
+
+    async def test_giveback_within_half_of_peak_does_not_trigger_safety_net(self):
+        state = ctx.STATES[self.sym]
+        state.update({
+            "qty": 10.0,
+            "avg_price": 100.0,
+            "close_price": 100.5,  # profit 0.5%, still above half of the 0.6% peak
+            "current_atr": 0.5,
+            "current_vol": 100.0,
+            "vol_ma20": 100.0,
+            "open_time": time.time() - 600,
+            "entry_reason": "MA7_Simple",
+            "highest_profit_pct": 0.006,
+            "ma7": 100.0,
+            "ma25": 99.0,
+            "prev_ma7": 99.9,
+            "prev_ma25": 99.0,
+            "ma_candle_ts": 8000,
+            "ohlcv": self._long_turn_candles(),
+        })
+
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        for call in close_mock.await_args_list:
+            self.assertNotEqual(call.kwargs.get("reason"), "[MA7_Profit_Turn_Giveback]")

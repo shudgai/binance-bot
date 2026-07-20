@@ -138,7 +138,8 @@
       "Bash(python3 -m py_compile core/exits.py core/trade_signal.py core/state_manager.py core/orders.py)",
       "Bash(.venv/bin/python3 -m pytest tests/test_range_trailing_confirmation.py -q)",
       "Bash(.venv/bin/python3 -m pytest tests/test_realtime_trailing.py -q)",
-      "Bash(python3 -m py_compile core/signal_engine.py core/entry_filter.py core/check_entries.py core/state_manager.py)"
+      "Bash(python3 -m py_compile core/signal_engine.py core/entry_filter.py core/check_entries.py core/state_manager.py)",
+      "Bash(.venv/bin/python3 -m pytest tests/test_ma7_profit_turn.py -q)"
     ]
   }
 }

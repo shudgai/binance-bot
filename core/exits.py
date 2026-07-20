@@ -84,6 +84,13 @@ _MA_EXCHANGE_STOP_SYNC_TASKS = {}
 # 最低毛利需涵蓋雙邊手續費及一小段滑價，避免把接近成本的 MA7 抖動當成停利。
 MA7_PROFIT_TURN_PARTIAL_RATIO = 0.60
 MA7_PROFIT_TURN_MIN_PCT = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
+# 峰值回吐安全網：MA7_Profit_Turn_Partial／Confirmed 只看「MA7 收線後有沒有
+# 轉彎」，完全不參考峰值，導致峰值再高、每次出場都貼著成本價（實測 BCHUSDT
+# 案例：同一倉位連續三次分批出場，峰值一路墊高到 0.44%，三次都在成本價附近
+# 結算）。這裡不等 MA7 轉彎收線確認，只要浮盈已經從峰值回吐超過一半，直接
+# 出清剩餘部位，把「已經確認到手的獲利」跟「等下一根 K 棒確認轉彎」的延遲
+# 脫鉤。刻意用比例而非固定價格門檻，不會重新把小峰值的獲利空間鎖死。
+MA7_PROFIT_TURN_GIVEBACK_KEEP_RATIO = 0.5
 
 
 def _ma7_closed_turn(candles, is_long):
@@ -1039,6 +1046,28 @@ async def check_exits(sym):
                 sym, cs, abs(s["qty"]), p, avg,
                 reason="[MA_Wrong_Direction_Confirmed]", is_stop_loss=True,
             )
+            return
+
+        # 峰值回吐安全網：不等 MA7 轉彎收線確認，浮盈已經從峰值回吐超過一半
+        # 就直接出清（見 MA7_PROFIT_TURN_GIVEBACK_KEEP_RATIO 定義說明）。
+        _turn_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
+        if (
+            _turn_peak >= MA7_PROFIT_TURN_MIN_PCT
+            and profit_pct < _turn_peak * MA7_PROFIT_TURN_GIVEBACK_KEEP_RATIO
+        ):
+            cs = "sell" if is_long else "buy"
+            logger.info(
+                f"⚠️ [MA7_Profit_Turn_Giveback] {sym} 峰值 {_turn_peak*100:.2f}% 已回吐至 "
+                f"{profit_pct*100:.2f}%（低於保留門檻 {MA7_PROFIT_TURN_GIVEBACK_KEEP_RATIO*100:.0f}%），"
+                f"不再等下一根收線確認，直接出清剩餘部位"
+            )
+            await close_position(
+                sym, cs, abs(s["qty"]), p, avg,
+                reason="[MA7_Profit_Turn_Giveback]", is_stop_loss=(profit_pct <= 0),
+            )
+            s["ma7_profit_turn_stage"] = 0
+            s["ma7_profit_turn_signal_ts"] = 0
+            s["ma7_profit_turn_signal_extreme"] = 0.0
             return
 
         # 獲利中的 MA7 轉彎分批出場：只採已收線 K 棒，避免盤中 MA7 抖動誤殺。
