@@ -183,7 +183,7 @@ COOLDOWN_SEC = 300
 
 DAILY_LOSS_LIMIT_PCT = 0.10
 
-MAIN_LOOP_INTERVAL_SEC = 10
+MAIN_LOOP_INTERVAL_SEC = 15
 PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 1800          # 縮短至 30 分鐘觀測窗口，更快偵測連續停損
 BAN_DURATION = 86400
@@ -285,12 +285,13 @@ USE_BTC_MACRO_FILTER = os.getenv("USE_BTC_MACRO_FILTER", "true").lower() in ("1"
 
 # 市場資料分批抓取：將所有監控幣種分成此數量的批次，fetch_all_klines 每輪抓一個批次
 # （輪替），降低每輪瞬間送出請求量，避免衝高幣安 API 權重
-MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '4'))
+MARKET_FETCH_BATCHES = int(os.getenv('MARKET_FETCH_BATCHES', '6'))
 # 控制同時對交易所發出的併發請求數（Semaphore 大小）
-REQUEST_SEMAPHORE_SIZE = int(os.getenv('REQUEST_SEMAPHORE_SIZE', '2'))
+REQUEST_SEMAPHORE_SIZE = int(os.getenv('REQUEST_SEMAPHORE_SIZE', '1'))
 # 批次之間的額外延遲（秒），需要時可拉開批次間隔
-KLINE_BATCH_PAUSE_SEC = float(os.getenv("KLINE_BATCH_PAUSE_SEC", "0.0"))
+KLINE_BATCH_PAUSE_SEC = float(os.getenv("KLINE_BATCH_PAUSE_SEC", "0.2"))
 # REST 成交流只作輔助動能判斷，降低輪詢頻率並縮小回傳筆數可大幅減少 API 權重。
-TRADE_POLL_INTERVAL_SEC = float(os.getenv("TRADE_POLL_INTERVAL_SEC", "30"))
-TRADE_POLL_LIMIT = int(os.getenv("TRADE_POLL_LIMIT", "20"))
+TRADE_POLL_INTERVAL_SEC = float(os.getenv("TRADE_POLL_INTERVAL_SEC", "60"))
+# 減少每次獲取的成交明細數量以節省權重
+TRADE_POLL_LIMIT = int(os.getenv("TRADE_POLL_LIMIT", "10"))
 API_RATE_LIMIT_COOLDOWN_SEC = float(os.getenv("API_RATE_LIMIT_COOLDOWN_SEC", "60"))
