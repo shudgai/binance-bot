@@ -87,7 +87,7 @@ def _range_exit_prices(price, support, resistance, atr, side):
     support = float(support)
     resistance = float(resistance)
     atr = float(atr)
-    minimum_stop_room = max(atr * 0.75, price * 0.003)
+    minimum_stop_room = max(atr * 0.70, price * 0.0025)
     if side == "buy":
         take_profit = resistance - price * 0.0005
         structural_stop = support - atr * 0.5

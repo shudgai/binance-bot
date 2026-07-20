@@ -86,11 +86,11 @@ def compute_signal_strength(sym, realtime_trigger=False):
     )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
-                  and cross_long_volume_ok and current_rsi < 70
+                  and cross_long_volume_ok and current_rsi < 75
                   and cross_direction_confirmed and not is_flat_chop)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
                    and (candle_close < candle_open or is_realtime_strong)
-                   and cross_short_volume_ok and current_rsi > 30
+                   and cross_short_volume_ok and current_rsi > 25
                    and cross_direction_confirmed and not is_flat_chop)
 
     atr = float(s.get("current_atr", 0.0) or 0.0)

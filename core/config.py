@@ -31,7 +31,7 @@ DISABLE_MA_BREAKOUT = True
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
 RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
-RANGE_ADX_THRESHOLD = 30.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）
+RANGE_ADX_THRESHOLD = 35.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
