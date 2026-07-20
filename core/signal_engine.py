@@ -53,11 +53,11 @@ def compute_signal_strength(sym, realtime_trigger=False):
     personality = s.get("personality", "calm")
     atr_pct = float(s.get("atr_pct", 0.0))
 
-    # 動態量能閾值 — 放寬至 0.50x，與 ENTRY_SURGE_THRESHOLD 對齊
-    # 0.50x 已有 ETH 成功樣本（RVOL 0.52x）支撐，本次統一基線
-    base_limit = 0.50
+    # 動態量能閾值 — 放寬至 0.40x，與 ENTRY_SURGE_THRESHOLD 對齊
+    # 0.40x 已有 ETH 成功樣本（RVOL 0.52x）支撐，本次統一基線
+    base_limit = 0.40
     if atr_pct > 5.0:
-        base_limit = 0.85  # 波動失控時稍微收緊（原 1.0，稍降以保留一定彈性）
+        base_limit = 0.75  # 波動失控時稍微收緊（原 1.0，稍降以保留一定彈性）
     breakout_limit = base_limit * 1.5
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
