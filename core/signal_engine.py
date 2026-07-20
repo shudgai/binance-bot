@@ -27,6 +27,16 @@ def compute_signal_strength(sym, realtime_trigger=False):
         s["entry_block_reason"] = "MA7／MA25／MA99 或成交量資料尚未完成"
         return (None, 0, None)
 
+    # 實測 DOTUSDT（ADX=0.0）、BCHUSDT（ADX=1.4）、AVAXUSDT（ADX=2.7）三筆案例：
+    # MA_Cross／MA7_Simple 在幾乎沒有趨勢的盤整行情下一樣會觸發訊號（這幾條路線
+    # 原本完全沒有 ADX 下限），進場後幾十秒內就整段反轉回吐。四條 MA 趨勢路線
+    # 共用同一個最低 ADX 門檻，低於門檻直接不產生任何 MA 訊號——沒有趨勢的
+    # 環境，趨勢跟隨策略本來就不該進場，不分路線都一樣。
+    MIN_TREND_ADX = 10.0
+    if adx < MIN_TREND_ADX:
+        s["entry_block_reason"] = f"ADX={adx:.1f} < {MIN_TREND_ADX:.0f}，盤整無趨勢，暫停 MA 訊號"
+        return (None, 0, None)
+
     signal_candle = candles[-2]
     signal_ts = int(signal_candle[0])
     candle_open, candle_high, candle_low, candle_close, candle_volume = map(float, signal_candle[1:6])

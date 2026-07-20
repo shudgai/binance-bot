@@ -21,7 +21,7 @@ class TradeSignalTests(unittest.TestCase):
                                signal_low=99.8, signal_close=101.0,
                                signal_volume=1200.0, vol_ma20=1000.0,
                                ma7=100.2, ma25=100.0, ma99=99.0,
-                               prev_ma7=99.9, prev_ma25=100.0):
+                               prev_ma7=99.9, prev_ma25=100.0, adx=25.0):
         sym = "XRPUSDT"
         init_states([sym])
         reset_coin_state(sym)
@@ -35,6 +35,9 @@ class TradeSignalTests(unittest.TestCase):
             "prev_ma7": prev_ma7, "prev_ma25": prev_ma25,
             "vol_ma20": vol_ma20, "current_atr": 0.4,
             "current_rsi": 55.0 if ma7 >= ma25 else 45.0,
+            # 預設給一個明確有趨勢的 ADX，避免跟 MIN_TREND_ADX 門檻打架；
+            # 需要測試低 ADX 行為的案例（暴衝過濾等）再個別覆寫。
+            "adx": adx, "prev_adx": adx,
         })
         return sym
 
@@ -49,6 +52,14 @@ class TradeSignalTests(unittest.TestCase):
         STATES[sym].update({"current_rsi": 55.0, "vol_surge": 2.0})
         self.assertEqual(compute_signal_strength(sym, realtime_trigger=True), (None, 0, None))
         self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
+
+    def test_flat_adx_blocks_all_ma_routes(self):
+        # 實測 DOTUSDT（ADX=0.0）、BCHUSDT（ADX=1.4）、AVAXUSDT（ADX=2.7）三筆
+        # 案例：完全沒有趨勢的盤整行情下，MA_Cross/MA7_Simple 一樣會觸發訊號，
+        # 進場後幾十秒內就整段反轉。MIN_TREND_ADX 門檻對所有 MA 路線一視同仁。
+        sym = self._setup_ma_signal_state(adx=2.7)
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+        self.assertIn("盤整無趨勢", STATES[sym]["entry_block_reason"])
 
     def test_confirmed_golden_cross_opens_long_above_ma99(self):
         sym = self._setup_ma_signal_state()
