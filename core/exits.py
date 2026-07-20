@@ -37,7 +37,7 @@ MA_WRONG_DIRECTION_WINDOW_SEC = 1800
 MA_ACTIVE_RISK_STOP_PCT = 0.01
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
-MA_MIN_PROFIT_TARGET_PCT = 0.006
+MA_MIN_PROFIT_TARGET_PCT = 0.003
 MA_MICRO_PROFIT_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
 MA_MICRO_PROFIT_KEEP_RATIO = 0.60
 # 實測 FILUSDT 案例：鎖利價同步到交易所端 STOP_MARKET 後，行情急速反轉時，
@@ -45,9 +45,9 @@ MA_MICRO_PROFIT_KEEP_RATIO = 0.60
 # 原本只留 0.05% 的緩衝，導致理論上鎖住的小賺變成實際虧損。兩層緩衝都拉高到
 # 0.20%，讓「手續費 0.10% + 緩衝 0.20%」= 0.30% 的總門檻能扛住這種急反轉滑價，
 # 不再是滑一下就穿。
-MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.002
-MA_PROFIT_FLOOR_ARM_PCT = 0.003
-MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.002
+MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.001
+MA_PROFIT_FLOOR_ARM_PCT = 0.002
+MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.001
 MA_PROFIT_FLOOR_CONFIRM_TICKS = 3
 MA_PROFIT_FLOOR_CONFIRM_SEC = 1.0
 MA_PROFIT_FLOOR_TREND_CONFIRM_SEC = 2.0
@@ -456,15 +456,10 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
         # 鎖利線是為了保住淨利，不可在價格已跳空越過底線、連雙邊費用都無法
         # 涵蓋時，仍等待數秒確認後追價虧損平倉。此時把出場權交回 MA 轉折及
         # 災難停損；若價格重新回到可獲利區，鎖利線仍可再次正常生效。
-        if crossed and profit <= ROUND_TRIP_FEE_PCT:
-            _reset_ma_profit_floor_confirmation(s)
-            if not s.get("ma_profit_floor_missed", False):
-                logger.info(
-                    f"⚠️ [MA_Profit_Floor_Missed] {sym} 價格已跳過鎖利線且"
-                    f"扣雙邊費用後無淨利，不以鎖利理由追價平倉"
-                )
-            s["ma_profit_floor_missed"] = True
-            return False, floor_price
+        if crossed and profit < ROUND_TRIP_FEE_PCT:
+            # 如果已經跌穿，為了避免進一步虧損，強行平倉（不重設為未確認狀態），
+            # 確保不會再放大虧損退回災難停損。
+            return True, floor_price
         if not crossed:
             s["ma_profit_floor_missed"] = False
         return _ma_profit_floor_cross_confirmed(sym, crossed, is_long, now), floor_price
