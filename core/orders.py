@@ -32,6 +32,13 @@ MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma
 RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
 MA_DISASTER_STOP_PCT = 0.025
 MA_PENDING_MONITOR_INTERVAL_SEC = 3.0
+# check_stale_limit_orders 每 3 秒對每一筆待成交單都呼叫一次 get_reference_price()
+# （REST，含 fetch_mark_price/fetch_order_book），是造成幣安 API 權重吃緊的主要
+# 來源之一：一筆掛單在到期前可能被檢查數十次，且常常同時有多個幣種掛單並存。
+# 這裡改成優先採用即時成交流（WebSocket 餵進來的 last_trade_price，完全不佔
+# REST 權重）；只有在資料太舊（代表 WS 可能斷線或該幣種太冷門沒有成交）才退回
+# 原本的 REST 查價，把權重成本降到只在真的需要時才付。
+PENDING_ORDER_WS_PRICE_MAX_AGE_SEC = 10.0
 MA7_SIMPLE_PENDING_MAX_SEC = 20.0
 MA_PENDING_REPRICE_COOLDOWN_SEC = 6.0
 MA_CROSS_MAX_EXTENSION_PCT = 0.0025
@@ -129,8 +136,10 @@ def is_strong_selling_pressure(current_price, prev_price, current_volume, avg_vo
     :param price_drop_multiplier: 價格跌幅門檻倍數 (基於 ATR)
     :return: Boolean
     """
+    if prev_price <= 0:
+        return False
     price_change = (prev_price - current_price) / prev_price
-    
+
     # 條件 1: 價格跌幅超過動態門檻 (基於 ATR)
     dynamic_threshold = atr * price_drop_multiplier
     price_drop = price_change > dynamic_threshold
@@ -1925,22 +1934,6 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
         mode=actual_entry_mode, is_rescue_dca=is_rescue_dca,
     )
     if not price_ok:
-        logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 訊號價與即時牌價偏離：{price_reason}，
-            logger.info(f"🚫 [EntryDirectionGuard_放棄] {sym} 連續 {_DG_MAX_REJECTS} 次方向守門失敗，放棄這波訊號，暫停 5 分鐘避免追價進場")
-        return
-    s["_direction_guard_reject_count"] = 0
-
-    pending_ok, pending_reason = _entry_pending_adverse_guard(sym, side, price, market_price, is_rescue_dca=is_rescue_dca)
-    if not pending_ok:
-        logger.info(f"🛑 [EntryAdverseGuard] {sym} {side} 當前價已逆向偏離訊號價：{pending_reason}，取消開倉")
-        logger.info(f"🧱 [ORDER_BLOCK] {sym} 被逆向偏離攔截，未進入下單")
-        return
-
-    price_ok, price_reason = _entry_price_guard(
-        sym, side, price, market_price,
-        mode=actual_entry_mode, is_rescue_dca=is_rescue_dca,
-    )
-    if not price_ok:
         logger.info(f"🛑 [EntryPriceGuard] {sym} {side} 訊號價與即時牌價偏離：{price_reason}，取消開倉")
         logger.info(f"🧱 [ORDER_BLOCK] {sym} 被開倉價格偏離攔截，未進入下單")
         return
@@ -2937,14 +2930,19 @@ async def check_stale_limit_orders():
                 cancel_reason = f"進場訊號已失效: {setup_reason}"
 
             if setup_ok and not should_cancel:
-                try:
-                    latest_ref_price = await get_reference_price(sym, exchange_futures)
-                except Exception as pe:
-                    logger.info(f"⚠️ [掛單價格掃描] {sym} 取得最新參考價失敗: {pe}")
                 s_check = ctx.STATES.get(sym, {})
-                if latest_ref_price <= 0:
-                    latest_ref_price = float(s_check.get("last_trade_price", 0.0)
-                        or s_check.get("close_price", 0.0) or 0.0)
+                _ws_price = float(s_check.get("last_trade_price", 0.0) or 0.0)
+                _ws_age = time.time() - float(s_check.get("last_market_trade_time", 0.0) or 0.0)
+                if _ws_price > 0 and _ws_age <= PENDING_ORDER_WS_PRICE_MAX_AGE_SEC:
+                    latest_ref_price = _ws_price
+                else:
+                    try:
+                        latest_ref_price = await get_reference_price(sym, exchange_futures)
+                    except Exception as pe:
+                        logger.info(f"⚠️ [掛單價格掃描] {sym} 取得最新參考價失敗: {pe}")
+                    if latest_ref_price <= 0:
+                        latest_ref_price = float(s_check.get("last_trade_price", 0.0)
+                            or s_check.get("close_price", 0.0) or 0.0)
                 if dynamic_strategy_order:
                     reprice_eligible, reprice_reason = _pending_entry_reprice_needed(
                         sym, info, latest_ref_price,

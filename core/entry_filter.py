@@ -127,13 +127,13 @@ def is_entry_volume_confirmed(sym, side):
     # 與 signal_engine.py 的 base_limit=0.50 與 check_entries.py 的
     # _d_multiplier 方向一致，整體放寬各路由的已收線量能門樻
     if route == "MA_Cross":
-        required = 0.35   # 原 0.40
+        required = 0.25   # 調低門檻以適應低流動性
     elif route == "MA_Breakout":
-        required = 0.5   # 原 0.55
+        required = 0.40   # 調低門檻
     elif route in RANGE_ENTRY_ROUTES:
-        required = 0.55  # 原 0.65，降低區間模式成交量門檻
+        required = 0.30   # 大幅放寬區間模式門檻，允許量縮支撐開倉
     else:
-        required = 0.30   # MA7_Simple / MA25_Pullback 原 0.35
+        required = 0.20   # 調低 MA7_Simple / MA25_Pullback 門檻
     return closed_volume >= vol_ma20 * required
 
 

@@ -340,11 +340,11 @@ def compute_range_signal(sym):
         )
         return (None, 0, None)
 
-    # 1. ADX 確認區間行情
-    if adx >= RANGE_ADX_THRESHOLD:
-        s["entry_block_reason"] = f"ADX={adx:.1f} ≥ {RANGE_ADX_THRESHOLD}，趨勢明顯，不開區間倉"
-        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] ADX={adx:.1f} 過高，略過區間模式")
-        return (None, 0, None)
+    # 1. ADX 確認區間行情 (已放寬限制，允許高 ADX 下執行區間模式)
+    # if adx >= RANGE_ADX_THRESHOLD:
+    #     s["entry_block_reason"] = f"ADX={adx:.1f} ≥ {RANGE_ADX_THRESHOLD}，趨勢明顯，不開區間倉"
+    #     logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] ADX={adx:.1f} 過高，略過區間模式")
+    #     return (None, 0, None)
 
     # 1.5. ATR 波動比例過濾（高於 6.0% 判定為高波動妖幣，不開區間倉以防突破止損）
     close_price = candles[-1][4] if candles else 0.0
