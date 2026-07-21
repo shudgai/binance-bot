@@ -959,10 +959,26 @@ async def check_exits(sym):
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
 
-    # ── 獲利保留 70% 急煞平倉 (70% Profit Retained Lock) ──
-    # 浮盈達 >= 0.50% 後才啟動 70% 利潤保留鎖定，給予初期波段足夠發展空間，衝刺 +1.0% ~ +2.0% 大獲利
+    # ── 第一階段：50% 先落袋為安 (Partial Exit 50% @ +0.25%) ──
+    # 當浮盈達 >= 0.25% 時，第一時間先把 50% 倉位平倉落袋為安，鎖定現金利潤！
+    if profit_pct >= 0.0025 and not s.get("partial_tp_done", False):
+        cs = "sell" if is_long else "buy"
+        half_qty = abs(s["qty"]) * 0.5
+        logger.info(
+            f"💰 [Partial_TP_50Pct] {sym} 浮盈達 {profit_pct*100:.2f}% >= 0.25%，"
+            f"先平倉 50% 倉位 ({half_qty:.4f}) 落袋為安，剩餘 50% 鎖定保本放飛！"
+        )
+        s["partial_tp_done"] = True
+        await close_position(
+            sym, cs, half_qty, p, avg,
+            reason="[Partial_TP_50Pct]", is_stop_loss=False,
+        )
+        return
+
+    # ── 第二階段：剩餘倉位 70% 利潤保留鎖定 (70% Profit Retained Lock) ──
+    # 最高浮盈達 >= 0.40% 後，若利潤回吐僅剩 70%，平倉剩餘 50% 倉位！
     highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
-    if highest_profit >= 0.0050 and profit_pct <= (highest_profit * 0.70):
+    if highest_profit >= 0.0040 and profit_pct <= (highest_profit * 0.70):
         cs = "sell" if is_long else "buy"
         logger.info(
             f"🛡️ [Profit_70Pct_Retained_TP] {sym} 最高浮盈 {highest_profit*100:.2f}% "
