@@ -797,10 +797,12 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
         # 回吐容忍度依 ATR 波動環境調整，避免依賴已移除的 MACD 交易規則。
         # Soft Trailing 啟動門檻拉高至 0.45%，給予利潤足夠的奔跑與震盪空間
         if GENERIC_TRAILING_ARM_PCT <= _hp_soft:
-            atr_history_v = s.get("atr_history", [])
-            atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
-            is_low_vol_exit = atr_val <= atr_24h_avg_v if atr_24h_avg_v > 0 else False
-            _soft_tolerance = 0.0020 if is_low_vol_exit else 0.0012
+            # ── 動態緩衝區 (Dynamic ATR Buffer) ──
+            # 根據當前幣種的 ATR% (ATR / 現價) 動態調整回撤緩衝比例。
+            # 波動劇烈時自動放寬從 0.2% 至 0.4% (1.2 * ATR_PCT)，避免被「毛刺」洗出場；
+            # 平緩市場維持 0.2% 緊密護航。
+            _atr_pct = (atr_val / current_price) if current_price > 0 else 0.002
+            _soft_tolerance = max(0.0020, min(0.0040, _atr_pct * 1.2))
                 
             # 保本低限：進場價 + 雙邊費用 + 0.05% 安全微利
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
@@ -985,6 +987,24 @@ async def check_exits(sym):
         )
         if _range_trailing_cross_confirmed(sym, trailing_crossed, time.time()):
             cs = "sell" if is_long else "buy"
+            # ── 多級獲利目標 (Multi-stage TP) ──
+            # 當達到最高點回撤觸發停利線時，若浮盈 > 0 且尚未分批，先賣出 50% 落袋為安
+            if not s.get("_multistage_tp1_done", False) and profit_pct > 0.0015:
+                s["_multistage_tp1_done"] = True
+                tp1_qty = abs(float(s["qty"])) * 0.50
+                logger.info(
+                    f"🎯 [MultiStage_TP1] {sym} 浮盈 {profit_pct*100:.2f}% 觸發動態停利線，"
+                    f"先賣出 50% 部位 ({tp1_qty:.4f}) 鎖定獲利！剩餘 50% 鎖定保本繼續追蹤"
+                )
+                await close_position(
+                    sym, cs, tp1_qty, p, avg,
+                    reason="[MultiStage_TP1]",
+                    is_stop_loss=False,
+                )
+                fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
+                s["trailing_stop_price"] = avg * (1.0 + fee_safe_profit if is_long else 1.0 - fee_safe_profit)
+                return
+
             logger.info(
                 f"🚨 [Range_Trailing_Closed_Confirm] {sym} 現價 {p:.6f} 持續穿越保護線 "
                 f"{ts_price:.6f}，確認出場"
