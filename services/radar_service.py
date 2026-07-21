@@ -539,14 +539,18 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         ),
         reverse=True,
     )
-    best_symbols = [row["symbol"] for row in selected_rows]
+    from core.config import DEFAULT_SYMBOLS
+    best_symbols = [row["symbol"] for row in selected_rows if row["symbol"] in DEFAULT_SYMBOLS]
+    # 補足白名單中剩餘的藍籌主流幣
+    for sym in DEFAULT_SYMBOLS:
+        if sym not in best_symbols:
+            best_symbols.append(sym)
 
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
         return get_bot_status().get("active_symbols", [])
 
-    # 2. 將選出的 15 個幣種寫入 bot_symbols.json
-    # 使用 save_symbol_config 確保配置被正確持久化
+    # 2. 將選出的主流幣種寫入 bot_symbols.json
     trade_symbols = best_symbols[:TRADE_POOL_SIZE]
     save_symbol_config(trade_symbols)
     _save_radar_profiles(profiles)
