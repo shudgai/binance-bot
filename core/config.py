@@ -113,11 +113,10 @@ TIME_STOP_MINUTES = 30
 # - 去掉低量幣：APT/RENDER/ATOM/HBAR/ETC/DOT/LTC/BCH/INJ/XLM/AVAX/LINK/SUI
 # - 新增高量新幣：HYPE（5億）、WLD（2億）
 DEFAULT_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT",
-    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
-    "UNIUSDT", "AAVEUSDT",
-    "HYPEUSDT", "WLDUSDT",
-    ]
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT",
+    "HYPEUSDT", "WLDUSDT", "1000PEPEUSDT", "TRUMPUSDT", "SUIUSDT"
+]
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
 
 PERSONALITY_TEMPLATES = {
