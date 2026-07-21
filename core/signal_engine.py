@@ -164,8 +164,18 @@ def compute_signal_strength(sym, realtime_trigger=False):
         MTF_RSI_SHORT_FLOOR = 40.0  # 15m RSI 放寬至 40
         MTF_RSI_LONG_CEIL   = 70.0  # 15m RSI 放寬至 70
 
-        # MA7 谷底轉折向上：允許價跌量縮陰線/打底階段在 MA7 一向上勾時即刻開倉做多
-        if (turn_up and volume_ok and current_rsi < 82.0
+        # ── MA7 谷底轉折多重二次確認機制 ──
+        curr_slope_pct = (ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
+        # 1. 斜率確立確認：斜率必須真實向上拉開 >= 0.01%，排除平走橫盤微小雜訊
+        slope_confirmed = curr_slope_pct >= 0.0001
+        # 2. 價格站穩確認：收盤價站穩在 MA7 之上 (或下影線止跌反彈)，確認買盤支撐
+        price_above_ma7 = candle_close >= (ma7 * 0.9992)
+        # 3. RSI 止跌確認：RSI 必須 >= 35.0，避免在自由落體式崩跌中接刀
+        rsi_bottom_ok = current_rsi >= 35.0
+
+        # MA7 谷底轉折向上：必須同時通過上述三重二次確認才允許開倉做多
+        if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
+                and volume_ok and current_rsi < 82.0
                 and adx_not_spiking and not (golden_cross or death_cross)):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
