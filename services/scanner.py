@@ -11,8 +11,9 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Configuration
-WHITELIST = ["BTCUSDT", "ETHUSDT"]
-MAX_SYMBOLS = 20  # Target count of active symbols
+WHITELIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT", "HYPEUSDT", "WLDUSDT", "1000PEPEUSDT", "TRUMPUSDT", "SUIUSDT"]
+MAX_SYMBOLS = 15  # Target count of active symbols
+MIN_24H_QUOTE_VOLUME = 50_000_000  # 5,000萬 USDT 最低 24H 成交量要求
 STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "scanner_state.json")
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
 SCAN_INTERVAL_SEC = 3600
@@ -40,7 +41,6 @@ def run_scan():
             if not symbol.endswith('USDT') and not symbol.endswith('USDT:USDT'):
                 continue
             
-            # Standardize symbol name (e.g. BTC/USDT:USDT -> BTCUSDT)
             clean_sym = symbol.replace('/', '').split(':')[0]
             if not clean_sym.endswith('USDT'):
                 continue
@@ -51,51 +51,20 @@ def run_scan():
             if last_price is None or quote_volume is None:
                 continue
 
-            current_volumes[clean_sym] = float(quote_volume)
+            vol_val = float(quote_volume)
+            current_volumes[clean_sym] = vol_val
 
-            # Filter candidates: price under $5.0 OR in whitelist
+            # 嚴格成交量過濾：24H 成交量低於 5,000萬 USDT 直接剔除 (白名單豁免)
             if clean_sym not in WHITELIST:
-                if last_price > 5.0 or last_price == 0:
+                if vol_val < MIN_24H_QUOTE_VOLUME:
                     continue
 
-            candidates.append(clean_sym)
+            candidates.append((clean_sym, vol_val))
 
-        # Load previous volumes for change rate calculation
-        prev_volumes = {}
-        if os.path.exists(STATE_FILE):
-            try:
-                with open(STATE_FILE, 'r', encoding='utf-8') as f:
-                    prev_volumes = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.warning(f"⚠️ Error loading state file: {e}")
+        # 按 24H 成交金額 (USDT) 降序排序，確保選出的全是大流動性主流幣
+        candidates.sort(key=lambda x: x[1], reverse=True)
 
-        # Compute volume growth rates
-        growth_rates = []
-        for sym in candidates:
-            if sym in WHITELIST:
-                continue
-            curr_vol = current_volumes.get(sym, 0.0)
-            prev_vol = prev_volumes.get(sym, 0.0)
-
-            # Growth rate calculation: (current - previous) / previous
-            if prev_vol > 0.0:
-                rate = (curr_vol - prev_vol) / prev_vol
-            else:
-                rate = 0.0  # Default to 0 growth if no prior data
-            
-            growth_rates.append((sym, rate, curr_vol))
-
-        # Sort by growth rate descending (and absolute volume as secondary sort key)
-        growth_rates.sort(key=lambda x: (x[1], x[2]), reverse=True)
-
-        # Build new symbols list starting with whitelist
-        selected_symbols = list(WHITELIST)
-        for item in growth_rates:
-            if len(selected_symbols) >= MAX_SYMBOLS:
-                break
-            sym = item[0]
-            if sym not in selected_symbols:
-                selected_symbols.append(sym)
+        selected_symbols = [item[0] for item in candidates[:MAX_SYMBOLS]]
 
         # Sort selected symbols alphabetically
         selected_symbols.sort()

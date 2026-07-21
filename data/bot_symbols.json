@@ -1,24 +1,20 @@
 {
   "symbols": [
-    "TRUMPUSDT",
-    "TAOUSDT",
-    "LDOUSDT",
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
     "DOGEUSDT",
     "ADAUSDT",
-    "1000PEPEUSDT",
-    "LTCUSDT",
-    "ENAUSDT",
-    "SUIUSDT",
-    "INJUSDT",
-    "SOLUSDT",
-    "AVAXUSDT",
     "NEARUSDT",
-    "DOTUSDT",
-    "LINKUSDT",
-    "BCHUSDT",
+    "UNIUSDT",
+    "AAVEUSDT",
+    "HYPEUSDT",
     "WLDUSDT",
-    "DEXEUSDT",
-    "ESPORTSUSDT",
-    "VIRTUALUSDT"
-  ]
+    "1000PEPEUSDT",
+    "TRUMPUSDT",
+    "SUIUSDT"
+  ],
+  "profiles": {}
 }
