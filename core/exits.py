@@ -92,6 +92,14 @@ MA7_PROFIT_TURN_MIN_PCT = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
 # 脫鉤。刻意用比例而非固定價格門檻，不會重新把小峰值的獲利空間鎖死。
 MA7_PROFIT_TURN_GIVEBACK_KEEP_RATIO = 0.5
 
+# RSI 頂背離出場：持倉有基本浮盈時，若價格創近期新高但 RSI 比前一波高點
+# 低 RSI_DIVERGENCE_MIN_DROP 以上（代表上漲動能衰竭），連續 2 根 K 棒確認後出場。
+# 只在 _peak_profit >= RSI_DIVERGENCE_MIN_PROFIT_PCT 時啟用，避免剛進場就誤觸。
+RSI_DIVERGENCE_MIN_PROFIT_PCT = 0.004   # 至少獲利 0.4% 才啟用背離保護
+RSI_DIVERGENCE_MIN_DROP = 4.0           # 前高 RSI - 現高 RSI >= 4 視為有效背離
+RSI_DIVERGENCE_LOOKBACK = 20            # 向前找「前波高點」的 K 棒數
+RSI_DIVERGENCE_CONFIRM = 2              # 連續幾根 K 棒確認才出場
+
 
 def _ma7_closed_turn(candles, is_long):
     """Return a completed-candle MA7 turn signal and its confirmation data.
@@ -1340,6 +1348,90 @@ async def check_exits(sym):
         await close_position(
             sym, cs, abs(s["qty"]), p, avg,
             reason="[Peak_Volume_Contraction]", is_stop_loss=False,
+        )
+        return
+
+    # ── RSI 頂背離（底背離）出場保護 ───────────────────────────────────────────
+    # 條件：已有足夠浮盈 + 從 OHLCV 收盤動態計算 RSI 序列，對比前波高點RSI
+    # OHLCV 格式為 [ts, open, high, low, close, volume]（共6欄），需自行算 RSI。
+    _rsi_diverge_triggered = False
+    _RSI_CALC_PERIOD = 9
+    if (
+        _peak_profit >= RSI_DIVERGENCE_MIN_PROFIT_PCT
+        and profit_pct >= RSI_DIVERGENCE_MIN_PROFIT_PCT * 0.7
+        and len(_completed) >= RSI_DIVERGENCE_LOOKBACK + _RSI_CALC_PERIOD + 2
+    ):
+        _close_vals = [float(c[4]) for c in _completed]
+        _latest_close = _close_vals[-1]
+
+        # 計算每根已收 K 棒的 RSI（從 index RSI_PERIOD 開始才有足夠資料）
+        def _rolling_rsi(closes, period=9):
+            rsi_list = [None] * len(closes)
+            for i in range(period, len(closes)):
+                deltas = np.diff(closes[i - period: i + 1])
+                gains = deltas[deltas > 0]
+                losses = -deltas[deltas < 0]
+                avg_g = gains.mean() if len(gains) > 0 else 1e-10
+                avg_l = losses.mean() if len(losses) > 0 else 1e-10
+                rs = avg_g / avg_l if avg_l > 0 else 99.0
+                rsi_list[i] = min(99.0, 100.0 - (100.0 / (1.0 + rs)))
+            return rsi_list
+
+        _all_rsi = _rolling_rsi(_close_vals, _RSI_CALC_PERIOD)
+        # 只取最近 RSI_DIVERGENCE_LOOKBACK + 1 個有效值
+        _valid_pairs = [(c, r) for c, r in zip(_close_vals, _all_rsi) if r is not None]
+        _recent_pairs = _valid_pairs[-(RSI_DIVERGENCE_LOOKBACK + 1):]
+
+        if len(_recent_pairs) >= 4:
+            _lookback_closes = [p[0] for p in _recent_pairs[:-1]]
+            _lookback_rsis   = [p[1] for p in _recent_pairs[:-1]]
+            _latest_rsi      = _recent_pairs[-1][1]
+
+            if is_long:
+                # 多單頂背離：現價接近前高，但現 RSI 比前高點 RSI 低 >= RSI_DIVERGENCE_MIN_DROP
+                _prev_high_idx = int(np.argmax(_lookback_closes))
+                _prev_high_rsi = _lookback_rsis[_prev_high_idx]
+                _prev_high_close = _lookback_closes[_prev_high_idx]
+                if (
+                    _latest_close >= _prev_high_close * 0.9995
+                    and (_prev_high_rsi - _latest_rsi) >= RSI_DIVERGENCE_MIN_DROP
+                ):
+                    _rsi_diverge_triggered = True
+                    logger.info(
+                        f"⚠️ [RSI_Divergence] {sym} 多單頂背離："
+                        f"前高RSI={_prev_high_rsi:.1f} → 現RSI={_latest_rsi:.1f} "
+                        f"(差={_prev_high_rsi - _latest_rsi:.1f}) | 浮盈={profit_pct*100:.2f}%"
+                    )
+            else:
+                # 空單底背離：現價接近前低，但現 RSI 比前低點 RSI 高 >= RSI_DIVERGENCE_MIN_DROP
+                _prev_low_idx = int(np.argmin(_lookback_closes))
+                _prev_low_rsi = _lookback_rsis[_prev_low_idx]
+                _prev_low_close = _lookback_closes[_prev_low_idx]
+                if (
+                    _latest_close <= _prev_low_close * 1.0005
+                    and (_latest_rsi - _prev_low_rsi) >= RSI_DIVERGENCE_MIN_DROP
+                ):
+                    _rsi_diverge_triggered = True
+                    logger.info(
+                        f"⚠️ [RSI_Divergence] {sym} 空單底背離（反轉）："
+                        f"前低RSI={_prev_low_rsi:.1f} → 現RSI={_latest_rsi:.1f} "
+                        f"(差={_latest_rsi - _prev_low_rsi:.1f}) | 浮盈={profit_pct*100:.2f}%"
+                    )
+
+    s["rsi_divergence_count"] = (
+        int(s.get("rsi_divergence_count", 0)) + 1
+        if _rsi_diverge_triggered else 0
+    )
+    if s.get("rsi_divergence_count", 0) >= RSI_DIVERGENCE_CONFIRM:
+        cs = "sell" if is_long else "buy"
+        logger.info(
+            f"📉 [RSI_Divergence_Exit] {sym} 連續 {RSI_DIVERGENCE_CONFIRM} 根確認背離，"
+            f"峰值={_peak_profit*100:.2f}% 浮盈={profit_pct*100:.2f}%，提前落袋保護利潤"
+        )
+        s["rsi_divergence_count"] = 0
+        await close_position(
+            sym, cs, abs(s["qty"]), p, avg,
+            reason="[RSI_Divergence_Exit]", is_stop_loss=False,
         )
         return
 
