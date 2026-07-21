@@ -127,7 +127,7 @@ def log_decision_summary(
         reason = f"區間模式就緒，觸發 {route} ({side})"
     elif range_status == "略過":
         # 兩種模式均未能觸發
-        if adx < 25.0:
+        if adx < 60.0:
             detail = block_reason or "區間空間不足或邊界確認中"
             reason = f"盤整環境但區間模式確認中 ({detail})"
         else:
@@ -138,6 +138,8 @@ def log_decision_summary(
         reason = f"趨勢模式無訊號 (ADX={adx:.1f})，區間模式未啟用"
 
     logger.info(f"🔍 [Decision] {sym} | 決策路徑: {reason}")
+
+
 
 
 def _is_confirmable_exit_cooldown(state, now=None, side=None):

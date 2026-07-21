@@ -1708,6 +1708,16 @@ def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None
 
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
                         signal_strength=None, entry_route=None, entry_mode_override=None):
+    try:
+        await _execute_order_inner(sym, side, price, allocation_pct, is_rescue_dca, signal_strength, entry_route, entry_mode_override)
+    finally:
+        s = ctx.STATES.get(sym)
+        if s and s.get("is_ordering"):
+            s["is_ordering"] = False
+
+
+async def _execute_order_inner(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
+                        signal_strength=None, entry_route=None, entry_mode_override=None):
     import numpy as np  # 強制防禦局部變量失效漏洞
     side = str(side).lower()
     if side not in ("buy", "sell"):
