@@ -13,11 +13,13 @@ bot_status = {
     "strategy": "Top 15 Radar / 4 Slots",
     "balance_quote": 150.0,
     "active_orders": 0,
-    "active_symbols": [],  # 現在改為陣列存放多個幣種 (主攻幣, 其實現在只支援單一運行)
+    "active_symbols": [
+        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+        "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT", "DOGEUSDT", "1000PEPEUSDT"
+    ],
     "watch_symbols": [
-        "OPUSDT", "NEARUSDT", "APTUSDT", "TIAUSDT", "FTMUSDT",
-        "SUIUSDT", "AVAXUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT",
-        "INJUSDT", "RENDERUSDT", "SEIUSDT", "FETUSDT", "STXUSDT",
+        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+        "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT", "DOGEUSDT", "1000PEPEUSDT"
     ],
     "regime": "多幣種監控中",
     "coin_regimes": {},    # { symbol: regime }
@@ -343,11 +345,20 @@ def get_bot_status():
 
     # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
     try:
-        actual_symbols = load_symbol_config()
-        if actual_symbols:
-            bot_status["watch_symbols"] = actual_symbols
-            bot_status["active_symbols"] = actual_symbols
-            _prune_entry_diagnoses(actual_symbols)
+        actual_symbols, _ = load_symbol_config()
+        # 強制將藍籌巨頭 (BTC, ETH, BNB) 擺放在 active_symbols 清單的最前面
+        ordered_symbols = []
+        for maj in ("BTCUSDT", "ETHUSDT", "BNBUSDT"):
+            if maj not in ordered_symbols:
+                ordered_symbols.append(maj)
+        for s in (actual_symbols or []):
+            if s not in ordered_symbols:
+                ordered_symbols.append(s)
+
+        if ordered_symbols:
+            bot_status["watch_symbols"] = ordered_symbols
+            bot_status["active_symbols"] = ordered_symbols
+            _prune_entry_diagnoses(ordered_symbols)
         bot_status["disabled_symbols"] = load_disabled_symbols()
         config_path = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
         with open(config_path, "r", encoding="utf-8") as f:

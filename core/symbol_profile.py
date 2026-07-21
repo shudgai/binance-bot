@@ -444,9 +444,12 @@ def filter_valid_symbols(exchange, symbols):
         return list(symbols)
     valid = []
     for sym in symbols:
+        sym_clean = str(sym).replace('/', '').split(':')[0].upper()
         found = False
         for m in exchange_futures.markets.values():
-            if m['id'] == sym or m['symbol'] == sym:
+            clean_id = str(m.get('id', '')).replace('/', '').split(':')[0].upper()
+            clean_symbol = str(m.get('symbol', '')).replace('/', '').split(':')[0].upper()
+            if sym_clean in (clean_id, clean_symbol):
                 found = True
                 break
         if found:
