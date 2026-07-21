@@ -960,9 +960,9 @@ async def check_exits(sym):
         s["highest_profit_pct"] = profit_pct
 
     # ── 獲利保留 70% 急煞平倉 (70% Profit Retained Lock) ──
-    # 使用者指示：下修保本啟動門檻至 0.25%，浮盈達 >= 0.25% 後，若利潤回吐僅剩最高浮盈的 70% (回吐 30%)，即刻發動急煞停利！
+    # 浮盈達 >= 0.50% 後才啟動 70% 利潤保留鎖定，給予初期波段足夠發展空間，衝刺 +1.0% ~ +2.0% 大獲利
     highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
-    if highest_profit >= 0.0025 and profit_pct <= (highest_profit * 0.70):
+    if highest_profit >= 0.0050 and profit_pct <= (highest_profit * 0.70):
         cs = "sell" if is_long else "buy"
         logger.info(
             f"🛡️ [Profit_70Pct_Retained_TP] {sym} 最高浮盈 {highest_profit*100:.2f}% "
