@@ -162,17 +162,20 @@ def _filter_disabled_symbols(symbols):
 
 
 def _prioritize_trade_pool(symbols, profiles):
-    """Put mature tradable markets before observing and watch-only candidates."""
+    """Put mature tradable markets before observing and watch-only candidates, preserving Tier 1 bluechips at the top."""
     original_order = {sym: idx for idx, sym in enumerate(symbols)}
+    top_tier = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
 
     def priority(sym):
+        if sym in top_tier:
+            return (-1, 0, 0, original_order.get(sym, 999))
         profile = profiles.get(sym) or {}
         return (
             0 if profile.get("_trade_eligible", False) else
             1 if profile.get("_radar_strict_eligible", False) else 2,
             -float(profile.get("_radar_entry_readiness", 0.0) or 0.0),
             float(profile.get("_radar_rank", 9999) or 9999),
-            original_order[sym],
+            original_order.get(sym, 999),
         )
 
     return sorted(symbols, key=priority)
@@ -187,6 +190,9 @@ def load_symbol_config():
         else:
             symbols = normalize_symbol_list(data)
         symbols = _filter_disabled_symbols(symbols)
+        for default_sym in DEFAULT_SYMBOLS:
+            if default_sym not in symbols:
+                symbols.append(default_sym)
         raw_profiles = data.get("profiles", {}) if isinstance(data, dict) else {}
         return _prioritize_trade_pool(symbols, raw_profiles)[:TRADE_POOL_SIZE]
     except Exception:
