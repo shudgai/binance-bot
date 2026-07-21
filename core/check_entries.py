@@ -790,8 +790,8 @@ async def check_entries():
         # 必須真的通過量能/價格確認才能進場。
         _strong_participation_strength = 30.0
         # 參與度乘數整體降低：0.30/0.35/0.35（原 0.35/0.40/0.45），
-        # 與 base_limit=0.50 的放寬方向一致
-        _d_multiplier = 0.30 if strength >= _strong_participation_strength else (0.35 if _is_low_vol_ce else 0.35)
+        # MA7_Simple 專門捕捉「價縮量跌 / 谷底打底轉折」，放寬量能乘數至 0.10x，避免誤殺地量打底進場點
+        _d_multiplier = 0.10 if route == "MA7_Simple" else (0.30 if strength >= _strong_participation_strength else 0.30)
         if volume < (vol_ma20 * _d_multiplier):
             s["low_participation_streak"] = s.get("low_participation_streak", 0) + 1
             logger.info(f"🛑 [CONFLUENCE_FAIL] {sym}: 量能極度不足 (當前量 {volume:.0f} < 均量 {vol_ma20:.0f} * {_d_multiplier})")
