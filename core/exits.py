@@ -64,7 +64,7 @@ GENERIC_TRAILING_ARM_PCT = 0.0045
 # 更低：這是獨立的「真訊號」防線（看實際成交方向，不是看價格門檻），就算
 # 峰值還沒到鎖利線會啟動的門檻，只要出現真的逆勢量能主導也該提前反應；會不
 # 會誤觸交給下面的連續確認 (confirm ticks) 把單筆雜訊濾掉，不是靠拉高門檻。
-SELL_PRESSURE_MIN_PROFIT_PCT = 0.0008
+SELL_PRESSURE_MIN_PROFIT_PCT = 0.0025
 SELL_PRESSURE_WINDOW = 12
 SELL_PRESSURE_MIN_SAMPLES = 6
 SELL_PRESSURE_ADVERSE_RATIO = 0.70
