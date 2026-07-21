@@ -83,7 +83,7 @@ _MA_EXCHANGE_STOP_SYNC_TASKS = {}
 # MA7 獲利轉彎出場：第一根確認轉彎的收線先落袋 60%，下一根仍往反方向才清倉。
 # 最低毛利需涵蓋雙邊手續費及一小段滑價，避免把接近成本的 MA7 抖動當成停利。
 MA7_PROFIT_TURN_PARTIAL_RATIO = 0.60
-MA7_PROFIT_TURN_MIN_PCT = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
+MA7_PROFIT_TURN_MIN_PCT = 0.010  # 至少峰值達 1.0% 才啟動峰值回吐保護，避免 0.3%~0.4% 小峰值誤觸發慌忙平倉
 # 峰值回吐安全網：MA7_Profit_Turn_Partial／Confirmed 只看「MA7 收線後有沒有
 # 轉彎」，完全不參考峰值，導致峰值再高、每次出場都貼著成本價（實測 BCHUSDT
 # 案例：同一倉位連續三次分批出場，峰值一路墊高到 0.44%，三次都在成本價附近
