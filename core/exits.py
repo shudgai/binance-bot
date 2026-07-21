@@ -959,18 +959,18 @@ async def check_exits(sym):
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
 
-    # ── 獲利回吐急煞鎖定 (Peak Giveback Lock) ──
-    # 最高浮盈達到 >= 0.25% 後，若價格回吐超過 0.12%，立刻強制平倉落袋為安，絕不讓獲利單反轉虧損！
+    # ── 獲利保留 70% 急煞平倉 (70% Profit Retained Lock) ──
+    # 使用者指示：下修保本啟動門檻至 0.25%，浮盈達 >= 0.25% 後，若利潤回吐僅剩最高浮盈的 70% (回吐 30%)，即刻發動急煞停利！
     highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
-    if highest_profit >= 0.0025 and (highest_profit - profit_pct) >= 0.0012:
+    if highest_profit >= 0.0025 and profit_pct <= (highest_profit * 0.70):
         cs = "sell" if is_long else "buy"
         logger.info(
-            f"🛡️ [Peak_Giveback_Lock] {sym} 最高浮盈 {highest_profit*100:.2f}% 回吐至 {profit_pct*100:.2f}%，"
-            f"觸發回吐鎖定，立即落袋平倉！"
+            f"🛡️ [Profit_70Pct_Retained_TP] {sym} 最高浮盈 {highest_profit*100:.2f}% "
+            f"回吐至 {profit_pct*100:.2f}% (保留 70% 利潤)，急煞停利落袋為安！"
         )
         await close_position(
             sym, cs, abs(s["qty"]), p, avg,
-            reason="[Peak_Giveback_Lock]", is_stop_loss=False,
+            reason="[Profit_70Pct_Retained_TP]", is_stop_loss=False,
         )
         return
 
