@@ -1266,7 +1266,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # [MA7_Profit_Turn_Giveback] 同理補進來：峰值回吐超過一半時觸發，浮盈可能還是
     # 正的但低於 0.35%（實測 BCHUSDT 峰值 0.44% 只保留一半也才 0.22%），一樣不能
     # 被這道門檻卡住、逼它眼睜睜看著繼續回吐。
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA7_Profit_Turn_Giveback]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Sell_Pressure_Exit]", "[Buy_Pressure_Exit]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA7_Profit_Turn_Giveback]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Sell_Pressure_Exit]", "[Buy_Pressure_Exit]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]", "[Profit_70Pct_Retained_TP]", "[Peak_Giveback_Lock]", "[MultiStage_TP1]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
