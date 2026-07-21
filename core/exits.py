@@ -316,12 +316,9 @@ def _sell_pressure_confirmed(sym, qualifies, now):
 
 
 def check_realtime_sell_pressure(sym, is_long, current_price, event_time=None):
-    """持倉已有基本浮盈時，偵測即時成交流是否出現逆勢方向量能主導（賣壓/買壓），
-    比等鎖利線被價格穿越更早示警，用來對抗「賺了卻沒守住」的獲利回吐。
+    return False
 
-    只看成交流方向，不判斷出多凶猛；夠不夠格出場交給連續確認 (confirm ticks)
-    把單筆大單雜訊濾掉。
-    """
+def _unused_check_realtime_sell_pressure(sym, is_long, current_price, event_time=None):
     state = ctx.STATES.get(sym)
     if not state:
         return False
