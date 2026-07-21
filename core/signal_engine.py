@@ -155,18 +155,18 @@ def compute_signal_strength(sym, realtime_trigger=False):
         # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
         # 做空時 RSI < 52 表示已在下跌中途（超賣風險高），不跟進
         # 做多時 RSI > 65 表示已在上漲中途（超買風險高），不跟進
-        MA7_SIMPLE_SHORT_RSI_FLOOR = 52.0   # 做空最低 RSI 要求（避免在超賣區做空）
-        MA7_SIMPLE_LONG_RSI_CEIL   = 65.0   # 做多最高 RSI 要求（避免在超買區做多）
+        # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
+        MA7_SIMPLE_SHORT_RSI_FLOOR = 40.0   # 放寬做空最低 RSI 要求（原 52.0 太嚴苛）
+        MA7_SIMPLE_LONG_RSI_CEIL   = 70.0   # 做多最高 RSI 要求
 
         # 規則 2：15m RSI 多時間框架確認
-        # 若資料尚未抓到（rsi_15m == 0），則放行（降級處理，不阻擋）
         rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
-        MTF_RSI_SHORT_FLOOR = 45.0  # 15m RSI < 45 代表大週期已超賣，空單方向矛盾
-        MTF_RSI_LONG_CEIL   = 68.0  # 15m RSI > 68 代表大週期已超買，多單方向矛盾
+        MTF_RSI_SHORT_FLOOR = 40.0  # 15m RSI 放寬至 40
+        MTF_RSI_LONG_CEIL   = 70.0  # 15m RSI 放寬至 70
 
-        if (turn_up and bullish_candle and volume_ok and current_rsi < 82.0
-                and ma25_not_against_long and adx_not_spiking
-                and not (golden_cross or death_cross)):
+        # MA7 谷底轉折向上：允許價跌量縮陰線/打底階段在 MA7 一向上勾時即刻開倉做多
+        if (turn_up and volume_ok and current_rsi < 82.0
+                and adx_not_spiking and not (golden_cross or death_cross)):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
                 reason = f"MA7 谷底轉折向上，但 5m RSI={current_rsi:.1f} > {MA7_SIMPLE_LONG_RSI_CEIL:.0f} 偏高，跳過"
@@ -180,14 +180,12 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "")
                 s["ma_signal_candle_ts"] = signal_ts
                 logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] buy | {reason}")
-                # USUSDT 成功樣本的 RVOL 約 0.83x。保留門檻邊緣的最低觸發能力，
-                # 但讓門檻附近的弱量轉折確實降分，避免與有量轉折同為 25 分。
                 volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
                 strength = 25.0 + volume_adjustment
                 return (side, strength, route)
-        elif (turn_down and bearish_candle and volume_ok and current_rsi > 22.0
-                and ma25_not_against_short and adx_not_spiking
-                and not (golden_cross or death_cross)):
+        # MA7 頭部轉折向下：在 MA7 一向下勾時即刻開倉做空
+        elif (turn_down and volume_ok and current_rsi > 18.0
+                and adx_not_spiking and not (golden_cross or death_cross)):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
                 reason = f"MA7 頭部轉折向下，但 5m RSI={current_rsi:.1f} < {MA7_SIMPLE_SHORT_RSI_FLOOR:.0f} 已偏低，跳過避免超賣區做空"
