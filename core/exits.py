@@ -728,7 +728,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     # 降至 0.4%(一般) / 0.6%(高彈)，讓保本鎖在真實峰值範圍內生效。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.005  # 浮盈達 0.5% 以上才啟動保本，避免 0.2% 浮盈太近鎖住開倉價被秒平
+    breakeven_threshold = 0.0025  # 浮盈達 0.25% 即刻啟動保本，避免獲利回吐變成虧損
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     _hp_soft = s.get("highest_profit_pct", 0.0)
@@ -958,6 +958,22 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
+
+    # ── 獲利回吐急煞鎖定 (Peak Giveback Lock) ──
+    # 最高浮盈達到 >= 0.25% 後，若價格回吐超過 0.12%，立刻強制平倉落袋為安，絕不讓獲利單反轉虧損！
+    highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    if highest_profit >= 0.0025 and (highest_profit - profit_pct) >= 0.0012:
+        cs = "sell" if is_long else "buy"
+        logger.info(
+            f"🛡️ [Peak_Giveback_Lock] {sym} 最高浮盈 {highest_profit*100:.2f}% 回吐至 {profit_pct*100:.2f}%，"
+            f"觸發回吐鎖定，立即落袋平倉！"
+        )
+        await close_position(
+            sym, cs, abs(s["qty"]), p, avg,
+            reason="[Peak_Giveback_Lock]", is_stop_loss=False,
+        )
+        return
+
     current_atr = s.get("current_atr", 0.0)
 
     entry_reason = str(s.get("entry_reason", "") or "")
