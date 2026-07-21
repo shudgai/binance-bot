@@ -429,7 +429,9 @@ class EntryRiskTests(unittest.TestCase):
 
     def test_range_short_exchange_bracket_keeps_opposite_boundary_target(self):
         state = {"range_tp_price": 97.05, "range_sl_price": 101.5}
-        self.assertEqual(_range_exit_bracket(state, 100.98, False, 0.01), (101.5, 97.05))
+        stop, take_profit = _range_exit_bracket(state, 100.98, False, 0.01)
+        self.assertEqual(take_profit, 97.05)
+        self.assertLessEqual(stop - 100.98, (100.98 - take_profit) / 1.5 + 0.01)
 
     def test_btc_range_short_stop_keeps_room_from_actual_entry(self):
         take_profit, stop = _range_exit_prices(

@@ -3,16 +3,16 @@ import asyncio
 from unittest.mock import patch
 from core.config import COIN_PROFILE_CONFIG
 
-def test_user_excluded_symbols_in_config():
-    assert COIN_PROFILE_CONFIG.get("BTCUSDT", {}).get("disable_entry", False) is True
-    assert COIN_PROFILE_CONFIG.get("ETHUSDT", {}).get("disable_entry", False) is True
-    assert COIN_PROFILE_CONFIG.get("BNBUSDT", {}).get("disable_entry", False) is True
+def test_major_symbols_are_enabled_in_config():
+    assert COIN_PROFILE_CONFIG.get("BTCUSDT", {}).get("disable_entry", False) is False
+    assert COIN_PROFILE_CONFIG.get("ETHUSDT", {}).get("disable_entry", False) is False
+    assert COIN_PROFILE_CONFIG.get("BNBUSDT", {}).get("disable_entry", False) is False
 
 @patch("services.radar_service.get_bot_status")
 @patch("services.radar_service.clean_blacklist")
 @patch("services.radar_service.get_atr_ranked_coins")
 @patch("services.radar_service.prioritize_entry_ready")
-def test_auto_radar_switch_excludes_user_symbols(mock_prioritize, mock_get_atr, mock_clean, mock_status):
+def test_auto_radar_switch_keeps_fixed_pool_including_majors(mock_prioritize, mock_get_atr, mock_clean, mock_status):
     mock_status.return_value = {"is_running": False}
     # Mock return 15 generic coins plus the 3 excluded ones
     mock_ranking = [{"symbol": f"COIN{i}USDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0} for i in range(1, 16)]
@@ -33,19 +33,19 @@ def test_auto_radar_switch_excludes_user_symbols(mock_prioritize, mock_get_atr, 
          
         auto_radar_switch(force_start=False)
         
-        # Verify the saved symbols don't contain BTCUSDT, ETHUSDT, BNBUSDT
+        # The fixed pool includes all three enabled majors.
         saved_symbols = mock_save.call_args[0][0]
-        assert "BTCUSDT" not in saved_symbols
-        assert "ETHUSDT" not in saved_symbols
-        assert "BNBUSDT" not in saved_symbols
-        assert "COIN1USDT" in saved_symbols
+        assert "BTCUSDT" in saved_symbols
+        assert "ETHUSDT" in saved_symbols
+        assert "BNBUSDT" in saved_symbols
+        assert "COIN1USDT" not in saved_symbols
 
 @patch("core.ctx.ALL_SYMBOLS", ["BTCUSDT", "TESTUSDT"])
 @patch.dict("core.ctx.STATES", {
     "BTCUSDT": {"status": "ACTIVE", "is_ordering": False, "qty": 0, "ohlcv": []},
     "TESTUSDT": {"status": "ACTIVE", "is_ordering": False, "qty": 0, "ohlcv": []}
 }, clear=True)
-def test_check_entries_skips_disabled_symbols():
+def test_check_entries_processes_enabled_major_symbols():
     from core.check_entries import check_entries
     import core.ctx as ctx
     
@@ -67,5 +67,5 @@ def test_check_entries_skips_disabled_symbols():
                  if state is state_arg:
                      called_symbols.append(sym)
                      
-         assert "BTCUSDT" not in called_symbols, "BTCUSDT should have been skipped due to disable_entry=True"
+         assert "BTCUSDT" in called_symbols, "BTCUSDT should be processed when entry is enabled"
          assert "TESTUSDT" in called_symbols, "TESTUSDT should have been processed"

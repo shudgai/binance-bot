@@ -37,10 +37,9 @@ RESTART_ORDER_CACHE_SEC = 5.0
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
 BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
 DEFAULT_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT",
-    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
-    "UNIUSDT", "AAVEUSDT",
-    "HYPEUSDT", "WLDUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
+    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
 
 

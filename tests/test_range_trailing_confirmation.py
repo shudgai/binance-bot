@@ -41,6 +41,8 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
             "trailing_stop_price": 99.5,
             "stop_loss": 99.5,
             "highest_profit_pct": 0.005,
+            "partial_tp_done": True,
+            "_multistage_tp1_done": True,
             "trailing_lowest": 98.0,
             "current_vol": 100.0,
             "vol_ma20": 100.0,
@@ -56,8 +58,8 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
         # 雜訊就出場——見 RANGE_TRAILING_CONFIRM_TICKS/SEC。空單的停利線在
         # avg 下方，「穿越」代表現價回升到 >= 停利線（回吐），不是跌破。
         state = self._short_state()
-        state["close_price"] = 99.6  # crossed back above the 99.5 stop
-        with patch("core.exits.update_trailing_stop", return_value=(False, 99.5)), \
+        state.update({"close_price": 99.3, "trailing_stop_price": 99.2})  # 0.70% 毛利後回吐穿越 99.2
+        with patch("core.exits.update_trailing_stop", return_value=(False, 99.2)), \
              patch("core.orders.close_position", AsyncMock()) as close_mock:
             await check_exits(self.sym)
 
@@ -85,11 +87,13 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
         # 穿越狀態，應該直接確認出場，不必等整根 K 棒收線。
         state = self._short_state()
         state.update({
-            "close_price": 99.6,
+            "close_price": 99.3,
+            "trailing_stop_price": 99.2,
+            "highest_profit_pct": 0.01,
             "range_trailing_cross_count": 2,
             "range_trailing_cross_since": time.time() - 1.1,
         })
-        with patch("core.exits.update_trailing_stop", return_value=(False, 99.5)), \
+        with patch("core.exits.update_trailing_stop", return_value=(False, 99.2)), \
              patch("core.orders.close_position", AsyncMock()) as close_mock:
             await check_exits(self.sym)
 
@@ -98,6 +102,47 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
             close_mock.call_args.kwargs["reason"],
             "[Range_Trailing_Closed_Confirm]",
         )
+
+    async def test_breach_below_minimum_peak_resets_confirmation(self):
+        state = self._short_state()
+        state.update({
+            "close_price": 99.6,
+            "highest_profit_pct": 0.005,
+            "range_trailing_cross_count": 2,
+            "range_trailing_cross_since": time.time() - 1.1,
+        })
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        close_mock.assert_not_awaited()
+        self.assertEqual(state["range_trailing_cross_count"], 0)
+
+    async def test_partial_tp_does_not_fire_at_old_quarter_percent_threshold(self):
+        state = self._short_state()
+        state.update({
+            "close_price": 99.74,
+            "highest_profit_pct": 0.002,
+            "partial_tp_done": False,
+        })
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        close_mock.assert_not_awaited()
+        self.assertFalse(state["partial_tp_done"])
+
+    async def test_partial_tp_fires_after_six_tenths_percent(self):
+        state = self._short_state()
+        state.update({
+            "close_price": 99.39,
+            "highest_profit_pct": 0.002,
+            "partial_tp_done": False,
+        })
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        close_mock.assert_awaited_once()
+        self.assertEqual(close_mock.call_args.kwargs["reason"], "[Partial_TP_50Pct]")
+        self.assertAlmostEqual(close_mock.call_args.args[2], 0.5)
 
     async def test_range_structural_stop_remains_immediate(self):
         state = self._short_state()

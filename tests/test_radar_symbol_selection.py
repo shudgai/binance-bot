@@ -26,10 +26,9 @@ from services.binance_service import calculate_entry_readiness
 
 
 EXPECTED_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT",
-    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
-    "UNIUSDT", "AAVEUSDT",
-    "HYPEUSDT", "WLDUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
+    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
 EXPECTED_ATR_SYMBOLS = EXPECTED_SYMBOLS
 
@@ -41,7 +40,7 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert RADAR_SELECT_COUNT == 25  # 候選池；實際交易監控仍由 bot manager 截為 15 檔
     assert TRADE_POOL_SIZE == 15
     assert MANAGER_TRADE_POOL_SIZE == 15
-    assert MIN_ATR_PCT_FOR_ENTRY == 1.5
+    assert MIN_ATR_PCT_FOR_ENTRY == 0.3
     assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
     assert MAX_1H_VOL_PCT_FOR_ENTRY == 2.8
@@ -74,7 +73,7 @@ def test_range_uses_local_strategy_band_and_missing_1h_is_explicit():
 def test_entry_slots_follow_capital_tiers():
     assert get_dynamic_max_slots(150) == 3
     assert get_dynamic_max_slots(250) == 5
-    assert abs(MIN_5M_ATR_PCT_FOR_MA_ENTRY - 0.0012) < 1e-12
+    assert abs(MIN_5M_ATR_PCT_FOR_MA_ENTRY - 0.002) < 1e-12
 
 
 def test_atr_pool_excludes_event_and_unapproved_coins():

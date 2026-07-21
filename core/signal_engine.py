@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 
 from core.config import ENTRY_SURGE_THRESHOLD, MA_CROSS_MIN_GAP_PCT
 
+CORE_LIQUID_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
+
+def _ma_base_volume_limit(sym, atr_pct):
+    if atr_pct > 5.0:
+        return 1.0
+    return 0.70 if sym in CORE_LIQUID_SYMBOLS else 0.80
+
+
 def compute_signal_strength(sym, realtime_trigger=False):
     """Generate entries exclusively from completed-candle MA7/25/99 setups."""
     s = ctx.STATES[sym]
@@ -55,9 +63,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
     atr_pct = float(s.get("atr_pct", 0.0))
 
     # 模式 A（高品質杜絕假突破）：量能必須達到 20 週期均量的 0.80x 以上，真金白銀掃盤才放行
-    base_limit = 0.80
-    if atr_pct > 5.0:
-        base_limit = 1.00  # 波動劇烈時要求 1.0x 滿量
+    base_limit = _ma_base_volume_limit(sym, atr_pct)
     breakout_limit = base_limit * 1.3
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
@@ -378,11 +384,12 @@ def compute_range_signal(sym):
         )
         return (None, 0, None)
 
-    # 1. ADX 確認區間行情 (已放寬限制，允許高 ADX 下執行區間模式)
-    # if adx >= RANGE_ADX_THRESHOLD:
-    #     s["entry_block_reason"] = f"ADX={adx:.1f} ≥ {RANGE_ADX_THRESHOLD}，趨勢明顯，不開區間倉"
-    #     logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] ADX={adx:.1f} 過高，略過區間模式")
-    #     return (None, 0, None)
+    # 1. ADX 確認區間行情；高 ADX 交給 MA 趨勢路線，避免前段產生 Range 訊號、
+    # 送單前又被同一個 ADX 門檻取消。
+    if adx >= RANGE_ADX_THRESHOLD:
+        s["entry_block_reason"] = f"ADX={adx:.1f} ≥ {RANGE_ADX_THRESHOLD}，趨勢明顯，改由 MA 策略評估"
+        logger.info(f"⏳ {sym} [Range] ADX={adx:.1f} 過高，略過區間模式")
+        return (None, 0, None)
 
     # 1.5. ATR 波動比例過濾（高於 6.0% 判定為高波動妖幣，不開區間倉以防突破止損）
     close_price = candles[-1][4] if candles else 0.0

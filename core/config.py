@@ -11,6 +11,7 @@ PAPER_TRADING = not BINANCE_API_KEY or BINANCE_API_KEY == "your_api_key_here"
 # Demo Trading 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算（僅在非紙上交易時生效）。
 # 設為 0 或留空則不再限制真實交易帳戶的資金上限。
 LIVE_CAPITAL_CAP = float(os.getenv("LIVE_CAPITAL_CAP", "150.0"))
+MAX_RISK_PER_TRADE_PCT = 0.025
 TIMEFRAME = '5m'
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 1
@@ -36,6 +37,7 @@ RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
 RANGE_MIN_NET_PROFIT_PCT = 0.003    # 模式 A：最低獲利空間 0.3%（過濾微幅假區間陷阱）
+RANGE_MIN_RR = 1.5                 # 區間單最終成交後至少維持 1.5:1 盈虧比
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
 RANGE_MIN_SIGNAL_STRENGTH = 18.0    # 模式 A：區間模式最低信號強度 18.0（高品質過濾）
 # ─────────────────────────────────────────────────────────────────────────────
@@ -54,10 +56,10 @@ CAPITAL_SLOT_TIERS = [
 COIN_PROFILE_CONFIG = {
     # 第一類：核心趨勢型 (Core_Trend) - 穩健獲利為主
     # 選幣標準：24h量 > 1億USDT、流動性佳、滑點低
-    "BTCUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False, "disable_entry": True},
-    "ETHUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 12, "disable_rescue_dca": False, "disable_entry": True},
+    "BTCUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 8.0,  "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False},
+    "ETHUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 12, "disable_rescue_dca": False},
     "SOLUSDT":  {"sl_atr_multiplier": 1.3, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 3600, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False, "hard_sl_pct": 0.015},
-    "BNBUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 14, "disable_rescue_dca": False, "disable_entry": True},
+    "BNBUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 14, "disable_rescue_dca": False},
     "XRPUSDT":  {"sl_atr_multiplier": 1.3, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False, "hard_sl_pct": 0.015},
     "NEARUSDT": {"sl_atr_multiplier": 1.3, "tp_atr_multiplier": 12.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "Core_Trend",         "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False, "hard_sl_pct": 0.015, "stagnation_base_limit": 7200},
 
@@ -107,18 +109,12 @@ ATR_WARMUP_LIMIT = 1000
 ATR_WARMUP_PAUSE_SEC = 0.4
 TIME_STOP_MINUTES = 30
  
-# 幣種選擇標準（2026-07-14 更新）：
-# - 24h 成交量 > 0.5億 USDT（保證流動性，減少滑價）
-# - 真實加密幣（排除股票型/ETF/商品型合約）
-# - 去掉低量幣：APT/RENDER/ATOM/HBAR/ETC/DOT/LTC/BCH/INJ/XLM/AVAX/LINK/SUI
-# - 新增高量新幣：HYPE（5億）、WLD（2億）
+# 固定交易池：大／中大型市值、合約成交量充足，並保留足夠波動空間。
+# 雷達只負責判斷這 15 檔當下是否可交易，不再從全市場替換幣種。
 DEFAULT_SYMBOLS = [
-    # 一、主流雙雄 (穩健抗風險)
-    "BTCUSDT", "ETHUSDT",
-    # 二、高貝塔主流 (波段爆發力)
-    "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT",
-    # 三、迷因熱點 (短線補充)
-    "DOGEUSDT", "1000PEPEUSDT"
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
+    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
 

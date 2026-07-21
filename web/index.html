@@ -991,7 +991,7 @@ createApp({
             if (!Array.isArray(symbols)) return [];
             return symbols
                 .map(s => (typeof s === 'string' ? s.trim().toUpperCase() : ''))
-                .filter(s => s && s !== 'BTCUSDT' && !disabledSymbols.value.includes(s));
+                .filter(s => s && !disabledSymbols.value.includes(s));
         };
 
         watch(() => coins.value.map(c => c.symbol), () => {
@@ -1171,16 +1171,9 @@ createApp({
         };
 
         const sortedCoins = computed(() => {
-            return [...coins.value].sort((a, b) => {
-                const posA = getPositionInfo(a.symbol);
-                const posB = getPositionInfo(b.symbol);
-                const hasA = posA && Math.abs(posA.qty) > 0 ? 1 : 0;
-                const hasB = posB && Math.abs(posB.qty) > 0 ? 1 : 0;
-                if (hasA !== hasB) {
-                    return hasB - hasA;
-                }
-                return a.symbol.localeCompare(b.symbol);
-            });
+            return [...coins.value].sort((a, b) =>
+                (a.name || a.symbol).localeCompare(b.name || b.symbol, 'en', { sensitivity: 'base' })
+            );
         });
 
         const formattedMainPrice = computed(() => {

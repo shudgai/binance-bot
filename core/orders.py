@@ -12,7 +12,8 @@ from core.peak_store import clear_peak
 from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
 ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
-    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER)
+    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER, RANGE_MIN_RR,
+    MAX_RISK_PER_TRADE_PCT)
 from core.exchange_client import (exchange_futures, exchange_market_data, sanitize_order_qty,
     get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price,
     get_contract_openability)
@@ -167,7 +168,7 @@ def check_take_profit(current_price, entry_price, target_profit_pct=0.03, buffer
     return False
 
 def _range_exit_bracket(state, avg, is_long, tick_size):
-    """區間單固定在對側邊界停利、結構外側停損，不套用趨勢單的 R:R 延伸。"""
+    """區間單固定在對側邊界停利，成交價偏移時收緊停損以維持最低 R:R。"""
     avg = float(avg or 0.0)
     take_profit = float(state.get("range_tp_price", 0.0) or 0.0)
     stop = float(state.get("range_sl_price", 0.0) or 0.0)
@@ -176,6 +177,11 @@ def _range_exit_bracket(state, avg, is_long, tick_size):
     valid = stop < avg < take_profit if is_long else take_profit < avg < stop
     if not valid:
         return None
+    tp_dist = (take_profit - avg) if is_long else (avg - take_profit)
+    stop_dist = (avg - stop) if is_long else (stop - avg)
+    max_stop_dist = tp_dist / RANGE_MIN_RR
+    if stop_dist > max_stop_dist:
+        stop = avg - max_stop_dist if is_long else avg + max_stop_dist
     return round_step(stop, tick_size), round_step(take_profit, tick_size)
 
 
@@ -1712,7 +1718,7 @@ def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None
     return "chase"
 
 
-async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
+async def execute_order(sym, side, price, allocation_pct=1.0, is_rescue_dca=False,
                         signal_strength=None, entry_route=None, entry_mode_override=None):
     try:
         await _execute_order_inner(sym, side, price, allocation_pct, is_rescue_dca, signal_strength, entry_route, entry_mode_override)
@@ -1722,7 +1728,7 @@ async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=Fal
             s["is_ordering"] = False
 
 
-async def _execute_order_inner(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
+async def _execute_order_inner(sym, side, price, allocation_pct=1.0, is_rescue_dca=False,
                         signal_strength=None, entry_route=None, entry_mode_override=None):
     import numpy as np  # 強制防禦局部變量失效漏洞
     side = str(side).lower()
@@ -1980,11 +1986,12 @@ async def _execute_order_inner(sym, side, price, allocation_pct=0.33, is_rescue_
         base_notional = 10.0
 
     balance = get_balance()
-    # Position sizing hard cap: a full hard-stop loss may consume at most 2% of strategy capital.
+    # Position sizing hard cap: a full hard-stop loss may consume at most the configured share of strategy capital.
     _entry_sl_pct = max(float(s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT) or HARD_STOP_LOSS_PCT), 0.01)
-    _risk_notional_cap = balance * 0.02 / _entry_sl_pct
+    _risk_notional_cap = balance * MAX_RISK_PER_TRADE_PCT / _entry_sl_pct
     if base_notional > _risk_notional_cap:
-        logger.info(f"🛡️ [Risk_2Pct_Cap] {sym} 名義倉位 {base_notional:.2f} 縮減至 {_risk_notional_cap:.2f} USDT，確保硬停損風險不超過本金 2%")
+        logger.info(f"🛡️ [Risk_Cap] {sym} 名義倉位 {base_notional:.2f} 縮減至 {_risk_notional_cap:.2f} USDT，"
+                    f"確保硬停損風險不超過本金 {MAX_RISK_PER_TRADE_PCT*100:.1f}%")
         base_notional = _risk_notional_cap
     required_margin = base_notional / DUAL_SHOT_LEVERAGE
 

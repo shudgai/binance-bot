@@ -1037,7 +1037,7 @@ async def check_entries():
             support    = float(s.get("range_support_level",    0.0) or 0.0)
             resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
             atr        = float(s.get("current_atr", 0.0) or 0.0)
-            from core.config import RANGE_MIN_NET_PROFIT_PCT, TAKER_FEE_RATE
+            from core.config import RANGE_MIN_NET_PROFIT_PCT, RANGE_MIN_RR, TAKER_FEE_RATE
             if not (support > 0 and resistance > 0 and support < resistance):
                 logger.info(f"🛑 [Range_Final_Guard] {sym} 支撐/壓力資料不完整或順序錯誤")
                 continue
@@ -1051,8 +1051,8 @@ async def check_entries():
                 logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {RANGE_MIN_NET_PROFIT_PCT*100:.1f}%")
                 continue
             range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
-            if range_rr < 1.0:
-                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < 1.0")
+            if range_rr < RANGE_MIN_RR:
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < {RANGE_MIN_RR:.1f}")
                 continue
             # 寫入進場時預先計算好的區間出場價位到 state
             s["range_tp_price"] = range_tp

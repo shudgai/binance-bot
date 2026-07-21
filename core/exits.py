@@ -17,6 +17,7 @@ from core.calc import profit_pct as _profit_pct
 logger = logging.getLogger(__name__)
 
 MA_ENTRY_ROUTES = {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}
+RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
 MA_DISASTER_STOP_PCT = 0.025
 MA_WRONG_DIRECTION_PCT = 0.01
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
@@ -56,6 +57,9 @@ MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 1.5
 GENERIC_TRAILING_ARM_PCT = 0.0045
+PARTIAL_TP_MIN_GROSS_PCT = 0.006
+RANGE_TRAILING_MIN_GROSS_PCT = 0.006
+RANGE_TRAILING_NET_BUFFER_PCT = 0.004
 
 # 即時賣壓/買壓出場：鎖利線是等「價格」跌破才反應，本質上一定會落後於真正的
 # 反轉。即時成交流（taker 主動買/賣）比價格更早反映風向轉變，因此在已有基本
@@ -728,9 +732,12 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     # 降至 0.4%(一般) / 0.6%(高彈)，讓保本鎖在真實峰值範圍內生效。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.0025  # 浮盈達 0.25% 即刻啟動保本，避免獲利回吐變成虧損
-    
-    fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
+    is_range_route = route in RANGE_ENTRY_ROUTES
+    breakeven_threshold = RANGE_TRAILING_MIN_GROSS_PCT if is_range_route else 0.0025
+
+    fee_safe_profit = ROUND_TRIP_FEE_PCT + (
+        RANGE_TRAILING_NET_BUFFER_PCT if is_range_route else 0.0015
+    )
     _hp_soft = s.get("highest_profit_pct", 0.0)
     if _hp_soft > breakeven_threshold:
         should_log_breakeven = not bool(s.get("is_breakeven_locked", False))
@@ -959,13 +966,16 @@ async def check_exits(sym):
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
 
-    # ── 第一階段：50% 先落袋為安 (Partial Exit 50% @ +0.25%) ──
-    # 當浮盈達 >= 0.25% 時，第一時間先把 50% 倉位平倉落袋為安，鎖定現金利潤！
-    if profit_pct >= 0.0025 and not s.get("partial_tp_done", False):
+    entry_reason = str(s.get("entry_reason", "") or "")
+    is_range_route = entry_reason.lower() in RANGE_ENTRY_ROUTES
+
+    # ── 第一階段：扣除費用與滑價後仍有實質利潤，才先平 50% ──
+    if profit_pct >= PARTIAL_TP_MIN_GROSS_PCT and not s.get("partial_tp_done", False):
         cs = "sell" if is_long else "buy"
         half_qty = abs(s["qty"]) * 0.5
         logger.info(
-            f"💰 [Partial_TP_50Pct] {sym} 浮盈達 {profit_pct*100:.2f}% >= 0.25%，"
+            f"💰 [Partial_TP_50Pct] {sym} 浮盈達 {profit_pct*100:.2f}% "
+            f">= {PARTIAL_TP_MIN_GROSS_PCT*100:.2f}%，"
             f"先平倉 50% 倉位 ({half_qty:.4f}) 落袋為安，剩餘 50% 鎖定保本放飛！"
         )
         s["partial_tp_done"] = True
@@ -978,7 +988,7 @@ async def check_exits(sym):
     # ── 第二階段：剩餘倉位 70% 利潤保留鎖定 (70% Profit Retained Lock) ──
     # 最高浮盈達 >= 0.40% 後，若利潤回吐僅剩 70%，平倉剩餘 50% 倉位！
     highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
-    if highest_profit >= 0.0040 and profit_pct <= (highest_profit * 0.70):
+    if not is_range_route and highest_profit >= 0.0040 and profit_pct <= (highest_profit * 0.70):
         cs = "sell" if is_long else "buy"
         logger.info(
             f"🛡️ [Profit_70Pct_Retained_TP] {sym} 最高浮盈 {highest_profit*100:.2f}% "
@@ -991,9 +1001,6 @@ async def check_exits(sym):
         return
 
     current_atr = s.get("current_atr", 0.0)
-
-    entry_reason = str(s.get("entry_reason", "") or "")
-    is_range_route = entry_reason in ("Range_Support_Long", "Range_Resistance_Short")
 
     if is_range_route:
         # Range 的結構停損是真突破安全線，仍採盤中立即退出；只有較貼近價格的
@@ -1017,6 +1024,10 @@ async def check_exits(sym):
         trailing_crossed = (hold_sec >= 60.0) and ts_price > 0 and (
             (is_long and p <= ts_price) or (not is_long and p >= ts_price)
         )
+        # 未覆蓋最低毛利時，即使舊保本線被穿越也不可當成停利。
+        if highest_profit < RANGE_TRAILING_MIN_GROSS_PCT:
+            _reset_range_trailing_confirmation(s)
+            trailing_crossed = False
         if _range_trailing_cross_confirmed(sym, trailing_crossed, time.time()):
             cs = "sell" if is_long else "buy"
             # ── 多級獲利目標 (Multi-stage TP) ──

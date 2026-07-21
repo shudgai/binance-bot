@@ -318,6 +318,19 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(STATES[sym]["range_support_level"], 99.0)
         self.assertEqual(STATES[sym]["range_resistance_level"], 103.0)
 
+    def test_range_signal_rejects_high_adx_before_becoming_candidate(self):
+        sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
+        STATES[sym]["adx"] = 40.0
+        with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
+            self.assertEqual(compute_range_signal(sym), (None, 0, None))
+        self.assertIn("改由 MA", STATES[sym]["entry_block_reason"])
+
+    def test_core_liquid_symbols_use_slightly_lower_ma_volume_floor(self):
+        from core.signal_engine import _ma_base_volume_limit
+        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 0.2), 0.70)
+        self.assertEqual(_ma_base_volume_limit("SOLUSDT", 0.2), 0.80)
+        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 6.0), 1.0)
+
     def test_range_long_rejected_when_rsi_still_falling_fast(self):
         # 實測 ADAUSDT 案例：支撐反彈訊號觸發當下 RSI=50，但不到一分鐘內連續
         # 幾輪掃描 RSI 一路殺到 29.4，代表賣壓根本沒停，進場後直接跌破支撐，

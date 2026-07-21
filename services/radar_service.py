@@ -201,12 +201,9 @@ def _save_radar_profiles(profiles: dict):
         add_system_log(f"⚠️ [AI個性] 寫入 profiles 失敗: {e}", "warning")
 
 ATR_ELIGIBLE_SYMBOLS = [
-    # 2026-07-14 更新：與 COIN_PROFILE_CONFIG 同步，只保留24h量>0.5億的真實加密幣
-    # ATR篩選門檻不變（MIN_ATR_PCT=2%、MAX_ATR_PCT=6%、1H量0.30%~2.8%）
-    "BTCUSDT", "ETHUSDT", "BNBUSDT",
-    "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT",
-    "UNIUSDT", "AAVEUSDT",
-    "HYPEUSDT", "WLDUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
+    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
 CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
 # 選幣數擴大到 15：新倉條件變嚴後，需要更多候選給 5 個倉位槽篩選。
@@ -415,9 +412,7 @@ def _follow_source_radar_switch(force_start=False):
 from services.binance_service import get_dynamic_top_15_coins
 
 def auto_radar_switch(force_start=False, restart_on_change=True):
-    """動態選幣：根據 24h 成交量與 ATR 波動度，動態選出當前最適合的 15 個幣種，並更新配置。
-    掃描全市場，但只保留真實加密幣（排除股票型/ETF/商品型合約）。
-    """
+    """更新固定 15 檔交易池的波動資格與動態風控參數。"""
     status_before_scan = get_bot_status()
     clean_blacklist()
     # 全市場動態掃描 (limit=80 確保足夠候選)
@@ -430,8 +425,6 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         'DRAM','EWY','MRVL','MSTR','NVDA','INTC','PAXG','QQQ',
         'MSFT','GOOGL','AMZN','AAPL','TSLA','NFLX',
     ]
-    
-    _USER_EXCLUDED_SYMBOLS = {'BTCUSDT', 'ETHUSDT', 'BNBUSDT'}
     
     def _is_crypto(sym: str) -> bool:
         # 排除已知股票/ETF/商品關鍵字
@@ -448,43 +441,23 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         if any(base.endswith(s) for s in ('BULL','BEAR','UP','DOWN','3L','3S','2L','2S')):
             return False
             
-        # 排除使用者指定不交易的幣種
-        if sym in _USER_EXCLUDED_SYMBOLS:
-            return False
-            
         return True
 
     ranking = [r for r in ranking if _is_crypto(r['symbol'])]
     eligible = prioritize_entry_ready([r for r in ranking if is_strict_radar_eligible(r)])
-    # 先取完全符合動能區間者；不足候選池上限時，從有效排名補足。
-    selected_rows = list(eligible[:RADAR_SELECT_COUNT])
-    selected_symbols = {r["symbol"] for r in selected_rows}
-    if len(selected_rows) < RADAR_SELECT_COUNT:
-        safe_fallback = [
-            r for r in ranking
-            if r["symbol"] not in selected_symbols
-            and float(r.get("price", 0.0) or 0.0) > 0
-            and float(r.get("atr_pct", 0.0) or 0.0) > 0
-            and float(r.get("one_h_vol_pct", 0.0) or 0.0) > 0
-            and abs(float(r.get("change_pct", 0.0) or 0.0)) <= MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY
-        ]
-        selected_rows.extend(safe_fallback[:RADAR_SELECT_COUNT - len(selected_rows)])
+    from core.config import DEFAULT_SYMBOLS
+    ranking_by_symbol = {row["symbol"]: row for row in ranking}
+    selected_rows = [ranking_by_symbol[sym] for sym in DEFAULT_SYMBOLS if sym in ranking_by_symbol]
 
-    best_symbols = [r["symbol"] for r in selected_rows]
     try:
         with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
             previous_profiles = (json.load(f) or {}).get("profiles", {})
     except Exception:
         previous_profiles = {}
     strict_symbols = {r["symbol"] for r in eligible}
-    from core.idle_tracker import idle_tracker
-    from core.config import RANGE_MODE_ENABLED
-    total_strategies = 2 if RANGE_MODE_ENABLED else 1
-    current_active = status_before_scan.get("active_symbols", [])
 
     now = time.time()
     profiles = {}
-    eligibility_changed = False
     for idx, row in enumerate(selected_rows):
         sym = row["symbol"]
         profile = _compute_dynamic_profile(sym, row["atr_pct"], row["price"], idx + 1, len(selected_rows))
@@ -522,29 +495,9 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
             "_trade_eligible": trade_eligible,
             "_trade_eligibility_reason": reason,
         })
-        if bool(previous.get("_trade_eligible", False)) != trade_eligible:
-            eligibility_changed = True
         profiles[sym] = profile
 
-    # 實際核心只取設定檔前 15 檔。成熟可交易幣必須排在觀察中候選之前，
-    # 嚴格候選再排在僅監控補位之前，避免不可下單幣占滿交易池。
-    # 同時優先排入非閒置（active）的幣種，閒置過久的降權到後面。
-    selected_rows.sort(
-        key=lambda row: (
-            not idle_tracker.is_idle(row["symbol"], total_strategies) if row["symbol"] in current_active else True,
-            bool(profiles[row["symbol"]].get("_trade_eligible", False)),
-            bool(profiles[row["symbol"]].get("_radar_strict_eligible", False)),
-            float(row.get("entry_readiness_score", 0.0) or 0.0),
-            float(row.get("momentum_score", 0.0) or 0.0),
-        ),
-        reverse=True,
-    )
-    from core.config import DEFAULT_SYMBOLS
-    best_symbols = [row["symbol"] for row in selected_rows if row["symbol"] in DEFAULT_SYMBOLS]
-    # 補足白名單中剩餘的藍籌主流幣
-    for sym in DEFAULT_SYMBOLS:
-        if sym not in best_symbols:
-            best_symbols.append(sym)
+    best_symbols = list(DEFAULT_SYMBOLS)
 
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
@@ -555,11 +508,11 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     save_symbol_config(trade_symbols)
     _save_radar_profiles(profiles)
     
-    add_system_log(f"🎯 [動態選幣] 已更新交易池為前 15 名動能幣種: {', '.join(trade_symbols)}", "success")
+    add_system_log(f"🎯 [固定幣池] 已更新 15 檔交易資格: {', '.join(trade_symbols)}", "success")
     
     # 3. 雷達保留 25 檔候選資料，但交易核心只接收資格排序後前 15 檔。
     symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(trade_symbols)
-    if restart_on_change and (force_start or (status_before_scan.get("is_running") and (symbols_changed or eligibility_changed))):
+    if restart_on_change and (force_start or (status_before_scan.get("is_running") and symbols_changed)):
         # 注意：start_bot 會處理重新啟動邏輯
         start_bot(trade_symbols, status_before_scan.get("trade_amount", 150.0))
     
