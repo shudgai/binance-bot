@@ -156,8 +156,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
         # 做空時 RSI < 52 表示已在下跌中途（超賣風險高），不跟進
         # 做多時 RSI > 65 表示已在上漲中途（超買風險高），不跟進
         # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
-        MA7_SIMPLE_SHORT_RSI_FLOOR = 40.0   # 放寬做空最低 RSI 要求（原 52.0 太嚴苛）
-        MA7_SIMPLE_LONG_RSI_CEIL   = 70.0   # 做多最高 RSI 要求
+        MA7_SIMPLE_SHORT_RSI_FLOOR = 20.0   # 下修做空最低 RSI 要求至 20.0，允許在強烈跌勢中追空
+        MA7_SIMPLE_LONG_RSI_CEIL   = 75.0   # 做多最高 RSI 要求
 
         # 規則 2：15m RSI 多時間框架確認
         rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
