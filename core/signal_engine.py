@@ -32,7 +32,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
     # 原本完全沒有 ADX 下限），進場後幾十秒內就整段反轉回吐。四條 MA 趨勢路線
     # 共用同一個最低 ADX 門檻，低於門檻直接不產生任何 MA 訊號——沒有趨勢的
     # 環境，趨勢跟隨策略本來就不該進場，不分路線都一樣。
-    MIN_TREND_ADX = 10.0
+    # 模式 A（高品質杜絕假突破）：趨勢強度 ADX 低於 18.0 直接過濾，拒絕死水盤整
+    MIN_TREND_ADX = 18.0
     if adx < MIN_TREND_ADX:
         s["entry_block_reason"] = f"ADX={adx:.1f} < {MIN_TREND_ADX:.0f}，盤整無趨勢，暫停 MA 訊號"
         return (None, 0, None)
@@ -53,11 +54,11 @@ def compute_signal_strength(sym, realtime_trigger=False):
     personality = s.get("personality", "calm")
     atr_pct = float(s.get("atr_pct", 0.0))
 
-    # 動態量能閾值 — 放寬至 0.20x，提升低量盤整時的開倉頻率
-    base_limit = 0.20
+    # 模式 A（高品質杜絕假突破）：量能必須達到 20 週期均量的 0.80x 以上，真金白銀掃盤才放行
+    base_limit = 0.80
     if atr_pct > 5.0:
-        base_limit = 0.75  # 波動失控時稍微收緊（原 1.0，稍降以保留一定彈性）
-    breakout_limit = base_limit * 1.5
+        base_limit = 1.00  # 波動劇烈時要求 1.0x 滿量
+    breakout_limit = base_limit * 1.3
 
     long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
     short_stack = ma7 < ma25 and ma7 < prev_ma7 and ma25 <= prev_ma25
