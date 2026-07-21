@@ -1707,16 +1707,9 @@ async def check_paper_pending_order(sym):
 
 
 def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None):
-    # MA25 回調使用被動限價；已收線交叉與帶量突破使用 IOC 限價追蹤，
-    # 在限制滑點的同時避免把有效突破掛到行情後方。
-    if entry_route in ("MA_Cross", "MA_Breakout"):
-        return "chase"
-    if entry_route == "MA25_Pullback":
-        return "pullback"
-    # 區間模式：直接用支撐/壓力位精確掛限價，不走 pullback 的 ATR 偏移邏輯
-    if entry_route in ("Range_Support_Long", "Range_Resistance_Short"):
-        return "range_limit"
-    return "pullback"
+    # 只要發出進場訊號，全部採用 "chase"（對手價/買一賣一）掛單，
+    # 確保 100% 立即成交，不再因為等待 ATR 回踩落後於行情而反覆 20 秒逾時撤單。
+    return "chase"
 
 
 async def execute_order(sym, side, price, allocation_pct=0.33, is_rescue_dca=False,
