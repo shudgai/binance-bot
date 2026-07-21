@@ -82,10 +82,12 @@ def is_ma_direction_aligned(state, side, route=None):
         # 剛暴衝上來的尖刺行情（同一套 ADX_SPIKE_GUARD_PCT 門檻）。
         adx = float(state.get("adx", 0.0) or 0.0)
         prev_adx = float(state.get("prev_adx", 0.0) or 0.0)
-        adx_not_spiking = (adx - prev_adx) <= 15.0
+        adx_not_spiking = (adx - prev_adx) <= 20.0
         if side == "buy":
-            return ma7 > prev_ma7 and ma25 >= prev_ma25 and adx_not_spiking
-        return ma7 < prev_ma7 and ma25 <= prev_ma25 and adx_not_spiking
+            # 做多：MA7 向上，且價格高於 MA99 趨勢護城河（大方向做多）
+            return ma7 > prev_ma7 and closed_price >= (ma99 * 0.985) and adx_not_spiking
+        # 做空：MA7 向下，且價格低於 MA99 趨勢天花板（大方向做空）
+        return ma7 < prev_ma7 and closed_price <= (ma99 * 1.015) and adx_not_spiking
     if side == "buy":
         # MA25_Pullback / MA_Breakout：不強求完整牛市排列（MA25>MA99），
         # 只要 MA7>MA25、斜率向上，且收盤與 MA25 均在 MA99 的 98% 緩衝帶以上即可。
