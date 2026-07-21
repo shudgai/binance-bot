@@ -356,30 +356,10 @@ async def _replace_exchange_exit_orders(sym):
     s["exchange_stop_order_id"] = stop_order["id"]
     logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {qty})")
 
-    # ── 方案 B：分批限價停利 (50% 倉位在 +0.6% 建立零滑價 Limit TP，剩餘 50% 走大波段) ──
-    tp_ratio = 0.50
-    tp_profit_pct = 0.006  # +0.6% 獲利目標
-    half_qty = round_step(qty * tp_ratio, prec.get("step_size", 0.001))
-    min_amount = prec.get("min_amount", 0.0) or prec.get("step_size", 0.001)
-    if half_qty >= min_amount:
-        tp_price = avg * (1.0 + tp_profit_pct) if is_long else avg * (1.0 - tp_profit_pct)
-        tp_price = round_step(tp_price, prec["tick_size"])
-        try:
-            tp_order = await exchange_futures.create_order(
-                sym, type="LIMIT", side=close_side, amount=half_qty, price=tp_price,
-                params={"reduceOnly": True}
-            )
-            s["exchange_take_profit_order_id"] = tp_order["id"]
-            logger.info(
-                f"🎯 [分批限價停利] {sym} 成功掛出 50% 倉位 ({half_qty}) 限價停利單 @ {tp_price:.6f} "
-                f"(預期 +0.60% 淨利，0滑價被動成交) | 剩餘 50% 倉位保留供大趨勢運作"
-            )
-        except Exception as _tp_err:
-            logger.info(f"⚠️ [分批限價停利掛單失敗] {sym}: {_tp_err}")
-            s["exchange_take_profit_order_id"] = None
-    else:
-        s["exchange_take_profit_order_id"] = None
-        logger.info(f"🎯 [分批限價停利] {sym} 50% 數量 {half_qty} 低於交易所最小下單量，略過限價停利掛單")
+    # 使用者要求「利潤全部改移動停利，全部入袋、利潤往上移動停利也跟著往上」：
+    # 不再對 50% 倉位掛固定 +0.6% 限價停利單提前鎖死獲利上限，全部倉位改由
+    # update_trailing_stop / MA PeakLock 的移動停損機制管理出場。
+    s["exchange_take_profit_order_id"] = None
 
 
 async def _sync_ma_exchange_profit_stop(sym):
@@ -486,7 +466,9 @@ async def _ensure_exchange_exit_orders(sym):
         if not side_matches or not qty_matches:
             continue
         key = "stop" if order_type in ("STOP_MARKET", "STOP") else "take_profit"
-        if is_ma_route and key == "take_profit":
+        if key == "take_profit":
+            # 全倉統一改由移動停損管理獲利出場，交易所端不再保留固定停利單，
+            # 任何殘留的舊版停利單一律視為多餘掛單，交給下方清除。
             continue
         if is_ma_route and key == "stop":
             trigger_price = float(order.get("triggerPrice") or order.get("stopPrice") or 0.0)
@@ -508,12 +490,11 @@ async def _ensure_exchange_exit_orders(sym):
         await _cancel_exchange_exit_order_id(sym, order_id, f"殘留{label}")
 
     s["exchange_stop_order_id"] = chosen.get("stop", {}).get("algoId")
-    s["exchange_take_profit_order_id"] = chosen.get("take_profit", {}).get("algoId")
-    exits_complete = bool(s.get("exchange_stop_order_id")) and (
-        is_ma_route or bool(s.get("exchange_take_profit_order_id"))
-    )
+    # 全倉統一改由移動停損管理獲利出場，不再要求固定限價停利單存在。
+    s["exchange_take_profit_order_id"] = None
+    exits_complete = bool(s.get("exchange_stop_order_id"))
     if exits_complete:
-        label = "1.5% 災難止損存在、高點鎖利由即時行情管理" if is_ma_route else "止損/停利單皆存在且數量正確"
+        label = "1.5% 災難止損存在、高點鎖利由即時行情管理" if is_ma_route else "止損存在，獲利出場由移動停損管理"
         logger.info(f"✅ [交易所退出單確認] {sym} Algo {label}")
         return
 

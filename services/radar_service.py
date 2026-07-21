@@ -60,8 +60,6 @@ def radar_eligibility(row: dict, route: str | None = None) -> tuple[bool, str, s
         return False, f"僅監控：{label} ATR {atr_pct:.2f}% 低於 {MIN_ATR_PCT_FOR_ENTRY:.2f}%", route_class
     if atr_pct > max_atr:
         return False, f"僅監控：{label} ATR {atr_pct:.2f}% 高於 {max_atr:.2f}%", route_class
-    if one_h < MIN_1H_VOL_PCT_FOR_ENTRY:
-        return False, f"僅監控：{label} 1H 波動 {one_h:.2f}% 低於 {MIN_1H_VOL_PCT_FOR_ENTRY:.2f}%", route_class
     if one_h > max_one_h:
         return False, f"僅監控：{label} 1H 波動 {one_h:.2f}% 高於 {max_one_h:.2f}%", route_class
     if change_pct > MAX_24H_ABS_CHANGE_PCT_FOR_ENTRY:

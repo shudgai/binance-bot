@@ -64,7 +64,17 @@ def run_scan():
         # 按 24H 成交金額 (USDT) 降序排序，確保選出的全是大流動性主流幣
         candidates.sort(key=lambda x: x[1], reverse=True)
 
-        selected_symbols = [item[0] for item in candidates[:MAX_SYMBOLS]]
+        # 優先保留白名單藍籌主流幣 (BTC, ETH, BNB 等)
+        selected_symbols = []
+        for sym in WHITELIST:
+            if sym not in selected_symbols:
+                selected_symbols.append(sym)
+        for item in candidates:
+            if len(selected_symbols) >= MAX_SYMBOLS:
+                break
+            sym = item[0]
+            if sym not in selected_symbols:
+                selected_symbols.append(sym)
 
         # Sort selected symbols alphabetically
         selected_symbols.sort()
