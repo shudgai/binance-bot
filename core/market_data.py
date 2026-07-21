@@ -232,6 +232,7 @@ async def fetch_all_klines(exchange):
 
 
 
+
 async def fetch_ema_15m(exchange, sym):
     from core import ctx
     try:
@@ -246,6 +247,48 @@ async def fetch_ema_15m(exchange, sym):
     except Exception as e:
         logger.info(f"⚠️ [15m EMA獲取失敗] {sym}: {e}")
         return 0.0, 0.0
+
+
+async def fetch_rsi_15m(exchange, sym):
+    """抓取 15 分鐘 K 線並計算 RSI-14，存入 ctx.STATES[sym]['rsi_15m']。
+    用於 MA7_Simple 多時間框架確認：避免在 5 分鐘超賣/超買區做空/做多，
+    但 15 分鐘趨勢方向相反，導致反向被軋。
+    """
+    from core import ctx
+    RSI_PERIOD_15M = 14
+    try:
+        async with ctx.request_semaphore:
+            ohlcv = await exchange.fetch_ohlcv(sym, '15m', limit=RSI_PERIOD_15M + 5)
+        if not ohlcv or len(ohlcv) < RSI_PERIOD_15M + 1:
+            return 50.0
+        closes = np.array([float(x[4]) for x in ohlcv])
+        deltas = np.diff(closes[-(RSI_PERIOD_15M + 1):])
+        gains = deltas[deltas > 0]
+        losses = -deltas[deltas < 0]
+        avg_g = gains.mean() if len(gains) > 0 else 1e-10
+        avg_l = losses.mean() if len(losses) > 0 else 1e-10
+        rs = avg_g / avg_l if avg_l > 0 else 99.0
+        rsi = min(99.0, 100.0 - (100.0 / (1.0 + rs)))
+        ctx.STATES[sym]["rsi_15m"] = float(rsi)
+        return float(rsi)
+    except Exception as e:
+        logger.info(f"⚠️ [15m RSI獲取失敗] {sym}: {e}")
+        return float(ctx.STATES.get(sym, {}).get("rsi_15m", 50.0))
+
+
+async def fetch_all_rsi_15m(exchange):
+    """每 5 分鐘更新一次所有監控幣種的 15 分鐘 RSI。
+    每次請求間隔 200ms 避免打爆 API 權重。
+    """
+    from core import ctx
+    symbols = list(dict.fromkeys(ctx.ALL_SYMBOLS))
+    for sym in symbols:
+        try:
+            await fetch_rsi_15m(exchange, sym)
+        except Exception as e:
+            logger.info(f"⚠️ [15m RSI全量更新異常] {sym}: {e}")
+        await asyncio.sleep(0.2)
+    logger.info(f"📊 [15m RSI] 已更新 {len(symbols)} 個幣種的 15 分鐘 RSI")
 
 
 async def fetch_all_ema_15m(exchange):

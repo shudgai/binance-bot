@@ -729,6 +729,12 @@ async def main_loop(exchange):
                 ctx.LAST_KLINES_UPDATE = current_time
                 logger.info(f"🔄 [KLines] 已更新市場行情資料")
 
+            # 1.2 更新 15m RSI（多時間框架確認，每5分鐘一次）
+            if ctx.LAST_MTF_RSI_UPDATE < current_time - 300:
+                from core.market_data import fetch_all_rsi_15m
+                ctx.LAST_MTF_RSI_UPDATE = current_time
+                asyncio.create_task(fetch_all_rsi_15m(exchange_market_data))
+
             # 1.5 監控池同步檢查 (每30秒)：main.py 記憶體裡的 ctx.ALL_SYMBOLS 才是真正
             # 在跑的監控清單，但畫面顯示是 API 那個獨立行程從 bot_symbols.json 讀出來
             # 的——好幾條會異動 ALL_SYMBOLS 的路徑（雷達換幣、冷卻補位等）分散在不同
