@@ -1351,9 +1351,9 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
     # 反覆拒絕進場（常見於 MA25_Pullback 回踩期間 RSI 自然走弱）。
     # 真正嚴重失效（如 RSI 跌至 38）仍會被攔下。
     current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
-    if side == "buy" and current_rsi < 45.0:
-        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 45)"
-    if side == "sell" and current_rsi > 55.0:
-        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 55)"
+    if side == "buy" and current_rsi < 30.0:
+        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 30)"
+    if side == "sell" and current_rsi > 70.0:
+        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 70)"
 
     return True, "ok"
