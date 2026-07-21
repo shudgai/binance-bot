@@ -209,7 +209,7 @@ PRICE_MOVEMENT_THRESHOLD  = 0.0015
 ENTRY_SURGE_THRESHOLD = float(os.getenv("ENTRY_SURGE_THRESHOLD", 0.5))  # 統一 0.50x（原 0.70x）
 # MA7／MA25 交叉後至少要拉開 0.005%，避免均線仍黏合時把一次跳動誤認成方向成立。
 MA_CROSS_MIN_GAP_PCT = float(os.getenv("MA_CROSS_MIN_GAP_PCT", 0.00005))
-MIN_ATR_PCT_FOR_ENTRY = float(os.getenv("MIN_ATR_PCT_FOR_ENTRY", 1.5))
+MIN_ATR_PCT_FOR_ENTRY = float(os.getenv("MIN_ATR_PCT_FOR_ENTRY", 0.3))   # 下修至 0.3%，放行 BTC/ETH/BNB 穩健藍籌資產
 MAX_ATR_PCT_FOR_ENTRY = float(os.getenv("MAX_ATR_PCT_FOR_ENTRY", 5.0))
 MIN_1H_VOL_PCT_FOR_ENTRY = float(os.getenv("MIN_1H_VOL_PCT_FOR_ENTRY", 0.30))
 MAX_1H_VOL_PCT_FOR_ENTRY = float(os.getenv("MAX_1H_VOL_PCT_FOR_ENTRY", 2.8))
