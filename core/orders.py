@@ -350,17 +350,30 @@ async def _replace_exchange_exit_orders(sym):
     s["exchange_stop_order_id"] = stop_order["id"]
     logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {qty})")
 
-    if is_ma_route:
+    # ── 方案 B：分批限價停利 (50% 倉位在 +0.6% 建立零滑價 Limit TP，剩餘 50% 走大波段) ──
+    tp_ratio = 0.50
+    tp_profit_pct = 0.006  # +0.6% 獲利目標
+    half_qty = round_step(qty * tp_ratio, prec.get("step_size", 0.001))
+    min_amount = prec.get("min_amount", 0.0) or prec.get("step_size", 0.001)
+    if half_qty >= min_amount:
+        tp_price = avg * (1.0 + tp_profit_pct) if is_long else avg * (1.0 - tp_profit_pct)
+        tp_price = round_step(tp_price, prec["tick_size"])
+        try:
+            tp_order = await exchange_futures.create_order(
+                sym, type="LIMIT", side=close_side, amount=half_qty, price=tp_price,
+                params={"reduceOnly": True}
+            )
+            s["exchange_take_profit_order_id"] = tp_order["id"]
+            logger.info(
+                f"🎯 [分批限價停利] {sym} 成功掛出 50% 倉位 ({half_qty}) 限價停利單 @ {tp_price:.6f} "
+                f"(預期 +0.60% 淨利，0滑價被動成交) | 剩餘 50% 倉位保留供大趨勢運作"
+            )
+        except Exception as _tp_err:
+            logger.info(f"⚠️ [分批限價停利掛單失敗] {sym}: {_tp_err}")
+            s["exchange_take_profit_order_id"] = None
+    else:
         s["exchange_take_profit_order_id"] = None
-        logger.info(f"🎯 [MA波段掛單] {sym} 不掛固定價停利，使用高點鎖利或等待 MA7/MA25 反向交叉")
-        return
-
-    tp_order = await exchange_futures.create_order(
-        sym, type="TAKE_PROFIT_MARKET", side=close_side, amount=qty,
-        params={"stopPrice": take_profit_price, "reduceOnly": True}
-    )
-    s["exchange_take_profit_order_id"] = tp_order["id"]
-    logger.info(f"🎯 [交易所挂單] {sym} 成功挂出 Take Profit Market 停利單 @ {take_profit_price} (數量: {qty})")
+        logger.info(f"🎯 [分批限價停利] {sym} 50% 數量 {half_qty} 低於交易所最小下單量，略過限價停利掛單")
 
 
 async def _sync_ma_exchange_profit_stop(sym):
