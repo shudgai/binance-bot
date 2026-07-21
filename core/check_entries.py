@@ -1097,9 +1097,16 @@ async def check_entries():
                 f"(基礎={strength:.2f}, 樣本加分={s['_range_sample_bonus']:.2f})"
             )
 
-        # 藍籌頂級主流幣 (BTC / ETH / BNB / SOL) 特權優先加分 +50.0，確保主流幣優先開倉出線！
-        if sym in ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 50.0
+        # ── 三大板塊資產分層特權權重（對齊頂級合約交易哲學） ──
+        # 一、主流雙雄 (BTC/ETH)：+60.0 分（最高優先權，抗風險最強、技術線型最健康）
+        # 二、高貝塔主流 (SOL/BNB/XRP/ADA/NEAR/UNI/AAVE)：+40.0 分（波段爆發力強、連動性高）
+        # 三、迷因熱點 (DOGE/1000PEPE)：+10.0 分（嚴控插針與資金費率風險）
+        if sym in ("BTCUSDT", "ETHUSDT"):
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 60.0
+        elif sym in ("SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT"):
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 40.0
+        elif sym in ("DOGEUSDT", "1000PEPEUSDT"):
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 10.0
 
         # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，給予適度品質排序加分
         atr_pct = float(s.get("atr_pct", 0.0) or 0.0)

@@ -1,20 +1,21 @@
 {
   "symbols": [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "BNBUSDT",
+    "LINKUSDT",
+    "DOTUSDT",
+    "AVAXUSDT",
+    "FILUSDT",
+    "XLMUSDT",
+    "UNIUSDT",
     "XRPUSDT",
     "DOGEUSDT",
-    "ADAUSDT",
-    "NEARUSDT",
-    "UNIUSDT",
-    "AAVEUSDT",
-    "HYPEUSDT",
+    "SUIUSDT",
+    "SOLUSDT",
     "WLDUSDT",
-    "1000PEPEUSDT",
-    "TRUMPUSDT",
-    "SUIUSDT"
-  ],
-  "profiles": {}
+    "ADAUSDT",
+    "ENAUSDT",
+    "TAOUSDT",
+    "LTCUSDT",
+    "BCHUSDT",
+    "LDOUSDT"
+  ]
 }
