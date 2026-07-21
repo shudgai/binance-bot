@@ -728,7 +728,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     # 降至 0.4%(一般) / 0.6%(高彈)，讓保本鎖在真實峰值範圍內生效。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.002  # 使用者指示：從 0.2% 浮盈開始啟用保本/移動停利
+    breakeven_threshold = 0.005  # 浮盈達 0.5% 以上才啟動保本，避免 0.2% 浮盈太近鎖住開倉價被秒平
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     _hp_soft = s.get("highest_profit_pct", 0.0)
@@ -979,10 +979,10 @@ async def check_exits(sym):
             )
             return
 
-        # 移動停利穿越：連續多筆/秒數確認即出場，不再等整根 K 棒收線
-        # （見 RANGE_TRAILING_CONFIRM_TICKS/SEC 定義說明）。
+        # 移動停利穿越：持倉前 60 秒屬於「初始呼吸保護期」，禁止任何移動停利/保本平倉，避免剛進場被雜訊秒平。
+        hold_sec = max(0.0, time.time() - float(s.get("open_time", time.time()) or time.time()))
         ts_price = float(s.get("trailing_stop_price", 0.0) or 0.0)
-        trailing_crossed = ts_price > 0 and (
+        trailing_crossed = (hold_sec >= 60.0) and ts_price > 0 and (
             (is_long and p <= ts_price) or (not is_long and p >= ts_price)
         )
         if _range_trailing_cross_confirmed(sym, trailing_crossed, time.time()):
