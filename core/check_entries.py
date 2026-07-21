@@ -1280,7 +1280,7 @@ async def check_entries():
 
 
             weight_label = f"{allocation_pct*100:.1f}%"
-            logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f} (原始佔比 {raw_ratio*100:.1f}%, 絕對強度換算上限 {absolute_alloc_pct*100:.1f}%)，實際分配資金為: {weight_label}")
+            logger.info(f"⚖️ [Allocation_Ratio] {sym} 強度 {strength:.1f}，實際分配資金為: {weight_label}")
             if not has_pos:
                 logger.info(f"🛒 [ENTRY_DISPATCH] {sym} 將進入 execute_order | side={side} route={route} strength={strength:.2f} allocation={allocation_pct:.3f}")
 
