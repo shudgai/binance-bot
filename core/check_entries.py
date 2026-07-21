@@ -1097,10 +1097,14 @@ async def check_entries():
                 f"(基礎={strength:.2f}, 樣本加分={s['_range_sample_bonus']:.2f})"
             )
 
-        # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，波段獲利潛力越大，給予品質排序加分
+        # 藍籌頂級主流幣 (BTC / ETH / BNB / SOL) 特權優先加分 +50.0，確保主流幣優先開倉出線！
+        if sym in ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"):
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 50.0
+
+        # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，給予適度品質排序加分
         atr_pct = float(s.get("atr_pct", 0.0) or 0.0)
         if atr_pct > 0:
-            volatility_bonus = atr_pct * 10.0  # 0.3% ATR% -> +3.0 分, 0.5% ATR% -> +5.0 分
+            volatility_bonus = atr_pct * 2.0  # 微幅加分
             s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + volatility_bonus
 
         validated_candidates.append((sym, side, strength, route, is_range_sig))
