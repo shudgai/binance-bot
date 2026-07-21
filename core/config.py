@@ -35,9 +35,9 @@ RANGE_ADX_THRESHOLD = 35.0          # ADX < 此值才視為區間行情（趨勢
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
-RANGE_MIN_NET_PROFIT_PCT = 0.003    # 扣手續費後最低獲利空間 0.3%（放寬區間進場門檻）
-RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊，不另作人工配額限制）
-RANGE_MIN_SIGNAL_STRENGTH = 18.0    # 區間模式最低信號強度（高於 MA 的 15，補償結構較弱）
+RANGE_MIN_NET_PROFIT_PCT = 0.001    # 最低獲利空間降至 0.1%（讓微幅區間也能秒開倉）
+RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
+RANGE_MIN_SIGNAL_STRENGTH = 10.0    # 區間模式最低信號強度降至 10.0（極高頻開倉）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
