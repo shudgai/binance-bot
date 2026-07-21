@@ -1353,12 +1353,14 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
         if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
 
-    # 掛單／送單前必須維持與初次訊號完全相同的 RSI 動能門檻。舊版放寬到多單
-    # RSI>=50、空單 RSI<=50，會讓原本已失效、回到中性區的 MA_Cross 仍然成交。
+    # 掛單／送單前維持基本 RSI 動能門檻，確保訊號未嚴重失效。
+    # 門檻放寬至 45/55（原本 51/49），避免 RSI 在 48-52 正常震盪時
+    # 反覆拒絕進場（常見於 MA25_Pullback 回踩期間 RSI 自然走弱）。
+    # 真正嚴重失效（如 RSI 跌至 38）仍會被攔下。
     current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
-    if side == "buy" and current_rsi < 51.0:
-        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 51)"
-    if side == "sell" and current_rsi > 49.0:
-        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 49)"
+    if side == "buy" and current_rsi < 45.0:
+        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 45)"
+    if side == "sell" and current_rsi > 55.0:
+        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 55)"
 
     return True, "ok"
