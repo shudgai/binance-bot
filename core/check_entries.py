@@ -1233,14 +1233,7 @@ async def check_entries():
             s["pending_side"] = side
 
             # --- 動態權重分配 (Dynamic Position Sizing) ---
-            raw_ratio = strength / total_weight if total_weight > 0 else 1.0
-            _strength_floor = 10.0
-            _strength_ceiling = 32.0
-            _min_alloc_pct = 0.30
-            _max_alloc_pct = 0.85
-            _strength_scaled = max(0.0, min(1.0, (strength - _strength_floor) / (_strength_ceiling - _strength_floor)))
-            absolute_alloc_pct = _min_alloc_pct + _strength_scaled * (_max_alloc_pct - _min_alloc_pct)
-            allocation_pct = min(raw_ratio, absolute_alloc_pct, _max_alloc_pct)
+            allocation_pct = 1.0  # 使用者指示：每槽使用 100% 滿額權重分配
 
             # 流動性折扣
             _LIQ_MIN = 1_000_000

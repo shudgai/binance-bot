@@ -728,7 +728,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     # 降至 0.4%(一般) / 0.6%(高彈)，讓保本鎖在真實峰值範圍內生效。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.015 if is_high_beta else 0.012
+    breakeven_threshold = 0.002  # 使用者指示：從 0.2% 浮盈開始啟用保本/移動停利
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     _hp_soft = s.get("highest_profit_pct", 0.0)
@@ -743,10 +743,6 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
             s["is_breakeven_locked"] = True
         else:
             new_be_sl = avg_price * (1.0 - fee_safe_profit)
-            # trailing_stop_price 初始值是 0.0（不是缺項），對空單而言 0.0 代表「尚未設定」
-            # 而不是「停損價=0」。直接 min(0.0, new_be_sl) 恆等於 0.0，保本鎖永遠鎖不上，
-            # 回檔時只能退到後面 ATR 動態停損那組更寬鬆的距離，等於整段保本機制形同虛設
-            # 0.6% 以上才屬於需要保本鎖利的區間。
             _cur_ts_short = s.get("trailing_stop_price", 0.0)
             s["trailing_stop_price"] = min(_cur_ts_short if _cur_ts_short > 0 else float('inf'), new_be_sl)
             s["stop_loss"] = s["trailing_stop_price"]
@@ -756,19 +752,12 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
     profile_type = str(s.get("profile_type", ""))
-    min_trailing_profit = 0.015 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.010
+    min_trailing_profit = 0.002
 
-    # 使用者指定的線性移動停損規則：獲利 < 1.0% 時維持固定停損 X%（hard_stop_loss_pct），
-    # 獲利 >= 1.0% 才啟動移動停損，之後現價每再往有利方向多走 0.2%，停損就跟著移動 0.1%
-    # （追回比例 0.5，連續比例計算，不用「跨過整數倍才更新」的階梯寫法，避免兩次檢查
-    # 之間的價格波動被漏掉）。加入滯後效應(hysteresis)：一旦啟動就不會因為獲利回落到
-    # 1.0% 以下而解除、也不會把停損放寬回原本更寬的固定百分比——活化當下的價格與停損
-    # 位置固定為基準，之後只能往更保護的方向推進（棘輪），最終再跟其他既有的保護機制
-    # （保本鎖、Soft Trailing、清算安全緩衝）取最保守的一個。
     from core.config import HARD_STOP_LOSS_PCT as _HARD_SL_DEFAULT
     _hard_sl_pct = float(s.get("hard_stop_loss_pct", _HARD_SL_DEFAULT) or _HARD_SL_DEFAULT)
-    _LIN_TRAIL_ACTIVATION_PCT = 0.010   # 1.0%
-    _LIN_TRAIL_CATCH_UP_RATIO = 0.5     # 每漲 0.2% 移動 0.1%
+    _LIN_TRAIL_ACTIVATION_PCT = 0.002   # 0.2% 浮盈開始移動停利
+    _LIN_TRAIL_CATCH_UP_RATIO = 0.75    # 利潤往上，移動停利以 0.75 追隨比例緊密向上推升
 
     if not s.get("_lin_trail_armed", False) and s["highest_profit_pct"] >= _LIN_TRAIL_ACTIVATION_PCT:
         s["_lin_trail_armed"] = True
