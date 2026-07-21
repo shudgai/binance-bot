@@ -660,7 +660,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     # 高點量縮全平或 trailing 穿越決定，不再拆分倉位。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.0035 if is_high_beta else 0.0025
+    breakeven_threshold = 0.015 if is_high_beta else 0.012
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     trailing_distance_atr = s.get("trailing_distance_atr", s.get("trailing_stop_multiplier", 2.5))
@@ -728,7 +728,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     # 降至 0.4%(一般) / 0.6%(高彈)，讓保本鎖在真實峰值範圍內生效。
     profile_type = str(s.get("profile_type", ""))
     is_high_beta = "High_Beta" in profile_type or "Speculative" in profile_type
-    breakeven_threshold = 0.006 if is_high_beta else 0.004
+    breakeven_threshold = 0.015 if is_high_beta else 0.012
     
     fee_safe_profit = ROUND_TRIP_FEE_PCT + 0.0015
     _hp_soft = s.get("highest_profit_pct", 0.0)
@@ -756,10 +756,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
 
     profit_atr_multiple = (current_price - avg_price) / atr_val if is_long else (avg_price - current_price) / atr_val
     profile_type = str(s.get("profile_type", ""))
-    # [2026-07-14 再校準] min_trailing_profit 從 1.0%/0.6% 降至 0.4%/0.25%：
-    # 主 Trailing 啟動前需獲利達此門溻， 0.6%/1.0% 远高於峰值中位數 0.28%，
-    # 等於主 Trailing 從未启動銀保來。降至 0.25%/0.40%，讓主追蹤在真實峰值範圍內問訊。
-    min_trailing_profit = 0.004 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.0025
+    min_trailing_profit = 0.015 if ("High_Beta" in profile_type or "Speculative" in profile_type) else 0.010
 
     # 使用者指定的線性移動停損規則：獲利 < 1.0% 時維持固定停損 X%（hard_stop_loss_pct），
     # 獲利 >= 1.0% 才啟動移動停損，之後現價每再往有利方向多走 0.2%，停損就跟著移動 0.1%
