@@ -445,6 +445,7 @@ class EntryRiskTests(unittest.TestCase):
         ]
 
         mock_exchange = AsyncMock()
+        mock_exchange.fetch_mark_price.return_value = {"markPrice": "110.0"}
         mock_exchange.fetch_ticker.return_value = {"last": 110.0}
         mock_exchange.fetch_order_book.return_value = {"bids": [[110.0, 1000.0]], "asks": [[110.1, 100.0]]}
         mock_exchange.fetch_balance.return_value = {"USDT": {"total": 10000.0, "free": 10000.0}}
@@ -476,6 +477,7 @@ class EntryRiskTests(unittest.TestCase):
         s["last_entry_time"] = 0.0
 
         mock_exchange = AsyncMock()
+        mock_exchange.fetch_mark_price.return_value = {"markPrice": "95.0"}
         mock_exchange.fetch_ticker.return_value = {"last": 95.0}
         mock_exchange.fetch_order_book.return_value = {"bids": [[95.0, 1000.0]], "asks": [[95.1, 100.0]]}
         with patch("core.orders.compute_per_coin_margin", return_value=3000.0), \

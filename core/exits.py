@@ -33,7 +33,7 @@ MA_WRONG_DIRECTION_WINDOW_SEC = 1800
 # 「這是真反轉還是正常雜訊」的，交給 check_realtime_sell_pressure() 看即時
 # 成交流方向、以及 MA7_Closed_Break/Death_Cross/Golden_Cross 等結構破壞判斷，
 # 讓浮盈有機會跟著趨勢跑；代價是萬一賣壓沒抓到真反轉，回吐幅度會比原本更大，
-# 最終防線退回到 MA_DISASTER_STOP_PCT。跨過 MA_PEAK_LOCK_ARM_PCT（0.6%，已是
+# 最終防線退回到 MA_DISASTER_STOP_PCT。跨過 MA_PEAK_LOCK_ARM_PCT（1.0%，已是
 # 有意義的實際獲利）之後，才進入下面原有的主鎖利層繼續運作。
 MA_ACTIVE_RISK_STOP_PCT = 0.01
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005

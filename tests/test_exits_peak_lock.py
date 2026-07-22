@@ -23,18 +23,17 @@ class TestExitsPeakLock(unittest.TestCase):
 
     def test_peak_lock_long_large_atr_respects_60pct_floor(self):
         """
-        avg=100, price=100.8 → peak=0.8%.
-        ATR=2.0 → atr*0.5 gap = 1.0 → without floor proposed = 100.8-1.0 = 99.8 (below entry).
-        60% floor: avg*(1+0.008*0.6) = 100.48.
-        Fee floor: avg*(1+fee_floor) ≈ 100.25 (below 100.48).
-        Expect lock_price ≈ 100.48.
+        avg=100, price=101.2 → peak=1.2% (above the current 1.0% arm threshold).
+        ATR=2.0 → the ATR gap alone would place the lock below entry.
+        60% floor: avg*(1+0.012*0.6) = 100.72.
+        Expect lock_price ≈ 100.72.
         """
         state = self._make_state()
         states = {"TESTUSDT": state}
         with patch.object(exits_mod.ctx, "STATES", states):
-            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 100.8, is_long=True)
-        self.assertAlmostEqual(lock_price, 100.48, places=4,
-            msg=f"Expected lock_price ≈ 100.48 but got {lock_price}")
+            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 101.2, is_long=True)
+        self.assertAlmostEqual(lock_price, 100.72, places=4,
+            msg=f"Expected lock_price ≈ 100.72 but got {lock_price}")
         self.assertFalse(crossed)
 
     def test_peak_lock_long_crossed_at_60pct_floor(self):
@@ -42,23 +41,23 @@ class TestExitsPeakLock(unittest.TestCase):
         state = self._make_state()
         states = {"TESTUSDT": state}
         with patch.object(exits_mod.ctx, "STATES", states):
-            exits_mod.update_ma_peak_lock("TESTUSDT", 100.8, is_long=True)
-            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 100.40, is_long=True)
-        self.assertTrue(crossed, f"Expected crossed=True at 100.40 (lock={lock_price})")
+            exits_mod.update_ma_peak_lock("TESTUSDT", 101.2, is_long=True)
+            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 100.70, is_long=True)
+        self.assertTrue(crossed, f"Expected crossed=True at 100.70 (lock={lock_price})")
 
     def test_peak_lock_short_large_atr_respects_60pct_floor(self):
         """
-        avg=100, price=99.2 → short peak=0.8%.
-        ATR=2.0 → peak_price+atr*0.5 = 99.2+1.0 = 100.2 (above entry).
-        60% floor: avg*(1-0.008*0.6) = 99.52.
-        Expect lock_price ≈ 99.52.
+        avg=100, price=98.8 → short peak=1.2% (above the current 1.0% arm threshold).
+        ATR=2.0 → the ATR gap alone would place the lock above entry.
+        60% floor: avg*(1-0.012*0.6) = 99.28.
+        Expect lock_price ≈ 99.28.
         """
         state = self._make_state()
         states = {"TESTUSDT": state}
         with patch.object(exits_mod.ctx, "STATES", states):
-            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 99.2, is_long=False)
-        self.assertAlmostEqual(lock_price, 99.52, places=4,
-            msg=f"Expected lock_price ≈ 99.52 but got {lock_price}")
+            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 98.8, is_long=False)
+        self.assertAlmostEqual(lock_price, 99.28, places=4,
+            msg=f"Expected lock_price ≈ 99.28 but got {lock_price}")
         self.assertFalse(crossed)
 
     def test_peak_lock_short_crossed_at_60pct_floor(self):
@@ -66,9 +65,9 @@ class TestExitsPeakLock(unittest.TestCase):
         state = self._make_state()
         states = {"TESTUSDT": state}
         with patch.object(exits_mod.ctx, "STATES", states):
-            exits_mod.update_ma_peak_lock("TESTUSDT", 99.2, is_long=False)
-            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 99.60, is_long=False)
-        self.assertTrue(crossed, f"Expected crossed=True at 99.60 (lock={lock_price})")
+            exits_mod.update_ma_peak_lock("TESTUSDT", 98.8, is_long=False)
+            crossed, lock_price = exits_mod.update_ma_peak_lock("TESTUSDT", 99.30, is_long=False)
+        self.assertTrue(crossed, f"Expected crossed=True at 99.30 (lock={lock_price})")
 
 if __name__ == '__main__':
     unittest.main()

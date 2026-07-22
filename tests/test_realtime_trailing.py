@@ -53,21 +53,20 @@ def test_ma_wave_position_uses_dedicated_realtime_peak_lock():
 
 
 def test_ma_peak_lock_closes_on_realtime_trade_tick():
-    # 小峰值鎖利層（MA_Profit_Floor）已停用，0.8% 峰值改由主鎖利層
-    # （MA_Peak_Lock）接手，且不需要多筆確認，單一 tick 跌破鎖利線即出場。
+    # MA Peak Lock 現從 1.0% 啟動；1.2% 峰值回吐穿線時即時出場。
     sym = "ETHUSDT"
     init_states([sym])
     reset_coin_state(sym)
     state = STATES[sym]
     state.update({
         "qty": 1.0, "avg_price": 100.0, "entry_reason": "MA_Cross",
-        "current_atr": 0.1, "highest_profit_pct": 0.008,
-        "trailing_highest": 100.8, "trade_price_history": [100.7],
+        "current_atr": 0.1, "highest_profit_pct": 0.012,
+        "trailing_highest": 101.2, "trade_price_history": [101.0],
         "trade_qty_history": [1.0],
     })
 
     with patch("core.orders.close_position", AsyncMock()) as close:
-        asyncio.run(update_trade_signal(sym, {"price": 100.5, "amount": 1.0, "timestamp": 1_000_000}))
+        asyncio.run(update_trade_signal(sym, {"price": 100.9, "amount": 1.0, "timestamp": 1_000_000}))
 
     close.assert_awaited_once()
     assert close.await_args.kwargs["reason"] == "[MA_Peak_Lock]"
@@ -81,13 +80,13 @@ def test_ma7_simple_short_peak_lock_closes_on_realtime_trade_tick():
     state = STATES[sym]
     state.update({
         "qty": -1.0, "avg_price": 100.0, "entry_reason": "MA7_Simple",
-        "current_atr": 0.1, "highest_profit_pct": 0.008,
-        "trailing_lowest": 99.2, "trade_price_history": [99.3],
+        "current_atr": 0.1, "highest_profit_pct": 0.012,
+        "trailing_lowest": 98.8, "trade_price_history": [99.0],
         "trade_qty_history": [1.0],
     })
 
     with patch("core.orders.close_position", AsyncMock()) as close:
-        asyncio.run(update_trade_signal(sym, {"price": 99.5, "amount": 1.0, "timestamp": 2_000_000}))
+        asyncio.run(update_trade_signal(sym, {"price": 99.1, "amount": 1.0, "timestamp": 2_000_000}))
 
     close.assert_awaited_once()
     assert close.await_args.kwargs["reason"] == "[MA_Peak_Lock]"
@@ -207,7 +206,7 @@ def test_realtime_trade_does_not_close_before_soft_activation():
     close.assert_not_awaited()
 
 
-def test_realtime_soft_trailing_gap_closes_immediately_instead_of_growing_loss():
+def test_realtime_soft_trailing_stays_off_below_activation():
     sym = "XRPUSDT"
     init_states([sym])
     reset_coin_state(sym)
@@ -227,12 +226,10 @@ def test_realtime_soft_trailing_gap_closes_immediately_instead_of_growing_loss()
     with patch("core.orders.close_position", AsyncMock()) as close:
         asyncio.run(update_trade_signal(sym, {"price": 99.95, "amount": 1.0}))
 
-    close.assert_awaited_once()
-    assert close.await_args.kwargs["reason"] == "[Dynamic_Trailing]"
-    assert close.await_args.kwargs["is_stop_loss"] is True
+    close.assert_not_awaited()
 
 
-def test_realtime_short_soft_trailing_gap_closes_immediately():
+def test_realtime_short_soft_trailing_stays_off_below_activation():
     sym = "XLMUSDT"
     init_states([sym])
     reset_coin_state(sym)
@@ -252,9 +249,7 @@ def test_realtime_short_soft_trailing_gap_closes_immediately():
     with patch("core.orders.close_position", AsyncMock()) as close:
         asyncio.run(update_trade_signal(sym, {"price": 0.18322, "amount": 559.0}))
 
-    close.assert_awaited_once()
-    assert close.await_args.kwargs["reason"] == "[Dynamic_Trailing]"
-    assert close.await_args.kwargs["is_stop_loss"] is True
+    close.assert_not_awaited()
 
 
 def test_single_spike_needs_confirmation_before_trailing():

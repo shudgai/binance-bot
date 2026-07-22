@@ -61,7 +61,7 @@ class MA7ProfitTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(short_data["previous_slope"], 0)
         self.assertGreater(short_data["current_slope"], 0)
 
-    async def test_profitable_long_partials_then_exits_on_next_falling_ma7(self):
+    async def test_partial_tp_then_profit_retention_precedes_ma7_turn(self):
         state = ctx.STATES[self.sym]
         state.update({
             "qty": 10.0,
@@ -81,15 +81,14 @@ class MA7ProfitTurnTests(unittest.IsolatedAsyncioTestCase):
         })
 
         async def partial_fill(*args, **kwargs):
-            state["qty"] = 4.0
+            state["qty"] = 5.0
 
         with patch("core.orders.close_position", AsyncMock(side_effect=partial_fill)) as close_mock:
             await check_exits(self.sym)
             close_mock.assert_awaited_once()
-            self.assertAlmostEqual(close_mock.call_args.args[2], 6.0)
-            self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Profit_Turn_Partial]")
-            self.assertEqual(state["ma7_profit_turn_stage"], 1)
-            self.assertEqual(state["ma7_profit_turn_signal_ts"], 8000)
+            self.assertAlmostEqual(close_mock.call_args.args[2], 5.0)
+            self.assertEqual(close_mock.call_args.kwargs["reason"], "[Partial_TP_50Pct]")
+            self.assertTrue(state["partial_tp_done"])
 
         state["adjusted_this_tick"] = False
         state["close_price"] = 99.0
@@ -98,12 +97,12 @@ class MA7ProfitTurnTests(unittest.IsolatedAsyncioTestCase):
         with patch("core.orders.close_position", AsyncMock()) as close_mock:
             await check_exits(self.sym)
             close_mock.assert_awaited_once()
-            self.assertAlmostEqual(close_mock.call_args.args[2], 4.0)
+            self.assertAlmostEqual(close_mock.call_args.args[2], 5.0)
+            self.assertEqual(close_mock.call_args.kwargs["reason"], "[Profit_70Pct_Retained_TP]")
 
-    async def test_giveback_past_half_of_peak_exits_immediately_without_waiting_for_turn(self):
-        # 實測 BCHUSDT 案例：峰值墊到 0.44%，但 MA7_Profit_Turn_Partial 完全不
-        # 參考峰值，每次都貼著成本價出場。這裡驗證浮盈已經回吐超過峰值一半時，
-        # 不必等 MA7 收線轉彎確認，直接出清剩餘部位。
+    async def test_profit_retention_precedes_ma7_giveback(self):
+        # 統一優先順序：峰值已達 0.6% 且回吐超過 30% 時，
+        # Profit_70Pct_Retained_TP 應先於 MA7 轉彎安全網出清。
         state = ctx.STATES[self.sym]
         state.update({
             "qty": 10.0,
@@ -128,7 +127,7 @@ class MA7ProfitTurnTests(unittest.IsolatedAsyncioTestCase):
 
         close_mock.assert_awaited_once()
         self.assertAlmostEqual(close_mock.call_args.args[2], 10.0)
-        self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA7_Profit_Turn_Giveback]")
+        self.assertEqual(close_mock.call_args.kwargs["reason"], "[Profit_70Pct_Retained_TP]")
 
     async def test_giveback_within_half_of_peak_does_not_trigger_safety_net(self):
         state = ctx.STATES[self.sym]

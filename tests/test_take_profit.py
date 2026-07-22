@@ -254,7 +254,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_peak_lock_exits_closer_to_high(self):
+    def test_profit_retention_exits_after_large_peak_giveback(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -282,17 +282,18 @@ class TakeProfitTests(unittest.TestCase):
         s["vol_ma20"] = 1000.0
         s["current_vol"] = 100.0
         s["pnl_history"] = []
-        # 此測試只驗證剩餘倉位的 PeakLock；分批停利另有獨立測試。
-        s["has_partial_closed"] = True
+        # 已完成分批停利後，大峰值回吐由 70% 利潤保留規則優先出清。
+        s["partial_tp_done"] = True
 
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
                 mock_close.assert_called_once()
+                self.assertEqual(mock_close.call_args.kwargs["reason"], "[Profit_70Pct_Retained_TP]")
 
         asyncio.run(run_check())
 
-    def test_peak_lock_uses_intracandle_high_when_trailing_highest_is_stale(self):
+    def test_profit_retention_precedes_stale_intracandle_peak_update(self):
         from unittest.mock import patch, AsyncMock
         sym = "XRPUSDT"
         init_states([sym])
@@ -321,9 +322,9 @@ class TakeProfitTests(unittest.TestCase):
         async def run_check():
             with patch("core.orders.close_position", AsyncMock()) as mock_close:
                 await check_exits(sym)
-                self.assertEqual(s["trailing_highest"], 100.37)
+                mock_close.assert_awaited_once()
+                self.assertEqual(mock_close.call_args.kwargs["reason"], "[Profit_70Pct_Retained_TP]")
                 self.assertGreaterEqual(s["highest_profit_pct"], 0.006)
-                self.assertLessEqual(mock_close.await_count, 1)
 
         asyncio.run(run_check())
 
@@ -402,7 +403,7 @@ class TakeProfitTests(unittest.TestCase):
         candles.append([20 * 300000, 100.0, 100.2, 99.4, 99.5, 500.0])
         candles.append([21 * 300000, 99.5, 99.6, 99.45, 99.5, 50.0])
         s.update({
-            "qty": -2.0, "avg_price": 100.0, "close_price": 99.4,
+            "qty": -2.0, "avg_price": 100.0, "close_price": 98.9,
             "open_time": time.time() - 900, "last_entry_time": time.time() - 900,
             "last_entry_price": 100.0, "current_atr": 0.2,
             "atr_history": [0.2] * 20, "current_rsi": 45.0,
@@ -410,7 +411,7 @@ class TakeProfitTests(unittest.TestCase):
             "prev_macd_line": -0.015, "prev_macd_signal": -0.01,
             "current_vol": 50.0, "vol_ma20": 1000.0,
             "ohlcv": candles, "pnl_history": [],
-            "highest_profit_pct": 0.0065,
+            "highest_profit_pct": 0.012, "partial_tp_done": True,
         })
 
         async def run_check():
@@ -466,8 +467,8 @@ class TakeProfitTests(unittest.TestCase):
         s["prev_close"] = 100.0
         s["highest_profit_pct"] = 0.0
         s["pnl_history"] = []
-        # 設定 has_partial_closed 為 True，防止 XRPUSDT 超過 0.2% 獲利時先被分批停利攔截
-        s["has_partial_closed"] = True
+        # 此測試只驗證保本鎖，略過 0.6% 部分停利
+        s["partial_tp_done"] = True
         s["vol_ma20"] = 1.0
         s["current_vol"] = 1.0
 
@@ -513,7 +514,7 @@ class TakeProfitTests(unittest.TestCase):
 
         asyncio.run(run_check())
 
-    def test_speculative_profile_waits_until_one_percent_to_lock(self):
+    def test_speculative_profile_uses_current_global_lock_thresholds(self):
         sym = "XRPUSDT"
         init_states([sym])
         s = STATES[sym]
@@ -521,15 +522,14 @@ class TakeProfitTests(unittest.TestCase):
         s.update({"qty": 1.0, "avg_price": 100.0, "current_atr": 0.2,
                   "trailing_stop_price": 0.0, "trailing_highest": 100.0,
                   "profile_type": "Speculative_Risk"})
-        # [2026-07-14 再校準] Speculative 屬性保本門檻從 1.0% 調降至 0.6%。
-        # 當價格上漲到 0.5% (100.5) 時，應未達到 0.6% 保本鎖，但已進入 Soft Trailing。
-        update_trailing_stop(sym, 100.5, True)
-        self.assertFalse(s.get("is_breakeven_locked", False))
-        self.assertTrue(s.get("soft_trailing_armed", False))
-        self.assertGreater(s["trailing_stop_price"], s["avg_price"])
 
-        update_trailing_stop(sym, 101.1, True)
+        update_trailing_stop(sym, 100.2, True)
+        self.assertFalse(s.get("is_breakeven_locked", False))
+        self.assertFalse(s.get("soft_trailing_armed", False))
+
+        update_trailing_stop(sym, 100.5, True)
         self.assertTrue(s.get("is_breakeven_locked", False))
+        self.assertTrue(s.get("soft_trailing_armed", False))
         self.assertGreater(s["trailing_stop_price"], s["avg_price"])
 
     def test_soft_trailing_only_moves_up_with_new_high(self):
