@@ -11,7 +11,8 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state, repair_invalid_states, get_open_position_count
 from core import ctx
 from core import exchange_client
-from core.config import RANGE_MIN_NET_PROFIT_PCT
+from core.config import (RANGE_MIN_NET_PROFIT_PCT,
+                         STRICT_RANGE_MIN_NET_PROFIT_PCT)
 from core.check_entries import (
     _is_confirmable_exit_cooldown, _rapid_reconfirm_cooldown_entry, _range_exit_prices,
 )
@@ -25,17 +26,17 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
 
 
 class EntryRiskTests(unittest.TestCase):
-    def test_range_entry_requires_meaningful_post_fee_profit_room(self):
-        # LINKUSDT 2026-07-22: 0.1% floor admitted a narrow range setup that
-        # never exceeded 0.01% gross profit and hit its structural stop.
-        self.assertGreaterEqual(RANGE_MIN_NET_PROFIT_PCT, 0.004)
+    def test_range_entry_threshold_is_strict_only_for_eth_xrp(self):
+        self.assertEqual(RANGE_MIN_NET_PROFIT_PCT, 0.001)
+        self.assertGreaterEqual(STRICT_RANGE_MIN_NET_PROFIT_PCT, 0.004)
 
-    def test_entry_modes_follow_setup_structure(self):
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "Range_Support_Long"), "range_limit")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA25_Pullback"), "pullback")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA7_Simple"), "pullback")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Breakout"), "pullback")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Cross"), "chase")
+    def test_entry_modes_keep_eth_xrp_guarded_and_restore_legacy_for_others(self):
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "Range_Support_Long", "ETHUSDT"), "range_limit")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA25_Pullback", "XRPUSDT"), "pullback")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA7_Simple", "ETHUSDT"), "pullback")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Breakout", "XRPUSDT"), "pullback")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Cross", "ETHUSDT"), "chase")
+        self.assertEqual(_resolve_entry_order_mode("auto", 5.0, "MA25_Pullback", "SOLUSDT"), "chase")
 
     def test_entry_reason_is_persisted_only_after_first_fill(self):
         state = {"entry_reason": None}

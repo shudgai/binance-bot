@@ -118,14 +118,25 @@ def get_dynamic_volume_factor(states):
     return 1.0 if average > 0 and current / average < 1.0 else 1.2
 
 
-def is_entry_volume_confirmed(sym, side):
+def is_entry_volume_confirmed(sym, side, route=None):
     s = ctx.STATES[sym]
     candles = s.get("ohlcv", [])
     vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
     if len(candles) < 2 or vol_ma20 <= 0:
         return False
     closed_volume = float(candles[-2][5])
-    route = str(s.get("entry_reason", "") or "")
+    route = str(route or s.get("entry_reason", "") or "")
+    from core.config import STRICT_ENTRY_SYMBOLS
+    if sym not in STRICT_ENTRY_SYMBOLS:
+        if route == "MA_Cross":
+            required = 0.25
+        elif route == "MA_Breakout":
+            required = 0.40
+        elif route in RANGE_ENTRY_ROUTES:
+            required = 0.30
+        else:
+            required = 0.20
+        return closed_volume >= vol_ma20 * required
     # 與 signal_engine.py 的路由門檻一致；送單前再以已收線量能複核，
     # 避免弱量轉折或突破只靠高基礎分數穿透最後一道品質檢查。
     if route == "MA_Cross":
@@ -286,7 +297,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
             logger.info(f"🛑 [Range_Direction] {sym} {range_reason}")
             return False
         # 量能最低門檻（區間模式也需要一定參與度）
-        if not is_entry_volume_confirmed(sym, side):
+        if not is_entry_volume_confirmed(sym, side, route):
             logger.info(f"🛑 [Range_Volume] {sym} {route} 已收線成交量不足")
             return False
         # 影線過長檢查（避免被假突破吸引）
@@ -321,8 +332,7 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
         s["entry_block_reason"] = "未通過 MA7／MA25／MA99 排列、1% 緩衝與斜率確認"
         return False
 
-    s["entry_reason"] = route
-    if not is_entry_volume_confirmed(sym, side):
+    if not is_entry_volume_confirmed(sym, side, route):
         logger.info(f"🛑 [MA_VOLUME] {sym} {route} 已收線成交量不足")
         return False
     if not is_entry_pin_safe(sym, side, route=route):

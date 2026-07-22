@@ -718,7 +718,11 @@ def _pending_entry_setup_valid(info, validator=None):
     # 掛單期間以最新市價驗證；方向、MA、RSI 或大盤結構失效時仍會撤單。
     state = ctx.STATES.get(info.get("sym"), {})
     latest_price = float(state.get("close_price", 0.0) or 0.0)
-    validation_price = float(info.get("signal_price") or info.get("price") or latest_price or 0.0)
+    from core.config import STRICT_ENTRY_SYMBOLS
+    if info.get("sym") in STRICT_ENTRY_SYMBOLS:
+        validation_price = float(info.get("signal_price") or info.get("price") or latest_price or 0.0)
+    else:
+        validation_price = float(latest_price or info.get("signal_price") or info.get("price") or 0.0)
     return validator(
         info.get("sym"), info.get("side"), route,
         float(info.get("signal_strength", 0.0) or 0.0),
@@ -1721,8 +1725,11 @@ async def check_paper_pending_order(sym):
             logger.info(f"🛑 [Paper重掛取消] {sym} 最新價格不適合重掛：{price_reason}")
 
 
-def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None):
-    """Choose execution by setup structure instead of forcing every signal to chase."""
+def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None, sym=None):
+    """Keep legacy chase execution except for ETH/XRP guarded entries."""
+    from core.config import STRICT_ENTRY_SYMBOLS
+    if sym not in STRICT_ENTRY_SYMBOLS:
+        return "chase"
     route = str(entry_route or "").lower()
     if route in RANGE_ENTRY_ROUTES:
         return "range_limit"
@@ -1791,7 +1798,7 @@ async def _execute_order_inner(sym, side, price, allocation_pct=1.0, is_rescue_d
         return
     entry_mode = entry_mode_override if entry_mode_override is not None else ENTRY_ORDER_MODE
     _force_pullback = bool(s.pop("force_pullback_entry", False)) and not is_rescue_dca
-    actual_entry_mode = "pullback" if _force_pullback else _resolve_entry_order_mode(entry_mode, signal_strength, entry_route)
+    actual_entry_mode = "pullback" if _force_pullback else _resolve_entry_order_mode(entry_mode, signal_strength, entry_route, sym)
     if _force_pullback:
         logger.info(f"🧲 [EntryModeOverride] {sym} 套用高波動上/下緣防追價，強制使用 pullback 限價")
     
@@ -1843,9 +1850,11 @@ async def _execute_order_inner(sym, side, price, allocation_pct=1.0, is_rescue_d
             _atr_avg_of = float(np.mean(_atr_hist_of)) if len(_atr_hist_of) > 0 else 0.0
             _atr_cur_of = _s.get("current_atr", 0.0)
             _is_low_vol_of = (_atr_avg_of > 0 and _atr_cur_of <= _atr_avg_of)
-            # 強訊號（強度 >= 30）直接豁免 OrderFlow 過濾，避免封鎖高品質進場訊號
+            from core.config import STRICT_ENTRY_SYMBOLS
+            _flow_bypass_threshold = 30.0 if sym in STRICT_ENTRY_SYMBOLS else 20.0
+            # ETH/XRP 保留較嚴 OrderFlow；其他幣恢復上一版 20 分豁免。
             _signal_str_of = signal_strength or 0.0
-            _flow_bypass = _signal_str_of >= 30.0
+            _flow_bypass = _signal_str_of >= _flow_bypass_threshold
             _flow_threshold = 0.45 if _is_low_vol_of else 0.50
             _flow_label = f"低波動放寬 {_flow_threshold}" if _is_low_vol_of else f"高波動嚴格 {_flow_threshold}"
             if not _flow_bypass:
@@ -1862,7 +1871,7 @@ async def _execute_order_inner(sym, side, price, allocation_pct=1.0, is_rescue_d
                             logger.info(f"🧱 [ORDER_BLOCK] {sym} 被 OrderFlow 攔截，未進入下單")
                             return
             else:
-                logger.info(f"⚡ [OrderFlow_Bypass] {sym} 強訊號 ({_signal_str_of:.1f} >= 30)，豁免 OrderFlow 過濾直接進場")
+                logger.info(f"⚡ [OrderFlow_Bypass] {sym} 強訊號 ({_signal_str_of:.1f} >= {_flow_bypass_threshold:g})，豁免 OrderFlow 過濾直接進場")
         except Exception as e:
             logger.info(f"⚠️ [OrderFlow] 讀取掛單簿失敗 {sym}: {e}")
     if not PAPER_TRADING:

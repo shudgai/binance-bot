@@ -101,6 +101,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
+    from core.config import STRICT_ENTRY_SYMBOLS
     pullback_rebound_limit = max(candle_close * 0.0015, atr * 0.35)
     pullback_long_rebound = candle_close - ma25
     pullback_short_rebound = ma25 - candle_close
@@ -109,11 +110,11 @@ def compute_signal_strength(sym, realtime_trigger=False):
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
                      and volume_ratio >= base_limit and current_rsi < 70
-                     and pullback_long_rebound <= pullback_rebound_limit)
+                     and (sym not in STRICT_ENTRY_SYMBOLS or pullback_long_rebound <= pullback_rebound_limit))
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
                       and volume_ratio >= base_limit and current_rsi > 30
-                      and pullback_short_rebound <= pullback_rebound_limit)
+                      and (sym not in STRICT_ENTRY_SYMBOLS or pullback_short_rebound <= pullback_rebound_limit))
 
     from core.config import DISABLE_MA_BREAKOUT
     completed = candles[:-1]
@@ -362,7 +363,8 @@ def compute_range_signal(sym):
     from core.config import (
         RANGE_MODE_ENABLED, RANGE_ADX_THRESHOLD, RANGE_LOOKBACK,
         RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE,
-        RANGE_MIN_NET_PROFIT_PCT, TAKER_FEE_RATE,
+        RANGE_MIN_NET_PROFIT_PCT, STRICT_ENTRY_SYMBOLS,
+        STRICT_RANGE_MIN_NET_PROFIT_PCT, TAKER_FEE_RATE,
     )
 
     if not RANGE_MODE_ENABLED:
@@ -407,7 +409,11 @@ def compute_range_signal(sym):
     # 2. 辨識水平支撐/壓力帶（只用已收盤 K 棒，排除最後一根）
     completed = candles[:-1]
     signal_close = float(completed[-1][4])
-    min_range_width_pct = TAKER_FEE_RATE * 2 + RANGE_MIN_NET_PROFIT_PCT
+    range_min_net_pct = (
+        STRICT_RANGE_MIN_NET_PROFIT_PCT
+        if sym in STRICT_ENTRY_SYMBOLS else RANGE_MIN_NET_PROFIT_PCT
+    )
+    min_range_width_pct = TAKER_FEE_RATE * 2 + range_min_net_pct
     support, resistance = _find_horizontal_zones(
         completed, atr, RANGE_LOOKBACK, RANGE_TOUCH_COUNT, RANGE_TOUCH_ATR_TOLERANCE,
         current_price=signal_close, min_width_pct=min_range_width_pct,
@@ -419,7 +425,7 @@ def compute_range_signal(sym):
 
     # 3. 空間保護：區間寬度必須能覆蓋手續費 + 最低獲利空間
     round_trip_fee = TAKER_FEE_RATE * 2
-    min_range_width_pct = round_trip_fee + RANGE_MIN_NET_PROFIT_PCT
+    min_range_width_pct = round_trip_fee + range_min_net_pct
     if support is not None and resistance is not None:
         range_width_pct = (resistance - support) / support if support > 0 else 0.0
         if range_width_pct < min_range_width_pct:

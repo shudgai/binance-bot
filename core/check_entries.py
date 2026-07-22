@@ -850,10 +850,16 @@ async def check_entries():
 
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
-        _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY
-        # 所有 MA 路線都必須有足以覆蓋費用與正常回撤的即時波動；
-        # MA7 轉折也不能在死水行情中只為了提高成交數而豁免。
-        if _atr_pct_5m < _min_atr_pct_5m:
+        from core.config import STRICT_ENTRY_SYMBOLS
+        _strict_entry = sym in STRICT_ENTRY_SYMBOLS
+        _min_atr_pct_5m = (
+            0.0008 if is_range_signal
+            else MIN_5M_ATR_PCT_FOR_MA_ENTRY if _strict_entry
+            else MIN_5M_ATR_PCT_FOR_MA_ENTRY * 0.80
+        )
+        # ETH/XRP 保留完整波動底線；其他幣恢復原本 MA7 豁免與 0.8 倍門檻。
+        _skip_slow_market = (not _strict_entry and str(route or "").lower() == "ma7_simple")
+        if not _skip_slow_market and _atr_pct_5m < _min_atr_pct_5m:
             _mode_name = "區間" if is_range_signal else "MA"
             logger.info(
                 f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < "
@@ -966,7 +972,7 @@ async def check_entries():
         # 訊號已由已收線 K 棒生成，直接加入候選，不再走舊二次確認路線。
         signal_anchor_price = (
             float(s["ohlcv"][-2][4])
-            if not is_range_signal and len(s.get("ohlcv", [])) >= 2
+            if sym in STRICT_ENTRY_SYMBOLS and not is_range_signal and len(s.get("ohlcv", [])) >= 2
             else float(s.get("close_price", 0.0) or 0.0)
         )
         candidates.append((sym, side, strength, route, is_range_signal, signal_anchor_price))
@@ -1038,7 +1044,10 @@ async def check_entries():
             support    = float(s.get("range_support_level",    0.0) or 0.0)
             resistance = float(s.get("range_resistance_level", 0.0) or 0.0)
             atr        = float(s.get("current_atr", 0.0) or 0.0)
-            from core.config import RANGE_MIN_NET_PROFIT_PCT, RANGE_MIN_RR, TAKER_FEE_RATE
+            from core.config import (RANGE_MIN_NET_PROFIT_PCT, RANGE_MIN_RR,
+                                     STRICT_ENTRY_SYMBOLS,
+                                     STRICT_RANGE_MIN_NET_PROFIT_PCT,
+                                     TAKER_FEE_RATE)
             if not (support > 0 and resistance > 0 and support < resistance):
                 logger.info(f"🛑 [Range_Final_Guard] {sym} 支撐/壓力資料不完整或順序錯誤")
                 continue
@@ -1048,8 +1057,12 @@ async def check_entries():
             range_tp_dist = abs(range_tp - price)
             range_sl_dist = abs(range_sl - price)
             range_net_pct = range_tp_dist / price - TAKER_FEE_RATE * 2
-            if range_net_pct < RANGE_MIN_NET_PROFIT_PCT:
-                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {RANGE_MIN_NET_PROFIT_PCT*100:.1f}%")
+            range_min_net_pct = (
+                STRICT_RANGE_MIN_NET_PROFIT_PCT
+                if sym in STRICT_ENTRY_SYMBOLS else RANGE_MIN_NET_PROFIT_PCT
+            )
+            if range_net_pct < range_min_net_pct:
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {range_min_net_pct*100:.1f}%")
                 continue
             range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
             if range_rr < RANGE_MIN_RR:
@@ -1099,15 +1112,17 @@ async def check_entries():
             )
 
         # ── 三大板塊資產分層特權權重（對齊頂級合約交易哲學） ──
-        # 一、主流雙雄 (BTC/ETH)：+8.0 分（只作同品質候選的溫和排序）
-        # 二、高貝塔主流：+5.0 分（技術品質仍是主要分數）
-        # 三、迷因熱點：+2.0 分（不再靠資產身分蓋過進場位置）
-        if sym in ("BTCUSDT", "ETHUSDT"):
+        # ETH/XRP 保留位置品質優先；其他幣恢復上一版資產分層排序。
+        if sym == "ETHUSDT":
             s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 8.0
-        elif sym in ("SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT"):
+        elif sym == "XRPUSDT":
             s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 5.0
+        elif sym == "BTCUSDT":
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 60.0
+        elif sym in ("SOLUSDT", "BNBUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT"):
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 40.0
         elif sym in ("DOGEUSDT", "1000PEPEUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 2.0
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 10.0
 
         # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，給予適度品質排序加分
         atr_pct = float(s.get("atr_pct", 0.0) or 0.0)
@@ -1376,7 +1391,8 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
         if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
 
-    if str(route or "").lower() == "ma25_pullback":
+    from core.config import STRICT_ENTRY_SYMBOLS
+    if sym in STRICT_ENTRY_SYMBOLS and str(route or "").lower() == "ma25_pullback":
         ma25 = float(s.get("ma25", 0.0) or 0.0)
         max_rebound = max(current_price * 0.0015, atr * 0.35)
         rebound = current_price - ma25 if side == "buy" else ma25 - current_price
@@ -1391,9 +1407,11 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
     # 反覆拒絕進場（常見於 MA25_Pullback 回踩期間 RSI 自然走弱）。
     # 真正嚴重失效（如 RSI 跌至 38）仍會被攔下。
     current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
-    if side == "buy" and current_rsi < 45.0:
-        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 45)"
-    if side == "sell" and current_rsi > 55.0:
-        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 55)"
+    long_rsi_floor = 45.0 if sym in STRICT_ENTRY_SYMBOLS else 30.0
+    short_rsi_ceiling = 55.0 if sym in STRICT_ENTRY_SYMBOLS else 70.0
+    if side == "buy" and current_rsi < long_rsi_floor:
+        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < {long_rsi_floor:g})"
+    if side == "sell" and current_rsi > short_rsi_ceiling:
+        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > {short_rsi_ceiling:g})"
 
     return True, "ok"

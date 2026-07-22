@@ -17,12 +17,11 @@ from core.check_entries import (check_entries, _entry_structure_quality,
 
 
 class TradeSignalTests(unittest.TestCase):
-    def _setup_ma_signal_state(self, *, signal_open=100.0, signal_high=101.2,
+    def _setup_ma_signal_state(self, *, sym="XRPUSDT", signal_open=100.0, signal_high=101.2,
                                signal_low=99.8, signal_close=101.0,
                                signal_volume=1200.0, vol_ma20=1000.0,
                                ma7=100.2, ma25=100.0, ma99=99.0,
                                prev_ma7=99.9, prev_ma25=100.0, adx=25.0):
-        sym = "XRPUSDT"
         init_states([sym])
         reset_coin_state(sym)
         base = [[i, 100.0, 100.5, 99.5, 100.0, vol_ma20] for i in range(20)]
@@ -135,6 +134,15 @@ class TradeSignalTests(unittest.TestCase):
             prev_ma7=100.4, prev_ma25=99.9, signal_volume=900.0,
         )
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+    def test_non_eth_xrp_restores_legacy_ma25_rebound_entry(self):
+        sym = self._setup_ma_signal_state(
+            sym="SOLUSDT", signal_open=100.1, signal_close=100.3, signal_low=99.9,
+            ma7=100.6, ma25=100.0, ma99=99.0,
+            prev_ma7=100.4, prev_ma25=99.9, signal_volume=900.0,
+        )
+        side, _, route = compute_signal_strength(sym)
+        self.assertEqual((side, route), ("buy", "MA25_Pullback"))
 
     def test_golden_cross_above_ma99_does_not_require_ma25_above_ma99_yet(self):
         sym = self._setup_ma_signal_state(ma99=100.1)
