@@ -10,7 +10,7 @@ from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
     DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT,
     DEFAULT_LOSS_REENTRY_COOLDOWN_SEC, MIN_5M_ATR_PCT_FOR_MA_ENTRY,
-    get_entry_strictness_profile)
+    STRICT_ENTRY_SYMBOLS, get_entry_strictness_profile)
 from core.indicators import (_get_atr, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -46,7 +46,7 @@ def _radar_entry_block_reason(profile, route=None):
         if not route_ok:
             return route_reason
         # Range 已由已收線支撐／壓力、低 ADX、量能與 RR 做局部確認；
-        # 邊界機會短，不再等待較慢雷達的第二次確認與 30 分鐘成熟期。
+        # 邊界機會短，不再等待較慢雷達的第二次確認與 15 分鐘成熟期。
         if route_class == "range":
             return ""
         if not bool(profile.get("_radar_observation_mature", False)):
@@ -68,15 +68,19 @@ def _radar_signal_block_message(sym, route, reason):
     return f"{sym}: 偵測到 {route} 訊號，但{reason}，不送單"
 
 
-def _radar_direction_block_reason(profile, side, route):
+def _radar_direction_block_reason(profile, side, route, sym=None):
     """MA7_Simple 以即時轉折為準；其他路線保留高可信雷達方向保護。"""
     route_key = str(route or "").lower()
-    if route_key == "ma7_simple" or route_key in ("range", "range_support_long", "range_resistance_short"):
+    is_range_route = route_key in ("range", "range_support_long", "range_resistance_short")
+    if route_key == "ma7_simple":
+        return ""
+    if is_range_route and str(sym or "").upper() not in STRICT_ENTRY_SYMBOLS:
         return ""
     radar_direction = profile.get("_radar_entry_direction", "none")
     radar_readiness = float(profile.get("_radar_entry_readiness", 0.0) or 0.0)
     expected_side = "buy" if radar_direction == "long" else "sell" if radar_direction == "short" else None
-    if expected_side and radar_readiness >= 0.80 and side != expected_side:
+    readiness_floor = 0.55 if is_range_route else 0.80
+    if expected_side and radar_readiness >= readiness_floor and side != expected_side:
         return f"訊號 {side} 與雷達 {radar_direction} 不一致"
     return ""
 
@@ -828,7 +832,7 @@ async def check_entries():
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
-                if not volume_price_sync:
+                if not volume_price_sync and route != "MA7_Simple":
                     # 放寬量能要求：強度夠高時，只要量能達 0.35x 即可，基礎門檻放寬
                     strong_volume_override = strength >= _strong_participation_strength and current_vol >= vol_ma20 * 0.35
                     if not strong_volume_override:
@@ -999,7 +1003,7 @@ async def check_entries():
             set_entry_diagnosis(diagnosis)
             logger.info(f"🛑 [Final_Entry_Guard] {diagnosis}")
             continue
-        radar_direction_reason = _radar_direction_block_reason(radar_profile, side, route)
+        radar_direction_reason = _radar_direction_block_reason(radar_profile, side, route, sym)
         if radar_direction_reason:
             logger.info(f"🛑 [Final_Entry_Guard] {sym} {radar_direction_reason}")
             continue
