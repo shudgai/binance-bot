@@ -940,7 +940,11 @@ async def periodic_momentum_swap():
     await asyncio.sleep(300)
     while True:
         try:
-            from services.radar_service import auto_radar_switch, FOLLOW_SYMBOLS_FROM
+            from services.radar_service import (
+                FOLLOW_SYMBOLS_FROM,
+                auto_radar_switch,
+                is_fixed_trade_pool,
+            )
             if not FOLLOW_SYMBOLS_FROM:
                 selected = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: auto_radar_switch(force_start=False, restart_on_change=False)
@@ -958,6 +962,7 @@ async def periodic_momentum_swap():
                     # 閒置分流：策略卡住超過閾值的幣種，依持倉狀況分成兩類
                     from core.idle_tracker import idle_tracker as _idle_tracker
                     from core.config import RANGE_MODE_ENABLED
+                    _fixed_pool_mode = is_fixed_trade_pool(selected)
                     _total_strategies = 2 if RANGE_MODE_ENABLED else 1
                     _idle_symbols = _idle_tracker.get_idle_symbols(
                         list(ctx.ALL_SYMBOLS), _total_strategies
@@ -965,9 +970,18 @@ async def periodic_momentum_swap():
                     _local_pos_checker = lambda sym: (
                         abs(ctx.STATES.get(sym, {}).get("qty", 0.0)) > 0.000001
                     )
-                    _safe_to_remove, _hold_for_exit = _idle_tracker.get_removable_symbols(
-                        _idle_symbols, _local_pos_checker
-                    )
+                    if _fixed_pool_mode:
+                        _safe_to_remove, _hold_for_exit = [], []
+                        if _idle_symbols:
+                            logger.info(
+                                f"📌 [IdleTracker] 固定幣池保留暫無訊號幣種：{_idle_symbols}"
+                            )
+                            for _sym in _idle_symbols:
+                                _idle_tracker.reset(_sym)
+                    else:
+                        _safe_to_remove, _hold_for_exit = _idle_tracker.get_removable_symbols(
+                            _idle_symbols, _local_pos_checker
+                        )
                     if _safe_to_remove:
                         logger.info(
                             f"♻️ [IdleTracker] 無持倉閒置幣種移出監控池：{_safe_to_remove}"
@@ -994,7 +1008,12 @@ async def periodic_momentum_swap():
                             continue
                         state = ctx.STATES.get(sym, {})
                         age = time.time() - state.get("first_seen_time", 0)
-                        if age > 1800 and state.get("personality") == "calm" and state.get("vol_surge", 0.0) < 0.5:
+                        if (
+                            not _fixed_pool_mode
+                            and age > 1800
+                            and state.get("personality") == "calm"
+                            and state.get("vol_surge", 0.0) < 0.5
+                        ):
                             selected_list.remove(sym)
                             evicted.append(sym)
 

@@ -20,6 +20,7 @@ from services.radar_service import (
     MAX_1H_VOL_PCT_FOR_ENTRY,
     prioritize_entry_ready,
     radar_eligibility,
+    is_fixed_trade_pool,
     is_strict_radar_eligible,
 )
 from services.binance_service import calculate_entry_readiness
@@ -44,6 +45,13 @@ def test_atr_sources_use_the_approved_dynamic_pool():
     assert MAX_ATR_PCT_FOR_ENTRY == 5.0
     assert MIN_1H_VOL_PCT_FOR_ENTRY == 0.30
     assert MAX_1H_VOL_PCT_FOR_ENTRY == 2.8
+
+
+def test_fixed_trade_pool_detection_keeps_all_configured_symbols():
+    assert is_fixed_trade_pool(DEFAULT_SYMBOLS)
+    assert is_fixed_trade_pool(list(reversed(DEFAULT_SYMBOLS)))
+    assert not is_fixed_trade_pool(DEFAULT_SYMBOLS[:-1])
+    assert not is_fixed_trade_pool(DEFAULT_SYMBOLS[:-1] + ["OTHERUSDT"])
 
 
 def test_radar_limits_are_classified_by_future_symbol_setup():

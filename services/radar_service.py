@@ -6,9 +6,16 @@ from services.system_log_service import add_system_log
 from services.bot_manager_service import get_bot_status, start_bot, kill_bot, save_symbol_config
 from services.binance_service import get_atr_ranked_coins, get_hot_movers as _get_hot_movers
 from core.ctx import CACHE
-from core.config import COIN_PROFILE_CONFIG, TRADE_POOL_SIZE
+from core.config import COIN_PROFILE_CONFIG, DEFAULT_SYMBOLS, TRADE_POOL_SIZE
 
 SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
+
+
+def is_fixed_trade_pool(symbols) -> bool:
+    """Return whether symbols are exactly the configured fixed trade pool."""
+    normalized = [str(symbol).upper() for symbol in (symbols or [])]
+    configured = [str(symbol).upper() for symbol in DEFAULT_SYMBOLS]
+    return len(normalized) == len(configured) and set(normalized) == set(configured)
 
 
 def _resolve_follow_symbols_from(base_dir: str | None = None) -> str:
