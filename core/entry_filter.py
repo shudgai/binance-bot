@@ -352,8 +352,17 @@ def is_entry_allowed(sym, side, route="MA_Cross", strength=0.0):
         adverse = (reference - closed_price) if side == "buy" else (closed_price - reference)
         if adverse >= atr * 2.0:
             s["crash_cooldown_until"] = time.time() + 900
-    if time.time() < float(s.get("crash_cooldown_until", 0.0) or 0.0):
-        logger.info(f"🛑 [MA_AdverseMove] {sym} 近期逆向波動過大，等待冷卻")
-        return False
+    # ── 方案 B：追高/追空過深防禦（防止急拉後衝高追單） ──
+    # 當訊號 K 棒收盤價距離 MA7 拉開超過 0.60%，代表短線急拉過深，
+    # 容易買在極短線頂部造成進場即浮虧，防護攔截並等待回落至 MA7 附近。
+    if ma7 > 0:
+        ma_dist_pct = (closed_price - ma7) / ma7 if side == "buy" else (ma7 - closed_price) / ma7
+        if ma_dist_pct > 0.0060:
+            logger.info(
+                f"🛑 [MA_Overextension] {sym} {side} 收盤價 {closed_price:.6f} 距離 MA7 ({ma7:.6f}) "
+                f"拉開 {ma_dist_pct*100:.2f}% > 0.60%，防追高不進場"
+            )
+            s["entry_block_reason"] = f"收盤價偏離 MA7 {ma_dist_pct*100:.2f}% > 0.60%，防衝高追單"
+            return False
 
     return True
