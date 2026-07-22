@@ -220,6 +220,15 @@ async def fetch_all_klines(exchange):
             ctx.STATES[sym]["ohlcv"] = results[i]
             ctx.STATES[sym]["close_price"] = results[i][-1][4]
             ctx.STATES[sym]["last_ohlcv_update"] = time.time()
+            # 立即計算指標：K 線下載完後必須馬上更新 ATR / vol_ma20 等指標，
+            # 否則若這一輪仍在暖機階段（ohlcv 由空變為有資料），指標就會在
+            # 整個下一輪 compute_indicators 之前一直顯示為 0，造成不必要的
+            # "ATR=0, VolMA20=0.00" 錯誤且不會觸發開倉。
+            try:
+                from core.check_entries import compute_indicators
+                compute_indicators(sym)
+            except Exception as _ci_err:
+                logger.debug(f"[K線暖機] {sym} compute_indicators 異常: {_ci_err}")
         else:
             logger.info(f"⚠️ [K線獲取失敗] {sym}: {results[i]}")
 
