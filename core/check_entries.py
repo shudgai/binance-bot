@@ -28,9 +28,87 @@ _LOSS_HISTORY_CACHE = {}
 COOLDOWN_REENTRY_TOTAL_CONFIRMATIONS = 3
 COOLDOWN_REENTRY_RAPID_RECHECKS = 2
 COOLDOWN_REENTRY_RECHECK_INTERVAL_SEC = 1.0
+FAST_RADAR_1M_CACHE_SEC = 20.0
 
 
-def _radar_entry_block_reason(profile, route=None):
+async def _fast_radar_entry_confirmation(sym, side, route, profile, now=None):
+    """Strong MA setups may mature after two aligned closed 1m candles."""
+    from services.radar_service import (
+        RADAR_FAST_OBSERVATION_SEC, RADAR_FAST_READINESS, radar_eligibility,
+    )
+
+    route_key = str(route or "").lower()
+    if route_key not in ("ma_cross", "ma_breakout", "ma25_pullback"):
+        return False, "快速通道僅適用已成立的 5m MA 結構"
+    readiness = float(profile.get("_radar_entry_readiness", 0.0) or 0.0)
+    radar_direction = str(profile.get("_radar_entry_direction", "none") or "none")
+    expected_side = "buy" if radar_direction == "long" else "sell" if radar_direction == "short" else ""
+    if readiness < RADAR_FAST_READINESS or expected_side != side:
+        return False, "快速通道準備度或雷達方向未達門檻"
+    route_ok, route_reason, _ = radar_eligibility(profile, route)
+    if not profile.get("_radar_strict_eligible", False) or not route_ok:
+        return False, route_reason
+
+    now = float(time.time() if now is None else now)
+    first_seen = float(profile.get("_radar_candidate_since", now) or now)
+    observed = max(0.0, now - first_seen)
+    if observed < RADAR_FAST_OBSERVATION_SEC:
+        remaining = max(1, int((RADAR_FAST_OBSERVATION_SEC - observed + 59) // 60))
+        return False, f"強訊號快速確認中：尚需 {remaining} 分鐘"
+
+    state = ctx.STATES.get(sym, {})
+    ema20_15m = float(state.get("ema20_15m", 0.0) or 0.0)
+    ema50_15m = float(state.get("ema50_15m", 0.0) or 0.0)
+    if min(ema20_15m, ema50_15m) <= 0:
+        return False, "強訊號快速確認中：等待 15m 趨勢資料"
+    trend_aligned = ema20_15m > ema50_15m if side == "buy" else ema20_15m < ema50_15m
+    if not trend_aligned:
+        return False, "強訊號快速確認中：15m 趨勢尚未同向"
+
+    cached = state.get("_fast_radar_1m_cache", {})
+    if (
+        cached.get("side") == side
+        and cached.get("route") == route_key
+        and now - float(cached.get("checked_at", 0.0) or 0.0) < FAST_RADAR_1M_CACHE_SEC
+    ):
+        return bool(cached.get("ok", False)), str(cached.get("reason", ""))
+
+    try:
+        from core.exchange_client import exchange_market_data
+        candles = await exchange_market_data.fetch_ohlcv(sym, "1m", limit=4)
+    except Exception as exc:
+        logger.info(f"⚠️ [Radar_Fast_1m] {sym} 取得 1m K線失敗: {exc}")
+        candles = []
+
+    ok = False
+    reason = "強訊號快速確認中：等待兩根已收線 1m K線"
+    completed = list(candles[:-1]) if len(candles or []) >= 3 else []
+    if len(completed) >= 2:
+        first, second = completed[-2], completed[-1]
+        first_open, first_close = float(first[1]), float(first[4])
+        second_open, second_close = float(second[1]), float(second[4])
+        first_open_sec = float(first[0]) / 1000.0 if float(first[0]) > 10_000_000_000 else float(first[0])
+        candles_after_detection = first_open_sec + 60.0 >= first_seen
+        if side == "buy":
+            aligned_1m = first_close > first_open and second_close > second_open and second_close >= first_close
+        else:
+            aligned_1m = first_close < first_open and second_close < second_open and second_close <= first_close
+        ok = bool(candles_after_detection and aligned_1m)
+        if not candles_after_detection:
+            reason = "強訊號快速確認中：等待雷達發現後的兩根 1m 收線"
+        elif not aligned_1m:
+            reason = "強訊號快速確認中：1m 連續方向尚未成立"
+        else:
+            reason = "強訊號快速通道：15m 同向、5m 結構成立、兩根 1m 收線確認"
+
+    state["_fast_radar_1m_cache"] = {
+        "side": side, "route": route_key, "checked_at": now, "ok": ok, "reason": reason,
+    }
+    return ok, reason
+
+
+
+def _radar_entry_block_reason(profile, route=None, observation_confirmed=False):
     """依實際訊號 route 重驗雷達分類；舊 profile 維持安全側相容。"""
     if not profile:
         return "尚無雷達交易資格"
@@ -46,16 +124,19 @@ def _radar_entry_block_reason(profile, route=None):
         if not route_ok:
             return route_reason
         # Range 已由已收線支撐／壓力、低 ADX、量能與 RR 做局部確認；
-        # 邊界機會短，不再等待較慢雷達的第二次確認與 15 分鐘成熟期。
+        # 邊界機會短，不再等待較慢雷達的第二次確認與 5 分鐘成熟期。
         if route_class == "range":
+            return ""
+        # Fast-path confirmation applies only to this candidate. Route risk is rechecked above.
+        if observation_confirmed:
             return ""
         if not bool(profile.get("_radar_observation_mature", False)):
             confirmations = int(profile.get("_radar_confirmations", 0) or 0)
             if confirmations < 2:
                 return "觀察中：等待第二次雷達確認"
             first_seen = float(profile.get("_radar_candidate_since", time.time()) or time.time())
-            # 將觀察成熟期從 30 分鐘縮短為 15 分鐘，加快新幣進入可交易狀態
-            remaining = max(0, int((900 - max(0.0, time.time() - first_seen)) / 60) + 1)
+            from services.radar_service import RADAR_STANDARD_OBSERVATION_SEC
+            remaining = max(0, int((RADAR_STANDARD_OBSERVATION_SEC - max(0.0, time.time() - first_seen)) / 60) + 1)
             return f"觀察中：尚需 {remaining} 分鐘"
         return ""
 
@@ -624,6 +705,7 @@ async def check_entries():
 
         # 雷達監控池與可交易池分離。既有持倉仍正常管理；只有新開倉會被觀察期攔截。
         radar_block_reason = ""
+        _radar_profile = {}
         if not has_position:
             from core.symbol_profile import SYMBOL_PROFILES
             _radar_profile = SYMBOL_PROFILES.get(sym, {})
@@ -698,12 +780,26 @@ async def check_entries():
         
         side, strength, route = side_strength
 
+        fast_radar_approved = False
         radar_block_reason = _radar_entry_block_reason(_radar_profile, route)
+        if radar_block_reason and not has_position:
+            from services.radar_service import RADAR_FAST_READINESS
+            radar_readiness = float(_radar_profile.get("_radar_entry_readiness", 0.0) or 0.0)
+            if radar_readiness >= RADAR_FAST_READINESS:
+                fast_ok, fast_reason = await _fast_radar_entry_confirmation(
+                    sym, side, route, _radar_profile,
+                )
+                if fast_ok:
+                    fast_radar_approved = True
+                    radar_block_reason = ""
+                    logger.info(f"⚡ [Radar_Fast_Path] {sym} {side}: {fast_reason}")
+                elif fast_reason:
+                    radar_block_reason = fast_reason
 
         # 先辨識訊號再回報雷達阻擋，避免介面把「觀察到訊號」誤寫成「準備送單」。
         # 雷達資料缺失也採安全側拒絕，不能因空 dict 繞過交易資格。
         # MA7_Simple 路線刻意設計為「MA7 一轉折就進場」，使用者明確要求不受
-        # 雷達資格審核（連續兩次確認+30分鐘觀察期）限制，直接放行。
+        # 雷達資格審核（普通訊號兩次確認＋5分鐘觀察）限制，直接放行。
         if radar_block_reason and str(route or "").lower() != "ma7_simple":
             diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
             s["entry_block_reason"] = radar_block_reason
@@ -979,7 +1075,7 @@ async def check_entries():
             if sym in STRICT_ENTRY_SYMBOLS and not is_range_signal and len(s.get("ohlcv", [])) >= 2
             else float(s.get("close_price", 0.0) or 0.0)
         )
-        candidates.append((sym, side, strength, route, is_range_signal, signal_anchor_price))
+        candidates.append((sym, side, strength, route, is_range_signal, signal_anchor_price, fast_radar_approved))
         continue
 
 
@@ -990,14 +1086,16 @@ async def check_entries():
     from core.symbol_profile import SYMBOL_PROFILES
     from core.entry_filter import RANGE_ENTRY_ROUTES, MA_ENTRY_ROUTES
     validated_candidates = []
-    for sym, side, strength, route, is_range_sig, signal_anchor_price in candidates:
+    for sym, side, strength, route, is_range_sig, signal_anchor_price, fast_radar_approved in candidates:
         s = ctx.STATES[sym]
         radar_profile = SYMBOL_PROFILES.get(sym, {})
         if s.get("status") != "ACTIVE" and not _is_confirmable_exit_cooldown(s):
             continue
         if abs(s.get("qty", 0.0)) > 0.000001:
             continue
-        radar_block_reason = _radar_entry_block_reason(radar_profile, route)
+        radar_block_reason = _radar_entry_block_reason(
+            radar_profile, route, observation_confirmed=fast_radar_approved,
+        )
         if radar_block_reason and str(route or "").lower() != "ma7_simple":
             diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
             set_entry_diagnosis(diagnosis)
@@ -1134,7 +1232,7 @@ async def check_entries():
             volatility_bonus = atr_pct * 2.0  # 微幅加分
             s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + volatility_bonus
 
-        validated_candidates.append((sym, side, strength, route, is_range_sig, signal_anchor_price))
+        validated_candidates.append((sym, side, strength, route, is_range_sig, signal_anchor_price, fast_radar_approved))
 
     candidates = validated_candidates
     if not candidates:
@@ -1173,16 +1271,16 @@ async def check_entries():
 
     _qual_desc = []
     for _c in candidates[:3]:
-        _sym, _side, _str, _rt, _ir, _signal_anchor = _c
+        _sym, _side, _str, _rt, _ir, _signal_anchor, _fast_approved = _c
         _score = ctx.STATES[_sym].get("_entry_quality_score", 0.0)
         _qual_desc.append(f"{_sym}:{_side}(品質={_score:.2f}, 訊號={_str:.2f})")
     logger.info(f"📊 [品質排行] {' | '.join(_qual_desc)}")
 
     # 資金分配：只用實際會被派發的前 remaining_slots 名當分母
     _weight_pool = candidates[:remaining_slots] if remaining_slots > 0 else candidates
-    total_weight = sum(strength for _, _, strength, _, _, _ in _weight_pool)
+    total_weight = sum(candidate[2] for candidate in _weight_pool)
 
-    for sym, side, strength, route, is_range_sig, signal_anchor_price in candidates:
+    for sym, side, strength, route, is_range_sig, signal_anchor_price, fast_radar_approved in candidates:
         if remaining_slots <= 0:
             break
         s = ctx.STATES[sym]

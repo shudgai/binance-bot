@@ -12,13 +12,13 @@ def test_major_symbols_are_enabled_in_config():
 @patch("services.radar_service.clean_blacklist")
 @patch("services.radar_service.get_atr_ranked_coins")
 @patch("services.radar_service.prioritize_entry_ready")
-def test_auto_radar_switch_keeps_fixed_pool_including_majors(mock_prioritize, mock_get_atr, mock_clean, mock_status):
+def test_auto_radar_switch_keeps_core_and_fills_dynamic_slots(mock_prioritize, mock_get_atr, mock_clean, mock_status):
     mock_status.return_value = {"is_running": False}
     # Mock return 15 generic coins plus the 3 excluded ones
-    mock_ranking = [{"symbol": f"COIN{i}USDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0} for i in range(1, 16)]
-    mock_ranking.append({"symbol": "BTCUSDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0})
-    mock_ranking.append({"symbol": "ETHUSDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0})
-    mock_ranking.append({"symbol": "BNBUSDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0})
+    mock_ranking = [{"symbol": f"COIN{i}USDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0, "entry_direction": "long", "entry_readiness_score": 0.7, "entry_setup": "trend_wait"} for i in range(1, 16)]
+    mock_ranking.append({"symbol": "BTCUSDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0, "entry_direction": "long", "entry_readiness_score": 0.7, "entry_setup": "trend_wait"})
+    mock_ranking.append({"symbol": "ETHUSDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0, "entry_direction": "long", "entry_readiness_score": 0.7, "entry_setup": "trend_wait"})
+    mock_ranking.append({"symbol": "BNBUSDT", "price": 10, "atr_pct": 2, "one_h_vol_pct": 1, "change_pct": 0, "entry_direction": "long", "entry_readiness_score": 0.7, "entry_setup": "trend_wait"})
     mock_get_atr.return_value = ([], mock_ranking)
     
     # Let prioritized be the same as filtered
@@ -29,16 +29,17 @@ def test_auto_radar_switch_keeps_fixed_pool_including_majors(mock_prioritize, mo
     from services.radar_service import auto_radar_switch
     with patch("services.radar_service.save_symbol_config") as mock_save, \
          patch("services.radar_service._save_radar_profiles"), \
+         patch("services.radar_service.add_system_log"), \
          patch("services.radar_service.start_bot") as mock_start:
          
         auto_radar_switch(force_start=False)
         
-        # The fixed pool includes all three enabled majors.
+        # Five core symbols stay fixed and the remaining slots come from radar ranking.
         saved_symbols = mock_save.call_args[0][0]
-        assert "BTCUSDT" in saved_symbols
-        assert "ETHUSDT" in saved_symbols
-        assert "BNBUSDT" in saved_symbols
-        assert "COIN1USDT" not in saved_symbols
+        for symbol in ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"):
+            assert symbol in saved_symbols
+        assert "COIN1USDT" in saved_symbols
+        assert len(saved_symbols) == 15
 
 @patch("core.ctx.ALL_SYMBOLS", ["BTCUSDT", "TESTUSDT"])
 @patch.dict("core.ctx.STATES", {

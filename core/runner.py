@@ -245,8 +245,24 @@ async def _record_external_position_close(exchange, sym, state):
     )
     exit_price = notional / close_qty if notional > 0 and close_qty > 0 else float(latest.get("price") or 0.0)
     realized_pnl = sum(float(t.get("info", {}).get("realizedPnl") or t.get("realizedPnl") or 0.0) for t in fills)
-    fees = sum(float((t.get("fee") or {}).get("cost") or t.get("info", {}).get("commission") or 0.0) for t in fills)
+    exit_fees = sum(float((t.get("fee") or {}).get("cost") or t.get("info", {}).get("commission") or 0.0) for t in fills)
     close_time = max(int(t.get("timestamp") or t.get("info", {}).get("time") or 0) for t in fills)
+    # fetch_my_trades 已從本次開倉時間開始抓取；外部／交易所保護單平倉也必須把
+    # 進場、加倉與出場的全部 commission 計入，不能只扣最後一張平倉單的費用。
+    lifecycle_trades = [
+        trade for trade in trades
+        if (
+            int(trade.get("timestamp") or trade.get("info", {}).get("time") or 0) <= close_time
+            and (
+                opened_ms <= 0
+                or int(trade.get("timestamp") or trade.get("info", {}).get("time") or 0) >= opened_ms - 5000
+            )
+        )
+    ]
+    fees = sum(
+        float((trade.get("fee") or {}).get("cost") or trade.get("info", {}).get("commission") or 0.0)
+        for trade in lifecycle_trades
+    ) if opened_ms > 0 else exit_fees
     history_id = f"{sym}:{order_id}"
     position_value = avg_price * abs(old_qty)
     profit_pct = realized_pnl / position_value if position_value > 0 else 0.0
@@ -260,15 +276,49 @@ async def _record_external_position_close(exchange, sym, state):
     if stored_stop_id:
         try:
             algo_order = await exchange.fapiPrivateGetAlgoOrder({"algoId": stored_stop_id})
-            actual_stop_order_id = str((algo_order or {}).get("actualOrderId") or "")
+            algo_data = (algo_order or {}).get("data") if isinstance(algo_order, dict) else None
+            actual_stop_order_id = str(
+                ((algo_order or {}).get("actualOrderId") if isinstance(algo_order, dict) else "")
+                or ((algo_data or {}).get("actualOrderId") if isinstance(algo_data, dict) else "")
+                or ""
+            )
         except Exception as algo_error:
             logger.info(f"ℹ️ [ExternalClose] {sym} 無法核對 Algo 止損子訂單: {algo_error}")
-    if "TAKE_PROFIT" in order_type or (stored_tp_id and order_id_text == stored_tp_id):
+
+    # Algo 條件單成交後，myTrades 常只回報 MARKET 子單，沒有 STOP_MARKET 類型；
+    # 再查一次實際成交 order，補回 origType／clientOrderId 等可辨識欄位。
+    resolved_order_type = order_type
+    if stored_stop_id or stored_tp_id:
+        try:
+            resolved_order = await exchange.fetch_order(order_id, sym)
+            resolved_info = (resolved_order or {}).get("info", {}) if isinstance(resolved_order, dict) else {}
+            resolved_order_type += " " + " ".join(
+                str(value) for value in (
+                    (resolved_order or {}).get("type", "") if isinstance(resolved_order, dict) else "",
+                    resolved_info.get("type", ""),
+                    resolved_info.get("origType", ""),
+                    resolved_info.get("clientOrderId", ""),
+                )
+            ).upper()
+        except Exception as order_error:
+            logger.info(f"ℹ️ [ExternalClose] {sym} 無法核對成交子訂單類型: {order_error}")
+
+    known_stop_prices = [
+        float(state.get(key, 0.0) or 0.0)
+        for key in ("range_sl_price", "stop_loss", "trailing_stop_price")
+    ]
+    stop_price_tolerance = max(exit_price * 0.00015, 1e-12)
+    matched_known_stop = bool(stored_stop_id) and any(
+        price > 0 and abs(exit_price - price) <= stop_price_tolerance
+        for price in known_stop_prices
+    )
+    if "TAKE_PROFIT" in resolved_order_type or (stored_tp_id and order_id_text == stored_tp_id):
         exit_reason = "[External_Take_Profit]"
     elif (
-        "STOP" in order_type
+        "STOP" in resolved_order_type
         or (stored_stop_id and order_id_text == stored_stop_id)
         or (actual_stop_order_id and order_id_text == actual_stop_order_id)
+        or matched_known_stop
     ):
         exit_reason = "[External_Stop_Loss]"
     else:
@@ -935,7 +985,7 @@ async def periodic_htf_update(exchange):
 
 
 async def periodic_momentum_swap():
-    """每 15 分鐘完整 ATR 重選；保留持倉、下單中與 pending 幣種，且不重啟程序。"""
+    """每 5 分鐘完整 ATR 重選；保留持倉、下單中與 pending 幣種，且不重啟程序。"""
     # 啟動雷達已先選過一次；等待 5 分鐘讓 ATR 與高週期指標完成暖機。
     await asyncio.sleep(300)
     while True:
@@ -943,7 +993,7 @@ async def periodic_momentum_swap():
             from services.radar_service import (
                 FOLLOW_SYMBOLS_FROM,
                 auto_radar_switch,
-                is_fixed_trade_pool,
+                is_managed_trade_pool,
             )
             if not FOLLOW_SYMBOLS_FROM:
                 selected = await asyncio.get_event_loop().run_in_executor(
@@ -962,7 +1012,7 @@ async def periodic_momentum_swap():
                     # 閒置分流：策略卡住超過閾值的幣種，依持倉狀況分成兩類
                     from core.idle_tracker import idle_tracker as _idle_tracker
                     from core.config import RANGE_MODE_ENABLED
-                    _fixed_pool_mode = is_fixed_trade_pool(selected)
+                    _managed_pool_mode = is_managed_trade_pool(selected)
                     _total_strategies = 2 if RANGE_MODE_ENABLED else 1
                     _idle_symbols = _idle_tracker.get_idle_symbols(
                         list(ctx.ALL_SYMBOLS), _total_strategies
@@ -970,11 +1020,11 @@ async def periodic_momentum_swap():
                     _local_pos_checker = lambda sym: (
                         abs(ctx.STATES.get(sym, {}).get("qty", 0.0)) > 0.000001
                     )
-                    if _fixed_pool_mode:
+                    if _managed_pool_mode:
                         _safe_to_remove, _hold_for_exit = [], []
                         if _idle_symbols:
                             logger.info(
-                                f"📌 [IdleTracker] 固定幣池保留暫無訊號幣種：{_idle_symbols}"
+                                f"📌 [IdleTracker] 受管理交易池保留暫無訊號幣種：{_idle_symbols}"
                             )
                             for _sym in _idle_symbols:
                                 _idle_tracker.reset(_sym)
@@ -1009,7 +1059,7 @@ async def periodic_momentum_swap():
                         state = ctx.STATES.get(sym, {})
                         age = time.time() - state.get("first_seen_time", 0)
                         if (
-                            not _fixed_pool_mode
+                            not _managed_pool_mode
                             and age > 1800
                             and state.get("personality") == "calm"
                             and state.get("vol_surge", 0.0) < 0.5
@@ -1033,7 +1083,7 @@ async def periodic_momentum_swap():
                         logger.info(f"🔄 [ATR定時重選-免重啟] 監控池已由 {len(old_pool)} 檔更新為 {len(new_pool)} 檔")
         except Exception as e:
             logger.info(f"⚠️ [ATR定時重選] 執行失敗: {e}")
-        await asyncio.sleep(900)
+        await asyncio.sleep(300)
 
 
 def print_multi_status():

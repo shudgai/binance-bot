@@ -469,13 +469,13 @@ def read_bot_output(proc, sym):
                 if _should_emit_bot_web_log(web_line):
                     add_system_log(web_line, "info")
             else:
-                # 過濾掉極高頻的排版雜訊（如分隔線與靜態區塊），保留進場與決策路徑紀錄
                 _skip_prefixes = ("----", "[__multi__] ----")
                 if any(line.startswith(p) for p in _skip_prefixes):
                     pass  # 靜默丟棄
                 else:
                     level = classify_bot_log_level(line)
-                    add_system_log(f"[{sym}] {line}", level)
+                    log_msg = line if sym == "__multi__" else f"[{sym}] {line}"
+                    add_system_log(log_msg, level)
     proc.stdout.close()
     proc.wait()
     intentional_stop = id(proc) in _intentional_stop_processes

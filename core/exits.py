@@ -21,34 +21,29 @@ RANGE_ENTRY_ROUTES = {"range_support_long", "range_resistance_short"}
 MA_DISASTER_STOP_PCT = 0.025
 MA_WRONG_DIRECTION_PCT = 0.01
 MA_WRONG_DIRECTION_WINDOW_SEC = 1800
-# 微利價格鎖利層（0.2%~0.6% 峰值）已停用：實測 FILUSDT（ADX 55、扎實趨勢單）
+# 微利價格鎖利層（低於 0.5% 峰值）已停用：實測 FILUSDT（ADX 55、扎實趨勢單）
 # 峰值只到 +0.22% 就被這層鎖死，交易所端同步的 STOP_MARKET 隨後被急速反轉的
 # 滑價打穿，小賺變小虧；而且無論鎖多緊，都是「見好就收一點點」，跟後面行情
 # 有沒有真的繼續完全無關——本質上是拿一個固定價格門檻去猜「這是真反轉還是
 # 正常雜訊」，猜不準。
 #
-# 現在小峰值（< MA_PEAK_LOCK_ARM_PCT）不再武裝任何價格鎖利線，client 端跟
+# 小峰值（< MA_PEAK_LOCK_ARM_PCT）不再用「固定比例鎖死」猜反轉，改用跟 Range
+# 路線一樣的 ATR 動態距離移動停利：距離依波動度自動調整，波動大的幣種留的
+# 空間寬一點、不會被正常雜訊滑穿；波動小的幣種收緊一點。實測 6 筆 MA7_Simple
+# 交易（BCH/XMR/WLD 等）峰值都在 0.17%~0.42%（卡在 0.5% 門檻之下完全沒有
+# 保護），等 MA7 結構反轉確認出來，獲利已經全部回吐甚至變虧損；改成動態距離
+# 移動停利後，這個區間也有基本保護，但不是固定價位死鎖。
+MA_MICRO_TRAIL_ARM_PCT = 0.0025  # 峰值至少 0.25%（高於雙邊費用門檻）才啟動，確保峰值與地板之間留有真正的移動空間
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
 MA_MIN_PROFIT_TARGET_PCT = 0.010
-# 微利地板只負責 0.3%~0.5% 的小峰值保護；0.5% 以上直接進入移動停利（棘輪）機制
-MA_MICRO_PROFIT_ARM_PCT = 0.003  # 0.3% 啟動微利地板（最小保護層）
-MA_MICRO_PROFIT_KEEP_RATIO = 0.70  # 微利層保留 70% 峰值
-# 實測 FILUSDT 案例：鎖利價同步到交易所端 STOP_MARKET 後，行情急速反轉時，
-# 停損單觸發後市價成交實際滑價達 0.29%（0.7235 觸發 -> 0.7214 成交），遠大於
-# 原本只留 0.05% 的緩衝，導致理論上鎖住的小賺變成實際虧損。兩層緩衝都拉高到
-# 0.20%，讓「手續費 0.10% + 緩衝 0.20%」= 0.30% 的總門檻能扛住這種急反轉滑價，
-# 不再是滑一下就穿。
-MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.001
-MA_PROFIT_FLOOR_ARM_PCT = 0.005  # 0.5% 就進入移動停利（原 0.8% 固定地板層，改讓移動停利更早接管）
+# 0.5% 前不以價格地板猜測反轉；由 MA 結構與災難停損管理。達 0.5% 後，
+# 單一 Peak Lock 棘輪隨已確認峰值向獲利方向推進，避免重疊規則搶先平倉。
+MA_PEAK_LOCK_ARM_PCT = 0.005
 MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.001
 MA_PROFIT_FLOOR_CONFIRM_TICKS = 3
 MA_PROFIT_FLOOR_CONFIRM_SEC = 1.0
 MA_PROFIT_FLOOR_TREND_CONFIRM_SEC = 2.0
-# 移動停利（棘輪鎖利）：峰值達 0.5% 就啟動真正的追蹤停利，隨利潤往上移動
-# 原本設為 MA_MIN_PROFIT_TARGET_PCT（1.0%），ETH 這次峰值 0.42% 根本沒機會進入棘輪，
-# 改為 0.5% 讓中等波段也能享有移動停利保護。
-MA_PEAK_LOCK_ARM_PCT = 0.005  # 0.5% 峰值啟動棘輪移動停利（原 1.0% 太晚）
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 1.0  # 移動停利線距峰值 1.0 ATR（原 1.5，適度收緊跟蹤距離）
@@ -62,7 +57,7 @@ RANGE_TRAILING_NET_BUFFER_PCT = 0.0005
 # 即時賣壓/買壓出場：鎖利線是等「價格」跌破才反應，本質上一定會落後於真正的
 # 反轉。即時成交流（taker 主動買/賣）比價格更早反映風向轉變，因此在已有基本
 # 浮盈的前提下，若逆勢方向成交量明顯主導，提前出場，減少等鎖利線被價格穿越
-# 才出場所造成的回吐。刻意不跟 MA_MICRO_PROFIT_ARM_PCT 綁在一起、門檻設得
+# 才出場所造成的回吐。刻意不跟 MA_PEAK_LOCK_ARM_PCT 綁在一起、門檻設得
 # 更低：這是獨立的「真訊號」防線（看實際成交方向，不是看價格門檻），就算
 # 峰值還沒到鎖利線會啟動的門檻，只要出現真的逆勢量能主導也該提前反應；會不
 # 會誤觸交給下面的連續確認 (confirm ticks) 把單筆雜訊濾掉，不是靠拉高門檻。
@@ -431,44 +426,34 @@ def update_ma_peak_lock(sym, current_price, is_long, event_time=None, require_co
     # 兩個可成交價之間；回吐的下一格就是進場價，結果毛利 0、淨損雙邊費用。
     fee_floor = ROUND_TRIP_FEE_PCT + MA_PROFIT_FLOOR_NET_BUFFER_PCT
     if confirmed_peak < MA_PEAK_LOCK_ARM_PCT:
-        if confirmed_peak < MA_MICRO_PROFIT_ARM_PCT:
+        if confirmed_peak < MA_MICRO_TRAIL_ARM_PCT:
             _reset_ma_profit_floor_confirmation(s)
-            return False, float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-        # 0.20%~0.30% 是微利保護層：保留峰值 60%，並至少涵蓋雙邊費用 + 0.05%。
-        # 0.30%~0.60% 改為保留 80%；兩層都只建立移動地板，不是固定價停利。
-        is_micro_profit = confirmed_peak < MA_PROFIT_FLOOR_ARM_PCT
-        keep_ratio = MA_MICRO_PROFIT_KEEP_RATIO if is_micro_profit else 0.80
-        protective_fee_floor = (
-            ROUND_TRIP_FEE_PCT + MA_MICRO_PROFIT_NET_BUFFER_PCT
-            if is_micro_profit else fee_floor
-        )
-        previous_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-        locked_mid = max(protective_fee_floor, confirmed_peak * keep_ratio)
+            s["ma_profit_floor_armed"] = False
+            s["ma_profit_floor_price"] = 0.0
+            return False, 0.0
+
+        # ATR 動態距離移動停利：距離依波動度自動調整（0.15%~0.35%），
+        # 而不是鎖死一個固定比例的獲利價位。
+        atr_pct = (atr / avg) if avg > 0 else 0.0
+        trail_tolerance = max(0.0015, min(0.0035, atr_pct * 1.2))
         if is_long:
-            floor_price = avg * (1.0 + locked_mid)
-            # 棘輪：只能往更保護的方向推進（更高）
+            peak_price = avg * (1.0 + confirmed_peak)
+            floor_price = max(peak_price * (1.0 - trail_tolerance), avg * (1.0 + fee_floor))
+            floor_price = min(floor_price, peak_price)  # 地板永遠不可高於目前峰值價
             floor_price = max(float(s.get("ma_profit_floor_price", 0.0) or 0.0), floor_price)
+            crossed = current_price <= floor_price
         else:
-            floor_price = avg * (1.0 - locked_mid)
-            prev_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
-            floor_price = min(prev_floor if prev_floor > 0 else float("inf"), floor_price)
+            peak_price = avg * (1.0 - confirmed_peak)
+            floor_price = min(peak_price * (1.0 + trail_tolerance), avg * (1.0 - fee_floor))
+            floor_price = max(floor_price, peak_price)  # 地板永遠不可低於目前峰值價
+            previous_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
+            floor_price = min(previous_floor if previous_floor > 0 else float("inf"), floor_price)
+            crossed = current_price >= floor_price
+        previous_floor = float(s.get("ma_profit_floor_price", 0.0) or 0.0)
         s["ma_profit_floor_armed"] = True
         s["ma_profit_floor_price"] = floor_price
         if abs(floor_price - previous_floor) > avg * 0.000001:
             _schedule_ma_exchange_profit_stop(sym)
-        # [保護] 若當前利潤明顯高於 floor（代表價格在 floor 上方往上走），不要觸發出場。
-        # 「price <= floor」只有在真正跌穿 floor 時才成立；若 current_price 還在 floor 上方，
-        # crossed=False，讓利潤繼續跑。
-        crossed = current_price <= floor_price if is_long else current_price >= floor_price
-        # 鎖利線是為了保住淨利，不可在價格已跳空越過底線、連雙邊費用都無法
-        # 涵蓋時，仍等待數秒確認後追價虧損平倉。此時把出場權交回 MA 轉折及
-        # 災難停損；若價格重新回到可獲利區，鎖利線仍可再次正常生效。
-        if crossed and profit < ROUND_TRIP_FEE_PCT:
-            # 如果已經跌穿，為了避免進一步虧損，強行平倉（不重設為未確認狀態），
-            # 確保不會再放大虧損退回災難停損。
-            return True, floor_price
-        if not crossed:
-            s["ma_profit_floor_missed"] = False
         return _ma_profit_floor_cross_confirmed(sym, crossed, is_long, now), floor_price
 
     locked_profit = max(fee_floor, confirmed_peak * _ma_peak_keep_ratio(confirmed_peak))

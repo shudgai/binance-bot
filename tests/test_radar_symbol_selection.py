@@ -21,6 +21,12 @@ from services.radar_service import (
     prioritize_entry_ready,
     radar_eligibility,
     is_fixed_trade_pool,
+    is_managed_trade_pool,
+    DYNAMIC_POOL_MIN_READINESS,
+    RADAR_STANDARD_OBSERVATION_SEC,
+    RADAR_FAST_READINESS,
+    RADAR_FAST_OBSERVATION_SEC,
+    radar_observation_mature,
     is_strict_radar_eligible,
 )
 from services.binance_service import calculate_entry_readiness
@@ -37,7 +43,7 @@ EXPECTED_ATR_SYMBOLS = EXPECTED_SYMBOLS
 def test_atr_sources_use_the_approved_dynamic_pool():
     assert set(MANAGER_DEFAULT_SYMBOLS).issubset(set(DEFAULT_SYMBOLS))
     assert ATR_ELIGIBLE_SYMBOLS == EXPECTED_ATR_SYMBOLS
-    assert CORE_SYMBOLS == EXPECTED_ATR_SYMBOLS
+    assert CORE_SYMBOLS == EXPECTED_SYMBOLS[:5]
     assert RADAR_SELECT_COUNT == 25  # 候選池；實際交易監控仍由 bot manager 截為 15 檔
     assert TRADE_POOL_SIZE == 15
     assert MANAGER_TRADE_POOL_SIZE == 15
@@ -52,6 +58,20 @@ def test_fixed_trade_pool_detection_keeps_all_configured_symbols():
     assert is_fixed_trade_pool(list(reversed(DEFAULT_SYMBOLS)))
     assert not is_fixed_trade_pool(DEFAULT_SYMBOLS[:-1])
     assert not is_fixed_trade_pool(DEFAULT_SYMBOLS[:-1] + ["OTHERUSDT"])
+
+
+def test_managed_pool_accepts_core_plus_dynamic_without_allowing_shrinkage():
+    assert DYNAMIC_POOL_MIN_READINESS == 0.50
+    assert RADAR_STANDARD_OBSERVATION_SEC == 300
+    assert RADAR_FAST_READINESS == 0.70
+    assert RADAR_FAST_OBSERVATION_SEC == 120
+    assert not radar_observation_mature(1, 300)
+    assert not radar_observation_mature(2, 299)
+    assert radar_observation_mature(2, 300)
+    dynamic_pool = CORE_SYMBOLS + [f"DYN{i}USDT" for i in range(10)]
+    assert is_managed_trade_pool(dynamic_pool)
+    assert not is_managed_trade_pool(dynamic_pool[:-1])
+    assert not is_managed_trade_pool(dynamic_pool[1:] + ["OTHERUSDT"])
 
 
 def test_radar_limits_are_classified_by_future_symbol_setup():
@@ -81,7 +101,7 @@ def test_range_uses_local_strategy_band_and_missing_1h_is_explicit():
 def test_entry_slots_follow_capital_tiers():
     assert get_dynamic_max_slots(150) == 3
     assert get_dynamic_max_slots(250) == 5
-    assert abs(MIN_5M_ATR_PCT_FOR_MA_ENTRY - 0.002) < 1e-12
+    assert abs(MIN_5M_ATR_PCT_FOR_MA_ENTRY - 0.0005) < 1e-12
 
 
 def test_atr_pool_excludes_event_and_unapproved_coins():

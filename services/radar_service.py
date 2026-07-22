@@ -210,12 +210,29 @@ ATR_ELIGIBLE_SYMBOLS = [
     "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
     "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
-CORE_SYMBOLS = list(ATR_ELIGIBLE_SYMBOLS)
+CORE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
 # 選幣數擴大到 15：新倉條件變嚴後，需要更多候選給 5 個倉位槽篩選。
 # 最大持倉仍由 MAX_POSITIONS 控制，不會因監控 15 檔而同時開更多單。
 RADAR_SELECT_COUNT = 25
 HOT_MOVERS_COUNT   = 0
-CORE_SELECT_COUNT  = len(ATR_ELIGIBLE_SYMBOLS)
+CORE_SELECT_COUNT  = len(CORE_SYMBOLS)
+DYNAMIC_POOL_MIN_READINESS = 0.50
+RADAR_STANDARD_OBSERVATION_SEC = 300
+RADAR_FAST_READINESS = 0.70
+RADAR_FAST_OBSERVATION_SEC = 120
+
+
+def radar_observation_mature(confirmations, observed_sec):
+    return (
+        int(confirmations or 0) >= 2
+        and float(observed_sec or 0.0) >= RADAR_STANDARD_OBSERVATION_SEC
+    )
+
+
+def is_managed_trade_pool(symbols) -> bool:
+    """A full core-plus-dynamic pool must not be shrunk by secondary eviction."""
+    normalized = {str(symbol).upper() for symbol in (symbols or [])}
+    return len(normalized) == TRADE_POOL_SIZE and set(CORE_SYMBOLS).issubset(normalized)
 
 # 雷達門檻依策略分類：Breakout 維持嚴格；MA 適度放寬；Range 由局部結構風控。
 # 共用最低波動與 24H 極端漲跌保護，實際送單前再依真正 route 重驗。
@@ -417,7 +434,7 @@ def _follow_source_radar_switch(force_start=False):
 from services.binance_service import get_dynamic_top_15_coins
 
 def auto_radar_switch(force_start=False, restart_on_change=True):
-    """更新固定 15 檔交易池的波動資格與動態風控參數。"""
+    """保留五個核心幣，並以安全雷達候選動態補滿其餘交易池。"""
     status_before_scan = get_bot_status()
     clean_blacklist()
     # 全市場動態掃描 (limit=80 確保足夠候選)
@@ -450,9 +467,29 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
 
     ranking = [r for r in ranking if _is_crypto(r['symbol'])]
     eligible = prioritize_entry_ready([r for r in ranking if is_strict_radar_eligible(r)])
-    from core.config import DEFAULT_SYMBOLS
+    ready_eligible = [
+        row for row in eligible
+        if row.get("entry_direction") in ("long", "short")
+        and float(row.get("entry_readiness_score", 0.0) or 0.0) >= DYNAMIC_POOL_MIN_READINESS
+    ]
     ranking_by_symbol = {row["symbol"]: row for row in ranking}
-    selected_rows = [ranking_by_symbol[sym] for sym in DEFAULT_SYMBOLS if sym in ranking_by_symbol]
+    ready_by_symbol = {row["symbol"]: row for row in ready_eligible}
+    incumbent_dynamic = [
+        symbol for symbol in status_before_scan.get("active_symbols", [])
+        if symbol not in CORE_SYMBOLS and symbol in ready_by_symbol
+    ]
+    dynamic_symbols = list(dict.fromkeys(
+        incumbent_dynamic
+        + [row["symbol"] for row in ready_eligible if row["symbol"] not in CORE_SYMBOLS]
+    ))[:max(0, TRADE_POOL_SIZE - len(CORE_SYMBOLS))]
+    best_symbols = list(dict.fromkeys(CORE_SYMBOLS + dynamic_symbols))
+    if len(best_symbols) < TRADE_POOL_SIZE:
+        best_symbols.extend(
+            symbol for symbol in DEFAULT_SYMBOLS
+            if symbol not in best_symbols
+        )
+    best_symbols = best_symbols[:TRADE_POOL_SIZE]
+    selected_rows = [ranking_by_symbol[sym] for sym in best_symbols if sym in ranking_by_symbol]
 
     try:
         with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -476,19 +513,19 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         confirmations = int(previous.get("_radar_confirmations", 0) or 0) + 1 if observation_now and observation_before else (1 if observation_now else 0)
         first_seen = float(previous.get("_radar_candidate_since", now) or now) if observation_now and observation_before else now
         observed_sec = max(0.0, now - first_seen)
-        trade_eligible = strict_now and confirmations >= 2 and observed_sec >= 1800
+        trade_eligible = strict_now and radar_observation_mature(confirmations, observed_sec)
         if not strict_now:
             reason = strict_reason
         elif confirmations < 2:
             reason = "觀察中：等待第二次雷達確認"
-        elif observed_sec < 1800:
-            reason = f"觀察中：尚需 {int((1800-observed_sec)/60)+1} 分鐘"
+        elif observed_sec < RADAR_STANDARD_OBSERVATION_SEC:
+            reason = f"觀察中：尚需 {int((RADAR_STANDARD_OBSERVATION_SEC-observed_sec)/60)+1} 分鐘"
         else:
-            reason = "可交易：連續兩次雷達合格且觀察滿 30 分鐘"
+            reason = "可交易：連續兩次雷達合格且觀察滿 5 分鐘"
         profile.update({
             "_radar_strict_eligible": strict_now,
             "_radar_observation_eligible": observation_now,
-            "_radar_observation_mature": confirmations >= 2 and observed_sec >= 1800,
+            "_radar_observation_mature": radar_observation_mature(confirmations, observed_sec),
             "_radar_confirmations": confirmations,
             "_radar_candidate_since": first_seen,
             "_radar_route_class": route_class,
@@ -502,8 +539,6 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
         })
         profiles[sym] = profile
 
-    best_symbols = list(DEFAULT_SYMBOLS)
-
     if not best_symbols:
         add_system_log("⚠️ [動態選幣] 無法取得任何幣種，維持現狀", "warning")
         return get_bot_status().get("active_symbols", [])
@@ -513,7 +548,7 @@ def auto_radar_switch(force_start=False, restart_on_change=True):
     save_symbol_config(trade_symbols)
     _save_radar_profiles(profiles)
     
-    add_system_log(f"🎯 [固定幣池] 已更新 15 檔交易資格: {', '.join(trade_symbols)}", "success")
+    add_system_log(f"🎯 [核心＋動態池] 已更新 {len(trade_symbols)} 檔交易資格: {', '.join(trade_symbols)}", "success")
     
     # 3. 雷達保留 25 檔候選資料，但交易核心只接收資格排序後前 15 檔。
     symbols_changed = set(status_before_scan.get("active_symbols", [])) != set(trade_symbols)

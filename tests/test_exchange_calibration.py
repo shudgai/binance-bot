@@ -211,6 +211,41 @@ class ExchangeCalibrationTests(unittest.TestCase):
 
         self.assertEqual(reason, "[External_Stop_Loss]")
 
+    def test_external_stop_matches_saved_range_stop_and_includes_entry_fee(self):
+        state = ctx.STATES[self.sym]
+        opened_ms = int((time.time() - 60) * 1000)
+        state.update({
+            "qty": 2.0,
+            "avg_price": 100.0,
+            "open_time": opened_ms / 1000.0,
+            "entry_reason": "Range_Support_Long",
+            "exchange_stop_order_id": "algo-stop-2",
+            "range_sl_price": 99.75,
+        })
+        exchange = AsyncMock()
+        exchange.fetch_my_trades.return_value = [
+            {
+                "id": "entry-trade", "order": "entry-order",
+                "timestamp": opened_ms + 1000, "side": "buy",
+                "amount": 2.0, "price": 100.0, "fee": {"cost": 0.08},
+                "info": {"realizedPnl": "0"},
+            },
+            {
+                "id": "stop-trade", "order": "child-market-2",
+                "timestamp": opened_ms + 30000, "side": "sell",
+                "amount": 2.0, "price": 99.75, "fee": {"cost": 0.08},
+                "info": {"realizedPnl": "-0.5", "type": "MARKET"},
+            },
+        ]
+        exchange.fapiPrivateGetAlgoOrder.side_effect = RuntimeError("algo lookup unavailable")
+        exchange.fetch_order.side_effect = RuntimeError("order lookup unavailable")
+
+        with patch("core.orders.record_trade_result", return_value=True) as record_result:
+            reason = asyncio.run(_record_external_position_close(exchange, self.sym, state))
+
+        self.assertEqual(reason, "[External_Stop_Loss]")
+        self.assertAlmostEqual(record_result.call_args.kwargs["fees"], 0.16)
+
     def test_exchange_close_id_is_deduplicated_in_trade_history(self):
         from core.orders import record_trade_result
 

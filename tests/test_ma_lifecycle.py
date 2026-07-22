@@ -244,10 +244,9 @@ class MALifecycleTests(unittest.TestCase):
         self.assertEqual(_ma_peak_keep_ratio(0.020), 0.85)
         self.assertEqual(_ma_peak_keep_ratio(0.030), 0.90)
 
-    def test_ma_micro_profit_floor_disabled_up_to_peak_lock_threshold(self):
-        # 小峰值鎖利層已停用（見 exits.py 說明）：MA_MICRO_PROFIT_ARM_PCT 現在
-        # 直接等於 MA_PEAK_LOCK_ARM_PCT，0.6% 以下的浮盈不再武裝任何價格鎖利線，
-        # 出場交給賣壓／MA結構破壞判斷，讓浮盈有機會跟著趨勢跑。
+    def test_ma_micro_trail_arms_once_peak_confirmed_between_quarter_and_half_percent(self):
+        # 0.25%~0.5% 峰值區間改用 ATR 動態距離移動停利（見 exits.py 說明），
+        # 不再像過去一樣完全不設防；但單一未確認的尖峰不會馬上武裝。
         state = self._position_state(closed_price=100.28)
         state.update({"highest_profit_pct": 0.0})
 
@@ -258,12 +257,15 @@ class MALifecycleTests(unittest.TestCase):
         self.assertEqual(floor, 0.0)
         self.assertFalse(state["ma_profit_floor_armed"])
 
+        # 第二筆在 1 秒內、誤差帶內確認同一個峰值後，峰值才真正被採認為 0.28%，
+        # 落在 0.25%~0.5% 區間，動態距離移動停利地板開始武裝（但還沒被價格穿越）。
         hit, floor = update_ma_peak_lock(
             self.sym, 100.279, True, event_time=100.5, require_confirmation=True,
         )
         self.assertFalse(hit)
-        self.assertEqual(floor, 0.0)
-        self.assertFalse(state["ma_profit_floor_armed"])
+        self.assertGreater(floor, 0.0)
+        self.assertLess(floor, 100.28)
+        self.assertTrue(state["ma_profit_floor_armed"])
 
     def test_ma_micro_profit_floor_stays_off_below_point_two_percent(self):
         state = self._position_state(closed_price=100.19)
@@ -274,6 +276,24 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(hit)
         self.assertEqual(floor, 0.0)
         self.assertFalse(state["ma_profit_floor_armed"])
+
+    def test_eth_short_point_four_two_peak_does_not_exit_near_cost(self):
+        """Regression: ETH 1937.74 short peaked at 0.42%; single tick doesn't force an exit."""
+        state = self._position_state(closed_price=1937.05803, ma7=1936.0, ma25=1938.0)
+        state.update({
+            "qty": -0.076,
+            "avg_price": 1937.74,
+            "current_atr": 6.630714,
+            "highest_profit_pct": 0.0042,
+        })
+
+        hit, floor = update_ma_peak_lock(self.sym, 1937.05803, False)
+
+        # 0.42% 峰值落在動態距離移動停利區間，地板會武裝，但單一 tick 尚未
+        # 累積到連續確認次數/秒數門檻，不會立即出場。
+        self.assertFalse(hit)
+        self.assertGreater(floor, 0.0)
+        self.assertTrue(state["ma_profit_floor_armed"])
 
     def test_sell_pressure_stays_off_without_profit_peak(self):
         state = self._position_state(closed_price=100.0)
@@ -334,7 +354,7 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(hit)
         self.assertEqual(state["sell_pressure_cross_count"], 0)
 
-    def test_ma_peak_lock_does_not_arm_below_point_six_percent(self):
+    def test_ma_peak_lock_does_not_arm_below_point_five_percent(self):
         state = self._position_state(closed_price=100.6)
         state["close_price"] = 100.3
         state["highest_profit_pct"] = 0.003
@@ -349,16 +369,17 @@ class MALifecycleTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_profit_lock_still_disabled_at_point_three_percent(self):
-        # 0.3% 一樣落在停用區間內（門檻已提高到 0.6%），不武裝任何鎖利線。
+        # 0.3% 落在動態距離移動停利區間（0.25%~0.5%），地板會武裝，但完整的
+        # Peak Lock 棘輪（>=0.5%）仍未啟動。
         state = self._position_state(closed_price=100.3)
         state.update({"close_price": 100.3, "highest_profit_pct": 0.003})
 
         hit, floor_price = update_ma_peak_lock(self.sym, 100.3, True)
 
         self.assertFalse(hit)
-        self.assertFalse(state["ma_profit_floor_armed"])
+        self.assertTrue(state["ma_profit_floor_armed"])
         self.assertFalse(state["ma_peak_lock_armed"])
-        self.assertEqual(floor_price, 0.0)
+        self.assertGreater(floor_price, 0.0)
 
     def test_profit_retention_precedes_sub_one_percent_peak_lock(self):
         # 0.8% 峰值尚未到 1.0% Peak Lock；回吐至峰值 70% 以下時，
@@ -377,7 +398,7 @@ class MALifecycleTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_ma_short_peak_lock_is_symmetric(self):
-        # 主鎖利層從 1.0% 峰值啟動，確認空單方向與 60% 最低保留對稱。
+        # 主鎖利層從 0.5% 峰值啟動，確認空單方向與 60% 最低保留對稱。
         state = self._position_state(closed_price=99.30, ma7=99.0, ma25=100.0)
         state.update({"qty": -1.0, "close_price": 99.30, "highest_profit_pct": 0.012})
 
@@ -611,7 +632,7 @@ class MALifecycleTests(unittest.TestCase):
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
                 self.assertGreater(state["ma_peak_lock_price"], first_lock)
-                self.assertAlmostEqual(state["ma_peak_lock_price"], 102.25, places=6)
+                self.assertAlmostEqual(state["ma_peak_lock_price"], 102.50, places=6)
 
         asyncio.run(run())
 
