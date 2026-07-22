@@ -469,10 +469,10 @@ def read_bot_output(proc, sym):
                 if _should_emit_bot_web_log(web_line):
                     add_system_log(web_line, "info")
             else:
-                # 過濾掉每輪掃描的 debug 雜訊（🔍 條件檢測），只保留有意義的事件
-                _skip_prefixes = ("🔍", "[__multi__]", "[__multi__] 🔍", "----")
+                # 過濾掉極高頻的排版雜訊（如分隔線與靜態區塊），保留進場與決策路徑紀錄
+                _skip_prefixes = ("----", "[__multi__] ----")
                 if any(line.startswith(p) for p in _skip_prefixes):
-                    pass  # 靜默丟棄，不送 web log
+                    pass  # 靜默丟棄
                 else:
                     level = classify_bot_log_level(line)
                     add_system_log(f"[{sym}] {line}", level)
