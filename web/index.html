@@ -2119,6 +2119,8 @@ createApp({
             loadKlines();
             initWebSocket();
             fetchInitialPrices();
+            fetchPricesBatch();
+            startHTTPFallback();
             initLiveTradesWs();
             fetchBackendLogs();
 
