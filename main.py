@@ -90,7 +90,7 @@ def ensure_single_instance():
 
         if stale_pid and stale_pid != os.getpid():
             if _process_exists(stale_pid):
-                logger.info(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。")
+                _file_handler.emit(logging.LogRecord(__name__, logging.INFO, __file__, 93, f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。", (), None))
                 # 用專屬 exit code 99（不是 0），讓 bot_manager_service.py 的看門狗邏輯能
                 # 分辨「偵測到重複、正常讓路退出」跟「真的意外崩潰」。之前兩者都是 exit 0，
                 # 看門狗看到 exit 0 又以為機器人意外停止，5 秒後又重啟一次，新行程又立刻
