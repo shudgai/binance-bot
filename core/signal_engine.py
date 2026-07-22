@@ -177,18 +177,16 @@ def compute_signal_strength(sym, realtime_trigger=False):
         MTF_RSI_SHORT_FLOOR = 40.0  # 15m RSI 放寬至 40
         MTF_RSI_LONG_CEIL   = 70.0  # 15m RSI 放寬至 70
 
-        # ── MA7 谷底轉折多重二次確認機制 ──
+        # 放寬 MA7_Simple 的專屬 RVOL 要求 (>= 0.3x)，並調整斜率只要由負轉正 (>0) 即認定觸發
+        ma7_simple_volume_ok = volume_ratio >= 0.30
         curr_slope_pct = (ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
-        # 1. 斜率確立確認：斜率必須真實向上拉開 >= 0.01%，排除平走橫盤微小雜訊
-        slope_confirmed = curr_slope_pct >= 0.0001
-        # 2. 價格站穩確認：收盤價站穩在 MA7 之上 (或下影線止跌反彈)，確認買盤支撐
+        slope_confirmed = curr_slope_pct > 0.0
         price_above_ma7 = candle_close >= (ma7 * 0.9992)
-        # 3. RSI 止跌確認：RSI 必須 >= 35.0，避免在自由落體式崩跌中接刀
         rsi_bottom_ok = current_rsi >= 35.0
 
-        # MA7 谷底轉折向上：必須同時通過上述三重二次確認才允許開倉做多
+        # MA7 谷底轉折向上：當由負轉正且 RVOL >= 0.3x 即允許開倉做多
         if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
-                and volume_ok and current_rsi < 82.0
+                and ma7_simple_volume_ok and current_rsi < 82.0
                 and adx_not_spiking and not (golden_cross or death_cross)):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
@@ -206,8 +204,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
                 strength = 25.0 + volume_adjustment
                 return (side, strength, route)
-        # MA7 頭部轉折向下：在 MA7 一向下勾時即刻開倉做空
-        elif (turn_down and volume_ok and current_rsi > 18.0
+        # MA7 頭部轉折向下：在 MA7 一向下勾且 RVOL >= 0.3x 時即刻開倉做空
+        elif (turn_down and ma7_simple_volume_ok and current_rsi > 18.0
                 and adx_not_spiking and not (golden_cross or death_cross)):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
@@ -435,8 +433,15 @@ def compute_range_signal(sym):
             logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [Range] 區間過窄，略過")
             return (None, 0, None)
 
-    # 4. 訊號 K 棒（已收盤倒數第二根）
-    sig = candles[-2]
+    # 4. 訊號 K 棒。ETH/XRP 曾出現只靠一根短暫拒跌 K 棒就逆著 15m
+    # 趨勢做多，下一根隨即破底；嚴格幣種因此要用前一根作為觸碰／拒絕，
+    # 再由最新已收盤 K 棒確認 higher-low + higher-close（做空反向）。
+    strict_reversal_confirmation = sym in STRICT_ENTRY_SYMBOLS
+    if strict_reversal_confirmation and len(candles) < 23:
+        s["entry_block_reason"] = "等待第二根收線確認區間反轉"
+        return (None, 0, None)
+    sig = candles[-3] if strict_reversal_confirmation else candles[-2]
+    confirmation = candles[-2] if strict_reversal_confirmation else None
     candle_open  = float(sig[1])
     candle_high  = float(sig[2])
     candle_low   = float(sig[3])
@@ -450,6 +455,32 @@ def compute_range_signal(sym):
     upper_wick = candle_high - max(candle_open, candle_close)
     bullish_rejection = candle_close > candle_open or lower_wick >= body * 1.5
     bearish_rejection = candle_close < candle_open or upper_wick >= body * 1.5
+
+    strict_long_confirmation = True
+    strict_short_confirmation = True
+    if strict_reversal_confirmation:
+        ema20_15m = float(s.get("ema20_15m", 0.0) or 0.0)
+        ema50_15m = float(s.get("ema50_15m", 0.0) or 0.0)
+        if min(ema20_15m, ema50_15m) <= 0:
+            s["entry_block_reason"] = "等待 15m EMA20／EMA50 完成，避免把短暫反彈誤認為反轉"
+            return (None, 0, None)
+
+        confirm_open = float(confirmation[1])
+        confirm_high = float(confirmation[2])
+        confirm_low = float(confirmation[3])
+        confirm_close = float(confirmation[4])
+        strict_long_confirmation = (
+            ema20_15m >= ema50_15m
+            and confirm_close > confirm_open
+            and confirm_close > candle_close
+            and confirm_low > candle_low
+        )
+        strict_short_confirmation = (
+            ema20_15m <= ema50_15m
+            and confirm_close < confirm_open
+            and confirm_close < candle_close
+            and confirm_high < candle_high
+        )
 
     # 實測 ADAUSDT 案例：支撐反彈訊號觸發時 RSI=50.0，看似正常，但短短不到
     # 一分鐘內連續幾輪掃描 RSI 一路殺到 33.3、29.4，代表當下賣壓根本還沒停，
@@ -468,6 +499,7 @@ def compute_range_signal(sym):
         and bullish_rejection                        # 收陽或更長下影確認拒跌
         and rsi < 50.0                               # 排除偏高位時的假支撐
         and rsi_not_still_falling                     # 排除賣壓還在惡化中的假支撐
+        and strict_long_confirmation                  # ETH/XRP：15m 同向且第二根收線確認反轉
     )
 
     # 6. 做空條件：高點碰壓力帶 且 收盤回落至壓力下方 且 RSI > 50 (原45，收緊防低位做空)
@@ -478,10 +510,14 @@ def compute_range_signal(sym):
         and bearish_rejection                        # 收陰或更長上影確認拒漲
         and rsi > 50.0                               # 排除偏低位時的假壓力
         and rsi_not_still_rising                      # 排除買壓還在惡化中的假壓力
+        and strict_short_confirmation                 # ETH/XRP：15m 同向且第二根收線確認反轉
     )
 
     if not long_signal and not short_signal:
-        s["entry_block_reason"] = "價格未確認觸碰支撐/壓力後回彈/拒絕（區間模式）"
+        if strict_reversal_confirmation:
+            s["entry_block_reason"] = "ETH/XRP 區間反轉未確認：需 15m 趨勢同向及第二根收線形成更高低點／更低高點"
+        else:
+            s["entry_block_reason"] = "價格未確認觸碰支撐/壓力後回彈/拒絕（區間模式）"
         return (None, 0, None)
 
     # 確保兩個訊號不會同時成立（優先支撐做多，壓力做空次之）
