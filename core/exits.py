@@ -28,34 +28,30 @@ MA_WRONG_DIRECTION_WINDOW_SEC = 1800
 # 正常雜訊」，猜不準。
 #
 # 現在小峰值（< MA_PEAK_LOCK_ARM_PCT）不再武裝任何價格鎖利線，client 端跟
-# 交易所端都不會在這個區間掛出保護性停損（_ma_exchange_stop_target 找不到
-# armed 的 floor/peak_lock 時會退回災難停損價，見 orders.py）。真正該負責抓
-# 「這是真反轉還是正常雜訊」的，交給 check_realtime_sell_pressure() 看即時
-# 成交流方向、以及 MA7_Closed_Break/Death_Cross/Golden_Cross 等結構破壞判斷，
-# 讓浮盈有機會跟著趨勢跑；代價是萬一賣壓沒抓到真反轉，回吐幅度會比原本更大，
-# 最終防線退回到 MA_DISASTER_STOP_PCT。跨過 MA_PEAK_LOCK_ARM_PCT（1.0%，已是
-# 有意義的實際獲利）之後，才進入下面原有的主鎖利層繼續運作。
-MA_ACTIVE_RISK_STOP_PCT = 0.01
 MA_EARLY_MOMENTUM_FLIP_STOP_PCT = 0.005
 MA_EARLY_MOMENTUM_FLIP_WINDOW_SEC = 1800
 MA_MIN_PROFIT_TARGET_PCT = 0.010
-MA_MICRO_PROFIT_ARM_PCT = 0.003  # 獲利達 0.3% 即啟動保本微利地板，防止小漲後反轉虧損
-MA_MICRO_PROFIT_KEEP_RATIO = 0.60
+# 微利地板只負責 0.3%~0.5% 的小峰值保護；0.5% 以上直接進入移動停利（棘輪）機制
+MA_MICRO_PROFIT_ARM_PCT = 0.003  # 0.3% 啟動微利地板（最小保護層）
+MA_MICRO_PROFIT_KEEP_RATIO = 0.70  # 微利層保留 70% 峰值
 # 實測 FILUSDT 案例：鎖利價同步到交易所端 STOP_MARKET 後，行情急速反轉時，
 # 停損單觸發後市價成交實際滑價達 0.29%（0.7235 觸發 -> 0.7214 成交），遠大於
 # 原本只留 0.05% 的緩衝，導致理論上鎖住的小賺變成實際虧損。兩層緩衝都拉高到
 # 0.20%，讓「手續費 0.10% + 緩衝 0.20%」= 0.30% 的總門檻能扛住這種急反轉滑價，
 # 不再是滑一下就穿。
 MA_MICRO_PROFIT_NET_BUFFER_PCT = 0.001
-MA_PROFIT_FLOOR_ARM_PCT = 0.008
+MA_PROFIT_FLOOR_ARM_PCT = 0.005  # 0.5% 就進入移動停利（原 0.8% 固定地板層，改讓移動停利更早接管）
 MA_PROFIT_FLOOR_NET_BUFFER_PCT = 0.001
 MA_PROFIT_FLOOR_CONFIRM_TICKS = 3
 MA_PROFIT_FLOOR_CONFIRM_SEC = 1.0
 MA_PROFIT_FLOOR_TREND_CONFIRM_SEC = 2.0
-MA_PEAK_LOCK_ARM_PCT = MA_MIN_PROFIT_TARGET_PCT
+# 移動停利（棘輪鎖利）：峰值達 0.5% 就啟動真正的追蹤停利，隨利潤往上移動
+# 原本設為 MA_MIN_PROFIT_TARGET_PCT（1.0%），ETH 這次峰值 0.42% 根本沒機會進入棘輪，
+# 改為 0.5% 讓中等波段也能享有移動停利保護。
+MA_PEAK_LOCK_ARM_PCT = 0.005  # 0.5% 峰值啟動棘輪移動停利（原 1.0% 太晚）
 MA_PEAK_LOCK_MID_PCT = 0.015
 MA_PEAK_LOCK_HIGH_PCT = 0.030
-MA_PEAK_LOCK_MIN_ATR_GAP = 1.5
+MA_PEAK_LOCK_MIN_ATR_GAP = 1.0  # 移動停利線距峰值 1.0 ATR（原 1.5，適度收緊跟蹤距離）
 GENERIC_TRAILING_ARM_PCT = 0.0045
 PARTIAL_TP_MIN_GROSS_PCT = 0.006
 # Range 在峰值達 0.25% 後，把保護線推到「雙邊費用 + 0.05%」；搭配下方
