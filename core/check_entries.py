@@ -857,7 +857,7 @@ async def check_entries():
         from core.config import STRICT_ENTRY_SYMBOLS
         _strict_entry = sym in STRICT_ENTRY_SYMBOLS
         _min_atr_pct_5m = (
-            0.0008 if is_range_signal
+            0.0003 if is_range_signal
             else MIN_5M_ATR_PCT_FOR_MA_ENTRY if _strict_entry
             else MIN_5M_ATR_PCT_FOR_MA_ENTRY * 0.80
         )
