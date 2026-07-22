@@ -29,7 +29,11 @@ _stdout_handler.setFormatter(logging.Formatter("%(message)s"))
 _file_handler = logging.FileHandler(os.path.join(_LOG_DIR, "bot.log"), encoding="utf-8")
 _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
 
-logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _file_handler])
+from services.system_log_service import FileBackedSystemLogHandler
+_web_handler = FileBackedSystemLogHandler()
+_web_handler.setFormatter(logging.Formatter("%(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _file_handler, _web_handler])
 logger = logging.getLogger(__name__)
 
 # ── SIGTERM 診斷處理器 ──────────────────────────────────────────
