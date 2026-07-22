@@ -184,10 +184,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
         price_above_ma7 = candle_close >= (ma7 * 0.9992)
         rsi_bottom_ok = current_rsi >= 35.0
 
-        # MA7 谷底轉折向上：當由負轉正且 RVOL >= 0.3x 即允許開倉做多
+        # MA7 谷底轉折向上：當 MA7 勾頭向上、RVOL >= 0.3x 即允許開倉做多
         if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
                 and ma7_simple_volume_ok and current_rsi < 82.0
-                and adx_not_spiking and not (golden_cross or death_cross)):
+                and adx_not_spiking):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
                 reason = f"MA7 谷底轉折向上，但 5m RSI={current_rsi:.1f} > {MA7_SIMPLE_LONG_RSI_CEIL:.0f} 偏高，跳過"
@@ -206,7 +206,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 return (side, strength, route)
         # MA7 頭部轉折向下：在 MA7 一向下勾且 RVOL >= 0.3x 時即刻開倉做空
         elif (turn_down and ma7_simple_volume_ok and current_rsi > 18.0
-                and adx_not_spiking and not (golden_cross or death_cross)):
+                and adx_not_spiking):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
                 reason = f"MA7 頭部轉折向下，但 5m RSI={current_rsi:.1f} < {MA7_SIMPLE_SHORT_RSI_FLOOR:.0f} 已偏低，跳過避免超賣區做空"

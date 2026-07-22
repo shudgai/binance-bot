@@ -114,8 +114,8 @@ class TradeSignalTests(unittest.TestCase):
             signal_volume=800.0, ma7=99.997, ma25=100.0, ma99=101.0,
             prev_ma7=100.1, prev_ma25=100.0,
         )
-        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
-        self.assertIn("方向確認不足", STATES[sym]["entry_block_reason"])
+        # MA7 勾頭向下時符合 MA7_Simple 做空條件
+        self.assertEqual(compute_signal_strength(sym), ("sell", 25.0, "MA7_Simple"))
 
     def test_ma25_pullback_enters_only_after_bullish_rejection(self):
         sym = self._setup_ma_signal_state(
@@ -278,11 +278,13 @@ class TradeSignalTests(unittest.TestCase):
         init_states([sym])
         reset_coin_state(sym)
         base = [[i, 100.0, 100.4, 99.6, 100.0, 1000.0] for i in range(20)]
-        live = [21, signal[4], signal[4], signal[4], signal[4], 1.0]
+        confirmation = [21, signal[4], signal[4] + 0.3, signal[3] + 0.1, signal[4] + 0.2, 1000.0]
+        live = [22, confirmation[4], confirmation[4], confirmation[4], confirmation[4], 1.0]
         STATES[sym].update({
-            "status": "ACTIVE", "ohlcv": base + [signal, live],
-            "close_price": signal[4], "current_atr": 1.0,
+            "status": "ACTIVE", "ohlcv": base + [signal, confirmation, live],
+            "close_price": confirmation[4], "current_atr": 1.0,
             "adx": 10.0, "current_rsi": 50.0, "vol_ma20": 1000.0,
+            "ema20_15m": 101.0, "ema50_15m": 100.0,
         })
         return sym
 
@@ -363,6 +365,24 @@ class TradeSignalTests(unittest.TestCase):
         with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
             side, _, route = compute_range_signal(sym)
         self.assertEqual((side, route), ("buy", "Range_Support_Long"))
+
+    def test_strict_range_long_rejects_countertrend_15m_bounce(self):
+        sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
+        STATES[sym].update({
+            "current_rsi": 48.0, "prev_rsi": 49.0,
+            "ema20_15m": 99.0, "ema50_15m": 100.0,
+        })
+        with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
+            self.assertEqual(compute_range_signal(sym), (None, 0, None))
+        self.assertIn("15m 趨勢同向", STATES[sym]["entry_block_reason"])
+
+    def test_strict_range_long_requires_second_closed_candle_confirmation(self):
+        sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
+        STATES[sym].update({"current_rsi": 48.0, "prev_rsi": 49.0})
+        STATES[sym]["ohlcv"][-2] = [21, 99.2, 99.3, 98.8, 99.1, 1000.0]
+        with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
+            self.assertEqual(compute_range_signal(sym), (None, 0, None))
+        self.assertIn("第二根收線", STATES[sym]["entry_block_reason"])
 
     def test_kaito_like_range_setup_gets_priority_without_becoming_a_gate(self):
         sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 750.0])
