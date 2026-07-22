@@ -152,6 +152,38 @@ def test_range_realtime_trailing_exits_after_confirm_window():
     assert close.await_args.kwargs["reason"] == "[Range_Trailing_Closed_Confirm]"
 
 
+def test_range_small_profit_floor_exits_after_realtime_confirmation():
+    sym = "RANGESMALLUSDT"
+    init_states([sym])
+    reset_coin_state(sym)
+    state = STATES[sym]
+    state.update({
+        "qty": 1.0, "avg_price": 100.0,
+        "entry_reason": "Range_Support_Long",
+        "current_atr": 0.1, "highest_profit_pct": 0.0025,
+        "trailing_highest": 100.25, "trailing_stop_price": 0.0,
+        "stop_loss": 0.0, "trade_price_history": [100.25],
+        "trade_qty_history": [1.0],
+        "ohlcv": [[123000, 100.25, 100.25, 100.14, 100.25, 10.0]],
+    })
+
+    with patch("core.orders.close_position", AsyncMock()) as close:
+        asyncio.run(update_trade_signal(
+            sym, {"price": 100.14, "amount": 1.0, "timestamp": 1_000_000},
+        ))
+        close.assert_not_awaited()
+        asyncio.run(update_trade_signal(
+            sym, {"price": 100.14, "amount": 1.0, "timestamp": 1_000_500},
+        ))
+        close.assert_not_awaited()
+        asyncio.run(update_trade_signal(
+            sym, {"price": 100.14, "amount": 1.0, "timestamp": 1_001_100},
+        ))
+
+    close.assert_awaited_once()
+    assert close.await_args.kwargs["reason"] == "[Range_Trailing_Closed_Confirm]"
+
+
 def test_realtime_trade_does_not_close_before_soft_activation():
     sym = "XRPUSDT"
     init_states([sym])

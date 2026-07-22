@@ -58,8 +58,10 @@ MA_PEAK_LOCK_HIGH_PCT = 0.030
 MA_PEAK_LOCK_MIN_ATR_GAP = 1.5
 GENERIC_TRAILING_ARM_PCT = 0.0045
 PARTIAL_TP_MIN_GROSS_PCT = 0.006
-RANGE_TRAILING_MIN_GROSS_PCT = 0.006
-RANGE_TRAILING_NET_BUFFER_PCT = 0.004
+# Range 在峰值達 0.25% 後，把保護線推到「雙邊費用 + 0.05%」；搭配下方
+# 3 ticks / 1 秒確認，保留 0.2x% 小波段，同時避免單筆毛刺立即出場。
+RANGE_TRAILING_MIN_GROSS_PCT = 0.0025
+RANGE_TRAILING_NET_BUFFER_PCT = 0.0005
 
 # 即時賣壓/買壓出場：鎖利線是等「價格」跌破才反應，本質上一定會落後於真正的
 # 反轉。即時成交流（taker 主動買/賣）比價格更早反映風向轉變，因此在已有基本
@@ -739,7 +741,7 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
         RANGE_TRAILING_NET_BUFFER_PCT if is_range_route else 0.0015
     )
     _hp_soft = s.get("highest_profit_pct", 0.0)
-    if _hp_soft > breakeven_threshold:
+    if _hp_soft >= breakeven_threshold:
         should_log_breakeven = not bool(s.get("is_breakeven_locked", False))
         # Ensure the stop-loss is at least at the entry price (+ 0.01% buffer)
         # For long: new_sl >= entry; For short: new_sl <= entry
@@ -1032,7 +1034,9 @@ async def check_exits(sym):
             cs = "sell" if is_long else "buy"
             # ── 多級獲利目標 (Multi-stage TP) ──
             # 當達到最高點回撤觸發停利線時，若浮盈 > 0 且尚未分批，先賣出 50% 落袋為安
-            if not s.get("_multistage_tp1_done", False) and profit_pct > 0.0015:
+            if (highest_profit >= PARTIAL_TP_MIN_GROSS_PCT
+                    and not s.get("_multistage_tp1_done", False)
+                    and profit_pct > 0.0015):
                 s["_multistage_tp1_done"] = True
                 tp1_qty = abs(float(s["qty"])) * 0.50
                 logger.info(
@@ -1488,9 +1492,14 @@ async def check_exits(sym):
     ts_price = s.get("trailing_stop_price")
     # 尚未達保本門檻時，停損不可能位於獲利側；若出現代表沿用了舊倉狀態。
     _peak_for_sl = float(s.get("highest_profit_pct", 0.0) or 0.0)
+    _profit_side_sl_is_valid = (
+        bool(s.get("is_breakeven_locked", False))
+        or bool(s.get("soft_trailing_armed", False))
+        or (is_range_route and _peak_for_sl >= RANGE_TRAILING_MIN_GROSS_PCT)
+    )
     _invalid_profit_side_sl = (
         _peak_for_sl < 0.003
-        and not s.get("soft_trailing_armed", False)
+        and not _profit_side_sl_is_valid
         and ts_price is not None and ts_price > 0
         and ((is_long and ts_price >= avg) or (not is_long and ts_price <= avg))
     )

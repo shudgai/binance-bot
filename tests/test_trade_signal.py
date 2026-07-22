@@ -120,13 +120,21 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_ma25_pullback_enters_only_after_bullish_rejection(self):
         sym = self._setup_ma_signal_state(
-            signal_open=100.1, signal_close=100.3, signal_low=99.9,
+            signal_open=100.05, signal_close=100.14, signal_low=99.9,
             ma7=100.6, ma25=100.0, ma99=99.0,
             prev_ma7=100.4, prev_ma25=99.9,
             signal_volume=900.0,
         )
         side, _, route = compute_signal_strength(sym)
         self.assertEqual((side, route), ("buy", "MA25_Pullback"))
+
+    def test_ma25_pullback_rejects_rebound_at_signal_high(self):
+        sym = self._setup_ma_signal_state(
+            signal_open=100.1, signal_close=100.3, signal_low=99.9,
+            ma7=100.6, ma25=100.0, ma99=99.0,
+            prev_ma7=100.4, prev_ma25=99.9, signal_volume=900.0,
+        )
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
 
     def test_golden_cross_above_ma99_does_not_require_ma25_above_ma99_yet(self):
         sym = self._setup_ma_signal_state(ma99=100.1)
@@ -161,7 +169,7 @@ class TradeSignalTests(unittest.TestCase):
         # Here gap (0.1) is NOT > max(prev_gap, 0.0) (0.2), so long_spreading is False.
         # Turn up: prev_slope = prev_ma7 - prev_ma7_2 <= 0 and curr_slope = ma7 - prev_ma7 > 0
         sym = self._setup_ma_signal_state(
-            signal_open=100.0, signal_close=100.5, signal_volume=1000.0, vol_ma20=1000.0,
+            signal_open=100.0, signal_close=101.5, signal_volume=1000.0, vol_ma20=1000.0,
             ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8
         )
         STATES[sym].update({
@@ -172,27 +180,27 @@ class TradeSignalTests(unittest.TestCase):
         side, strength, route = compute_signal_strength(sym)
         self.assertEqual((side, route), ("buy", "MA7_Simple"))
 
-    def test_ma7_simple_weak_volume_is_kept_but_ranked_below_us_like_signal(self):
-        # 量能門檻已從 0.5x 拉齊到跟其他路線一樣的 0.6x（見 signal_engine.py 說明），
-        # 這裡用 0.65x（門檻之上但仍偏弱）驗證「能過但排序較低」的行為還在。
+    def test_ma7_simple_minimum_volume_is_ranked_below_strong_signal(self):
+        # 量能門檻已拉齊到現行非核心幣的 0.80x（見 signal_engine.py 說明），
+        # 這裡用 0.80x（現行門檻）驗證「能過但排序較低」的行為還在。
         sym = self._setup_ma_signal_state(
-            signal_open=100.0, signal_close=100.5, signal_volume=650.0, vol_ma20=1000.0,
+            signal_open=100.0, signal_close=101.5, signal_volume=800.0, vol_ma20=1000.0,
             ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
         )
         STATES[sym].update({"prev_ma7_2": 101.2, "current_rsi": 60.0})
         weak_side, weak_strength, weak_route = compute_signal_strength(sym)
 
-        STATES[sym]["ohlcv"][-2][5] = 830.0
+        STATES[sym]["ohlcv"][-2][5] = 1000.0
         strong_side, strong_strength, strong_route = compute_signal_strength(sym)
 
         self.assertEqual((weak_side, weak_route), ("buy", "MA7_Simple"))
         self.assertEqual((strong_side, strong_route), ("buy", "MA7_Simple"))
-        self.assertAlmostEqual(weak_strength, 24.25)
-        self.assertAlmostEqual(strong_strength, 25.15)
+        self.assertAlmostEqual(weak_strength, 25.0)
+        self.assertAlmostEqual(strong_strength, 26.0)
         self.assertGreater(strong_strength, weak_strength)
 
-    def test_ma7_simple_below_point_six_volume_is_rejected(self):
-        # 原本 MA7_Simple 量能門檻 0.5x 比其他路線都寬鬆；拉齊到 0.6x 後，
+    def test_ma7_simple_below_point_eight_volume_is_rejected(self):
+        # 原本 MA7_Simple 量能門檻 0.5x 比其他路線都寬鬆；拉齊到 0.80x 後，
         # 0.5x 這種低於平均量的轉折應該直接被拒絕，不再是「排序較低但仍放行」。
         sym = self._setup_ma_signal_state(
             signal_open=100.0, signal_close=100.5, signal_volume=500.0, vol_ma20=1000.0,
@@ -228,7 +236,7 @@ class TradeSignalTests(unittest.TestCase):
     def test_ma7_simple_allowed_when_adx_builds_up_gradually(self):
         # 對照組：ADX 是緩慢累積上來的（相鄰兩輪掃描差距小），不該被誤擋。
         sym = self._setup_ma_signal_state(
-            signal_open=100.0, signal_close=100.5, signal_volume=1000.0, vol_ma20=1000.0,
+            signal_open=100.0, signal_close=101.5, signal_volume=1000.0, vol_ma20=1000.0,
             ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
         )
         STATES[sym].update({
@@ -311,6 +319,7 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_range_long_opens_after_bullish_support_rejection(self):
         sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
+        STATES[sym]["current_rsi"] = 49.0
         with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
             side, strength, route = compute_range_signal(sym)
         self.assertEqual((side, route), ("buy", "Range_Support_Long"))
@@ -455,7 +464,9 @@ class TradeSignalTests(unittest.TestCase):
                 await asyncio.sleep(0.05)
                 mock_exec.assert_called_once()
                 allocation = mock_exec.call_args.args[3]
-                self.assertLess(allocation, 0.5)
+                self.assertLessEqual(allocation, 0.55)
+                self.assertIsNone(STATES[sym].get("entry_reason"))
+                self.assertNotIn("_pending_entry_route", STATES[sym])
 
         asyncio.run(run_check())
 

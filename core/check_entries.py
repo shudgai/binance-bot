@@ -850,11 +850,10 @@ async def check_entries():
 
         # E2. 即時 5m 波動底線：日 ATR 高不代表現在有行情，避免選到當下死水幣。
         _atr_pct_5m = (_atr_cur_ce / cp) if cp > 0 else 0.0
-        _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY * 0.80
-        # MA7_Simple 路線刻意設計為「MA7 一轉折就進場」，不做即時波動底線檢查——
-        # 使用者明確要求只要 MA7 谷底/頭部轉折，即直接放行，
-        # 由 MA7_Simple 自身的量能與 RSI 極端值過濾負責基本把關。
-        if str(route or "").lower() != "ma7_simple" and _atr_pct_5m < _min_atr_pct_5m:
+        _min_atr_pct_5m = 0.0008 if is_range_signal else MIN_5M_ATR_PCT_FOR_MA_ENTRY
+        # 所有 MA 路線都必須有足以覆蓋費用與正常回撤的即時波動；
+        # MA7 轉折也不能在死水行情中只為了提高成交數而豁免。
+        if _atr_pct_5m < _min_atr_pct_5m:
             _mode_name = "區間" if is_range_signal else "MA"
             logger.info(
                 f"🛑 [SLOW_MARKET] {sym} 5m ATR 僅 {_atr_pct_5m*100:.3f}% < "
@@ -965,10 +964,12 @@ async def check_entries():
             continue
 
         # 訊號已由已收線 K 棒生成，直接加入候選，不再走舊二次確認路線。
-        s["entry_reason"] = route
-        from core.entry_reason_store import save_entry_reason
-        save_entry_reason(sym, route)
-        candidates.append((sym, side, strength, route, is_range_signal))
+        signal_anchor_price = (
+            float(s["ohlcv"][-2][4])
+            if not is_range_signal and len(s.get("ohlcv", [])) >= 2
+            else float(s.get("close_price", 0.0) or 0.0)
+        )
+        candidates.append((sym, side, strength, route, is_range_signal, signal_anchor_price))
         continue
 
 
@@ -979,7 +980,7 @@ async def check_entries():
     from core.symbol_profile import SYMBOL_PROFILES
     from core.entry_filter import RANGE_ENTRY_ROUTES, MA_ENTRY_ROUTES
     validated_candidates = []
-    for sym, side, strength, route, is_range_sig in candidates:
+    for sym, side, strength, route, is_range_sig, signal_anchor_price in candidates:
         s = ctx.STATES[sym]
         radar_profile = SYMBOL_PROFILES.get(sym, {})
         if s.get("status") != "ACTIVE" and not _is_confirmable_exit_cooldown(s):
@@ -1098,15 +1099,15 @@ async def check_entries():
             )
 
         # ── 三大板塊資產分層特權權重（對齊頂級合約交易哲學） ──
-        # 一、主流雙雄 (BTC/ETH)：+60.0 分（最高優先權，抗風險最強、技術線型最健康）
-        # 二、高貝塔主流 (SOL/BNB/XRP/ADA/NEAR/UNI/AAVE)：+40.0 分（波段爆發力強、連動性高）
-        # 三、迷因熱點 (DOGE/1000PEPE)：+10.0 分（嚴控插針與資金費率風險）
+        # 一、主流雙雄 (BTC/ETH)：+8.0 分（只作同品質候選的溫和排序）
+        # 二、高貝塔主流：+5.0 分（技術品質仍是主要分數）
+        # 三、迷因熱點：+2.0 分（不再靠資產身分蓋過進場位置）
         if sym in ("BTCUSDT", "ETHUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 60.0
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 8.0
         elif sym in ("SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 40.0
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 5.0
         elif sym in ("DOGEUSDT", "1000PEPEUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 10.0
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 2.0
 
         # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，給予適度品質排序加分
         atr_pct = float(s.get("atr_pct", 0.0) or 0.0)
@@ -1114,7 +1115,7 @@ async def check_entries():
             volatility_bonus = atr_pct * 2.0  # 微幅加分
             s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + volatility_bonus
 
-        validated_candidates.append((sym, side, strength, route, is_range_sig))
+        validated_candidates.append((sym, side, strength, route, is_range_sig, signal_anchor_price))
 
     candidates = validated_candidates
     if not candidates:
@@ -1139,25 +1140,30 @@ async def check_entries():
         if abs(ctx.STATES[sym].get("qty", 0.0)) > 0.000001
         and ctx.STATES[sym].get("entry_reason", "") in ("Range_Support_Long", "Range_Resistance_Short")
     )
-    _range_inflight = sum(
-        1 for _sym, st in ctx.STATES.items()
-        if st.get("is_ordering") and st.get("pending_side") is not None
-        and st.get("entry_reason", "") in ("Range_Support_Long", "Range_Resistance_Short")
+    _range_inflight_symbols = {
+        info.get("sym") for info in ctx.PENDING_LIMIT_ORDERS.values()
+        if info.get("sym")
+        and info.get("entry_route") in ("Range_Support_Long", "Range_Resistance_Short")
+    }
+    _range_inflight_symbols.update(
+        _sym for _sym, st in ctx.STATES.items()
+        if st.get("is_ordering")
+        and st.get("_pending_entry_route") in ("Range_Support_Long", "Range_Resistance_Short")
     )
-    _range_slots_used = _range_open_count + _range_inflight
+    _range_slots_used = _range_open_count + len(_range_inflight_symbols)
 
     _qual_desc = []
     for _c in candidates[:3]:
-        _sym, _side, _str, _rt, _ir = _c
+        _sym, _side, _str, _rt, _ir, _signal_anchor = _c
         _score = ctx.STATES[_sym].get("_entry_quality_score", 0.0)
         _qual_desc.append(f"{_sym}:{_side}(品質={_score:.2f}, 訊號={_str:.2f})")
     logger.info(f"📊 [品質排行] {' | '.join(_qual_desc)}")
 
     # 資金分配：只用實際會被派發的前 remaining_slots 名當分母
     _weight_pool = candidates[:remaining_slots] if remaining_slots > 0 else candidates
-    total_weight = sum(strength for _, _, strength, _, _ in _weight_pool)
+    total_weight = sum(strength for _, _, strength, _, _, _ in _weight_pool)
 
-    for sym, side, strength, route, is_range_sig in candidates:
+    for sym, side, strength, route, is_range_sig, signal_anchor_price in candidates:
         if remaining_slots <= 0:
             break
         s = ctx.STATES[sym]
@@ -1248,6 +1254,7 @@ async def check_entries():
         if not s.get("is_ordering"):
             s["is_ordering"] = True
             s["pending_side"] = side
+            s["_pending_entry_route"] = route
 
             # --- 動態權重分配 (Dynamic Position Sizing) ---
             allocation_pct = 1.0  # 使用者指示：每槽使用 100% 滿額權重分配
@@ -1295,11 +1302,11 @@ async def check_entries():
             if not has_pos:
                 logger.info(f"🛒 [ENTRY_DISPATCH] {sym} 將進入 execute_order | side={side} route={route} strength={strength:.2f} allocation={allocation_pct:.3f}")
 
-            async def _entry_task(sym, side, price, alloc_pct, signal_strength, entry_route):
+            async def _entry_task(sym, side, price, alloc_pct, signal_strength, entry_route, signal_anchor_price):
                 try:
                     order_data = await execute_order(sym, side, price, alloc_pct,
                                                       signal_strength=signal_strength,
-                                                      entry_route=entry_route)
+                                                      entry_route=entry_route, signal_price=signal_anchor_price)
                     if order_data and order_data.get("avgPrice") and order_data.get("filledQty"):
                         from core.state_manager import update_state_with_fill
                         update_state_with_fill(sym, order_data)
@@ -1311,8 +1318,9 @@ async def check_entries():
                     logger.error(f"🚨 [EntryTask_Error] {sym}: {e}")
                 finally:
                     ctx.STATES[sym]["is_ordering"] = False
+                    ctx.STATES[sym].pop("_pending_entry_route", None)
 
-            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct, strength, route))
+            asyncio.create_task(_entry_task(sym, side, s["close_price"], allocation_pct, strength, route, signal_anchor_price))
 
         s["pending_side"] = None
         s["pending_confirm_high"] = 0
@@ -1346,9 +1354,14 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
     if route in ("Range_Support_Long", "Range_Resistance_Short"):
         from core.config import RANGE_ADX_THRESHOLD
         from core.entry_filter import is_range_direction_valid
+        from core.signal_engine import compute_range_signal
         adx = float(s.get("current_adx", s.get("adx", 99.0)) or 99.0)
         if adx >= RANGE_ADX_THRESHOLD:
             return False, f"range trend strengthened (ADX {adx:.1f} >= {RANGE_ADX_THRESHOLD:.1f})"
+        fresh_side, _, fresh_route = compute_range_signal(sym)
+        if fresh_side != side or fresh_route != route:
+            detail = str(s.get("entry_block_reason", "") or "完整區間訊號已不存在")
+            return False, f"fresh range signal invalid: {detail}"
         range_ok, range_reason = is_range_direction_valid(sym, side, route)
         if not range_ok:
             return False, range_reason
@@ -1363,14 +1376,24 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
         if not is_ma_direction_aligned(s, side, route):
             return False, "MA7/MA25/MA99 完整排列或斜率已失效"
 
+    if str(route or "").lower() == "ma25_pullback":
+        ma25 = float(s.get("ma25", 0.0) or 0.0)
+        max_rebound = max(current_price * 0.0015, atr * 0.35)
+        rebound = current_price - ma25 if side == "buy" else ma25 - current_price
+        if ma25 <= 0 or rebound < 0 or rebound > max_rebound:
+            return False, (
+                f"MA25 pullback entry moved {max(rebound, 0.0)/current_price*100:.3f}% "
+                f"from MA25 (limit {max_rebound/current_price*100:.3f}%)"
+            )
+
     # 掛單／送單前維持基本 RSI 動能門檻，確保訊號未嚴重失效。
     # 門檻放寬至 45/55（原本 51/49），避免 RSI 在 48-52 正常震盪時
     # 反覆拒絕進場（常見於 MA25_Pullback 回踩期間 RSI 自然走弱）。
     # 真正嚴重失效（如 RSI 跌至 38）仍會被攔下。
     current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
-    if side == "buy" and current_rsi < 30.0:
-        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 30)"
-    if side == "sell" and current_rsi > 70.0:
-        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 70)"
+    if side == "buy" and current_rsi < 45.0:
+        return False, f"waiting-period RSI below long threshold ({current_rsi:.1f} < 45)"
+    if side == "sell" and current_rsi > 55.0:
+        return False, f"waiting-period RSI above short threshold ({current_rsi:.1f} > 55)"
 
     return True, "ok"

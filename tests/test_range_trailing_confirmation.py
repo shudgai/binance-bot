@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from core import ctx
-from core.exits import check_exits
+from core.exits import check_exits, update_trailing_stop
 from core.state_manager import build_symbol_state
 
 
@@ -106,8 +106,8 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
     async def test_breach_below_minimum_peak_resets_confirmation(self):
         state = self._short_state()
         state.update({
-            "close_price": 99.6,
-            "highest_profit_pct": 0.005,
+            "close_price":  99.8,
+            "highest_profit_pct": 0.0024,
             "range_trailing_cross_count": 2,
             "range_trailing_cross_since": time.time() - 1.1,
         })
@@ -143,6 +143,68 @@ class RangeTrailingConfirmationTests(unittest.IsolatedAsyncioTestCase):
         close_mock.assert_awaited_once()
         self.assertEqual(close_mock.call_args.kwargs["reason"], "[Partial_TP_50Pct]")
         self.assertAlmostEqual(close_mock.call_args.args[2], 0.5)
+
+    def test_range_small_profit_peak_arms_fee_safe_floor(self):
+        state = ctx.STATES[self.sym]
+        state.update({
+            "qty": 1.0,
+            "avg_price": 100.0,
+            "close_price": 100.25,
+            "current_atr": 0.1,
+            "entry_reason": "Range_Support_Long",
+            "highest_profit_pct": 0.0025,
+            "trailing_highest": 100.25,
+            "trailing_stop_price": 0.0,
+            "stop_loss": 0.0,
+            "liquidation_price": 50.0,
+        })
+
+        update_trailing_stop(self.sym, 100.25, True)
+
+        self.assertTrue(state["is_breakeven_locked"])
+        self.assertAlmostEqual(state["trailing_stop_price"], 100.15, places=6)
+
+    async def test_main_loop_keeps_range_small_profit_floor_armed(self):
+        state = ctx.STATES[self.sym]
+        state.update({
+            "qty": 1.0,
+            "avg_price": 100.0,
+            "close_price": 100.25,
+            "current_atr": 0.1,
+            "open_time": time.time() - 600,
+            "entry_reason": "Range_Support_Long",
+            "range_sl_price": 99.0,
+            "highest_profit_pct": 0.0025,
+            "trailing_highest": 100.25,
+            "trailing_stop_price": 0.0,
+            "stop_loss": 0.0,
+        })
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        close_mock.assert_not_awaited()
+        self.assertTrue(state["is_breakeven_locked"])
+        self.assertAlmostEqual(state["trailing_stop_price"], 100.15, places=6)
+
+    async def test_small_profit_floor_closes_full_position_after_confirmation(self):
+        state = self._short_state()
+        state.update({
+            "close_price": 99.86,
+            "highest_profit_pct": 0.0025,
+            "trailing_stop_price": 99.85,
+            "range_trailing_cross_count": 2,
+            "range_trailing_cross_since": time.time() - 1.1,
+            "_multistage_tp1_done": False,
+        })
+        with patch("core.orders.close_position", AsyncMock()) as close_mock:
+            await check_exits(self.sym)
+
+        close_mock.assert_awaited_once()
+        self.assertEqual(close_mock.call_args.args[2], 1.0)
+        self.assertEqual(
+            close_mock.call_args.kwargs["reason"],
+            "[Range_Trailing_Closed_Confirm]",
+        )
 
     async def test_range_structural_stop_remains_immediate(self):
         state = self._short_state()

@@ -11,6 +11,7 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state, repair_invalid_states, get_open_position_count
 from core import ctx
 from core import exchange_client
+from core.config import RANGE_MIN_NET_PROFIT_PCT
 from core.check_entries import (
     _is_confirmable_exit_cooldown, _rapid_reconfirm_cooldown_entry, _range_exit_prices,
 )
@@ -19,10 +20,45 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
     _translated_pending_limit_price, _ma_cross_anti_chase_plan, _is_dynamic_pending_entry,
     _reanchor_rejected_passive_price, _entry_price_guard,
     _ma25_confirmed_pullback_price, _range_exit_bracket,
-    _ma_exchange_stop_target, _pending_entry_time_expired)
+    _ma_exchange_stop_target, _pending_entry_time_expired, _resolve_entry_order_mode,
+    _persist_filled_entry_reason)
 
 
 class EntryRiskTests(unittest.TestCase):
+    def test_range_entry_requires_meaningful_post_fee_profit_room(self):
+        # LINKUSDT 2026-07-22: 0.1% floor admitted a narrow range setup that
+        # never exceeded 0.01% gross profit and hit its structural stop.
+        self.assertGreaterEqual(RANGE_MIN_NET_PROFIT_PCT, 0.004)
+
+    def test_entry_modes_follow_setup_structure(self):
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "Range_Support_Long"), "range_limit")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA25_Pullback"), "pullback")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA7_Simple"), "pullback")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Breakout"), "pullback")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Cross"), "chase")
+
+    def test_entry_reason_is_persisted_only_after_first_fill(self):
+        state = {"entry_reason": None}
+        with patch("core.entry_reason_store.save_entry_reason") as save:
+            self.assertTrue(_persist_filled_entry_reason(
+                "ETHUSDT", state, "Range_Resistance_Short", True
+            ))
+            save.assert_called_once_with("ETHUSDT", "Range_Resistance_Short")
+            self.assertFalse(_persist_filled_entry_reason(
+                "ETHUSDT", state, "MA_Cross", False
+            ))
+        self.assertEqual(state["entry_reason"], "Range_Resistance_Short")
+
+    def test_pending_validation_keeps_original_signal_anchor(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        STATES[sym]["close_price"] = 101.0
+        info = {"sym": sym, "side": "buy", "entry_route": "MA_Cross",
+                "signal_strength": 25.0, "signal_price": 100.0}
+        validator = unittest.mock.Mock(return_value=(True, "ok"))
+        self.assertEqual(_pending_entry_setup_valid(info, validator=validator), (True, "ok"))
+        validator.assert_called_once_with(sym, "buy", "MA_Cross", 25.0, 100.0)
+
     def test_settling_contract_is_not_openable(self):
         openable, reason = exchange_client._market_openability({
             "active": False,
@@ -196,18 +232,33 @@ class EntryRiskTests(unittest.TestCase):
         sym = "XRPUSDT"
         init_states([sym])
         reset_coin_state(sym)
-        STATES[sym].update({"close_price": 100.0, "current_atr": 1.0, "current_rsi": 49.0})
+        STATES[sym].update({"close_price": 100.0, "current_atr": 1.0, "current_rsi": 44.0})
         with patch("core.entry_filter.is_ma_direction_aligned", return_value=True):
             allowed, reason = is_entry_candidate_still_valid(sym, "buy", "MA_Cross", 25.0, 100.0)
         self.assertFalse(allowed)
         self.assertIn("RSI below long threshold", reason)
+
+    def test_waiting_ma25_pullback_rejects_price_far_from_ma25(self):
+        from core.check_entries import is_entry_candidate_still_valid
+        sym = "XRPUSDT"
+        init_states([sym])
+        reset_coin_state(sym)
+        STATES[sym].update({"close_price": 100.3, "current_atr": 0.1,
+                            "current_rsi": 50.0, "ma25": 100.0})
+        with patch("core.entry_filter.is_ma_direction_aligned", return_value=True), \
+             patch("core.check_entries.btc_macro_entry_guard", return_value=(True, "ok", "BULL")):
+            allowed, reason = is_entry_candidate_still_valid(
+                sym, "buy", "MA25_Pullback", 25.0, 100.0
+            )
+        self.assertFalse(allowed)
+        self.assertIn("moved", reason)
 
     def test_waiting_sell_is_rejected_after_rsi_leaves_short_threshold(self):
         from core.check_entries import is_entry_candidate_still_valid
         sym = "XRPUSDT"
         init_states([sym])
         reset_coin_state(sym)
-        STATES[sym].update({"close_price": 100.0, "current_atr": 1.0, "current_rsi": 50.0})
+        STATES[sym].update({"close_price": 100.0, "current_atr": 1.0, "current_rsi": 56.0})
         with patch("core.entry_filter.is_ma_direction_aligned", return_value=True):
             allowed, reason = is_entry_candidate_still_valid(sym, "sell", "MA_Cross", 25.0, 100.0)
         self.assertFalse(allowed)
@@ -219,10 +270,10 @@ class EntryRiskTests(unittest.TestCase):
         init_states([sym])
         reset_coin_state(sym)
         state = STATES[sym]
-        state.update({"close_price": 100.0, "current_atr": 1.0, "current_rsi": 51.0})
+        state.update({"close_price": 100.0, "current_atr": 1.0, "current_rsi": 45.0})
         with patch("core.entry_filter.is_ma_direction_aligned", return_value=True):
             self.assertTrue(is_entry_candidate_still_valid(sym, "buy", "MA_Cross", 25.0, 100.0)[0])
-            state["current_rsi"] = 49.0
+            state["current_rsi"] = 55.0
             self.assertTrue(is_entry_candidate_still_valid(sym, "sell", "MA_Cross", 25.0, 100.0)[0])
 
     def test_extended_ma_cross_long_waits_at_ma7_instead_of_chasing(self):
@@ -286,7 +337,9 @@ class EntryRiskTests(unittest.TestCase):
             "last_reprice_at": 1000.0,
         }
         self.assertTrue(_is_dynamic_pending_entry(info))
-        self.assertEqual(_pending_entry_setup_valid(info), (True, "range setup valid"))
+        with patch("core.signal_engine.compute_range_signal",
+                   return_value=("buy", 18.0, "Range_Support_Long")):
+            self.assertEqual(_pending_entry_setup_valid(info), (True, "range setup valid"))
         needed, reason = _pending_entry_reprice_needed(sym, info, 99.2, now=1006.0)
         self.assertTrue(needed)
         self.assertEqual(reason, "range anchor moved")
@@ -304,9 +357,28 @@ class EntryRiskTests(unittest.TestCase):
             "sym": sym, "side": "buy", "entry_route": "Range_Support_Long",
             "signal_strength": 18.0, "signal_price": 101.5,
         }
-        allowed, reason = _pending_entry_setup_valid(info)
+        with patch("core.signal_engine.compute_range_signal",
+                   return_value=("buy", 18.0, "Range_Support_Long")):
+            allowed, reason = _pending_entry_setup_valid(info)
         self.assertFalse(allowed)
         self.assertIn("離開支撐邊界", reason)
+
+    def test_pending_range_order_is_cancelled_when_fresh_signal_disappears(self):
+        sym = "XRPUSDT"
+        init_states([sym])
+        reset_coin_state(sym)
+        STATES[sym].update({
+            "close_price": 99.2, "current_atr": 1.0, "adx": 10.0,
+            "range_support_level": 99.0, "range_resistance_level": 103.0,
+        })
+        info = {
+            "sym": sym, "side": "buy", "entry_route": "Range_Support_Long",
+            "signal_strength": 18.0, "signal_price": 99.2,
+        }
+        with patch("core.signal_engine.compute_range_signal", return_value=(None, 0, None)):
+            allowed, reason = _pending_entry_setup_valid(info)
+        self.assertFalse(allowed)
+        self.assertIn("fresh range signal invalid", reason)
 
     def test_float_symbol_state_is_repaired_before_position_count(self):
         sym = "BROKENUSDT"
@@ -438,7 +510,7 @@ class EntryRiskTests(unittest.TestCase):
             63275.0, 62693.85, 63250.357143, 200.885714, "sell"
         )
         self.assertAlmostEqual(take_profit, 62725.4875)
-        self.assertGreaterEqual((stop - 63275.0) / 63275.0, 0.003 - 1e-12)
+        self.assertGreaterEqual((stop - 63275.0) / 63275.0, 0.0025 - 1e-12)
         self.assertGreater((63275.0 - take_profit) / (stop - 63275.0), 1.0)
 
     def test_range_exchange_bracket_rejects_wrong_side_prices(self):

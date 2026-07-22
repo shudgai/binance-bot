@@ -101,14 +101,19 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
+    pullback_rebound_limit = max(candle_close * 0.0015, atr * 0.35)
+    pullback_long_rebound = candle_close - ma25
+    pullback_short_rebound = ma25 - candle_close
 
     # 回調路線：只需量能 + K 棒方向確認，不再過濾 RSI 方向動能
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
-                     and volume_ratio >= base_limit and current_rsi < 70)
+                     and volume_ratio >= base_limit and current_rsi < 70
+                     and pullback_long_rebound <= pullback_rebound_limit)
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
-                      and volume_ratio >= base_limit and current_rsi > 30)
+                      and volume_ratio >= base_limit and current_rsi > 30
+                      and pullback_short_rebound <= pullback_rebound_limit)
 
     from core.config import DISABLE_MA_BREAKOUT
     completed = candles[:-1]

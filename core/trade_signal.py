@@ -185,8 +185,16 @@ async def update_trade_signal(sym, trade):
 
         # 通用路線只呼叫 exits.update_trailing_stop() 這個唯一價格來源；
         # 即時層不再自行維護另一套回吐百分比。未確認的單筆尖峰不更新停利線。
-        from core.exits import GENERIC_TRAILING_ARM_PCT, update_trailing_stop
-        if confirmed_peak >= GENERIC_TRAILING_ARM_PCT:
+        route_key = str(s.get("entry_reason", "") or "").lower()
+        _is_range_route = route_key in {"range_support_long", "range_resistance_short"}
+        from core.exits import (GENERIC_TRAILING_ARM_PCT,
+                                RANGE_TRAILING_MIN_GROSS_PCT,
+                                update_trailing_stop)
+        _trailing_arm_pct = (
+            RANGE_TRAILING_MIN_GROSS_PCT if _is_range_route
+            else GENERIC_TRAILING_ARM_PCT
+        )
+        if confirmed_peak >= _trailing_arm_pct:
             update_trailing_stop(sym, price, _is_long, update_peak=False)
 
         # 成交流每個 tick 檢查同一條 trailing_stop_price。Range 路線改成跟 MA
@@ -195,12 +203,9 @@ async def update_trade_signal(sym, trade):
         _rt_ts = float(s.get("trailing_stop_price", 0.0) or 0.0)
         _rt_peak = float(s.get("highest_profit_pct", 0.0) or 0.0)
         _rt_crossed = (
-            _rt_peak >= 0.003 and _rt_ts > 0
+            _rt_peak >= _trailing_arm_pct and _rt_ts > 0
             and ((_is_long and price <= _rt_ts) or (not _is_long and price >= _rt_ts))
         )
-        route_key = str(s.get("entry_reason", "") or "").lower()
-        _is_range_route = route_key in {"range_support_long", "range_resistance_short"}
-
         if _is_range_route:
             from core.exits import _range_trailing_cross_confirmed
             _range_confirmed = _range_trailing_cross_confirmed(sym, _rt_crossed, ts_value)
