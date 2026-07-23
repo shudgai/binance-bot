@@ -169,13 +169,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
         # 做空時 RSI < 52 表示已在下跌中途（超賣風險高），不跟進
         # 做多時 RSI > 65 表示已在上漲中途（超買風險高），不跟進
         # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
-        MA7_SIMPLE_SHORT_RSI_FLOOR = 20.0   # 下修做空最低 RSI 要求至 20.0，允許在強烈跌勢中追空
+        MA7_SIMPLE_SHORT_RSI_FLOOR = 25.0   # 下修做空最低 RSI 要求，但不低於 25 避免極度超賣追空
         MA7_SIMPLE_LONG_RSI_CEIL   = 75.0   # 做多最高 RSI 要求
 
         # 規則 2：15m RSI 多時間框架確認
         rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
-        MTF_RSI_SHORT_FLOOR = 40.0  # 15m RSI 放寬至 40
-        MTF_RSI_LONG_CEIL   = 70.0  # 15m RSI 放寬至 70
+        MTF_RSI_SHORT_FLOOR = 40.0  # 15m RSI 防超賣地板
+        MTF_RSI_SHORT_CEIL  = 50.0  # 15m RSI 防逆勢天花板（大於 50 偏多不追空）
+        MTF_RSI_LONG_CEIL   = 70.0  # 15m RSI 防超買天花板
+        MTF_RSI_LONG_FLOOR  = 50.0  # 15m RSI 防逆勢地板（小於 50 偏空不追多）
 
         # 放寬 MA7_Simple 的專屬 RVOL 要求 (>= 0.3x)，並調整斜率只要由負轉正 (>0) 即認定觸發
         ma7_simple_volume_ok = volume_ratio >= 0.30
@@ -192,9 +194,12 @@ def compute_signal_strength(sym, realtime_trigger=False):
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
                 reason = f"MA7 谷底轉折向上，但 5m RSI={current_rsi:.1f} > {MA7_SIMPLE_LONG_RSI_CEIL:.0f} 偏高，跳過"
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            # 規則 2：15m RSI 超買確認（有資料才檢查）
+            # 規則 2：15m RSI 多時間框架確認（有資料才檢查）
             elif rsi_15m > 0 and rsi_15m > MTF_RSI_LONG_CEIL:
                 reason = f"MA7 谷底轉折，但 15m RSI={rsi_15m:.1f} > {MTF_RSI_LONG_CEIL:.0f} 大週期已超買，跳過"
+                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
+            elif rsi_15m > 0 and rsi_15m < MTF_RSI_LONG_FLOOR:
+                reason = f"MA7 谷底轉折，但 15m RSI={rsi_15m:.1f} < {MTF_RSI_LONG_FLOOR:.0f} 大週期仍偏空，防逆勢跳過"
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
             else:
                 side, route = "buy", "MA7_Simple"
@@ -211,9 +216,12 @@ def compute_signal_strength(sym, realtime_trigger=False):
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
                 reason = f"MA7 頭部轉折向下，但 5m RSI={current_rsi:.1f} < {MA7_SIMPLE_SHORT_RSI_FLOOR:.0f} 已偏低，跳過避免超賣區做空"
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            # 規則 2：15m RSI 超賣確認（有資料才檢查）
+            # 規則 2：15m RSI 多時間框架確認（有資料才檢查）
             elif rsi_15m > 0 and rsi_15m < MTF_RSI_SHORT_FLOOR:
                 reason = f"MA7 頭部轉折，但 15m RSI={rsi_15m:.1f} < {MTF_RSI_SHORT_FLOOR:.0f} 大週期已超賣，跳過"
+                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
+            elif rsi_15m > 0 and rsi_15m > MTF_RSI_SHORT_CEIL:
+                reason = f"MA7 頭部轉折，但 15m RSI={rsi_15m:.1f} > {MTF_RSI_SHORT_CEIL:.0f} 大週期仍偏多，防逆勢跳過"
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
             else:
                 side, route = "sell", "MA7_Simple"
