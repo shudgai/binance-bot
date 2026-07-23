@@ -201,9 +201,10 @@ def load_symbol_config():
             if default_sym not in symbols:
                 symbols.append(default_sym)
         raw_profiles = data.get("profiles", {}) if isinstance(data, dict) else {}
-        return _prioritize_trade_pool(symbols, raw_profiles)[:TRADE_POOL_SIZE]
+        pool = _prioritize_trade_pool(symbols, raw_profiles)[:TRADE_POOL_SIZE]
+        return sorted(pool)
     except Exception:
-        return _filter_disabled_symbols(list(DEFAULT_SYMBOLS))
+        return sorted(_filter_disabled_symbols(list(DEFAULT_SYMBOLS)))
 
 
 def load_symbol_profiles():
