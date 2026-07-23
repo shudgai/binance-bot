@@ -1103,31 +1103,9 @@ async def check_exits(sym):
         hold_sec = max(0.0, time.time() - float(s.get("open_time", time.time()) or time.time()))
 
 
+        # 用戶明確要求：「要有利潤才能平倉，不能因微幅波動太快砍倉」
+        # 禁用 MA_Wrong_Direction 早期微虧砍倉，給予倉位充分呼吸與震盪拉升空間
         wrong_direction_confirmed = False
-        if len(candles) >= 3 and hold_sec <= MA_WRONG_DIRECTION_WINDOW_SEC and profit_pct <= -MA_WRONG_DIRECTION_PCT:
-            previous_closed, latest_closed = candles[-3], candles[-2]
-            open_ms = int(float(s.get("open_time", 0.0) or 0.0) * 1000)
-            both_closed_after_entry = int(latest_closed[0]) >= open_ms > 0
-            if is_long:
-                two_opposite = float(previous_closed[4]) < float(previous_closed[1]) and float(latest_closed[4]) < float(latest_closed[1])
-            else:
-                two_opposite = float(previous_closed[4]) > float(previous_closed[1]) and float(latest_closed[4]) > float(latest_closed[1])
-            avg_reversal_volume = (float(previous_closed[5]) + float(latest_closed[5])) / 2.0
-            reversal_vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
-            volume_confirmed = reversal_vol_ma20 > 0 and avg_reversal_volume >= reversal_vol_ma20 * 0.8
-            wrong_direction_confirmed = both_closed_after_entry and two_opposite and volume_confirmed
-
-        if wrong_direction_confirmed:
-            cs = "sell" if is_long else "buy"
-            logger.info(
-                f"🛑 [MA_Wrong_Direction_Confirmed] {sym} 持倉 {hold_sec:.0f} 秒，"
-                f"連續兩根反向收線且逆勢 {abs(profit_pct)*100:.2f}%，立即平倉"
-            )
-            await close_position(
-                sym, cs, abs(s["qty"]), p, avg,
-                reason="[MA_Wrong_Direction_Confirmed]", is_stop_loss=True,
-            )
-            return
 
         # 峰值回吐安全網：不等 MA7 轉彎收線確認，浮盈已經從峰值回吐超過一半
         # 就直接出清（見 MA7_PROFIT_TURN_GIVEBACK_KEEP_RATIO 定義說明）。
