@@ -207,7 +207,7 @@ def _save_radar_profiles(profiles: dict):
 ATR_ELIGIBLE_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
-    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
+    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "LTCUSDT", "ZECUSDT",
 ]
 CORE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
 # 選幣數擴大到 15：新倉條件變嚴後，需要更多候選給 5 個倉位槽篩選。

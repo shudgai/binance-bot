@@ -12,9 +12,8 @@
         "NEARUSDT",
         "AAVEUSDT",
         "XLMUSDT",
-        "HYPEUSDT",
-        "ZECUSDT",
-        "DOGEUSDT"
-    ],
-    "profiles": {}
+        "DOGEUSDT",
+        "LTCUSDT",
+        "ZECUSDT"
+    ]
 }
