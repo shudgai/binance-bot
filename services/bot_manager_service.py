@@ -336,13 +336,13 @@ def get_bot_status():
     else:
         try:
             from services.binance_service import get_total_realized_pnl_usdt
-            bot_status["total_realized_pnl"] = get_total_realized_pnl_usdt()
+            pnl = get_total_realized_pnl_usdt()
+            if pnl == 0.0:
+                pnl = _get_trade_history_realized_pnl()
+            bot_status["total_realized_pnl"] = pnl
         except Exception:
-            bot_status["total_realized_pnl"] = 0.0
+            bot_status["total_realized_pnl"] = _get_trade_history_realized_pnl()
         try:
-            # 本金固定在 LIVE_CAPITAL_CAP（150），但帳戶餘額／單次交易金額要加回累計
-            # 已實現利潤：賺錢部位變大、虧錢部位縮小，複利式風控（之前一度改成完全
-            # 固定 150 不管損益，使用者後來要求恢復「本金 + 已實現利潤」這個算法）。
             from core.config import LIVE_CAPITAL_CAP
             base_amount = LIVE_CAPITAL_CAP if LIVE_CAPITAL_CAP else 150.0
             compounded_amount = max(base_amount + bot_status.get("total_realized_pnl", 0.0), 10.0)
@@ -350,6 +350,26 @@ def get_bot_status():
             bot_status["trade_amount"] = compounded_amount
         except Exception:
             pass
+
+
+def _get_trade_history_realized_pnl():
+    try:
+        from core.config import TRADE_HISTORY_FILE
+        if os.path.exists(TRADE_HISTORY_FILE):
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+            total = 0.0
+            for t in history:
+                if t.get("is_close") or "net_pnl" in t or "realized_pnl" in t:
+                    net = float(t.get("net_pnl", 0.0) or t.get("realized_pnl", 0.0) or 0.0)
+                    fee = float(t.get("fees", 0.0) or t.get("fee", 0.0) or 0.0)
+                    if "net_pnl" not in t and fee > 0:
+                        net -= fee
+                    total += net
+            return total
+    except Exception:
+        pass
+    return 0.0
 
     # 槽位數由本金級距動態決定，狀態頁不可再使用寫死的舊值。
     bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))
