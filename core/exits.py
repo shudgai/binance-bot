@@ -1083,23 +1083,6 @@ async def check_exits(sym):
             s["scalp_trail_cross_count"] = 0
             s["scalp_trail_cross_since"] = 0.0
 
-        # 3. +0.30% 只先落袋 30%，保留 70% 主倉參與後續趨勢。
-        if (
-            profit_pct + threshold_epsilon >= SCALP_TP1_PCT
-            and not s.get("scalp_tp1_done", False)
-        ):
-            partial_qty = abs(s["qty"]) * 0.30
-            logger.info(
-                f"⚡ [Scalp_TP1_30Pct] {sym} 浮盈 {profit_pct*100:.2f}% 達首段目標，"
-                f"先平 30% ({partial_qty:.4f})，保留 70% 讓利潤奔跑"
-            )
-            s["scalp_tp1_done"] = True
-            await close_position(
-                sym, cs, partial_qty, p, avg,
-                reason="[Scalp_TP1_30Pct]", is_stop_loss=False,
-            )
-            return
-
         # 4. +0.50% 僅記錄里程碑並繼續上推移動停利，不再固定全平封頂。
         if profit_pct + threshold_epsilon >= SCALP_TP2_PCT and not s.get("scalp_tp2_milestone", False):
             s["scalp_tp2_milestone"] = True
@@ -1108,7 +1091,7 @@ async def check_exits(sym):
                 "取消固定全平，剩餘部位交由 ATR 移動停利續抱"
             )
 
-        # 高頻模式由硬停損、30% 首段落袋與 ATR runner 管理，阻斷舊版雜項出場。
+        # 高頻模式由硬停損與 ATR runner 管理，阻斷舊版固定比例分批停利。
         return
 
     # ── 第一階段：扣除費用與滑價後仍有實質利潤，才先平 50% ──

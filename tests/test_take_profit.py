@@ -621,7 +621,7 @@ class TakeProfitTests(unittest.TestCase):
         self.assertAlmostEqual(s["ma_profit_floor_price"], 100.25)
         schedule.assert_called_once_with(sym)
 
-    def test_scalp_tp1_closes_only_30_percent(self):
+    def test_scalp_tp1_runs_full_position_with_atr_trailing(self):
         sym = "SCALPTP1USDT"
         init_states([sym])
         s = STATES[sym]
@@ -638,10 +638,8 @@ class TakeProfitTests(unittest.TestCase):
              patch("core.orders.close_position", close_mock):
             asyncio.run(check_exits(sym))
 
-        close_mock.assert_awaited_once()
-        self.assertAlmostEqual(close_mock.await_args.args[2], 3.0)
-        self.assertEqual(close_mock.await_args.kwargs["reason"], "[Scalp_TP1_30Pct]")
-        self.assertTrue(s["scalp_tp1_done"])
+        close_mock.assert_not_called()
+        self.assertGreater(s.get("scalp_trail_profit_pct", 0.0), 0.0)
 
     def test_scalp_tp2_keeps_runner_open(self):
         sym = "SCALPTP2USDT"
