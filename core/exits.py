@@ -999,6 +999,10 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_TP2_Full]", is_stop_loss=False)
             return
 
+        # 5. 高頻模式防護：除上述緊密硬停損 (-1.5%)、動態停利 (+0.20%+) 與分批/清倉 (+0.30%/+0.50%) 外，
+        # 100% 阻斷一般波段的雜項平倉邏輯，避免因盤中微幅波動 (-0.10% ~ -0.50%) 被誤砍。
+        return
+
     # ── 第一階段：扣除費用與滑價後仍有實質利潤，才先平 50% ──
     if profit_pct >= PARTIAL_TP_MIN_GROSS_PCT and not s.get("partial_tp_done", False):
         cs = "sell" if is_long else "buy"
