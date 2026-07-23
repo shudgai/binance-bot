@@ -1162,14 +1162,32 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
                 best_bid = float(bids[0][0]) if bids else limit_price
                 best_ask = float(asks[0][0]) if asks else limit_price
                 reprice = best_bid if close_side == 'sell' else best_ask
+                # 停利地板價格保護：做多平倉賣出價不得低於 (均價 * 1.0012)，做空平倉買回價不得高於 (均價 * 0.9988)
+                s = ctx.STATES.get(sym, {})
+                avg_p = float(s.get("avg_price", 0.0) or price or 0.0)
+                if avg_p > 0:
+                    min_tp_price = avg_p * 1.0012 if close_side == "sell" else avg_p * 0.9988
+                    reprice = max(reprice, min_tp_price) if close_side == "sell" else min(reprice, min_tp_price)
                 limit_price = round_step(reprice, prec['tick_size'])
-                logger.info(f"🔁 [鎖利限價追價] {sym} IOC未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），改掛貼近市場價 {limit_price:.6f} 再試")
+                logger.info(f"🔁 [鎖利限價追價] {sym} IOC未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），改掛保護價 {limit_price:.6f} 再試")
             except Exception as re_e:
                 logger.info(f"⚠️ [追價報價失敗] {sym}: {re_e}，維持原價再試一次")
 
     if remaining_qty > 0.000001:
-        logger.info(f"⏱️ [鎖利限價逾時] {sym} 追價後仍未完全成交（已成交 {filled_qty:.6f}/{qty:.6f}），剩餘 {remaining_qty:.6f} 改市價出場")
-        market_fill = await _market_close_and_get_fill(sym, close_side, remaining_qty, price)
+        # 停利防護：如果測試網買賣盤不足，以限價掛單防護在淨利潤地板，不直接市價砸單
+        s = ctx.STATES.get(sym, {})
+        avg_p = float(s.get("avg_price", 0.0) or price or 0.0)
+        tp_floor_price = (avg_p * 1.0012) if close_side == "sell" else (avg_p * 0.9988)
+        tp_floor_price = round_step(tp_floor_price, prec['tick_size'])
+        try:
+            order = await exchange_futures.create_order(
+                sym, type='limit', side=close_side, amount=remaining_qty,
+                price=tp_floor_price, params={'reduceOnly': True}
+            )
+            logger.info(f"🛡️ [停利保本地板掛單] {sym} 剩餘 {remaining_qty:.6f} 掛限價保本單 @ {tp_floor_price:.6f}")
+            market_fill = tp_floor_price
+        except Exception:
+            market_fill = await _market_close_and_get_fill(sym, close_side, remaining_qty, price)
         filled_notional += remaining_qty * market_fill
         filled_qty += remaining_qty
 
