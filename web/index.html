@@ -1776,15 +1776,23 @@ createApp({
         const getTradeUnrealizedPnl = (trade) => {
             if (!isOpenTrade(trade)) return 0;
             const pos = getPositionInfo(trade.symbol);
-            const posQty = pos ? Math.abs(pos.qty || 0) : Math.abs(trade.qty || 0);
-            if (posQty < 0.001) return 0;
+            const posQty = pos ? Math.abs(pos.qty || pos.positionAmt || 0) : Math.abs(trade.qty || 0);
+            if (posQty < 0.000001) return 0;
 
-            const gross = (trade._is_open_position && typeof trade.unrealized_pnl === "number")
+            return (trade._is_open_position && typeof trade.unrealized_pnl === "number")
                 ? trade.unrealized_pnl
                 : (pos?.pnl || pos?.unRealizedProfit || 0);
+        };
+
+        const getTradeNetUnrealizedPnl = (trade) => {
+            if (!isOpenTrade(trade)) return 0;
+            const pos = getPositionInfo(trade.symbol);
+            const posQty = pos ? Math.abs(pos.qty || pos.positionAmt || 0) : Math.abs(trade.qty || 0);
+            if (posQty < 0.000001) return 0;
+
+            const gross = getTradeUnrealizedPnl(trade);
             const entryFee = Number(trade.fee || 0);
             const entryNotional = Math.abs(Number(trade.price || 0) * Number(trade.qty || 0));
-            // 優先沿用這筆真實成交的費率；查不到時採 Binance testnet taker 0.04%。
             const feeRate = entryFee > 0 && entryNotional > 0 ? entryFee / entryNotional : 0.0004;
             const currentPrice = Number(pos?.current_price || pos?.markPrice || getTradeCurrentPrice(trade) || 0);
             const estimatedExitFee = currentPrice > 0 ? currentPrice * posQty * feeRate : 0;
