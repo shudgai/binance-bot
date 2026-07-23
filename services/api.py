@@ -562,7 +562,27 @@ def api_market_sell(symbol: str):
 @app.post("/api/order/close-all")
 def api_close_all_orders():
     try:
-        force_close_all_positions()
+        if is_paper_trading():
+            force_close_all_positions()
+        else:
+            from services.binance_service import client, get_all_positions
+            positions = get_all_positions()
+            for key, pos in list(positions.items()):
+                qty = float(pos.get("qty", 0.0) or 0.0)
+                if abs(qty) > 0.000001:
+                    raw_sym = str(key).replace(":", "").replace("/", "").upper()
+                    close_side = "SELL" if qty > 0 else "BUY"
+                    try:
+                        client.futures_cancel_all_open_orders(symbol=raw_sym)
+                        client.futures_create_order(
+                            symbol=raw_sym,
+                            side=close_side,
+                            type="MARKET",
+                            quantity=abs(qty),
+                            reduceOnly=True
+                        )
+                    except Exception:
+                        pass
         return {"status": "success", "detail": "已強制平倉所有持有部位"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"一鍵平倉失敗: {str(e)}")
