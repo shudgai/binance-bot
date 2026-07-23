@@ -73,18 +73,16 @@ def compute_signal_strength(sym, realtime_trigger=False):
     is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
 
     # 防假突破倒鉤 / 上下影線反轉過濾 (Fake Breakout Wick Guard)
-    c_high = float(candle[2])
-    c_low = float(candle[3])
-    c_range = max(c_high - c_low, 1e-8)
-    upper_wick_ratio = (c_high - max(candle_close, candle_open)) / c_range
-    lower_wick_ratio = (min(candle_close, candle_open) - c_low) / c_range
-    long_no_fake_breakout = upper_wick_ratio <= 0.35  # 上影線不可超過 35% (拒絕高位倒鉤/假突破吸頂)
-    short_no_fake_breakout = lower_wick_ratio <= 0.35  # 下影線不可超過 35% (拒絕低位反彈/假向下破位)
+    c_range = max(candle_high - candle_low, 1e-8)
+    upper_wick_ratio = (candle_high - max(candle_close, candle_open)) / c_range
+    lower_wick_ratio = (min(candle_close, candle_open) - candle_low) / c_range
+    long_no_fake_breakout = upper_wick_ratio <= 0.45  # 上影線不可超過 45% (拒絕高位倒鉤/假突破吸頂)
+    short_no_fake_breakout = lower_wick_ratio <= 0.45  # 下影線不可超過 45% (拒絕低位反彈/假向下破位)
 
-    # 偏離度過大過濾 (過度延伸追高拒絕)
+    # 偏離度過大過濾 (過度延伸追高拒絕：超過 1.5% 遠離均線拒絕進場)
     dev_from_ma25 = (candle_close - ma25) / ma25 if ma25 > 0 else 0.0
-    long_not_overextended = dev_from_ma25 <= 0.008  # 開多時離 MA25 不可拉開 > 0.8%
-    short_not_overextended = dev_from_ma25 >= -0.008  # 開空時離 MA25 不可跌開 > 0.8%
+    long_not_overextended = dev_from_ma25 <= 0.015  # 開多時離 MA25 不可拉開 > 1.5%
+    short_not_overextended = dev_from_ma25 >= -0.015  # 開空時離 MA25 不可跌開 > 1.5%
 
     # MA7／MA25 必須在交叉後拉開最小距離；斜率與 GAP
     ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
@@ -93,12 +91,12 @@ def compute_signal_strength(sym, realtime_trigger=False):
     is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
     cross_direction_confirmed = ma_gap_pct >= MA_CROSS_MIN_GAP_PCT
 
-    # 嚴格量能爆發確認 (拒絕無量假突破/偽交叉)
-    cross_long_volume_ok = volume_ratio >= 1.00 or (
-        volume_ratio >= 0.70 and above_ma99 and atr_pct <= 5.0
+    # 嚴格量能爆發與防假突破確認 (拒絕無量假突破/偽交叉)
+    cross_long_volume_ok = volume_ratio >= base_limit or (
+        volume_ratio >= 0.45 and above_ma99 and atr_pct <= 5.0
     )
-    cross_short_volume_ok = volume_ratio >= 1.00 or (
-        volume_ratio >= 0.70 and below_ma99 and atr_pct <= 5.0
+    cross_short_volume_ok = volume_ratio >= base_limit or (
+        volume_ratio >= 0.45 and below_ma99 and atr_pct <= 5.0
     )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
@@ -118,16 +116,14 @@ def compute_signal_strength(sym, realtime_trigger=False):
     pullback_long_rebound = candle_close - ma25
     pullback_short_rebound = ma25 - candle_close
 
-    # 回調路線：量能 + 影線 + K 棒方向確認
+    # 回調路線：量能 + K 棒方向確認
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
-                     and volume_ratio >= base_limit and current_rsi < 68
-                     and long_no_fake_breakout
+                     and volume_ratio >= base_limit and current_rsi < 70
                      and (sym not in STRICT_ENTRY_SYMBOLS or pullback_long_rebound <= pullback_rebound_limit))
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
-                      and volume_ratio >= base_limit and current_rsi > 32
-                      and short_no_fake_breakout
+                      and volume_ratio >= base_limit and current_rsi > 30
                       and (sym not in STRICT_ENTRY_SYMBOLS or pullback_short_rebound <= pullback_rebound_limit))
 
     from core.config import DISABLE_MA_BREAKOUT
@@ -137,7 +133,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
         prior = completed[-21:-1]
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
-        # 突破路線：嚴格真量能 (RVOL >= 1.0) + 影線過濾 + 偏離過大過濾
+        # 突破路線：嚴格真量能 (RVOL >= 1.0) + 影線過濾 + 偏離過大過濾 (杜絕假突破追高)
         breakout_long = (long_spreading and long_stack and candle_close > prior_high
                          and (candle_close > candle_open or is_realtime_strong)
                          and volume_ratio >= max(1.0, breakout_limit) and current_rsi < 68
