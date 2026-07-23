@@ -81,7 +81,7 @@ DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
 TRADE_POOL_SIZE = 15
 DISABLE_MA_BREAKOUT = True
-DISABLE_MA25_PULLBACK = True
+DISABLE_MA25_PULLBACK = False
 
 # ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
