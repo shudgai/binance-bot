@@ -1242,8 +1242,8 @@ async def check_exits(sym):
         s["dynamic_exit_manager"] = DynamicExitManager(avg, restored_peak_pct=s.get("highest_profit_pct", 0.0) * 100, is_long=is_long)
     
     manager = s["dynamic_exit_manager"]
-    # 預設停用重疊的舊 DynamicExitManager，由單一 trailing/partial TP 管理停利。
-    exit_signal = manager.update(p) if s.get("use_dynamic_exit_manager", False) else "HOLD"
+    # 啟用 DynamicExitManager，滿足使用者「入袋為安、盤整就在高點停利」的需求。
+    exit_signal = manager.update(p)
     if exit_signal == "SELL":
         cs = 'sell' if is_long else 'buy'
         logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
