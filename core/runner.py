@@ -1133,7 +1133,8 @@ async def periodic_status_log():
             for sym in ctx.STATES:
                 cache_data[sym] = ctx.STATES[sym]["atr_history"][-1000:]
 
-            with open(os.path.join(_data_dir, "atr_history_cache.json"), "w") as f:
+            from core.config import get_data_file_path
+            with open(get_data_file_path("atr_history_cache.json"), "w") as f:
                 json.dump(cache_data, f)
         except Exception as e:
             logger.error(f"Error in periodic_status_log: {e}", exc_info=True)

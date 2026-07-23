@@ -34,8 +34,9 @@ _web_log_throttle = {}
 ROUTINE_WAIT_LOG_INTERVAL_SEC = 60.0
 _restart_order_cache = {"checked_at": 0.0, "orders": None}
 RESTART_ORDER_CACHE_SEC = 5.0
-SYMBOL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_symbols.json")
-BOT_STATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot_running_state.json")
+from core.config import get_data_file_path
+SYMBOL_CONFIG_PATH = get_data_file_path("bot_symbols.json")
+BOT_STATE_PATH = get_data_file_path("bot_running_state.json")
 DEFAULT_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
@@ -370,7 +371,7 @@ def get_bot_status():
             bot_status["active_symbols"] = ordered_symbols
             _prune_entry_diagnoses(ordered_symbols)
         bot_status["disabled_symbols"] = load_disabled_symbols()
-        config_path = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
+        config_path = get_data_file_path("bot_symbols.json")
         with open(config_path, "r", encoding="utf-8") as f:
             raw_config = json.load(f)
         raw_profiles = raw_config.get("profiles", {}) if isinstance(raw_config, dict) else {}

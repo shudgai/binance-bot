@@ -652,9 +652,9 @@ def get_account_balance_usdt() -> float | None:
 
 _total_pnl_cache = (0, None)
 
-PNL_BASELINE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_baseline.json")
-
-PNL_SYMBOL_REGISTRY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pnl_symbol_registry.json")
+from core.config import get_data_file_path
+PNL_BASELINE_PATH = get_data_file_path("pnl_baseline.json")
+PNL_SYMBOL_REGISTRY_PATH = get_data_file_path("pnl_symbol_registry.json")
 
 
 def _normalize_symbol_for_pnl(raw: str) -> str:

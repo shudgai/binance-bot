@@ -203,7 +203,8 @@ def get_effective_exit_setting(sym, key, base_value, is_long):
     return value
 
 
-_DCA_OVERRIDE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "dca_overrides.json")
+from core.config import get_data_file_path
+_DCA_OVERRIDE_PATH = get_data_file_path("dca_overrides.json")
 
 
 def _load_dca_overrides() -> dict:

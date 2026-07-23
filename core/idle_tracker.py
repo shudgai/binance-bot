@@ -6,11 +6,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-IDLE_STATE_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data",
-    "idle_state.json"
-)
+from core.config import get_data_file_path
+IDLE_STATE_FILE = get_data_file_path("idle_state.json")
 
 class StrategyIdleTracker:
     """

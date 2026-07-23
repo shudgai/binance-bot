@@ -125,7 +125,8 @@ async def initialize_atr_history(exchange, batch_size: int = ATR_WARMUP_BATCH_SI
 
     loaded_symbols = set()
     try:
-        cache_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "atr_history_cache.json")
+        from core.config import get_data_file_path
+        cache_path = get_data_file_path("atr_history_cache.json")
         if os.path.exists(cache_path):
             with open(cache_path, "r") as f:
                 cache_data = json.load(f)

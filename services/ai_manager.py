@@ -20,9 +20,9 @@ AI_REQUEST_TIMEOUT_SEC = float(os.getenv("AI_REQUEST_TIMEOUT_SEC", "90"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "2048"))
 AI_AUTO_REVIEW_ENABLED = os.getenv("AI_AUTO_REVIEW_ENABLED", "false").lower() == "true"
 AI_AUTO_REVIEW_EVERY_TRADES = max(1, int(os.getenv("AI_AUTO_REVIEW_EVERY_TRADES", "5")))
-AI_REPORT_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "ai_latest_report.json")
-from core.config import TRADE_HISTORY_FILE
-BOT_SYMBOLS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
+from core.config import TRADE_HISTORY_FILE, get_data_file_path
+AI_REPORT_FILE = get_data_file_path("ai_latest_report.json")
+BOT_SYMBOLS_FILE = get_data_file_path("bot_symbols.json")
 
 # --- 安全閥門：硬性限制 ---
 SAFETY_LIMITS = {

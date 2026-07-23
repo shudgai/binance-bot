@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 WHITELIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT", "HYPEUSDT", "WLDUSDT", "1000PEPEUSDT", "TRUMPUSDT", "SUIUSDT"]
 MAX_SYMBOLS = 15  # Target count of active symbols
 MIN_24H_QUOTE_VOLUME = 50_000_000  # 5,000萬 USDT 最低 24H 成交量要求
-STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "scanner_state.json")
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "bot_symbols.json")
+from core.config import get_data_file_path
+STATE_FILE = get_data_file_path("scanner_state.json")
+CONFIG_FILE = get_data_file_path("bot_symbols.json")
 SCAN_INTERVAL_SEC = 3600
 
 def run_scan():

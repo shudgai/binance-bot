@@ -146,7 +146,7 @@ DEFAULT_SYMBOLS = [
     "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
     "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
+CONFIG_FILE = get_data_file_path("bot_symbols.json")
 
 PERSONALITY_TEMPLATES = {
     "calm": {
