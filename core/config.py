@@ -20,7 +20,19 @@ PAPER_TRADING = _is_placeholder_key(BINANCE_API_KEY)
 LIVE_CAPITAL_CAP = float(os.getenv("LIVE_CAPITAL_CAP", "150.0"))
 MAX_RISK_PER_TRADE_PCT = 0.025
 TIMEFRAME = '5m'
-PORT = os.getenv("PORT", "8005").strip()
+def _detect_port():
+    import sys
+    env_port = os.getenv("PORT", "").strip()
+    if env_port:
+        return env_port
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1].strip()
+        elif arg.startswith("--port="):
+            return arg.split("=", 1)[1].strip()
+    return "8005"
+
+PORT = _detect_port()
 PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
 
 def get_data_file_path(filename: str) -> str:
