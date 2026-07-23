@@ -1214,24 +1214,38 @@ async def check_entries():
                 f"(基礎={strength:.2f}, 樣本加分={s['_range_sample_bonus']:.2f})"
             )
 
-        # ── 三大板塊資產分層特權權重（對齊頂級合約交易哲學） ──
-        # ETH/XRP 保留位置品質優先；其他幣恢復上一版資產分層排序。
-        if sym == "ETHUSDT":
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 8.0
-        elif sym == "XRPUSDT":
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 5.0
-        elif sym == "BTCUSDT":
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 60.0
-        elif sym in ("SOLUSDT", "BNBUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 40.0
-        elif sym in ("DOGEUSDT", "1000PEPEUSDT"):
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 10.0
+        # ── 品質分層排序權重 ──
+        # Scalp 模式（8007）：不依幣種固定加權，改用即時量化指標排名
+        #   → ATR 動能百分比（越高越好）× 5
+        #   → 雷達準備度 readiness（0~1 之間的實時評分）× 20
+        #   → 信號強度 strength（已有，不再單獨另加）
+        #   → 快速雷達審核通過 bonus +5
+        # MA 趨勢模式（8005）：維持原本幣種資產等級靜態加權。
+        from core.config import SCALP_MODE
+        if SCALP_MODE:
+            _radar_readiness = float(_radar_profile.get("_radar_entry_readiness", 0.0) or 0.0)
+            atr_pct = float(s.get("atr_pct", 0.0) or 0.0)
+            scalp_score = (atr_pct * 5.0) + (_radar_readiness * 20.0) + (5.0 if fast_radar_approved else 0.0)
+            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + scalp_score
+        else:
+            # MA 趨勢模式：三大板塊資產分層特權權重（對齊頂級合約交易哲學）
+            # ETH/XRP 保留位置品質優先；其他幣恢復上一版資產分層排序。
+            if sym == "ETHUSDT":
+                s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 8.0
+            elif sym == "XRPUSDT":
+                s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 5.0
+            elif sym == "BTCUSDT":
+                s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 60.0
+            elif sym in ("SOLUSDT", "BNBUSDT", "ADAUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT"):
+                s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 40.0
+            elif sym in ("DOGEUSDT", "1000PEPEUSDT"):
+                s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + 10.0
 
-        # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，給予適度品質排序加分
-        atr_pct = float(s.get("atr_pct", 0.0) or 0.0)
-        if atr_pct > 0:
-            volatility_bonus = atr_pct * 2.0  # 微幅加分
-            s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + volatility_bonus
+            # 高波動幣種權重加分：ATR% (ATR/現價) 越高的幣種，給予適度品質排序加分
+            atr_pct = float(s.get("atr_pct", 0.0) or 0.0)
+            if atr_pct > 0:
+                volatility_bonus = atr_pct * 2.0  # 微幅加分
+                s["_entry_quality_score"] = float(s.get("_entry_quality_score", 0.0)) + volatility_bonus
 
         validated_candidates.append((sym, side, strength, route, is_range_sig, signal_anchor_price, fast_radar_approved))
 

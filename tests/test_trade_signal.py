@@ -119,7 +119,7 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_ma25_pullback_enters_only_after_bullish_rejection(self):
         sym = self._setup_ma_signal_state(
-            signal_open=100.05, signal_close=100.14, signal_low=99.9,
+            signal_open=100.05, signal_high=100.20, signal_close=100.14, signal_low=99.9,
             ma7=100.6, ma25=100.0, ma99=99.0,
             prev_ma7=100.4, prev_ma25=99.9,
             signal_volume=900.0,
@@ -129,7 +129,7 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_ma25_pullback_rejects_rebound_at_signal_high(self):
         sym = self._setup_ma_signal_state(
-            signal_open=100.1, signal_close=100.3, signal_low=99.9,
+            signal_open=100.1, signal_high=100.35, signal_close=100.3, signal_low=99.9,
             ma7=100.6, ma25=100.0, ma99=99.0,
             prev_ma7=100.4, prev_ma25=99.9, signal_volume=900.0,
         )
@@ -137,7 +137,7 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_non_eth_xrp_restores_legacy_ma25_rebound_entry(self):
         sym = self._setup_ma_signal_state(
-            sym="SOLUSDT", signal_open=100.1, signal_close=100.3, signal_low=99.9,
+            sym="SOLUSDT", signal_open=100.1, signal_high=100.35, signal_close=100.3, signal_low=99.9,
             ma7=100.6, ma25=100.0, ma99=99.0,
             prev_ma7=100.4, prev_ma25=99.9, signal_volume=900.0,
         )
@@ -227,6 +227,36 @@ class TradeSignalTests(unittest.TestCase):
         )
         STATES[sym].update({"prev_ma7_2": 101.65, "current_rsi": 60.0})
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+
+    def test_hbar_ma7_simple_long_rejected_when_far_above_ma25(self):
+        sym = self._setup_ma_signal_state(
+            sym="HBARUSDT", signal_open=0.07419, signal_high=0.07438,
+            signal_low=0.07418, signal_close=0.07434,
+            signal_volume=2032842.0, vol_ma20=1658564.0,
+            ma7=0.074297142857, ma25=0.0738664, ma99=0.073276868687,
+            prev_ma7=0.074277142857, prev_ma25=0.0738304, adx=59.29,
+        )
+        STATES[sym].update({
+            "prev_ma7_2": 0.074278571429, "current_atr": 0.000182142857,
+            "current_rsi": 55.56, "rsi_15m": 55.0, "prev_adx": 59.29,
+        })
+
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+        self.assertIn("反彈末端不追多", STATES[sym]["entry_block_reason"])
+
+    def test_ma7_simple_long_requires_15m_rsi_above_midline(self):
+        sym = self._setup_ma_signal_state(
+            signal_open=100.0, signal_close=100.4, signal_volume=1000.0,
+            vol_ma20=1000.0, ma7=100.3, ma25=100.1,
+            prev_ma7=100.2, prev_ma25=100.0,
+        )
+        STATES[sym].update({
+            "prev_ma7_2": 100.25, "current_rsi": 55.0,
+            "rsi_15m": 48.3, "current_atr": 0.4,
+        })
+
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+        self.assertIn("多週期仍偏空不做多", STATES[sym]["entry_block_reason"])
 
     def test_ma7_simple_rejected_when_adx_just_spiked(self):
         # 實測 LINKUSDT 案例：ADX 15 秒內從 7.7 暴衝到 35.4，同一輪掃描就冒出

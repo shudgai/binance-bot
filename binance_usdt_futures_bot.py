@@ -164,6 +164,9 @@ class BinanceFuturesBot:
 
     def calculate_order_amount(self, symbol: str, usdt_amount: float, current_price: float) -> float:
         notional_value = usdt_amount * LEVERAGE
+        # 確保滿足幣安期貨 MIN_NOTIONAL (5.5 USDT) 限制
+        if notional_value < 5.5:
+            notional_value = 5.5
         raw_quantity = notional_value / current_price
         return float(self.exchange.amount_to_precision(symbol, raw_quantity))
 
@@ -218,13 +221,22 @@ class BinanceFuturesBot:
             logger.error("❌ 警告：已嘗試 3 次仍無法掛設止損/止盈單，請檢查精度或最小金額限制！")
 
     def close_position_market(self, symbol: str, current_side: str, contracts: float):
+        if getattr(self, "_is_closing", False):
+            logger.warning(f"⚠️ [DuplicateCloseGuard] {symbol} 平倉執行中，忽略重複調用")
+            return
+        self._is_closing = True
         try:
-            self.exchange.cancel_all_orders(symbol)
-        except Exception:
-            pass
-        close_side = 'sell' if current_side == 'long' else 'buy'
-        self.exchange.create_order(symbol=symbol, type='market', side=close_side, amount=contracts, params={'reduceOnly': True})
-        logger.info(f"✅ 已平倉 {current_side.upper()}")
+            try:
+                self.exchange.cancel_all_orders(symbol)
+            except Exception:
+                pass
+            close_side = 'sell' if current_side == 'long' else 'buy'
+            self.exchange.create_order(symbol=symbol, type='market', side=close_side, amount=contracts, params={'reduceOnly': True})
+            logger.info(f"✅ 已平倉 {current_side.upper()}")
+        except Exception as e:
+            logger.error(f"❌ 市價平倉失敗: {e}")
+        finally:
+            self._is_closing = False
 
     def run_strategy(self):
         logger.info(f"🤖 啟動複合策略: {TIMEFRAME_SHORT} 配合 {TIMEFRAME_LONG} (往向看模式)")

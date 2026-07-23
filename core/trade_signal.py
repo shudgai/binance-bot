@@ -56,7 +56,47 @@ async def update_trade_signal(sym, trade):
     s["last_trade_price"] = price
     s["close_price"] = price
     s["last_ohlcv_update"] = time.time()
-    
+
+    # ── 防插針確認價（Anti-Spike Filter — 雙重保護）──
+    # 幣安設計 Mark Price 就是用跨交易所指數均價防止插針誤觸強制清算。
+    # 此處以兩層等效保護取代即時 mark price API 查詢（節省 API 權重）：
+    #
+    # 【第1層】最近 5 筆成交中位數（擴大窗口，更難被連發插針污染）
+    #   - 正常行情：連續5筆都在同方向，中位數 = 真實趨勢價格
+    #   - 插針行情：插針1~2筆偏離，中位數仍落在正常成交區間
+    #
+    # 【第2層】與 OHLCV K線收盤偏差 > 0.5% 交叉確認
+    #   - K線收盤是分批定時更新的，比即時成交流平滑很多，
+    #     類似 Mark Price 的「跨時間平均」特性。
+    #   - 若成交流瞬間價格偏離K線收盤 > 0.5%，直接採用K線收盤
+    #     作為確認價，而非成交流中位數（更保守）。
+    #
+    # 停利追蹤仍用即時 close_price，保持對獲利行情的敏感度。
+    _rp = s.get("_recent_prices_5", [])
+    _rp = (_rp + [price])[-5:]
+    s["_recent_prices_5"] = _rp
+    _sorted5 = sorted(_rp)
+    _median5 = _sorted5[len(_sorted5) // 2]  # 5筆中位數
+
+    # 第2層：與 OHLCV K線收盤交叉確認（Mark Price 替代品）
+    _ohlcv_close = 0.0
+    if s.get("ohlcv") and len(s["ohlcv"]) >= 2:
+        # 使用倒數第2根（已收盤的完整K線），比當前未完成K線更穩定
+        _ohlcv_close = float(s["ohlcv"][-2][4] or 0.0)
+    if _ohlcv_close > 0 and _median5 > 0:
+        _ohlcv_dev = abs(_median5 - _ohlcv_close) / _ohlcv_close
+        if _ohlcv_dev > 0.005:  # 中位數仍偏離K線收盤 > 0.5% → 疑似連發插針
+            logger.info(
+                f"⚡ [SpikeFilter_L2] {sym} 成交中位數 {_median5:.6f} 偏離K線收盤 "
+                f"{_ohlcv_close:.6f} 達 {_ohlcv_dev*100:.2f}% > 0.5%，"
+                f"採用K線收盤作為確認價（疑似連發插針）"
+            )
+            s["close_price_spike_filtered"] = _ohlcv_close
+        else:
+            s["close_price_spike_filtered"] = _median5
+    else:
+        s["close_price_spike_filtered"] = _median5
+
     # 同步修改當前開著的 K 線 (ohlcv[-1])，確保即時指標計算與止損判斷最精準
     if "ohlcv" in s and s["ohlcv"]:
         _lc = s["ohlcv"][-1]

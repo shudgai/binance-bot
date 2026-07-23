@@ -43,7 +43,7 @@ BOT_STATE_PATH = get_data_file_path("bot_running_state.json")
 DEFAULT_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
-    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "LTCUSDT", "ZECUSDT",
+    "NEARUSDT", "AAVEUSDT", "XLMUSDT", "HYPEUSDT", "ZECUSDT",
 ]
 
 
@@ -53,7 +53,7 @@ def _strategy_label(balance=None):
     from core.balance import get_dynamic_max_slots
 
     if SCALP_MODE:
-        return "Top 15 Radar / Scalp Micro-Trend (+0.3% TP / -1.5% SL)"
+        return "Top 15 Radar / Scalp Micro-Trend (+0.5% TP / -1.5% SL)"
 
     slots = get_dynamic_max_slots(balance)
     if slots == 3:

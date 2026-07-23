@@ -116,17 +116,19 @@ def compute_signal_strength(sym, realtime_trigger=False):
     pullback_long_rebound = candle_close - ma25
     pullback_short_rebound = ma25 - candle_close
 
-    # 回調路線：量能 + K 棒方向確認
+    # 回調路線：量能 + K 棒方向確認 + 杜絕盤整黏合與上影線假突破
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
-                     and volume_ratio >= base_limit and current_rsi < 70
+                     and volume_ratio >= base_limit and current_rsi < 70 and not is_flat_chop
+                     and long_no_fake_breakout
                      and (sym not in STRICT_ENTRY_SYMBOLS or pullback_long_rebound <= pullback_rebound_limit))
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
-                      and volume_ratio >= base_limit and current_rsi > 30
+                      and volume_ratio >= base_limit and current_rsi > 30 and not is_flat_chop
+                      and short_no_fake_breakout
                       and (sym not in STRICT_ENTRY_SYMBOLS or pullback_short_rebound <= pullback_rebound_limit))
 
-    from core.config import DISABLE_MA_BREAKOUT
+    from core.config import DISABLE_MA_BREAKOUT, DISABLE_MA25_PULLBACK
     completed = candles[:-1]
     breakout_long = breakout_short = False
     if len(completed) >= 21 and not DISABLE_MA_BREAKOUT:
@@ -147,7 +149,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
     elif (breakout_long or breakout_short) and not DISABLE_MA_BREAKOUT:
         side, route = ("buy" if breakout_long else "sell"), "MA_Breakout"
-    elif pullback_long or pullback_short:
+    elif (pullback_long or pullback_short) and not DISABLE_MA25_PULLBACK:
         side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
     else:
         # 既有三條路線都沒觸發時，才嘗試簡化路線 (MA7_Simple)

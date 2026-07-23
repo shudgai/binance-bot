@@ -30,13 +30,15 @@ class EntryRiskTests(unittest.TestCase):
         self.assertEqual(RANGE_MIN_NET_PROFIT_PCT, 0.001)
         self.assertGreaterEqual(STRICT_RANGE_MIN_NET_PROFIT_PCT, 0.004)
 
-    def test_entry_modes_keep_eth_xrp_guarded_and_restore_legacy_for_others(self):
+    def test_entry_modes_use_market_for_ma_trend_turns_and_limit_for_range(self):
+        # MA 趨勢路線的進場前提是「轉折剛發生，馬上跟上」，改用市價單保證跟上，
+        # 不再受限價單追價幅度/逾時限制；Range 支撐/壓力模式仍要等特定價位，維持限價。
         self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "Range_Support_Long", "ETHUSDT"), "range_limit")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA25_Pullback", "XRPUSDT"), "pullback")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA7_Simple", "ETHUSDT"), "pullback")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Breakout", "XRPUSDT"), "pullback")
-        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Cross", "ETHUSDT"), "chase")
-        self.assertEqual(_resolve_entry_order_mode("auto", 5.0, "MA25_Pullback", "SOLUSDT"), "chase")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA25_Pullback", "XRPUSDT"), "market")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA7_Simple", "ETHUSDT"), "market")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Breakout", "XRPUSDT"), "market")
+        self.assertEqual(_resolve_entry_order_mode("auto", 25.0, "MA_Cross", "ETHUSDT"), "market")
+        self.assertEqual(_resolve_entry_order_mode("auto", 5.0, "MA25_Pullback", "SOLUSDT"), "market")
 
     def test_entry_reason_is_persisted_only_after_first_fill(self):
         state = {"entry_reason": None}

@@ -9,7 +9,12 @@ from core.state_manager import is_symbol_locked
 
 logger = logging.getLogger(__name__)
 
-MA_ENTRY_ROUTES = ("MA_Cross", "MA_Breakout", "MA25_Pullback", "MA7_Simple")
+from core.config import DISABLE_MA25_PULLBACK
+
+_ma_routes = ["MA_Cross", "MA_Breakout", "MA7_Simple"]
+if not DISABLE_MA25_PULLBACK:
+    _ma_routes.insert(2, "MA25_Pullback")
+MA_ENTRY_ROUTES = tuple(_ma_routes)
 RANGE_ENTRY_ROUTES = ("Range_Support_Long", "Range_Resistance_Short")
 ALL_ENTRY_ROUTES = MA_ENTRY_ROUTES + RANGE_ENTRY_ROUTES
 BTC_MACRO_MAX_AGE_SEC = 180.0

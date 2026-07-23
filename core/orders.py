@@ -2163,11 +2163,12 @@ async def _execute_order_inner(sym, side, price, allocation_pct=1.0, is_rescue_d
         base_amt = await sanitize_order_qty(sym, _market_max_qty)
 
     actual_notional = base_amt * price
-    if actual_notional < 6.0 and actual_notional > 0:
-        min_qty = 6.0 / price
+    MIN_NOTIONAL_USDT = 5.5  # 幣安下限 5 USDT + 安全緩衝
+    if actual_notional < MIN_NOTIONAL_USDT and actual_notional > 0:
+        min_qty = MIN_NOTIONAL_USDT / price
         min_qty = await sanitize_order_qty(sym, min_qty)
-        if (min_qty * price) / lev > balance * 0.98:
-            logger.info(f"⚠️ [風控] {sym} 資金不足以達到最小開倉額度 6 USDT (餘額: {balance:.2f})")
+        if min_qty <= 0.0 or (min_qty * price) / lev > balance * 0.98:
+            logger.info(f"⚠️ [MinNotional] {sym} 資金不足以達到最小名義價值 5.5 USDT (現價: {price:.6f}, 餘額: {balance:.2f})")
             return
         base_amt = min_qty
         actual_notional = base_amt * price

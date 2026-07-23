@@ -513,10 +513,10 @@ class DynamicExitManager:
         self.is_long = is_long
 
         # 配置參數
-        self.profit_threshold = 0.15        # 只要利潤 > 0.15% 就啟動高位盤整防護
-        self.stagnation_range = 0.0005       # 盤整區間 (0.05%)
-        self.no_high_time_limit = 60         # 盤整判定時間 (60秒內沒創新高)
-        self.min_exit_profit_pct = 0.12    # 百分比單位；至少覆蓋雙邊費用後才允許動態停利
+        self.profit_threshold = 0.35        # 利潤 > 0.35% 才啟動高位盤整防護，留足趨勢空間
+        self.stagnation_range = 0.0015       # 盤整區間 (0.15%)
+        self.no_high_time_limit = 180        # 盤整判定時間 (180秒內沒創新高)
+        self.min_exit_profit_pct = 0.25    # 百分比單位；至少覆蓋雙邊費用與摩擦後才允許動態停利
 
         # 還原重啟前已經記錄的峰值百分比
         self.max_profit_pct = max(0.0, restored_peak_pct)
@@ -956,7 +956,13 @@ async def check_exits(sym):
     p = s["close_price"]
     avg = s["avg_price"]
     is_long = s["qty"] > 0
+    # ── 防插針確認價（Anti-Spike Filter）──
+    # 硬停損使用「最近3筆成交中位數」作為確認價，避免一根插針誤觸軟體層停損。
+    # 停利追蹤仍用即時 close_price 以保持對獲利行情的敏感度。
+    p_sf = float(s.get("close_price_spike_filtered", p) or p)
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
+    # 確認價盈虧（用於硬停損判斷）
+    profit_pct_sf = (p_sf - avg) / avg if is_long else (avg - p_sf) / avg
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
     if s.get("lowest_profit_pct") is None or profit_pct < float(s.get("lowest_profit_pct", 0.0) or 0.0):
@@ -970,22 +976,24 @@ async def check_exits(sym):
         highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
 
         # 1. 緊密硬停損 (-0.8%)
-        if profit_pct <= -HARD_STOP_LOSS_PCT:
-            logger.info(f"🛑 [Scalp_Tight_SL] {sym} 虧損達 {profit_pct*100:.2f}% (門檻: -{HARD_STOP_LOSS_PCT*100:.2f}%)，高頻微波段緊密砍單！")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Tight_SL]", is_stop_loss=True)
+        # 使用 profit_pct_sf（插針過濾後的確認價）判斷，防止一根插針誤觸停損。
+        # 只有連續3筆中位數都確認跌破門檻，才真正執行平倉。
+        if profit_pct_sf <= -HARD_STOP_LOSS_PCT:
+            logger.info(f"🛑 [Scalp_Tight_SL] {sym} 虧損達 {profit_pct_sf*100:.2f}% (門檻: -{HARD_STOP_LOSS_PCT*100:.2f}%)，確認價={p_sf:.6f}，高頻微波段緊密砍單！")
+            await close_position(sym, cs, abs(s["qty"]), p_sf, avg, reason="[Scalp_Tight_SL]", is_stop_loss=True)
             return
 
-        MIN_NET_TP_FLOOR_PCT = 0.0012
+        MIN_NET_TP_FLOOR_PCT = 0.0025
 
         # 1.5. 方案 B：解套保本鎖定 + 利潤繼續跟隨奔跑 (Scalp_Drawdown_Rebound_TP)
-        # 曾跌入浮虧 (lowest_profit <= -0.25%) 或峰值 < 0.20% 持倉超過 60 秒後回彈：
-        # 1) 當價格跑回淨利區 (+0.12%+) 時，立刻啟用保本鎖 (100% 絕不轉虧)；
-        # 2) 若利潤繼續大漲（衝至 +0.30%、+0.50%），讓利潤繼續奔跑，追蹤停利線隨高點上推；
-        # 3) 直到價格從高點回吐 0.10% 時，才在最高位鎖利平倉！
+        # 曾跌入浮虧 (lowest_profit <= -0.25%) 或峰值 < 0.35% 持倉超過 180 秒後回彈：
+        # 1) 當價格跑回淨利區 (+0.25%+) 時，立刻啟用保本鎖 (100% 絕不轉虧)；
+        # 2) 若利潤繼續大漲（衝至 +0.50%、+1.00%），讓利潤繼續奔跑，追蹤停利線隨高點上推；
+        # 3) 直到價格從高點回吐時，才在最高位鎖利平倉！
         lowest_p = float(s.get("lowest_profit_pct", 0.0) or 0.0)
         opened_at = float(s.get("open_time", 0.0) or 0.0)
         hold_time = time.time() - opened_at if opened_at > 0 else 0.0
-        is_rebound_from_loss = (lowest_p <= -0.0025) or (highest_profit < 0.0020 and hold_time >= 60.0)
+        is_rebound_from_loss = (lowest_p <= -0.0025) or (highest_profit < 0.0035 and hold_time >= 180.0)
 
         if is_rebound_from_loss:
             if profit_pct >= MIN_NET_TP_FLOOR_PCT:
@@ -1013,11 +1021,11 @@ async def check_exits(sym):
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Drawdown_Rebound_TP]", is_stop_loss=False)
                 return
 
-        # 2. 讓利潤奔跑的 ATR 動態移動停利。峰值至少 0.30% 才啟動，
-        # 並保留 0.20%~0.45% 的正常回踩空間；不再用固定 0.12% 緊貼價格。
-        SCALP_TRAIL_ARM_PCT = max(0.0030, SCALP_TP1_PCT)
+        # 2. 讓利潤奔跑的 ATR 動態移動停利。峰值至少 0.45% 才啟動，
+        # 並保留 0.35%~0.65% 的正常回踩空間；給予大趨勢呼吸空間。
+        SCALP_TRAIL_ARM_PCT = max(0.0045, SCALP_TP1_PCT)
         atr_pct = float(s.get("current_atr", 0.0) or 0.0) / avg if avg > 0 else 0.0
-        trail_gap = max(0.0020, min(0.0045, atr_pct * 1.2))
+        trail_gap = max(0.0035, min(0.0065, atr_pct * 1.5))
         threshold_epsilon = 1e-12
 
         if highest_profit + threshold_epsilon >= SCALP_TRAIL_ARM_PCT:
@@ -1205,6 +1213,8 @@ async def check_exits(sym):
         ma_candle_ts = int(s.get("ma_candle_ts", 0) or 0)
         candles = s.get("ohlcv", [])
         hold_sec = max(0.0, time.time() - float(s.get("open_time", time.time()) or time.time()))
+        turn_triggered = False
+        turn_data = {}
 
 
         # 用戶明確要求：「要有利潤才能平倉，不能因微幅波動太快砍倉」
@@ -1723,15 +1733,15 @@ async def check_exits(sym):
         first_ep = float(s.get("first_entry_price", 0.0) or avg)
         if is_long:
             _hard_sl_price = max(avg * (1 - _hard_sl), first_ep * (1 - _hard_sl))
-            _hard_sl_hit = p <= _hard_sl_price
+            _hard_sl_hit = p_sf <= _hard_sl_price
         else:
             _hard_sl_price = min(avg * (1 + _hard_sl), first_ep * (1 + _hard_sl))
-            _hard_sl_hit = p >= _hard_sl_price
+            _hard_sl_hit = p_sf >= _hard_sl_price
 
         if _hard_sl_hit:
             cs = 'sell' if is_long else 'buy'
-            logger.info(f"🛑 [Hard_Stop_Loss] {sym} 觸發硬停損線 {(_hard_sl_price if is_long else _hard_sl_price):.4f}，執行平倉")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Hard_Stop_Loss]", is_stop_loss=True)
+            logger.info(f"🛑 [Hard_Stop_Loss] {sym} 觸發硬停損線 {_hard_sl_price:.4f}，確認價={p_sf:.6f}，執行平倉")
+            await close_position(sym, cs, abs(s["qty"]), p_sf, avg, reason="[Hard_Stop_Loss]", is_stop_loss=True)
             return
 
 async def _attempt_forced_rescue(sym, s, is_long, p):

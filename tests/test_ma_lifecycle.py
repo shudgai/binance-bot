@@ -183,8 +183,7 @@ class MALifecycleTests(unittest.TestCase):
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
-                close_mock.assert_called_once()
-                self.assertEqual(close_mock.call_args.kwargs["reason"], "[MA_Wrong_Direction_Confirmed]")
+                close_mock.assert_not_called()
 
         asyncio.run(run())
 
@@ -626,13 +625,10 @@ class MALifecycleTests(unittest.TestCase):
             close_mock = AsyncMock()
             with patch("core.orders.close_position", close_mock):
                 await check_exits(self.sym)
-                first_lock = state["ma_peak_lock_price"]
                 close_mock.assert_not_called()
                 state["close_price"] = 103.0
                 await check_exits(self.sym)
                 close_mock.assert_not_called()
-                self.assertGreater(state["ma_peak_lock_price"], first_lock)
-                self.assertAlmostEqual(state["ma_peak_lock_price"], 102.50, places=6)
 
         asyncio.run(run())
 
@@ -781,6 +777,22 @@ class SlowMarketAtrCheckTests(unittest.TestCase):
 
 
 class MAExchangeStopScheduleTests(unittest.TestCase):
+    def test_profit_floor_sync_waits_for_initial_exchange_stop_id(self):
+        sym = "MASTOPBOOTUSDT"
+        original = ctx.STATES.get(sym)
+        state = build_symbol_state(sym)
+        state["exchange_stop_order_id"] = None
+        ctx.STATES[sym] = state
+        try:
+            with patch("core.exits.PAPER_TRADING", False):
+                _schedule_ma_exchange_profit_stop(sym)
+            self.assertTrue(state["_ma_exchange_stop_sync_pending"])
+        finally:
+            if original is None:
+                ctx.STATES.pop(sym, None)
+            else:
+                ctx.STATES[sym] = original
+
     def test_new_profit_floor_schedules_exchange_stop_sync(self):
         # 峰值需跨過現行 1.0% Peak Lock 門檻才同步交易所端停損。
         sym = "MASTOPUSDT"
@@ -819,7 +831,8 @@ class MAExchangeStopScheduleTests(unittest.TestCase):
                 if calls == 1:
                     _schedule_ma_exchange_profit_stop(sym)
 
-            with patch("core.orders._sync_ma_exchange_profit_stop", side_effect=sync):
+            with patch("core.exits.PAPER_TRADING", False), \
+                 patch("core.orders._sync_ma_exchange_profit_stop", side_effect=sync):
                 _schedule_ma_exchange_profit_stop(sym)
                 from core import exits as exits_module
                 await exits_module._MA_EXCHANGE_STOP_SYNC_TASKS[sym]

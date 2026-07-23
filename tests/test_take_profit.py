@@ -602,6 +602,172 @@ class TakeProfitTests(unittest.TestCase):
         self.assertEqual(s["qty"], 1.0)
         self.assertFalse(mock_exchange.create_order.called)
 
+    def test_scalp_trail_push_syncs_exchange_profit_stop(self):
+        sym = "SCALPSYNCUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 1.0, "avg_price": 100.0, "close_price": 100.5,
+            "current_atr": 0.1, "highest_profit_pct": 0.005,
+        })
+
+        from unittest.mock import patch
+        with patch("core.exits.SCALP_MODE", True), \
+             patch("core.exits._schedule_ma_exchange_profit_stop") as schedule:
+            asyncio.run(check_exits(sym))
+
+        self.assertAlmostEqual(s["scalp_trail_profit_pct"], 0.0025)
+        self.assertAlmostEqual(s["ma_profit_floor_price"], 100.25)
+        schedule.assert_called_once_with(sym)
+
+    def test_scalp_tp1_closes_only_30_percent(self):
+        sym = "SCALPTP1USDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 10.0, "avg_price": 100.0, "close_price": 100.5,
+            "current_atr": 0.1, "highest_profit_pct": 0.0,
+        })
+
+        from unittest.mock import patch, AsyncMock
+        close_mock = AsyncMock()
+        with patch("core.exits.SCALP_MODE", True), \
+             patch("core.exits._schedule_ma_exchange_profit_stop"), \
+             patch("core.orders.close_position", close_mock):
+            asyncio.run(check_exits(sym))
+
+        close_mock.assert_awaited_once()
+        self.assertAlmostEqual(close_mock.await_args.args[2], 3.0)
+        self.assertEqual(close_mock.await_args.kwargs["reason"], "[Scalp_TP1_30Pct]")
+        self.assertTrue(s["scalp_tp1_done"])
+
+    def test_scalp_tp2_keeps_runner_open(self):
+        sym = "SCALPTP2USDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 7.0, "avg_price": 100.0, "close_price": 101.0,
+            "current_atr": 0.1, "highest_profit_pct": 0.010,
+            "scalp_tp1_done": True,
+        })
+
+        from unittest.mock import patch, AsyncMock
+        close_mock = AsyncMock()
+        with patch("core.exits.SCALP_MODE", True), \
+             patch("core.exits._schedule_ma_exchange_profit_stop"), \
+             patch("core.orders.close_position", close_mock):
+            asyncio.run(check_exits(sym))
+
+        close_mock.assert_not_awaited()
+        self.assertTrue(s["scalp_tp2_milestone"])
+
+    def test_scalp_trail_requires_two_second_confirmation(self):
+        sym = "SCALPCONFIRMUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 7.0, "avg_price": 100.0, "close_price": 100.39,
+            "current_atr": 0.1, "highest_profit_pct": 0.006,
+            "scalp_trail_profit_pct": 0.004, "scalp_tp1_done": True,
+            "scalp_tp2_milestone": True,
+        })
+
+        from unittest.mock import patch, AsyncMock
+        close_mock = AsyncMock()
+        with patch("core.exits.SCALP_MODE", True), \
+             patch("core.orders.close_position", close_mock):
+            asyncio.run(check_exits(sym))
+            close_mock.assert_not_awaited()
+            self.assertEqual(s["scalp_trail_cross_count"], 1)
+            s["scalp_trail_cross_since"] = time.time() - 3.0
+            asyncio.run(check_exits(sym))
+
+        close_mock.assert_awaited_once()
+        self.assertEqual(close_mock.await_args.kwargs["reason"], "[Scalp_Trail_Profit]")
+
+    def test_scalp_profit_exit_bypasses_generic_point_35pct_gate(self):
+        from core.orders import close_position
+        sym = "SCALPEXITUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({"qty": 1.0, "avg_price": 100.0, "close_price": 100.13})
+
+        from unittest.mock import patch, AsyncMock
+        mock_exchange = AsyncMock()
+        mock_exchange.fetch_my_trades.return_value = []
+        with patch("core.orders.exchange_futures", mock_exchange), \
+             patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders._exit_lock_profit_with_chase",
+                   new=AsyncMock(return_value=100.13)), \
+             patch("core.orders.record_trade_result") as record_mock:
+            asyncio.run(close_position(
+                sym, "sell", 1.0, 100.13, 100.0, reason="[Scalp_Trail_Profit]",
+            ))
+
+        record_mock.assert_called_once()
+
+    def test_scalp_early_close_guard_blocks_small_loss_during_first_90_seconds(self):
+        from core.orders import close_position
+        sym = "SCALPEARLYUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 10.0, "avg_price": 100.0, "close_price": 99.95,
+            "open_time": time.time() - 39.0,
+        })
+
+        from unittest.mock import patch, AsyncMock
+        mock_exchange = AsyncMock()
+        with patch("core.orders.SCALP_MODE", True), \
+             patch("core.orders.exchange_futures", mock_exchange):
+            asyncio.run(close_position(
+                sym, "sell", 10.0, 99.95, 100.0,
+                reason="[MA_Wrong_Direction_Confirmed]", is_stop_loss=True,
+            ))
+
+        mock_exchange.create_order.assert_not_called()
+        self.assertEqual(s["qty"], 10.0)
+
+    def test_scalp_early_close_guard_allows_true_tight_stop(self):
+        from core.orders import close_position
+        sym = "SCALPHARDSTOPUSDT"
+        init_states([sym])
+        s = STATES[sym]
+        reset_coin_state(sym)
+        s.update({
+            "qty": 1.0, "avg_price": 100.0, "close_price": 98.5,
+            "open_time": time.time() - 39.0,
+        })
+
+        from unittest.mock import patch, AsyncMock
+        market_close = AsyncMock(return_value=98.5)
+        with patch("core.orders.SCALP_MODE", True), \
+             patch("core.orders.PAPER_TRADING", False), \
+             patch("core.orders._reject_live_order_from_test_runtime"), \
+             patch("core.orders._market_close_and_get_fill", market_close), \
+             patch("core.orders.record_trade_result"):
+            asyncio.run(close_position(
+                sym, "sell", 1.0, 98.5, 100.0,
+                reason="[Scalp_Tight_SL]", is_stop_loss=True,
+            ))
+
+        market_close.assert_awaited_once()
+        self.assertEqual(market_close.await_args.kwargs["reason"], "[Scalp_Tight_SL]")
+
+    def test_bot_market_close_client_id_is_attributable(self):
+        from core.orders import _bot_close_client_order_id
+        from unittest.mock import patch
+        with patch("core.orders.PORT", "8007"):
+            client_id = _bot_close_client_order_id("[Scalp_Tight_SL]")
+        self.assertTrue(client_id.startswith("b8007-Scalp_Tight_SL-"))
+        self.assertLessEqual(len(client_id), 36)
+
     def test_sell_pressure_exit_bypasses_min_profit_gate(self):
         # 實測 XRPUSDT 案例：賣壓機制在浮盈 0.29%~0.30%（低於 0.35% 門檻）想出場，
         # 卻被一般的最低利潤門檻攔下，2~3 秒後才由反應更慢的交易所端鎖利單接手，

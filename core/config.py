@@ -60,6 +60,9 @@ PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
 
 def get_data_file_path(filename: str) -> str:
     base, ext = os.path.splitext(filename)
+    # bot_symbols.json 必須是全主機共享的動態幣池清單，確保所有 Port (8005 / 8007 等) 監控與下單幣種完全一致
+    if base == "bot_symbols":
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot_symbols.json")
     suffix = PORT_SUFFIX if PORT_SUFFIX else ""
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", f"{base}{suffix}{ext}")
 
@@ -78,6 +81,7 @@ DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
 TRADE_POOL_SIZE = 15
 DISABLE_MA_BREAKOUT = True
+DISABLE_MA25_PULLBACK = True
 
 # ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
@@ -120,7 +124,7 @@ COIN_PROFILE_CONFIG = {
     # 選幣標準：24h量 > 0.5億、波動率較高（24h ±2%以上）
     "DOGEUSDT": {"sl_atr_multiplier": 1.3, "tp_atr_multiplier": 22.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 11, "disable_rescue_dca": False, "hard_sl_pct": 0.015},
     "ADAUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False, "hard_sl_pct": 0.015},
-    "HYPEUSDT": {"disable_entry": True},
+    "HYPEUSDT": {"profile_type": "High_Beta_Momentum", "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7, "disable_entry": True},
     "WLDUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 14, "hard_sl_pct": 0.015, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
 
     # 第三類：投機風險型 (Speculative_Risk) - DeFi + 中型幣
@@ -243,8 +247,8 @@ SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 10.0
 HARD_STOP_LOSS_PCT = float(os.getenv("HARD_STOP_LOSS_PCT", "0.035"))
 SCALP_MODE = os.getenv("SCALP_MODE", "false").lower() in ("true", "1", "yes")
-SCALP_TP1_PCT = float(os.getenv("SCALP_TP1_PCT", "0.003"))
-SCALP_TP2_PCT = float(os.getenv("SCALP_TP2_PCT", "0.005"))
+SCALP_TP1_PCT = float(os.getenv("SCALP_TP1_PCT", "0.005"))
+SCALP_TP2_PCT = float(os.getenv("SCALP_TP2_PCT", "0.010"))
 MIN_TREND_ADX = float(os.getenv("MIN_TREND_ADX", "18.0"))
 EXIT_RR_MULTIPLIER = 2.5
 
