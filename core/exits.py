@@ -972,30 +972,33 @@ async def check_exits(sym):
 
         # 2. 利潤動態往上推進停利線 (Dynamic Trailing Stop Profit)
         # 最高浮盈達 0.20% 以上啟動，保持 0.12% 緊密動態跟隨距離（利潤越高，停利線越往上升）
+        # 扣除合約雙向手續費 (0.08%) 厚度：要求平倉時毛漲幅必須 >= 0.12%，扣除手續費後確保實質淨獲利 > +0.04%
+        MIN_NET_TP_FLOOR_PCT = 0.0012
+
         if highest_profit >= 0.0020:
-            current_trail_profit = highest_profit - 0.0012
+            current_trail_profit = max(highest_profit - 0.0012, MIN_NET_TP_FLOOR_PCT)
             prev_trail_profit = float(s.get("scalp_trail_profit_pct", 0.0) or 0.0)
             if current_trail_profit > prev_trail_profit:
                 s["scalp_trail_profit_pct"] = current_trail_profit
                 logger.info(f"📈 [Scalp_Trail_Profit_Push] {sym} 最高浮盈升至 {highest_profit*100:.2f}%，動態停利線跟隨往上推至 +{current_trail_profit*100:.2f}%")
 
         scalp_trail = float(s.get("scalp_trail_profit_pct", 0.0) or 0.0)
-        if scalp_trail > 0 and profit_pct <= scalp_trail:
-            logger.info(f"💰 [Scalp_Trail_Profit_Trigger] {sym} 浮盈 {profit_pct*100:.2f}% 觸及隨高點上推的動態停利線 (+{scalp_trail*100:.2f}%)，鎖定獲利出場！")
+        if scalp_trail > 0 and profit_pct <= scalp_trail and profit_pct >= MIN_NET_TP_FLOOR_PCT:
+            logger.info(f"💰 [Scalp_Trail_Profit_Trigger] {sym} 浮盈 {profit_pct*100:.2f}% (扣除手續費後淨利潤: +{(profit_pct-0.0008)*100:.2f}%) 觸及動態停利線 (+{scalp_trail*100:.2f}%)，鎖定獲利出場！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Trail_Profit]", is_stop_loss=False)
             return
 
         # 3. 高頻第一階段快扣停利 +0.30% (平倉 60%)
-        if profit_pct >= SCALP_TP1_PCT and not s.get("scalp_tp1_done", False):
+        if profit_pct >= SCALP_TP1_PCT and profit_pct >= MIN_NET_TP_FLOOR_PCT and not s.get("scalp_tp1_done", False):
             qty_60 = abs(s["qty"]) * 0.60
-            logger.info(f"⚡ [Scalp_TP1_60Pct] {sym} 浮盈達 {profit_pct*100:.2f}% >= {SCALP_TP1_PCT*100:.2f}%，極速平倉 60% 部位 ({qty_60:.4f}) 落袋為安！")
+            logger.info(f"⚡ [Scalp_TP1_60Pct] {sym} 浮盈達 {profit_pct*100:.2f}% (淨利潤: +{(profit_pct-0.0008)*100:.2f}%) >= {SCALP_TP1_PCT*100:.2f}%，極速平倉 60% 部位 ({qty_60:.4f}) 落袋為安！")
             s["scalp_tp1_done"] = True
             await close_position(sym, cs, qty_60, p, avg, reason="[Scalp_TP1_60Pct]", is_stop_loss=False)
             return
 
         # 4. 高頻第二階段清倉 +0.50%
-        if profit_pct >= SCALP_TP2_PCT:
-            logger.info(f"🎯 [Scalp_TP2_Full] {sym} 浮盈達 {profit_pct*100:.2f}% >= {SCALP_TP2_PCT*100:.2f}%，高頻微波段清倉落袋！")
+        if profit_pct >= SCALP_TP2_PCT and profit_pct >= MIN_NET_TP_FLOOR_PCT:
+            logger.info(f"🎯 [Scalp_TP2_Full] {sym} 浮盈達 {profit_pct*100:.2f}% (淨利潤: +{(profit_pct-0.0008)*100:.2f}%) >= {SCALP_TP2_PCT*100:.2f}%，高頻微波段清倉落袋！")
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_TP2_Full]", is_stop_loss=False)
             return
 
