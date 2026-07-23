@@ -255,7 +255,7 @@ def get_session_start_balance():
 
 
 def get_paper_positions():
-    """Return all positions for the current paper state."""
+    """Return all positions for the current paper state with real-time unrealized PnL."""
     state = {}
     if os.path.exists(PAPER_STATE_FILE):
         try:
@@ -265,9 +265,34 @@ def get_paper_positions():
             pass
     positions = {}
     for coin, data in state.get('positions', {}).items():
+        qty = float(data.get("qty", 0))
+        avg_price = float(data.get("avg_price", 0))
+        cur_price = float(data.get("current_price", 0) or 0)
+        if cur_price <= 0 and abs(qty) > 0:
+            try:
+                sym_clean = coin.replace(":", "").replace("/", "")
+                cur_price = get_price(sym_clean)["price"]
+            except Exception:
+                cur_price = avg_price
+        
+        pnl = float(data.get("unrealized_pnl", 0) or 0)
+        if pnl == 0 and abs(qty) > 0 and avg_price > 0 and cur_price > 0:
+            if qty > 0:
+                pnl = (cur_price - avg_price) * abs(qty)
+            else:
+                pnl = (avg_price - cur_price) * abs(qty)
+                
+        pnl_pct = (pnl / (abs(qty) * avg_price)) if (abs(qty) * avg_price) > 0 else 0.0
+
         positions[coin] = {
-            "qty": data.get("qty", 0),
-            "avg_price": data.get("avg_price", 0),
-            "realized_pnl": data.get("realized_pnl", 0)
+            "symbol": coin,
+            "qty": qty,
+            "avg_price": avg_price,
+            "current_price": cur_price,
+            "unrealized_pnl": pnl,
+            "pnl": pnl,
+            "unRealizedProfit": pnl,
+            "pnl_percent": pnl_pct,
+            "realized_pnl": float(data.get("realized_pnl", 0))
         }
     return positions
