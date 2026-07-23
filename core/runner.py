@@ -613,6 +613,13 @@ async def calibrate_with_exchange(exchange):
                         ctx.STATES[sym]["is_breakeven_locked"] = False
                         ctx.STATES[sym].pop("dynamic_exit_manager", None)
 
+                        # 如果是無法辨識歷史原因的盲目接管倉位 (MA_Restored)，且不屬於機器人自己掛單剛成交者，
+                        # 當下立即市價平倉清空，不讓無開倉依據的殘留倉位留在市場中套牢。
+                        _stored_reason = ctx.STATES[sym].get("entry_reason", "")
+                        if _stored_reason == "MA_Restored" and not _own_pending_fill:
+                            logger.info(f"🚨 [CALIBRATION] {sym} 屬無法追溯原因的舊殘留持倉 (MA_Restored)，當下立即發起市價清倉，杜絕殘留套牢！")
+                            ctx.STATES[sym]["_auto_close_restored"] = True
+
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 
 

@@ -950,6 +950,13 @@ async def check_exits(sym):
     if abs(s["qty"]) < 0.000001 or s["avg_price"] <= 0:
         return
 
+    if s.get("_auto_close_restored", False):
+        s["_auto_close_restored"] = False
+        cs = "sell" if s["qty"] > 0 else "buy"
+        logger.info(f"🚨 [Restored_Auto_Close] {sym} 屬舊殘留持倉 (MA_Restored)，發起當下即時市價平倉！")
+        await close_position(sym, cs, abs(s["qty"]), s["close_price"], s["avg_price"], reason="[Restored_Auto_Close]", is_stop_loss=True)
+        return
+
     if s.get("current_atr", 0.0) <= 0:
         return
 
