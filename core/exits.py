@@ -977,21 +977,41 @@ async def check_exits(sym):
 
         MIN_NET_TP_FLOOR_PCT = 0.0012
 
-        # 1.5. 回彈解套/微幅獲利平倉 (Scalp_Drawdown_Rebound_TP)
+        # 1.5. 方案 B：解套保本鎖定 + 利潤繼續跟隨奔跑 (Scalp_Drawdown_Rebound_TP)
         # 曾跌入浮虧 (lowest_profit <= -0.25%) 或峰值 < 0.20% 持倉超過 60 秒後回彈：
-        # 只要價格再跑回 positive 淨利潤區 (profit_pct >= MIN_NET_TP_FLOOR_PCT = +0.12% 毛利 / +0.04% 淨利)，
-        # 不再等待更高目標 +0.30%，有利潤即刻落袋為安平倉！
+        # 1) 當價格跑回淨利區 (+0.12%+) 時，立刻啟用保本鎖 (100% 絕不轉虧)；
+        # 2) 若利潤繼續大漲（衝至 +0.30%、+0.50%），讓利潤繼續奔跑，追蹤停利線隨高點上推；
+        # 3) 直到價格從高點回吐 0.10% 時，才在最高位鎖利平倉！
         lowest_p = float(s.get("lowest_profit_pct", 0.0) or 0.0)
         opened_at = float(s.get("open_time", 0.0) or 0.0)
         hold_time = time.time() - opened_at if opened_at > 0 else 0.0
         is_rebound_from_loss = (lowest_p <= -0.0025) or (highest_profit < 0.0020 and hold_time >= 60.0)
-        if is_rebound_from_loss and profit_pct >= MIN_NET_TP_FLOOR_PCT:
-            logger.info(
-                f"💰 [Scalp_Drawdown_Rebound_TP] {sym} (最低浮虧 {lowest_p*100:.2f}% / 峰值 {highest_profit*100:.2f}%) "
-                f"回彈至淨利潤區 (+{profit_pct*100:.2f}%)，有利潤即刻平倉落袋！"
-            )
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Drawdown_Rebound_TP]", is_stop_loss=False)
-            return
+
+        if is_rebound_from_loss:
+            if profit_pct >= MIN_NET_TP_FLOOR_PCT:
+                if not s.get("rebound_floor_armed", False):
+                    s["rebound_floor_armed"] = True
+                    s["rebound_trail_profit"] = MIN_NET_TP_FLOOR_PCT
+                    floor_price = (avg * (1.0 + MIN_NET_TP_FLOOR_PCT) if is_long else avg * (1.0 - MIN_NET_TP_FLOOR_PCT))
+                    s["ma_profit_floor_armed"] = True
+                    s["ma_profit_floor_price"] = floor_price
+                    _schedule_ma_exchange_profit_stop(sym)
+                    logger.info(f"🛡️ [Scalp_Rebound_Floor_Arm] {sym} 解套成功！已鎖定 +0.12% 保本底線，若繼續大漲將持續跟隨！")
+
+                new_rebound_trail = max(profit_pct - 0.0010, MIN_NET_TP_FLOOR_PCT)
+                prev_rebound_trail = float(s.get("rebound_trail_profit", MIN_NET_TP_FLOOR_PCT) or MIN_NET_TP_FLOOR_PCT)
+                if new_rebound_trail > prev_rebound_trail:
+                    s["rebound_trail_profit"] = new_rebound_trail
+                    logger.info(f"📈 [Scalp_Rebound_Trail_Push] {sym} 解套後繼續向上爆發！最高浮盈升至 +{profit_pct*100:.2f}%，動態保本停利線追隨推至 +{new_rebound_trail*100:.2f}%")
+
+            rebound_trail = float(s.get("rebound_trail_profit", 0.0) or 0.0)
+            if s.get("rebound_floor_armed", False) and profit_pct <= rebound_trail and profit_pct >= MIN_NET_TP_FLOOR_PCT:
+                logger.info(
+                    f"💰 [Scalp_Drawdown_Rebound_TP] {sym} (最低浮虧 {lowest_p*100:.2f}% / 最高浮盈 {highest_profit*100:.2f}%) "
+                    f"回吐觸及動態保本線 (+{rebound_trail*100:.2f}%)，高位鎖利解套平倉！"
+                )
+                await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Drawdown_Rebound_TP]", is_stop_loss=False)
+                return
 
         # 2. 讓利潤奔跑的 ATR 動態移動停利。峰值至少 0.30% 才啟動，
         # 並保留 0.20%~0.45% 的正常回踩空間；不再用固定 0.12% 緊貼價格。
