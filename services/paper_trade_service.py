@@ -70,17 +70,6 @@ def get_paper_trades(symbol: str, paper_key: str):
         except:
             trades = []
 
-    if not trades:
-        try:
-            from services.api import _get_real_trades
-            real_trades = _get_real_trades()
-            if symbol == "ALL":
-                return list(reversed(real_trades))[:30]
-            symbol_trades = [t for t in real_trades if t.get("symbol") in (symbol, paper_key)]
-            return list(reversed(symbol_trades))[:15]
-        except Exception:
-            pass
-
     if symbol == "ALL":
         result = list(reversed(trades))[:30]
         _enrich_trades_with_current_price(result, state)
