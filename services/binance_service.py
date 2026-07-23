@@ -46,8 +46,10 @@ def _is_placeholder_key(key):
     k = str(key).lower()
     return "your_" in k or "api_key" in k or "placeholder" in k or k == "your_api_key_here"
 
+from core.config import PAPER_TRADING
+
 client = None
-if api_key and not _is_placeholder_key(api_key):
+if not PAPER_TRADING and api_key and not _is_placeholder_key(api_key):
     client = Client(api_key, api_secret, demo=use_testnet, ping=False)
 else:
     client = Client(demo=use_testnet, ping=False)

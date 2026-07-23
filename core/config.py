@@ -13,7 +13,30 @@ def _is_placeholder_key(key):
     k = str(key).lower()
     return "your_" in k or "api_key" in k or "placeholder" in k or k == "your_api_key_here"
 
-PAPER_TRADING = _is_placeholder_key(BINANCE_API_KEY)
+def _detect_port():
+    import sys
+    env_port = os.getenv("PORT", "").strip()
+    if env_port:
+        return env_port
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1].strip()
+        elif arg.startswith("--port="):
+            return arg.split("=", 1)[1].strip()
+    return "8005"
+
+PORT = _detect_port()
+PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
+
+def _detect_paper_trading():
+    port = _detect_port()
+    # Port 8005 為純紙上模擬交易 (Paper Trading)，Port 8007 為幣安測試網 (Binance Demo Trading)
+    if port == "8005":
+        return True
+    key = os.getenv("BINANCE_API_KEY", "").strip()
+    return _is_placeholder_key(key)
+
+PAPER_TRADING = _detect_paper_trading()
 
 # Demo Trading 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算（僅在非紙上交易時生效）。
 # 設為 0 或留空則不再限制真實交易帳戶的資金上限。
