@@ -7,11 +7,11 @@ import fcntl
 import tempfile
 import pytz
 
-# 系統日誌儲存（改為檔案型，讓 API 與子流程共享）
+from core.config import get_data_file_path
 _LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 os.makedirs(_LOG_DIR, exist_ok=True)
-_LOG_FILE = os.path.join(_LOG_DIR, "system_logs.json")
-_LOCK_FILE = os.path.join(_LOG_DIR, "system_logs.lock")
+_LOG_FILE = get_data_file_path("system_logs.json")
+_LOCK_FILE = get_data_file_path("system_logs.lock")
 
 system_logs = collections.deque(maxlen=100)
 _tz_taipei = pytz.timezone('Asia/Taipei')

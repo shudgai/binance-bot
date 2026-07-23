@@ -94,6 +94,11 @@ def ensure_single_instance():
 
         if stale_pid and stale_pid != os.getpid():
             if _process_exists(stale_pid):
+                try:
+                    from services.system_log_service import add_system_log
+                    add_system_log(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。", "info")
+                except Exception:
+                    pass
                 logger.info(f"ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID={stale_pid})，本多餘執行緒自動退出。")
                 # 用專屬 exit code 99（不是 0），讓 bot_manager_service.py 的看門狗邏輯能
                 # 分辨「偵測到重複、正常讓路退出」跟「真的意外崩潰」。之前兩者都是 exit 0，
