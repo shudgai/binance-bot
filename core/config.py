@@ -120,7 +120,7 @@ COIN_PROFILE_CONFIG = {
     # 選幣標準：24h量 > 0.5億、波動率較高（24h ±2%以上）
     "DOGEUSDT": {"sl_atr_multiplier": 1.3, "tp_atr_multiplier": 22.0, "volume_threshold_factor": 1.1, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 11, "disable_rescue_dca": False, "hard_sl_pct": 0.015},
     "ADAUSDT":  {"sl_atr_multiplier": 1.2, "tp_atr_multiplier": 10.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 13, "disable_rescue_dca": False, "hard_sl_pct": 0.015},
-    "HYPEUSDT": {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 20.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 14, "hard_sl_pct": 0.015, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
+    "HYPEUSDT": {"disable_entry": True},
     "WLDUSDT":  {"sl_atr_multiplier": 1.5, "tp_atr_multiplier": 18.0, "volume_threshold_factor": 1.0, "breakeven_trigger": 1.2, "min_flip_time": 1800, "mtf_filter": True,  "profile_type": "High_Beta_Momentum", "leverage": 5, "rr_threshold": 2.5, "min_signal_strength": 14, "hard_sl_pct": 0.015, "trailing_activation_atr": 0.8, "trailing_distance_atr": 0.7},
 
     # 第三類：投機風險型 (Speculative_Risk) - DeFi + 中型幣

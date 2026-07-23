@@ -141,5 +141,8 @@
         "profile_type": "Speculative_Risk",
         "leverage": 2,
         "rr_threshold": 1.1
+    },
+    "HYPEUSDT": {
+        "disable_entry": true
     }
 }
