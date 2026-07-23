@@ -66,23 +66,28 @@ def get_paper_trades(symbol: str, paper_key: str):
         try:
             with open(PAPER_STATE_FILE, "r") as f:
                 state = json.load(f)
-                trades = state.get("trades", [])
+                trades = list(state.get("trades", []))
         except:
             trades = []
 
-    if not trades and os.path.exists(TRADE_HISTORY_FILE):
+    from core.config import TRADE_HISTORY_FILE
+    if os.path.exists(TRADE_HISTORY_FILE):
         try:
             with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
-                trades = json.load(f)
+                history_trades = json.load(f)
+                existing_times = {t.get("time") for t in trades if t.get("time")}
+                for ht in history_trades:
+                    if ht.get("time") not in existing_times:
+                        trades.append(ht)
         except Exception:
-            trades = []
+            pass
 
     if symbol == "ALL":
-        result = list(reversed(trades))[:30]
+        result = list(reversed(trades))[:50]
         _enrich_trades_with_current_price(result, state)
         return result
     symbol_trades = [t for t in trades if t.get("symbol") in (symbol, paper_key)]
-    result = list(reversed(symbol_trades))[:15]
+    result = list(reversed(symbol_trades))[:30]
     _enrich_trades_with_current_price(result, state)
     return result
 

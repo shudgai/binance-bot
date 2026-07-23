@@ -1770,20 +1770,25 @@ createApp({
             return 0;
         };
 
-        // getTradeUnrealizedPnl：直接取 /api/positions 回傳的 pos.pnl（即幣安
-        // unRealizedProfit，用 mark price 計算，且已正確處理整個倉位的數量，含分批成交）。
-        // 不再用 trade.price/qty 重算——後者只代表單筆成交紀錄，若同一次進場被幣安拆成
-        // 多筆小額成交（_aggregate_fills_by_order 已合併，但仍可能不等於完整持倉量），
-        // 重算出的損益會跟交易所實際持倉損益對不上。
+        // 開倉列顯示「若現在平倉」的預估淨浮盈：交易所 unRealizedProfit
+        // 只含價格損益、不含已付進場費與即將支付的出場費。小波段若直接顯示
+        // gross，會出現畫面正數、平倉後扣雙邊費用立刻變負數的誤導。
         const getTradeUnrealizedPnl = (trade) => {
-            // 同一幣種可能保留多筆歷史開倉成交；只有目前持倉所對應的最新一筆
-            // 才能顯示整體倉位的未實現損益，否則會把同一個 PnL 重複貼到舊成交列。
             if (!isOpenTrade(trade)) return 0;
-            if (trade._is_open_position && typeof trade.unrealized_pnl === "number") return trade.unrealized_pnl;
             const pos = getPositionInfo(trade.symbol);
-            if (!pos || Math.abs(pos.qty) < 0.001) return 0;
-            // 直接用交易所算好的權威未實現損益，不在前端重算
-            return pos.pnl || pos.unRealizedProfit || 0;
+            const posQty = pos ? Math.abs(pos.qty || 0) : Math.abs(trade.qty || 0);
+            if (posQty < 0.001) return 0;
+
+            const gross = (trade._is_open_position && typeof trade.unrealized_pnl === "number")
+                ? trade.unrealized_pnl
+                : (pos?.pnl || pos?.unRealizedProfit || 0);
+            const entryFee = Number(trade.fee || 0);
+            const entryNotional = Math.abs(Number(trade.price || 0) * Number(trade.qty || 0));
+            // 優先沿用這筆真實成交的費率；查不到時採 Binance testnet taker 0.04%。
+            const feeRate = entryFee > 0 && entryNotional > 0 ? entryFee / entryNotional : 0.0004;
+            const currentPrice = Number(pos?.current_price || pos?.markPrice || getTradeCurrentPrice(trade) || 0);
+            const estimatedExitFee = currentPrice > 0 ? currentPrice * posQty * feeRate : 0;
+            return gross - entryFee - estimatedExitFee;
         };
 
         // 全倉即時未實現損益 — allPositions 是 /api/positions 回傳、
@@ -1806,12 +1811,11 @@ createApp({
             const pnl = getTradeUnrealizedPnl(trade);
             if (pnl === 0) return 0;
             const pos = getPositionInfo(trade.symbol);
-            // 分母用持倉的 entryPrice * 實際持倉量（非單筆成交的 qty）
-            const posQty = pos ? Math.abs(pos.qty) : 0;
+            const posQty = pos ? Math.abs(pos.qty || pos.positionAmt || 0) : Math.abs(trade.qty || 0);
             const entryPrice = pos ? (pos.entryPrice || pos.avg_price || trade.price) : trade.price;
             const base = posQty * entryPrice;
             if (base <= 0) return 0;
-            const lev = pos?.leverage || bot.value?.leverage || 5;
+            const lev = (pos && pos.leverage > 0) ? pos.leverage : (bot.value?.leverage || 5);
             return pnl / base * 100 * lev;
         };
 
@@ -1819,8 +1823,7 @@ createApp({
             const pnl = getTradeUnrealizedPnl(trade);
             if (pnl === 0) return 0;
             const pos = getPositionInfo(trade.symbol);
-            // 分母用持倉的 entryPrice * 實際持倉量（非單筆成交的 qty）
-            const posQty = pos ? Math.abs(pos.qty) : 0;
+            const posQty = pos ? Math.abs(pos.qty || pos.positionAmt || 0) : Math.abs(trade.qty || 0);
             const entryPrice = pos ? (pos.entryPrice || pos.avg_price || trade.price) : trade.price;
             const base = posQty * entryPrice;
             if (base <= 0) return 0;
@@ -1872,22 +1875,16 @@ createApp({
 
         const isOpenTrade = (trade) => {
             if (trade.is_close) return false;
+            if (trade._is_open_position) return true;
+            if (trade.id && String(trade.id).startsWith("history:")) return false;
             const pos = getPositionInfo(trade.symbol);
-            if (!pos || Math.abs(pos.qty) === 0) return false;
-            // trades.value 已按 time 降序排列，取第一筆即為最新未平倉交易
-            // 用物件參考比對，避免 paper_state 交易沒有 id 欄位時 undefined===undefined 全部通過
-            const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
+            if (!pos || Math.abs(pos.qty || pos.positionAmt || 0) === 0) return false;
+            const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close && !String(tr.id || '').startsWith("history:"));
             return latestOpenTrade === trade;
         };
 
         const canCloseTrade = (trade) => {
-            // 與 isOpenTrade 邏輯一致，只有「最新的未平倉」才算可平倉
-            // 避免同幣種舊入場記錄因新倉開啟而被誤判為可平倉並排到最頂端
-            if (trade.is_close) return false;
-            const pos = getPositionInfo(trade.symbol);
-            if (!pos || Math.abs(pos.qty) === 0) return false;
-            const latestOpenTrade = trades.value.find(tr => tr.symbol === trade.symbol && !tr.is_close);
-            return latestOpenTrade === trade;
+            return isOpenTrade(trade);
         };
 
         const closeTradePosition = async (trade) => {
@@ -2127,7 +2124,7 @@ createApp({
             statusInterval       = setInterval(fetchBotStatus, 5000);
             positionInterval     = setInterval(fetchPosition, 10000);
             allPositionsInterval = setInterval(fetchAllPositions, 10000);
-            tradesInterval       = setInterval(fetchTrades, 30000);
+            tradesInterval       = setInterval(fetchTrades, 10000);
             rateInterval         = setInterval(fetchExchangeRate, 60000);
             logsInterval         = setInterval(fetchBackendLogs, 2000);
             klineInterval        = setInterval(loadKlines, 60000);
