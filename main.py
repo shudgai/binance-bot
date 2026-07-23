@@ -46,7 +46,8 @@ install_sigterm_diagnostic_handler()
 # FileBackedSystemLogHandler，同一訊息會由主程序與管理程序各寫一次。
 
 # ── Single-instance lock ──────────────────────────────────────
-LOCK_FILE = "/tmp/binance_bot_32f2e2ed.lock"
+from core.config import PORT
+LOCK_FILE = f"/tmp/binance_bot_32f2e2ed_{PORT}.lock"
 lock_file_handle = None
 
 
