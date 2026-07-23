@@ -378,20 +378,19 @@ def get_bot_status():
     # 槽位數由本金級距動態決定，狀態頁不可再使用寫死的舊值。
     bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))
 
-    # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步（100% 依英文首字母 A-Z 排序）
+    # 每次都從 _get_symbol_config_path() 讀取最新幣種清單，確保前端即時同步（100% 依英文首字母 A-Z 排序）
     try:
         symbols_data = load_symbol_config()
         if isinstance(symbols_data, tuple):
             symbols_data = symbols_data[0]
-        ordered_symbols = sorted(list(symbols_data or []))
+        actual_symbols = list(symbols_data or [])
+        ordered_symbols = sorted(actual_symbols)
         if ordered_symbols:
             bot_status["watch_symbols"] = ordered_symbols
             bot_status["active_symbols"] = ordered_symbols
-    except Exception:
-        pass
             _prune_entry_diagnoses(ordered_symbols)
         bot_status["disabled_symbols"] = load_disabled_symbols()
-        config_path = get_data_file_path("bot_symbols.json")
+        config_path = _get_symbol_config_path()
         with open(config_path, "r", encoding="utf-8") as f:
             raw_config = json.load(f)
         raw_profiles = raw_config.get("profiles", {}) if isinstance(raw_config, dict) else {}
