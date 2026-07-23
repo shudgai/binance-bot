@@ -170,8 +170,16 @@ class BinanceFuturesBot:
     def execute_trade(self, symbol: str, side: str, amount: float, current_price: float, atr: float):
         logger.info(f"✨ 觸發進場 {side.upper()}，下單數量: {amount}")
         order_side = 'buy' if side == 'long' else 'sell'
-        self.exchange.create_order(symbol=symbol, type='market', side=order_side, amount=amount)
 
+        # 1. 執行主單
+        try:
+            main_order = self.exchange.create_order(symbol=symbol, type='market', side=order_side, amount=amount)
+            logger.info(f"✅ 主單成交: {main_order['id']}")
+        except Exception as e:
+            logger.error(f"❌ 主單開倉失敗！詳細原因: {e}")
+            return
+
+        # 2. 計算並掛單 SL/TP (加入重試與詳細日誌機制)
         if side == 'long':
             sl = current_price - (atr * ATR_SL_MULT)
             tp = current_price + (atr * ATR_TP_MULT)
@@ -184,12 +192,30 @@ class BinanceFuturesBot:
         sl_str = self.exchange.price_to_precision(symbol, sl)
         tp_str = self.exchange.price_to_precision(symbol, tp)
 
-        try:
-            self.exchange.create_order(symbol=symbol, type='STOP_MARKET', side=close_side, amount=amount, params={'stopPrice': float(sl_str), 'reduceOnly': True})
-            self.exchange.create_order(symbol=symbol, type='TAKE_PROFIT_MARKET', side=close_side, amount=amount, params={'stopPrice': float(tp_str), 'reduceOnly': True})
-            logger.info(f"🛡️ 止損 {sl_str} / 止盈 {tp_str} 已掛單")
-        except Exception as e:
-            logger.error(f"⚠️ 掛單失敗: {e}")
+        # 重試機制：嘗試掛單最多 3 次
+        for i in range(3):
+            try:
+                self.exchange.create_order(
+                    symbol=symbol,
+                    type='STOP_MARKET',
+                    side=close_side,
+                    amount=amount,
+                    params={'stopPrice': float(sl_str), 'reduceOnly': True}
+                )
+                self.exchange.create_order(
+                    symbol=symbol,
+                    type='TAKE_PROFIT_MARKET',
+                    side=close_side,
+                    amount=amount,
+                    params={'stopPrice': float(tp_str), 'reduceOnly': True}
+                )
+                logger.info(f"🛡️ 成功掛設止損 {sl_str} / 止盈 {tp_str}")
+                break
+            except Exception as e:
+                logger.warning(f"⚠️ 掛單第 {i+1} 次失敗！詳細原因: {e}")
+                time.sleep(1)
+        else:
+            logger.error("❌ 警告：已嘗試 3 次仍無法掛設止損/止盈單，請檢查精度或最小金額限制！")
 
     def close_position_market(self, symbol: str, current_side: str, contracts: float):
         try:
