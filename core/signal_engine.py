@@ -72,31 +72,44 @@ def compute_signal_strength(sym, realtime_trigger=False):
     # 否則新 K 棒剛開始時 vol_surge 接近 0 會誤擋有效訊號，也可能被未收線瞬時量誤放行。
     is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
 
-    # MA7／MA25 必須在交叉後拉開最小距離；只有斜率、但兩線仍幾乎重疊時，方向
-    # 尚未真正成立。0.005% 可擋 DOGE 類極薄交叉，同時保留既有成功樣本的間距。
+    # 防假突破倒鉤 / 上下影線反轉過濾 (Fake Breakout Wick Guard)
+    c_high = float(candle[2])
+    c_low = float(candle[3])
+    c_range = max(c_high - c_low, 1e-8)
+    upper_wick_ratio = (c_high - max(candle_close, candle_open)) / c_range
+    lower_wick_ratio = (min(candle_close, candle_open) - c_low) / c_range
+    long_no_fake_breakout = upper_wick_ratio <= 0.35  # 上影線不可超過 35% (拒絕高位倒鉤/假突破吸頂)
+    short_no_fake_breakout = lower_wick_ratio <= 0.35  # 下影線不可超過 35% (拒絕低位反彈/假向下破位)
+
+    # 偏離度過大過濾 (過度延伸追高拒絕)
+    dev_from_ma25 = (candle_close - ma25) / ma25 if ma25 > 0 else 0.0
+    long_not_overextended = dev_from_ma25 <= 0.008  # 開多時離 MA25 不可拉開 > 0.8%
+    short_not_overextended = dev_from_ma25 >= -0.008  # 開空時離 MA25 不可跌開 > 0.8%
+
+    # MA7／MA25 必須在交叉後拉開最小距離；斜率與 GAP
     ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
     ma7_slope = abs(ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
     ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
     is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
     cross_direction_confirmed = ma_gap_pct >= MA_CROSS_MIN_GAP_PCT
 
-    # 交叉路線：MA7 x MA25 金叉/死叉，只需確認 K 棒方向與非極端 RSI
-    # ETH 成功樣本只有 0.52x RVOL：若交叉已站在 MA99 正確方向且波動未失控，
-    # 允許 0.50x～0.60x 進入候選；錯誤 MA99 方向仍維持原本 0.60x 門檻。
-    cross_long_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.45 and above_ma99 and atr_pct <= 5.0
+    # 嚴格量能爆發確認 (拒絕無量假突破/偽交叉)
+    cross_long_volume_ok = volume_ratio >= 1.00 or (
+        volume_ratio >= 0.70 and above_ma99 and atr_pct <= 5.0
     )
-    cross_short_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.45 and below_ma99 and atr_pct <= 5.0
+    cross_short_volume_ok = volume_ratio >= 1.00 or (
+        volume_ratio >= 0.70 and below_ma99 and atr_pct <= 5.0
     )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
-                  and cross_long_volume_ok and current_rsi < 75
-                  and cross_direction_confirmed and not is_flat_chop)
+                  and cross_long_volume_ok and current_rsi < 68
+                  and cross_direction_confirmed and not is_flat_chop
+                  and long_no_fake_breakout and long_not_overextended)
     cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
                    and (candle_close < candle_open or is_realtime_strong)
-                   and cross_short_volume_ok and current_rsi > 25
-                   and cross_direction_confirmed and not is_flat_chop)
+                   and cross_short_volume_ok and current_rsi > 32
+                   and cross_direction_confirmed and not is_flat_chop
+                   and short_no_fake_breakout and short_not_overextended)
 
     atr = float(s.get("current_atr", 0.0) or 0.0)
     touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
@@ -105,14 +118,16 @@ def compute_signal_strength(sym, realtime_trigger=False):
     pullback_long_rebound = candle_close - ma25
     pullback_short_rebound = ma25 - candle_close
 
-    # 回調路線：只需量能 + K 棒方向確認，不再過濾 RSI 方向動能
+    # 回調路線：量能 + 影線 + K 棒方向確認
     pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
                      and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
-                     and volume_ratio >= base_limit and current_rsi < 70
+                     and volume_ratio >= base_limit and current_rsi < 68
+                     and long_no_fake_breakout
                      and (sym not in STRICT_ENTRY_SYMBOLS or pullback_long_rebound <= pullback_rebound_limit))
     pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
                       and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
-                      and volume_ratio >= base_limit and current_rsi > 30
+                      and volume_ratio >= base_limit and current_rsi > 32
+                      and short_no_fake_breakout
                       and (sym not in STRICT_ENTRY_SYMBOLS or pullback_short_rebound <= pullback_rebound_limit))
 
     from core.config import DISABLE_MA_BREAKOUT
@@ -122,13 +137,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
         prior = completed[-21:-1]
         prior_high = max(float(c[2]) for c in prior)
         prior_low = min(float(c[3]) for c in prior)
-        # 突破路線：放寬量能門檻，不過濾 RSI 動能方向
+        # 突破路線：嚴格真量能 (RVOL >= 1.0) + 影線過濾 + 偏離過大過濾
         breakout_long = (long_spreading and long_stack and candle_close > prior_high
                          and (candle_close > candle_open or is_realtime_strong)
-                         and volume_ratio >= breakout_limit and current_rsi < 70)
+                         and volume_ratio >= max(1.0, breakout_limit) and current_rsi < 68
+                         and long_no_fake_breakout and long_not_overextended)
         breakout_short = (short_spreading and short_stack and candle_close < prior_low
                            and (candle_close < candle_open or is_realtime_strong)
-                           and volume_ratio >= breakout_limit and current_rsi > 30)
+                           and volume_ratio >= max(1.0, breakout_limit) and current_rsi > 32
+                           and short_no_fake_breakout and short_not_overextended)
 
     if cross_long or cross_short:
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
