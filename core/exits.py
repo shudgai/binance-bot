@@ -583,6 +583,8 @@ class DynamicExitManager:
         time_since_high = time.time() - self.last_high_time
         
         # 1. 傳統動態回撤 (保留作為極限防線)
+        # 對於極小的利潤(例如 0.15%)，回撤容忍度 0.12% 會直接導致出場在 0.03% (扣手續費後變虧損)。
+        # 因此，若回撤觸發時已經處於虧損狀態，則交由原始的停損機制處理，不要在這裡強制平倉。
         tolerance_pct = max(0.0012, min((self.max_profit_pct / 100.0) * 0.25, 0.0050))
         is_retracing = False
         if self.is_long and current_price < (self.current_max_price * (1 - tolerance_pct)):
@@ -591,19 +593,25 @@ class DynamicExitManager:
             is_retracing = True
 
         if is_retracing:
-            print(f"💰 [觸發：回撤比例(極限)] 價格從最高點回落超過 {tolerance_pct*100:.3f}%，快速落袋為安。")
-            return "SELL"
+            if current_profit > -0.05:  # 只有在淨利 >= -0.05% 時才執行保護性平倉
+                print(f"💰 [觸發：回撤比例(極限)] 價格從最高點回落超過 {tolerance_pct*100:.3f}%，快速落袋為安。")
+                return "SELL"
+            else:
+                # 已經跌回成本價以下，取消激進平倉，讓一般停損接手
+                is_retracing = False
 
         # 2. 動態耐心極限 (Time-out)
         if elapsed_time >= self.wait_time_limit:
-            print(f"💰 [觸發：耐心極限] 已等待 {elapsed_time:.1f}秒 (限時 {self.wait_time_limit:.1f}秒)，強制落袋為安。")
-            return "SELL"
+            if current_profit > -0.05:
+                print(f"💰 [觸發：耐心極限] 已等待 {elapsed_time:.1f}秒 (限時 {self.wait_time_limit:.1f}秒)，強制落袋為安。")
+                return "SELL"
 
         # 3. 盤整最高點 (Stagnation)
         is_stagnant = abs(current_price - self.current_max_price) <= (self.current_max_price * self.stagnation_range)
         if time_since_high > self.no_high_time_limit and is_stagnant:
-            print(f"🛑 [觸發：盤整最高點] 價格在 {self.current_max_price} 附近停滯過久，動能耗盡，執行停利。")
-            return "SELL"
+            if current_profit > -0.05:
+                print(f"🛑 [觸發：盤整最高點] 價格在 {self.current_max_price} 附近停滯過久，動能耗盡，執行停利。")
+                return "SELL"
 
         return "HOLD"
 
