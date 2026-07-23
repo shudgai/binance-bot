@@ -1040,9 +1040,9 @@ async def check_exits(sym):
                 await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Drawdown_Rebound_TP]", is_stop_loss=False)
                 return
 
-        # 2. 讓利潤奔跑的 ATR 動態移動停利。峰值至少 0.45% 才啟動，
-        # 並保留 0.35%~0.65% 的正常回踩空間；給予大趨勢呼吸空間。
-        SCALP_TRAIL_ARM_PCT = max(0.0045, SCALP_TP1_PCT)
+        # 2. 讓利潤奔跑的 ATR 動態移動停利。高頻模式下峰值達 0.25% 即啟動跟隨與保本鎖定，
+        # 避免浮盈 +0.32% 的單子回吐變成停損離場。
+        SCALP_TRAIL_ARM_PCT = 0.0025
         atr_pct = float(s.get("current_atr", 0.0) or 0.0) / avg if avg > 0 else 0.0
         trail_gap = max(0.0035, min(0.0065, atr_pct * 1.5))
         threshold_epsilon = 1e-12
