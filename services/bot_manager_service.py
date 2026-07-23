@@ -300,6 +300,26 @@ def toggle_coin_disabled(symbol: str) -> dict:
     return {"symbol": sym, "disabled": is_disabled, "all_disabled": disabled}
 
 
+def _get_trade_history_realized_pnl():
+    try:
+        from core.config import TRADE_HISTORY_FILE
+        if os.path.exists(TRADE_HISTORY_FILE):
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+            total = 0.0
+            for t in history:
+                if t.get("is_close") or "net_pnl" in t or "realized_pnl" in t:
+                    net = float(t.get("net_pnl", 0.0) or t.get("realized_pnl", 0.0) or 0.0)
+                    fee = float(t.get("fees", 0.0) or t.get("fee", 0.0) or 0.0)
+                    if "net_pnl" not in t and fee > 0:
+                        net -= fee
+                    total += net
+            return total
+    except Exception:
+        pass
+    return 0.0
+
+
 def get_bot_status():
     from services.paper_trade_service import get_paper_balance
     from core.config import PAPER_TRADING
@@ -350,26 +370,6 @@ def get_bot_status():
             bot_status["trade_amount"] = compounded_amount
         except Exception:
             pass
-
-
-def _get_trade_history_realized_pnl():
-    try:
-        from core.config import TRADE_HISTORY_FILE
-        if os.path.exists(TRADE_HISTORY_FILE):
-            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
-                history = json.load(f)
-            total = 0.0
-            for t in history:
-                if t.get("is_close") or "net_pnl" in t or "realized_pnl" in t:
-                    net = float(t.get("net_pnl", 0.0) or t.get("realized_pnl", 0.0) or 0.0)
-                    fee = float(t.get("fees", 0.0) or t.get("fee", 0.0) or 0.0)
-                    if "net_pnl" not in t and fee > 0:
-                        net -= fee
-                    total += net
-            return total
-    except Exception:
-        pass
-    return 0.0
 
     # 槽位數由本金級距動態決定，狀態頁不可再使用寫死的舊值。
     bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))

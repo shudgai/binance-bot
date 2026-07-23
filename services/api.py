@@ -234,11 +234,13 @@ async def api_run_ai_analysis():
 
 @app.get("/api/sl-states")
 def api_sl_states():
-    return get_bot_status().get("sl_states", {})
+    status = get_bot_status()
+    return status.get("sl_states", {}) if isinstance(status, dict) else {}
 
 @app.get("/api/trend-bias")
 def api_trend_bias():
-    return get_bot_status().get("trend_bias", {})
+    status = get_bot_status()
+    return status.get("trend_bias", {}) if isinstance(status, dict) else {}
 
 @app.get("/api/radar/scan")
 def api_radar_scan():
