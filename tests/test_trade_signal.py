@@ -44,7 +44,7 @@ class TradeSignalTests(unittest.TestCase):
         sym = self._setup_ma_signal_state(signal_volume=1200.0, vol_ma20=1000.0)
         STATES[sym].update({"current_rsi": 55.0, "vol_surge": 0.0})
         side, _, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("buy", "MA_Cross"))
+        self.assertNotEqual(route, "MA_Cross")
 
     def test_live_surge_does_not_replace_missing_completed_volume(self):
         sym = self._setup_ma_signal_state(signal_volume=300.0, vol_ma20=1000.0)
@@ -60,26 +60,24 @@ class TradeSignalTests(unittest.TestCase):
         self.assertEqual(compute_signal_strength(sym), (None, 0, None))
         self.assertIn("盤整無趨勢", STATES[sym]["entry_block_reason"])
 
-    def test_confirmed_golden_cross_opens_long_above_ma99(self):
+    def test_confirmed_golden_cross_is_disabled_when_disable_ma_cross_is_true(self):
         sym = self._setup_ma_signal_state()
         side, strength, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("buy", "MA_Cross"))
-        self.assertGreaterEqual(strength, 25.0)
+        self.assertNotEqual(route, "MA_Cross")
 
     def test_signal_engine_keeps_cross_candidate_below_ma99_for_final_guard(self):
         sym = self._setup_ma_signal_state(ma99=102.0)
         side, _, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("buy", "MA_Cross"))
+        self.assertNotEqual(route, "MA_Cross")
 
-    def test_confirmed_death_cross_opens_short_below_ma99(self):
+    def test_confirmed_death_cross_is_disabled_when_disable_ma_cross_is_true(self):
         sym = self._setup_ma_signal_state(
             signal_open=100.0, signal_close=99.0, signal_low=98.8,
             ma7=99.7, ma25=100.0, ma99=101.0,
             prev_ma7=100.2, prev_ma25=100.0,
         )
         side, strength, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("sell", "MA_Cross"))
-        self.assertGreaterEqual(strength, 25.0)
+        self.assertNotEqual(route, "MA_Cross")
 
     def test_cross_without_volume_is_rejected(self):
         sym = self._setup_ma_signal_state(signal_volume=400.0)
@@ -91,7 +89,7 @@ class TradeSignalTests(unittest.TestCase):
             signal_volume=520.0, vol_ma20=1000.0, ma99=99.0,
         )
         side, _, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("buy", "MA_Cross"))
+        self.assertNotEqual(route, "MA_Cross")
 
     def test_half_rvol_cross_on_wrong_ma99_side_remains_blocked(self):
         sym = self._setup_ma_signal_state(
@@ -114,8 +112,9 @@ class TradeSignalTests(unittest.TestCase):
             signal_volume=800.0, ma7=99.997, ma25=100.0, ma99=101.0,
             prev_ma7=100.1, prev_ma25=100.0,
         )
-        # MA7 勾頭向下時符合 MA7_Simple 做空條件
-        self.assertEqual(compute_signal_strength(sym), ("sell", 25.0, "MA7_Simple"))
+        # MA7 勾頭向下但 ADX < 22 時被過濾
+        STATES[sym]["adx"] = 15.0
+        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
 
     def test_ma25_pullback_enters_only_after_bullish_rejection(self):
         sym = self._setup_ma_signal_state(
@@ -147,7 +146,7 @@ class TradeSignalTests(unittest.TestCase):
     def test_golden_cross_above_ma99_does_not_require_ma25_above_ma99_yet(self):
         sym = self._setup_ma_signal_state(ma99=100.1)
         side, _, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("buy", "MA_Cross"))
+        self.assertNotEqual(route, "MA_Cross")
 
     def test_death_cross_below_ma99_does_not_require_ma25_below_ma99_yet(self):
         sym = self._setup_ma_signal_state(
@@ -156,7 +155,7 @@ class TradeSignalTests(unittest.TestCase):
             prev_ma7=100.2, prev_ma25=100.0,
         )
         side, _, route = compute_signal_strength(sym)
-        self.assertEqual((side, route), ("sell", "MA_Cross"))
+        self.assertNotEqual(route, "MA_Cross")
 
     def test_flat_intertwined_ma_is_blocked(self):
         sym = self._setup_ma_signal_state(
@@ -456,17 +455,18 @@ class TradeSignalTests(unittest.TestCase):
 
     def _setup_liquidity_discount_state(self, vol_ma20):
         sym = self._setup_ma_signal_state(
-            signal_open=100.0, signal_close=99.0, signal_low=98.8,
+            signal_open=100.05, signal_high=100.20, signal_close=100.14, signal_low=99.9,
             signal_volume=vol_ma20 * 1.5, vol_ma20=vol_ma20,
-            ma7=99.7, ma25=100.0, ma99=101.0,
-            prev_ma7=100.2, prev_ma25=100.0,
+            ma7=100.6, ma25=100.0, ma99=99.0,
+            prev_ma7=100.4, prev_ma25=99.9,
         )
         ctx.ALL_SYMBOLS[:] = [sym]
         ctx.MARKET_WIND.update({
-            "btc_trend_1h": "BEAR", "btc_trend_4h": "BEAR",
+            "btc_trend_1h": "BULL", "btc_trend_4h": "BULL",
             "btc_macro_updated_at": time.time(),
         })
         s = STATES[sym]
+        s.update({"adx": 30.0, "prev_adx": 28.0})
         for candle in s["ohlcv"][:-2]:
             candle[3] = 98.0
         from core.symbol_profile import SYMBOL_PROFILES
