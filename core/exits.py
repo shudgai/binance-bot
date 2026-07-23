@@ -959,6 +959,8 @@ async def check_exits(sym):
     profit_pct = (p - avg) / avg if is_long else (avg - p) / avg
     if profit_pct > s.get("highest_profit_pct", 0.0):
         s["highest_profit_pct"] = profit_pct
+    if s.get("lowest_profit_pct") is None or profit_pct < float(s.get("lowest_profit_pct", 0.0) or 0.0):
+        s["lowest_profit_pct"] = profit_pct
 
     entry_reason = str(s.get("entry_reason", "") or "")
     is_range_route = entry_reason.lower() in RANGE_ENTRY_ROUTES
@@ -973,9 +975,26 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Tight_SL]", is_stop_loss=True)
             return
 
+        MIN_NET_TP_FLOOR_PCT = 0.0012
+
+        # 1.5. 回彈解套/微幅獲利平倉 (Scalp_Drawdown_Rebound_TP)
+        # 曾跌入浮虧 (lowest_profit <= -0.25%) 或峰值 < 0.20% 持倉超過 60 秒後回彈：
+        # 只要價格再跑回 positive 淨利潤區 (profit_pct >= MIN_NET_TP_FLOOR_PCT = +0.12% 毛利 / +0.04% 淨利)，
+        # 不再等待更高目標 +0.30%，有利潤即刻落袋為安平倉！
+        lowest_p = float(s.get("lowest_profit_pct", 0.0) or 0.0)
+        opened_at = float(s.get("open_time", 0.0) or 0.0)
+        hold_time = time.time() - opened_at if opened_at > 0 else 0.0
+        is_rebound_from_loss = (lowest_p <= -0.0025) or (highest_profit < 0.0020 and hold_time >= 60.0)
+        if is_rebound_from_loss and profit_pct >= MIN_NET_TP_FLOOR_PCT:
+            logger.info(
+                f"💰 [Scalp_Drawdown_Rebound_TP] {sym} (最低浮虧 {lowest_p*100:.2f}% / 峰值 {highest_profit*100:.2f}%) "
+                f"回彈至淨利潤區 (+{profit_pct*100:.2f}%)，有利潤即刻平倉落袋！"
+            )
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Drawdown_Rebound_TP]", is_stop_loss=False)
+            return
+
         # 2. 讓利潤奔跑的 ATR 動態移動停利。峰值至少 0.30% 才啟動，
         # 並保留 0.20%~0.45% 的正常回踩空間；不再用固定 0.12% 緊貼價格。
-        MIN_NET_TP_FLOOR_PCT = 0.0012
         SCALP_TRAIL_ARM_PCT = max(0.0030, SCALP_TP1_PCT)
         atr_pct = float(s.get("current_atr", 0.0) or 0.0) / avg if avg > 0 else 0.0
         trail_gap = max(0.0020, min(0.0045, atr_pct * 1.2))
