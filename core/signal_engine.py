@@ -174,20 +174,26 @@ def compute_signal_strength(sym, realtime_trigger=False):
         # 規則 2：15m RSI 多時間框架確認
         rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
         MTF_RSI_SHORT_FLOOR = 35.0  # 15m RSI 防超賣地板放寬
-        MTF_RSI_SHORT_CEIL  = 55.0  # 15m RSI 防逆勢天花板放寬
+        MTF_RSI_SHORT_CEIL  = 50.0  # 15m RSI 防逆勢天花板放寬
         MTF_RSI_LONG_CEIL   = 75.0  # 15m RSI 防超買天花板放寬
-        MTF_RSI_LONG_FLOOR  = 45.0  # 15m RSI 防逆勢地板放寬
+        MTF_RSI_LONG_FLOOR  = 50.0  # 15m RSI 防逆勢地板放寬
 
-        # 放寬 MA7_Simple 的專屬 RVOL 要求 (>= 0.3x)，並調整斜率只要由負轉正 (>0) 即認定觸發
-        ma7_simple_volume_ok = volume_ratio >= 0.30
+        # MA7_Simple 不再享有低量豁免；單根均線勾頭至少要有與其他 MA 路線相同的已收線量能。
+        ma7_simple_volume_ok = volume_ratio >= base_limit
         curr_slope_pct = (ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
         slope_confirmed = curr_slope_pct > 0.0
         price_above_ma7 = candle_close >= (ma7 * 0.9992)
         rsi_bottom_ok = current_rsi >= 35.0
+        ma25_extension_limit = max(candle_close * 0.0035, atr * 1.5)
+        ma25_long_extension = candle_close - ma25
+        ma25_short_extension = ma25 - candle_close
+        ma25_long_extension_ok = 0.0 <= ma25_long_extension <= ma25_extension_limit
+        ma25_short_extension_ok = 0.0 <= ma25_short_extension <= ma25_extension_limit
 
         # MA7 谷底轉折向上：當 MA7 勾頭向上、RVOL >= 0.3x 即允許開倉做多
         if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
                 and ma7_simple_volume_ok and current_rsi < 82.0
+                and ma7 >= ma25 and ma25_not_against_long and ma25_long_extension_ok
                 and adx_not_spiking):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
@@ -210,6 +216,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 return (side, strength, route)
         # MA7 頭部轉折向下：在 MA7 一向下勾且 RVOL >= 0.3x 時即刻開倉做空
         elif (turn_down and ma7_simple_volume_ok and current_rsi > 18.0
+                and ma7 <= ma25 and ma25_not_against_short and ma25_short_extension_ok
                 and adx_not_spiking):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
@@ -232,7 +239,21 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 strength = 25.0 + volume_adjustment
                 return (side, strength, route)
 
-        if volume_ratio < base_limit:
+        if turn_up and not ma25_not_against_long:
+            reason = "MA7 雖向上勾，但 MA25 中期趨勢仍下彎，拒絕逆勢做多"
+        elif turn_up and ma25_long_extension > ma25_extension_limit:
+            reason = (f"MA7 向上勾但價格高於 MA25 {ma25_long_extension/ma25*100:.2f}% "
+                      f"> 允許 {ma25_extension_limit/ma25*100:.2f}%，反彈末端不追多")
+        elif turn_down and not ma25_not_against_short:
+            reason = "MA7 雖向下勾，但 MA25 中期趨勢仍上揚，拒絕逆勢做空"
+        elif turn_down and ma25_short_extension > ma25_extension_limit:
+            reason = (f"MA7 向下勾但價格低於 MA25 {ma25_short_extension/ma25*100:.2f}% "
+                      f"> 允許 {ma25_extension_limit/ma25*100:.2f}%，下跌末端不追空")
+        elif turn_up and rsi_15m > 0 and rsi_15m < MTF_RSI_LONG_FLOOR:
+            reason = f"MA7 向上勾但 15m RSI={rsi_15m:.1f} < 50，多週期仍偏空不做多"
+        elif turn_down and rsi_15m > MTF_RSI_SHORT_CEIL:
+            reason = f"MA7 向下勾但 15m RSI={rsi_15m:.1f} > 50，多週期仍偏多不做空"
+        elif volume_ratio < base_limit:
             reason = f"量能不足（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x），暫停交易"
         elif (golden_cross or death_cross) and not cross_direction_confirmed:
             reason = (f"MA7／MA25 交叉間距僅 {ma_gap_pct*100:.4f}% < "

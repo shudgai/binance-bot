@@ -929,7 +929,7 @@ async def check_entries():
                     logger.info(f"🛑 [LOW_PARTICIPATION] {sym} 被攔截：量能爆發不足 (目前 {current_vol:.0f} 未達均量 {_rvol_pct}% | {'低波動放寬' if _is_low_vol_ce else '高波動嚴格'})")
                     set_entry_diagnosis(f"{sym}: 量能爆發不足，放棄進場")
                     continue
-                if not volume_price_sync and route != "MA7_Simple":
+                if not volume_price_sync:
                     # 放寬量能要求：強度夠高時，只要量能達 0.35x 即可，基礎門檻放寬
                     strong_volume_override = strength >= _strong_participation_strength and current_vol >= vol_ma20 * 0.35
                     if not strong_volume_override:

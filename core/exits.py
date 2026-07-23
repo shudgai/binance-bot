@@ -204,7 +204,9 @@ def _schedule_ma_exchange_profit_stop(sym):
         return
     state = ctx.STATES.get(sym, {})
     if not state.get("exchange_stop_order_id"):
-        # 初始保護單尚未建立時交由 _ensure_exchange_exit_orders 一次完成。
+        # 重啟校準時，即時價格處理可能比 _ensure_exchange_exit_orders 更早算出
+        # 獲利地板；保護單 ID 尚未建立時保留 pending，建立後立即補同步。
+        state["_ma_exchange_stop_sync_pending"] = True
         return
     try:
         loop = asyncio.get_running_loop()
@@ -514,6 +516,7 @@ class DynamicExitManager:
         self.profit_threshold = 0.15        # 只要利潤 > 0.15% 就啟動高位盤整防護
         self.stagnation_range = 0.0005       # 盤整區間 (0.05%)
         self.no_high_time_limit = 60         # 盤整判定時間 (60秒內沒創新高)
+        self.min_exit_profit_pct = 0.12    # 百分比單位；至少覆蓋雙邊費用後才允許動態停利
 
         # 還原重啟前已經記錄的峰值百分比
         self.max_profit_pct = max(0.0, restored_peak_pct)
@@ -593,23 +596,23 @@ class DynamicExitManager:
             is_retracing = True
 
         if is_retracing:
-            if current_profit > -0.05:  # 只有在淨利 >= -0.05% 時才執行保護性平倉
+            if current_profit >= self.min_exit_profit_pct:  # 不得把接近成本或負報酬誤當停利
                 print(f"💰 [觸發：回撤比例(極限)] 價格從最高點回落超過 {tolerance_pct*100:.3f}%，快速落袋為安。")
                 return "SELL"
             else:
-                # 已經跌回成本價以下，取消激進平倉，讓一般停損接手
+                # 未保留至少 0.12% 毛利，取消動態停利，讓正常風控接手
                 is_retracing = False
 
         # 2. 動態耐心極限 (Time-out)
         if elapsed_time >= self.wait_time_limit:
-            if current_profit > -0.05:
+            if current_profit >= self.min_exit_profit_pct:
                 print(f"💰 [觸發：耐心極限] 已等待 {elapsed_time:.1f}秒 (限時 {self.wait_time_limit:.1f}秒)，強制落袋為安。")
                 return "SELL"
 
         # 3. 盤整最高點 (Stagnation)
         is_stagnant = abs(current_price - self.current_max_price) <= (self.current_max_price * self.stagnation_range)
         if time_since_high > self.no_high_time_limit and is_stagnant:
-            if current_profit > -0.05:
+            if current_profit >= self.min_exit_profit_pct:
                 print(f"🛑 [觸發：盤整最高點] 價格在 {self.current_max_price} 附近停滯過久，動能耗盡，執行停利。")
                 return "SELL"
 
@@ -970,40 +973,95 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Tight_SL]", is_stop_loss=True)
             return
 
-        # 2. 利潤動態往上推進停利線 (Dynamic Trailing Stop Profit)
-        # 最高浮盈達 0.20% 以上啟動，保持 0.12% 緊密動態跟隨距離（利潤越高，停利線越往上升）
-        # 扣除合約雙向手續費 (0.08%) 厚度：要求平倉時毛漲幅必須 >= 0.12%，扣除手續費後確保實質淨獲利 > +0.04%
+        # 2. 讓利潤奔跑的 ATR 動態移動停利。峰值至少 0.30% 才啟動，
+        # 並保留 0.20%~0.45% 的正常回踩空間；不再用固定 0.12% 緊貼價格。
         MIN_NET_TP_FLOOR_PCT = 0.0012
+        SCALP_TRAIL_ARM_PCT = max(0.0030, SCALP_TP1_PCT)
+        atr_pct = float(s.get("current_atr", 0.0) or 0.0) / avg if avg > 0 else 0.0
+        trail_gap = max(0.0020, min(0.0045, atr_pct * 1.2))
+        threshold_epsilon = 1e-12
 
-        if highest_profit >= 0.0020:
-            current_trail_profit = max(highest_profit - 0.0012, MIN_NET_TP_FLOOR_PCT)
+        if highest_profit + threshold_epsilon >= SCALP_TRAIL_ARM_PCT:
+            current_trail_profit = max(highest_profit - trail_gap, MIN_NET_TP_FLOOR_PCT)
             prev_trail_profit = float(s.get("scalp_trail_profit_pct", 0.0) or 0.0)
             if current_trail_profit > prev_trail_profit:
                 s["scalp_trail_profit_pct"] = current_trail_profit
-                logger.info(f"📈 [Scalp_Trail_Profit_Push] {sym} 最高浮盈升至 {highest_profit*100:.2f}%，動態停利線跟隨往上推至 +{current_trail_profit*100:.2f}%")
+                s["scalp_trail_cross_count"] = 0
+                s["scalp_trail_cross_since"] = 0.0
+
+                # 交易所端只放更寬的崩跌安全網；一般回吐由下方連續確認處理，
+                # 避免單一價格跳動直接把仍在延伸的趨勢清倉。
+                exchange_floor_profit = max(
+                    MIN_NET_TP_FLOOR_PCT,
+                    current_trail_profit - max(0.0010, trail_gap * 0.35),
+                )
+                floor_price = (avg * (1.0 + exchange_floor_profit) if is_long
+                               else avg * (1.0 - exchange_floor_profit))
+                s["ma_profit_floor_armed"] = True
+                s["ma_profit_floor_price"] = floor_price
+                _schedule_ma_exchange_profit_stop(sym)
+                logger.info(
+                    f"📈 [Scalp_Trail_Profit_Push] {sym} 峰值 {highest_profit*100:.2f}%，"
+                    f"ATR 跟隨線推至 +{current_trail_profit*100:.2f}% "
+                    f"(回踩空間 {trail_gap*100:.2f}%)"
+                )
 
         scalp_trail = float(s.get("scalp_trail_profit_pct", 0.0) or 0.0)
-        if scalp_trail > 0 and profit_pct <= scalp_trail and profit_pct >= MIN_NET_TP_FLOOR_PCT:
-            logger.info(f"💰 [Scalp_Trail_Profit_Trigger] {sym} 浮盈 {profit_pct*100:.2f}% (扣除手續費後淨利潤: +{(profit_pct-0.0008)*100:.2f}%) 觸及動態停利線 (+{scalp_trail*100:.2f}%)，鎖定獲利出場！")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Trail_Profit]", is_stop_loss=False)
-            return
+        trail_crossed = (
+            scalp_trail > 0
+            and profit_pct <= scalp_trail
+            and profit_pct >= MIN_NET_TP_FLOOR_PCT
+        )
+        if trail_crossed:
+            now = time.time()
+            count = int(s.get("scalp_trail_cross_count", 0) or 0)
+            since = float(s.get("scalp_trail_cross_since", 0.0) or 0.0)
+            if count <= 0 or since <= 0:
+                count, since = 1, now
+                s["scalp_trail_cross_since"] = since
+            else:
+                count += 1
+            s["scalp_trail_cross_count"] = count
+            if count >= 2 and now - since >= 2.0:
+                logger.info(
+                    f"💰 [Scalp_Trail_Profit_Confirmed] {sym} 峰值 {highest_profit*100:.2f}% "
+                    f"回吐至 {profit_pct*100:.2f}%，連續確認後鎖定剩餘利潤"
+                )
+                await close_position(
+                    sym, cs, abs(s["qty"]), p, avg,
+                    reason="[Scalp_Trail_Profit]", is_stop_loss=False,
+                )
+                return
+        else:
+            s["scalp_trail_cross_count"] = 0
+            s["scalp_trail_cross_since"] = 0.0
 
-        # 3. 高頻第一階段快扣停利 +0.30% (平倉 60%)
-        if profit_pct >= SCALP_TP1_PCT and profit_pct >= MIN_NET_TP_FLOOR_PCT and not s.get("scalp_tp1_done", False):
-            qty_60 = abs(s["qty"]) * 0.60
-            logger.info(f"⚡ [Scalp_TP1_60Pct] {sym} 浮盈達 {profit_pct*100:.2f}% (淨利潤: +{(profit_pct-0.0008)*100:.2f}%) >= {SCALP_TP1_PCT*100:.2f}%，極速平倉 60% 部位 ({qty_60:.4f}) 落袋為安！")
+        # 3. +0.30% 只先落袋 30%，保留 70% 主倉參與後續趨勢。
+        if (
+            profit_pct + threshold_epsilon >= SCALP_TP1_PCT
+            and not s.get("scalp_tp1_done", False)
+        ):
+            partial_qty = abs(s["qty"]) * 0.30
+            logger.info(
+                f"⚡ [Scalp_TP1_30Pct] {sym} 浮盈 {profit_pct*100:.2f}% 達首段目標，"
+                f"先平 30% ({partial_qty:.4f})，保留 70% 讓利潤奔跑"
+            )
             s["scalp_tp1_done"] = True
-            await close_position(sym, cs, qty_60, p, avg, reason="[Scalp_TP1_60Pct]", is_stop_loss=False)
+            await close_position(
+                sym, cs, partial_qty, p, avg,
+                reason="[Scalp_TP1_30Pct]", is_stop_loss=False,
+            )
             return
 
-        # 4. 高頻第二階段清倉 +0.50%
-        if profit_pct >= SCALP_TP2_PCT and profit_pct >= MIN_NET_TP_FLOOR_PCT:
-            logger.info(f"🎯 [Scalp_TP2_Full] {sym} 浮盈達 {profit_pct*100:.2f}% (淨利潤: +{(profit_pct-0.0008)*100:.2f}%) >= {SCALP_TP2_PCT*100:.2f}%，高頻微波段清倉落袋！")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_TP2_Full]", is_stop_loss=False)
-            return
+        # 4. +0.50% 僅記錄里程碑並繼續上推移動停利，不再固定全平封頂。
+        if profit_pct + threshold_epsilon >= SCALP_TP2_PCT and not s.get("scalp_tp2_milestone", False):
+            s["scalp_tp2_milestone"] = True
+            logger.info(
+                f"🚀 [Scalp_TP2_Runner] {sym} 浮盈已達 {profit_pct*100:.2f}%，"
+                "取消固定全平，剩餘部位交由 ATR 移動停利續抱"
+            )
 
-        # 5. 高頻模式防護：除上述緊密硬停損 (-1.5%)、動態停利 (+0.20%+) 與分批/清倉 (+0.30%/+0.50%) 外，
-        # 100% 阻斷一般波段的雜項平倉邏輯，避免因盤中微幅波動 (-0.10% ~ -0.50%) 被誤砍。
+        # 高頻模式由硬停損、30% 首段落袋與 ATR runner 管理，阻斷舊版雜項出場。
         return
 
     # ── 第一階段：扣除費用與滑價後仍有實質利潤，才先平 50% ──

@@ -84,6 +84,11 @@ def build_symbol_state(sym):
         "ma_profit_floor_cross_count": 0,
         "ma_profit_floor_cross_since": 0.0,
         "ma_profit_floor_missed": False,
+        "scalp_trail_profit_pct": 0.0,
+        "scalp_trail_cross_count": 0,
+        "scalp_trail_cross_since": 0.0,
+        "scalp_tp1_done": False,
+        "scalp_tp2_milestone": False,
         "_ma_exchange_stop_sync_pending": False,
         "ma_peak_saved_pct": 0.0,
         "macd_line": 0.0,
@@ -507,6 +512,11 @@ def reset_coin_state(sym):
     s["ma_profit_floor_cross_count"] = 0
     s["ma_profit_floor_cross_since"] = 0.0
     s["ma_profit_floor_missed"] = False
+    s["scalp_trail_profit_pct"] = 0.0
+    s["scalp_trail_cross_count"] = 0
+    s["scalp_trail_cross_since"] = 0.0
+    s["scalp_tp1_done"] = False
+    s["scalp_tp2_milestone"] = False
     s["sell_pressure_cross_count"] = 0
     s["sell_pressure_cross_since"] = 0.0
     s["_sell_pressure_debug_log_at"] = 0.0

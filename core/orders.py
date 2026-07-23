@@ -4,6 +4,7 @@ import time
 import json
 import os
 import sys
+import re
 import fcntl
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from core.peak_store import clear_peak
 from core.config import (PAPER_TRADING, USE_TESTNET, TRADE_HISTORY_FILE, DUAL_SHOT_ORDER_TIMEOUT,
     DUAL_SHOT_LEVERAGE, COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT, DUAL_SHOT_MAX_SLOTS,
 ENTRY_ORDER_MODE, ENTRY_PULLBACK_ATR_MULT, ENTRY_CHASE_OFFSET_PCT,
-    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER, RANGE_MIN_RR,
+    ENTRY_ORDER_MODE_AUTO_STRONG, ENTRY_ORDER_MODE_AUTO_MARKET, EXIT_RR_MULTIPLIER, RANGE_MIN_RR, SCALP_MODE, PORT,
     MAX_RISK_PER_TRADE_PCT)
 from core.exchange_client import (exchange_futures, exchange_market_data, sanitize_order_qty,
     get_contract_precision, round_step, convert_to_ccxt_symbol, get_reference_price,
@@ -506,10 +507,16 @@ async def _ensure_exchange_exit_orders(sym):
     if exits_complete:
         label = "1.5% 災難止損存在、高點鎖利由即時行情管理" if is_ma_route else "止損存在，獲利出場由移動停損管理"
         logger.info(f"✅ [交易所退出單確認] {sym} Algo {label}")
+        if s.get("_ma_exchange_stop_sync_pending", False):
+            from core.exits import _schedule_ma_exchange_profit_stop
+            _schedule_ma_exchange_profit_stop(sym)
         return
 
     logger.info(f"🛡️ [交易所退出單修復] {sym} 退出掛單不符合目前波段規則，重新建立")
     await _replace_exchange_exit_orders(sym)
+    if s.get("_ma_exchange_stop_sync_pending", False):
+        from core.exits import _schedule_ma_exchange_profit_stop
+        _schedule_ma_exchange_profit_stop(sym)
 
 
 def _entry_direction_guard(sym, side, reference_price=None):
@@ -705,8 +712,26 @@ def _entry_pending_adverse_guard(sym, side, reference_price, current_price, is_r
     return True, "ok"
 
 
+def _display_entry_pool_allows(sym):
+    """只有前端目前顯示的交易池幣種，才可建立或增加倉位。"""
+    try:
+        from services.bot_manager_service import load_symbol_config
+        display_symbols = load_symbol_config()
+    except Exception as exc:
+        return False, f"display pool unavailable: {exc}"
+    if sym not in set(display_symbols or []):
+        return False, "symbol is not in the current displayed trade pool"
+    return True, "display_pool"
+
+
 def _pending_entry_setup_valid(info, validator=None):
     """Revalidate a resting first-entry order against the latest full signal."""
+    # 正式掛單重驗（validator=None）必須再次核對牌面；注入 validator 的單元測試
+    # 只驗證其指定訊號，不讀取會隨雷達即時變動的外部名單。
+    if validator is None and info.get("sym"):
+        pool_ok, pool_reason = _display_entry_pool_allows(info.get("sym"))
+        if not pool_ok:
+            return False, pool_reason
     if info.get("is_rescue_dca", False):
         return True, "rescue_dca"
     route = info.get("entry_route")
@@ -1051,7 +1076,14 @@ def record_trade_result(symbol, entry_reason, exit_reason, profit_pct, current_a
         return None
 
 
-async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
+def _bot_close_client_order_id(reason):
+    """Tag bot-created MARKET closes so reconciliation can distinguish them from external closes."""
+    tag = re.sub(r"[^A-Za-z0-9_-]+", "", str(reason or "close").strip("[]")) or "close"
+    stamp = int(time.time() * 1000) % 100000000
+    return f"b{PORT}-{tag[:18]}-{stamp:08d}"[:36]
+
+
+async def _market_close_and_get_fill(sym, close_side, qty, fallback_price, reason=""):
     """送出市價平倉單，並可靠地取得真實成交均價。create_order() 剛回傳的市價單
     結果，average/price 欄位常常還沒填（要過一下子交易所才處理完），如果直接信任
     這個回傳值，會退回去用呼叫端傳入的理論價格算獲利——這正是 PeakLock/RESCUE_TRAIL
@@ -1086,7 +1118,10 @@ async def _market_close_and_get_fill(sym, close_side, qty, fallback_price):
     for i, chunk_qty in enumerate(chunks):
         market_order = await exchange_futures.create_order(
             sym, type="market", side=close_side, amount=chunk_qty,
-            params={"reduceOnly": True}
+            params={
+                "reduceOnly": True,
+                "newClientOrderId": _bot_close_client_order_id(reason),
+            }
         )
         chunk_fill_price = float(market_order.get('average') or market_order.get('price') or 0.0)
         if chunk_fill_price <= 0:
@@ -1187,7 +1222,9 @@ async def _exit_lock_profit_with_chase(sym, close_side, qty, price):
             logger.info(f"🛡️ [停利保本地板掛單] {sym} 剩餘 {remaining_qty:.6f} 掛限價保本單 @ {tp_floor_price:.6f}")
             market_fill = tp_floor_price
         except Exception:
-            market_fill = await _market_close_and_get_fill(sym, close_side, remaining_qty, price)
+            market_fill = await _market_close_and_get_fill(
+                sym, close_side, remaining_qty, price, reason="[Profit_Floor_Fallback]",
+            )
         filled_notional += remaining_qty * market_fill
         filled_qty += remaining_qty
 
@@ -1257,6 +1294,22 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     real_avg = s["avg_price"] if s["avg_price"] > 0 else avg_price
     profit_pct = (price - real_avg) / real_avg if s["qty"] > 0 else (real_avg - price) / real_avg
 
+    # Port 8007 的新倉在正常停損距離內，不得被其他舊版方向風控於 90 秒內誤砍。
+    # 真正的 Scalp 1.5% 硬停損與全局黑天鵝熔斷仍保持放行。
+    if SCALP_MODE and profit_pct < 0:
+        opened_at = float(s.get("open_time", 0.0) or 0.0)
+        hold_age = time.time() - opened_at if opened_at > 0 else float("inf")
+        emergency_early_reasons = ("Scalp_Tight_SL", "GLOBAL_MELTDOWN")
+        is_emergency_early_exit = any(token in str(reason) for token in emergency_early_reasons)
+        within_normal_stop = profit_pct > -float(HARD_STOP_LOSS_PCT)
+        if hold_age < 90.0 and within_normal_stop and not is_emergency_early_exit:
+            logger.info(
+                f"🧱 [Scalp_Early_Close_Guard] {sym} 持倉僅 {hold_age:.1f}s、"
+                f"毛損 {profit_pct*100:.3f}% 尚未達 -{HARD_STOP_LOSS_PCT*100:.2f}% 硬停損，"
+                f"拒絕非緊急平倉 | reason={reason}"
+            )
+            return
+
     # 根據幣種波動度動態決定最低利潤門檻，高波動幣種拉大獲利要求 (1.5%) 以優化盈虧比，主流幣維持 0.35%
     volatile_coins = ["ORDIUSDT", "INJUSDT", "SUIUSDT", "APTUSDT", "GUAUSDT", "SIRENUSDT"]
     fee_buffer = 0.015 if sym.replace(":", "") in volatile_coins else 0.0035
@@ -1286,7 +1339,7 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
     # [MA7_Profit_Turn_Giveback] 同理補進來：峰值回吐超過一半時觸發，浮盈可能還是
     # 正的但低於 0.35%（實測 BCHUSDT 峰值 0.44% 只保留一半也才 0.22%），一樣不能
     # 被這道門檻卡住、逼它眼睜睜看著繼續回吐。
-    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA7_Profit_Turn_Giveback]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Sell_Pressure_Exit]", "[Buy_Pressure_Exit]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]", "[Profit_70Pct_Retained_TP]", "[Peak_Giveback_Lock]", "[MultiStage_TP1]", "[Partial_TP_50Pct]"]
+    allowed_exit_reasons = ["[MA_Wrong_Direction_Confirmed]", "[MA_Disaster_Stop]", "[MA7_MA25_Death_Cross]", "[MA7_MA25_Golden_Cross]", "[MA7_Closed_Break]", "[MA7_Profit_Turn_Partial]", "[MA7_Profit_Turn_Confirmed]", "[MA7_Profit_Turn_Giveback]", "[MA_Peak_Lock]", "[MA_Profit_Floor]", "[Sell_Pressure_Exit]", "[Buy_Pressure_Exit]", "[Range_Mid_Target]", "[GLOBAL_MELTDOWN]", "[Peak_Giveback]", "[TrailTP_Peak]", "[Dynamic_Trailing]", "[Range_Trailing_Closed_Confirm]", "[Momentum_Tracker]", "[High_Point_Stagnation]", "[Dynamic_Exit_Manager]", "[Peak_Volume_Contraction]", "[Profit_70Pct_Retained_TP]", "[Peak_Giveback_Lock]", "[MultiStage_TP1]", "[Partial_TP_50Pct]", "[Scalp_Trail_Profit]", "[Scalp_TP1_30Pct]"]
     if profit_pct < fee_buffer and not is_stop_loss and reason not in allowed_exit_reasons:
         logger.info(f"⏳ [平倉攔截] {sym} 目前利潤 ({profit_pct*100:.4f}%) 未達最低利潤門檻 ({fee_buffer*100:.2f}%)，已拒絕平倉 | 原因={reason}")
         return
@@ -1346,7 +1399,9 @@ async def _close_position_inner_locked(sym, close_side, qty, price, avg_price, r
             if profit_pct > 0 and not is_stop_loss and not _is_urgent_exit:
                 final_price = await _exit_lock_profit_with_chase(sym, close_side, qty, price)
             else:
-                final_price = await _market_close_and_get_fill(sym, close_side, qty, price)
+                final_price = await _market_close_and_get_fill(
+                    sym, close_side, qty, price, reason=reason,
+                )
             s["_close_fail_count"] = 0
         except Exception as e:
             logger.info(f"🚨 [平倉錯誤] {sym}: {e}")
@@ -1744,16 +1799,19 @@ async def check_paper_pending_order(sym):
 
 
 def _resolve_entry_order_mode(entry_mode, signal_strength=None, entry_route=None, sym=None):
-    """Keep legacy chase execution except for ETH/XRP guarded entries."""
-    from core.config import STRICT_ENTRY_SYMBOLS
-    if sym not in STRICT_ENTRY_SYMBOLS:
-        return "chase"
+    """MA 趨勢路線（ma_cross/ma_breakout/ma25_pullback/ma7_simple）進場前提本來就是
+    「谷底/高點剛轉彎，馬上跟上」，不是「等一個更便宜的價位」；用限價單（哪怕只是
+    chase 這種接近市價的小加價限價）可能因為零點幾秒的延遲追不上轉折後的第一波
+    (實測 ENAUSDT 案例：算好要掛 0.0912，送單當下已經衝到 0.0915，限價單直接
+    追丟)，所以這幾條路線改用真正的市價單，保證跟上轉折。Range 支撐/壓力模式
+    本來就是要等價格到特定水位，維持限價單。"""
     route = str(entry_route or "").lower()
     if route in RANGE_ENTRY_ROUTES:
         return "range_limit"
-    if route in {"ma25_pullback", "ma7_simple", "ma_breakout"}:
-        return "pullback"
-    if route == "ma_cross":
+    if route in {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple"}:
+        return "market"
+    from core.config import STRICT_ENTRY_SYMBOLS
+    if sym not in STRICT_ENTRY_SYMBOLS:
         return "chase"
     mode = str(entry_mode or "auto").lower()
     if mode != "auto":
@@ -1780,6 +1838,13 @@ async def _execute_order_inner(sym, side, price, allocation_pct=1.0, is_rescue_d
     side = str(side).lower()
     if side not in ("buy", "sell"):
         logger.info(f"🛑 [InvalidEntrySide] {sym} 收到無效開倉方向 {side!r}，拒絕下單")
+        return
+    pool_ok, pool_reason = _display_entry_pool_allows(sym)
+    if not pool_ok:
+        logger.info(
+            f"🖥️ [DisplayPoolEntryGuard] {sym} 不在目前介面交易名單，"
+            f"拒絕建立／增加倉位（{pool_reason}）"
+        )
         return
     s = ctx.STATES[sym]
     signal_anchor_price = float(signal_price or price or 0.0)

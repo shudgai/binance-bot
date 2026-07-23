@@ -14,6 +14,7 @@ from core import ctx
 from core.config import (
     PAPER_TRADING, MAIN_LOOP_INTERVAL_SEC,
     TRADE_POLL_INTERVAL_SEC, TRADE_POLL_LIMIT, API_RATE_LIMIT_COOLDOWN_SEC, TRADE_POOL_SIZE,
+    PORT,
 )
 from core.exchange_client import exchange_futures, exchange_market_data, check_binance_weight
 from core.state_manager import build_symbol_state, update_states, reset_coin_state, repair_invalid_states
@@ -288,6 +289,7 @@ async def _record_external_position_close(exchange, sym, state):
     # Algo 條件單成交後，myTrades 常只回報 MARKET 子單，沒有 STOP_MARKET 類型；
     # 再查一次實際成交 order，補回 origType／clientOrderId 等可辨識欄位。
     resolved_order_type = order_type
+    resolved_client_id = str(info.get("clientOrderId", "") or "")
     if stored_stop_id or stored_tp_id:
         try:
             resolved_order = await exchange.fetch_order(order_id, sym)
@@ -300,6 +302,7 @@ async def _record_external_position_close(exchange, sym, state):
                     resolved_info.get("clientOrderId", ""),
                 )
             ).upper()
+            resolved_client_id = str(resolved_info.get("clientOrderId", "") or resolved_client_id)
         except Exception as order_error:
             logger.info(f"ℹ️ [ExternalClose] {sym} 無法核對成交子訂單類型: {order_error}")
 
@@ -321,6 +324,8 @@ async def _record_external_position_close(exchange, sym, state):
         or matched_known_stop
     ):
         exit_reason = "[External_Stop_Loss]"
+    elif resolved_client_id.lower().startswith(f"b{PORT}-"):
+        exit_reason = "[Bot_Market_Close_Reconciled]"
     else:
         exit_reason = "[External_Close]"
 
