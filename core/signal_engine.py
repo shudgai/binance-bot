@@ -145,7 +145,8 @@ def compute_signal_strength(sym, realtime_trigger=False):
                            and volume_ratio >= max(1.0, breakout_limit) and current_rsi > 32
                            and short_no_fake_breakout and short_not_overextended)
 
-    if cross_long or cross_short:
+    from core.config import DISABLE_MA_BREAKOUT, DISABLE_MA25_PULLBACK, DISABLE_MA_CROSS
+    if (cross_long or cross_short) and not DISABLE_MA_CROSS:
         side, route = ("buy" if cross_long else "sell"), "MA_Cross"
     elif (breakout_long or breakout_short) and not DISABLE_MA_BREAKOUT:
         side, route = ("buy" if breakout_long else "sell"), "MA_Breakout"
@@ -205,11 +206,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
         ma25_long_extension_ok = 0.0 <= ma25_long_extension <= ma25_extension_limit
         ma25_short_extension_ok = 0.0 <= ma25_short_extension <= ma25_extension_limit
 
+        ma7_ma25_gap_pct = abs(ma7 - ma25) / candle_close if candle_close > 0 else 0.0
+        ma7_simple_gap_ok = ma7_ma25_gap_pct >= 0.0008
+        adx_trend_ok = adx >= 22.0
+
         # MA7 谷底轉折向上：當 MA7 勾頭向上、RVOL >= 0.3x 即允許開倉做多
         if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
                 and ma7_simple_volume_ok and current_rsi < 82.0
                 and ma7 >= ma25 and ma25_not_against_long and ma25_long_extension_ok
-                and adx_not_spiking):
+                and adx_not_spiking and adx_trend_ok and ma7_simple_gap_ok):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
                 reason = f"MA7 谷底轉折向上，但 5m RSI={current_rsi:.1f} > {MA7_SIMPLE_LONG_RSI_CEIL:.0f} 偏高，跳過"
@@ -232,7 +237,7 @@ def compute_signal_strength(sym, realtime_trigger=False):
         # MA7 頭部轉折向下：在 MA7 一向下勾且 RVOL >= 0.3x 時即刻開倉做空
         elif (turn_down and ma7_simple_volume_ok and current_rsi > 18.0
                 and ma7 <= ma25 and ma25_not_against_short and ma25_short_extension_ok
-                and adx_not_spiking):
+                and adx_not_spiking and adx_trend_ok and ma7_simple_gap_ok):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
                 reason = f"MA7 頭部轉折向下，但 5m RSI={current_rsi:.1f} < {MA7_SIMPLE_SHORT_RSI_FLOOR:.0f} 已偏低，跳過避免超賣區做空"

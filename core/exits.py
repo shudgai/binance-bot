@@ -983,6 +983,18 @@ async def check_exits(sym):
             await close_position(sym, cs, abs(s["qty"]), p_sf, avg, reason="[Scalp_Tight_SL]", is_stop_loss=True)
             return
 
+        # 1.2. 進場即背離防禦線 (Early Momentum Flip Safeguard)
+        # 開倉後 180 秒內，若 highest_profit 保持 <= 0.00% 且已微虧跌破 -0.08%，直接強制砍單止損
+        opened_at = float(s.get("open_time", 0.0) or 0.0)
+        hold_time = time.time() - opened_at if opened_at > 0 else 0.0
+        if hold_time <= 180.0 and highest_profit <= 0.00005 and profit_pct_sf <= -0.0008:
+            logger.info(
+                f"🚨 [Early_Momentum_Flip] {sym} 進場 {hold_time:.1f} 秒無任何浮盈 (最高 {highest_profit*100:.2f}%) "
+                f"且價格持續背離 (虧損 {profit_pct_sf*100:.2f}%)，微損即刻砍單！"
+            )
+            await close_position(sym, cs, abs(s["qty"]), p_sf, avg, reason="[Early_Momentum_Flip]", is_stop_loss=True)
+            return
+
         MIN_NET_TP_FLOOR_PCT = 0.0025
 
         # 1.5. 方案 B：解套保本鎖定 + 利潤繼續跟隨奔跑 (Scalp_Drawdown_Rebound_TP)
