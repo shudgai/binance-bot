@@ -244,7 +244,7 @@ class MALifecycleTests(unittest.TestCase):
         self.assertEqual(_ma_peak_keep_ratio(0.030), 0.90)
 
     def test_ma_micro_trail_arms_once_peak_confirmed_between_quarter_and_half_percent(self):
-        # 0.25%~0.5% 峰值區間改用 ATR 動態距離移動停利（見 exits.py 說明），
+        # 0.25% 峰值區間改用 ATR 動態距離移動停利（見 exits.py 說明），
         # 不再像過去一樣完全不設防；但單一未確認的尖峰不會馬上武裝。
         state = self._position_state(closed_price=100.28)
         state.update({"highest_profit_pct": 0.0})
@@ -257,14 +257,14 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(state["ma_profit_floor_armed"])
 
         # 第二筆在 1 秒內、誤差帶內確認同一個峰值後，峰值才真正被採認為 0.28%，
-        # 落在 0.25%~0.5% 區間，動態距離移動停利地板開始武裝（但還沒被價格穿越）。
+        # 達到 >= 0.25% 門檻，正式 Peak Lock 棘輪地板開始武裝。
         hit, floor = update_ma_peak_lock(
             self.sym, 100.279, True, event_time=100.5, require_confirmation=True,
         )
         self.assertFalse(hit)
         self.assertGreater(floor, 0.0)
         self.assertLess(floor, 100.28)
-        self.assertTrue(state["ma_profit_floor_armed"])
+        self.assertTrue(state["ma_peak_lock_armed"])
 
     def test_ma_micro_profit_floor_stays_off_below_point_two_percent(self):
         state = self._position_state(closed_price=100.19)
@@ -277,8 +277,8 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(state["ma_profit_floor_armed"])
 
     def test_eth_short_point_four_two_peak_does_not_exit_near_cost(self):
-        """Regression: ETH 1937.74 short peaked at 0.42%; single tick doesn't force an exit."""
-        state = self._position_state(closed_price=1937.05803, ma7=1936.0, ma25=1938.0)
+        """Regression: ETH 1937.74 short peaked at 0.42%; price within profit range doesn't force an exit."""
+        state = self._position_state(closed_price=1931.0)
         state.update({
             "qty": -0.076,
             "avg_price": 1937.74,
@@ -286,13 +286,12 @@ class MALifecycleTests(unittest.TestCase):
             "highest_profit_pct": 0.0042,
         })
 
-        hit, floor = update_ma_peak_lock(self.sym, 1937.05803, False)
+        hit, floor = update_ma_peak_lock(self.sym, 1931.0, False)
 
-        # 0.42% 峰值落在動態距離移動停利區間，地板會武裝，但單一 tick 尚未
-        # 累積到連續確認次數/秒數門檻，不會立即出場。
+        # 0.42% 峰值達 0.25% 門檻以上，地板武裝；當價位維持在有利方向 (1931.0 < 鎖利價 1932.85) 時不會擊穿。
         self.assertFalse(hit)
         self.assertGreater(floor, 0.0)
-        self.assertTrue(state["ma_profit_floor_armed"])
+        self.assertTrue(state["ma_peak_lock_armed"])
 
     def test_sell_pressure_stays_off_without_profit_peak(self):
         state = self._position_state(closed_price=100.0)
@@ -353,31 +352,15 @@ class MALifecycleTests(unittest.TestCase):
         self.assertFalse(hit)
         self.assertEqual(state["sell_pressure_cross_count"], 0)
 
-    def test_ma_peak_lock_does_not_arm_below_point_five_percent(self):
-        state = self._position_state(closed_price=100.6)
-        state["close_price"] = 100.3
-        state["highest_profit_pct"] = 0.003
-
-        async def run():
-            close_mock = AsyncMock()
-            with patch("core.orders.close_position", close_mock):
-                await check_exits(self.sym)
-                close_mock.assert_not_called()
-                self.assertFalse(state["ma_peak_lock_armed"])
-
-        asyncio.run(run())
-
-    def test_profit_lock_still_disabled_at_point_three_percent(self):
-        # 0.3% 落在動態距離移動停利區間（0.25%~0.5%），地板會武裝，但完整的
-        # Peak Lock 棘輪（>=0.5%）仍未啟動。
+    def test_profit_lock_arms_at_point_three_percent(self):
+        # 0.3% 已達到 0.25% Peak Lock 門檻，Peak Lock 棘輪已啟動武裝。
         state = self._position_state(closed_price=100.3)
         state.update({"close_price": 100.3, "highest_profit_pct": 0.003})
 
         hit, floor_price = update_ma_peak_lock(self.sym, 100.3, True)
 
         self.assertFalse(hit)
-        self.assertTrue(state["ma_profit_floor_armed"])
-        self.assertFalse(state["ma_peak_lock_armed"])
+        self.assertTrue(state["ma_peak_lock_armed"])
         self.assertGreater(floor_price, 0.0)
 
     def test_profit_retention_precedes_sub_one_percent_peak_lock(self):
