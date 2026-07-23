@@ -113,6 +113,12 @@ async def update_trade_signal(sym, trade):
         _is_long = s["qty"] > 0
         rt_profit = (price - avg_p) / avg_p if _is_long else (avg_p - price) / avg_p
 
+        from core.config import SCALP_MODE
+        if SCALP_MODE:
+            # SCALP_MODE (Port 8007) 100% 由 exits.py 的 SCALP 高頻保護引擎接管，
+            # 不跑即時滴答線的舊版 MA_Profit_Floor / Order_Flow 離場。
+            return
+
         # MA 波段使用專用高點鎖利；下方較緊的通用 TrailTP 仍不套用。
         if str(s.get("entry_reason", "") or "").lower() in {"ma_cross", "ma_breakout", "ma25_pullback", "ma7_simple", "ma_restored"}:
             from core.exits import update_ma_peak_lock, check_realtime_sell_pressure
