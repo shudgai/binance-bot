@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 
-from core.config import ENTRY_SURGE_THRESHOLD, MA_CROSS_MIN_GAP_PCT
+from core.config import ENTRY_SURGE_THRESHOLD, MA_CROSS_MIN_GAP_PCT, MIN_TREND_ADX
 
 CORE_LIQUID_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
 
@@ -41,7 +41,6 @@ def compute_signal_strength(sym, realtime_trigger=False):
     # 共用同一個最低 ADX 門檻，低於門檻直接不產生任何 MA 訊號——沒有趨勢的
     # 環境，趨勢跟隨策略本來就不該進場，不分路線都一樣。
     # 模式 A（高品質杜絕假突破）：趨勢強度 ADX 低於 18.0 直接過濾，拒絕死水盤整
-    MIN_TREND_ADX = 18.0
     if adx < MIN_TREND_ADX:
         s["entry_block_reason"] = f"ADX={adx:.1f} < {MIN_TREND_ADX:.0f}，盤整無趨勢，暫停 MA 訊號"
         return (None, 0, None)

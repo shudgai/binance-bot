@@ -848,7 +848,8 @@ def _get_real_trades():
 def api_history_summary():
     try:
         if is_paper_trading():
-            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            from core.config import PAPER_STATE_FILE
+            ps_path = PAPER_STATE_FILE
             if not os.path.exists(ps_path):
                 return {"summaries": []}
             with open(ps_path, "r") as f:
@@ -900,7 +901,8 @@ def api_history_summary():
 def api_history_download(date: str):
     try:
         if is_paper_trading():
-            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            from core.config import PAPER_STATE_FILE
+            ps_path = PAPER_STATE_FILE
             if not os.path.exists(ps_path):
                 raise HTTPException(status_code=404, detail="無交易紀錄")
             with open(ps_path, "r") as f:
@@ -974,7 +976,8 @@ def api_history_download(date: str):
 def api_history_delete(date: str):
     try:
         if is_paper_trading():
-            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            from core.config import PAPER_STATE_FILE
+            ps_path = PAPER_STATE_FILE
             if os.path.exists(ps_path):
                 with open(ps_path, "r", encoding="utf-8") as f:
                     state = json.load(f)
@@ -1026,7 +1029,8 @@ def api_history_add(date: str):
             raise HTTPException(status_code=400, detail="日期格式錯誤，必須為 YYYY-MM-DD")
 
         if is_paper_trading():
-            ps_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            from core.config import PAPER_STATE_FILE
+            ps_path = PAPER_STATE_FILE
             if os.path.exists(ps_path):
                 with open(ps_path, "r", encoding="utf-8") as f:
                     state = json.load(f)
@@ -1134,4 +1138,4 @@ def cancel_open_orders(symbol: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8005)
+    uvicorn.run(app, host="0.0.0.0", port=8007)

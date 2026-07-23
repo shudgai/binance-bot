@@ -4,7 +4,7 @@ import fcntl
 import threading
 import time
 
-PAPER_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+from core.config import PAPER_STATE_FILE
 _lock = threading.Lock()
 
 

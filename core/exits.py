@@ -7,7 +7,7 @@ import numpy as np
 from core import ctx
 from core.config import (PAPER_TRADING, HARD_STOP_LOSS_PCT, MIN_PROFIT_LOCK_THRESHOLD,
     PROTECTED_PROFIT_FLOOR, MOMENTUM_EXIT_ATR_THRESHOLD, MOMENTUM_EXIT_MIN_PROFIT_PCT,
-    COIN_PROFILE_CONFIG,
+    COIN_PROFILE_CONFIG, SCALP_MODE, SCALP_TP1_PCT, SCALP_TP2_PCT,
     SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER,
     HIGH_POINT_STAGNATION_MIN_PROFIT, HIGH_POINT_STAGNATION_TIME, ROUND_TRIP_FEE_PCT)
 from core.indicators import _get_atr
@@ -959,6 +959,45 @@ async def check_exits(sym):
 
     entry_reason = str(s.get("entry_reason", "") or "")
     is_range_route = entry_reason.lower() in RANGE_ENTRY_ROUTES
+
+    if SCALP_MODE:
+        cs = "sell" if is_long else "buy"
+        highest_profit = float(s.get("highest_profit_pct", 0.0) or 0.0)
+
+        # 1. 緊密硬停損 (-0.8%)
+        if profit_pct <= -HARD_STOP_LOSS_PCT:
+            logger.info(f"🛑 [Scalp_Tight_SL] {sym} 虧損達 {profit_pct*100:.2f}% (門檻: -{HARD_STOP_LOSS_PCT*100:.2f}%)，高頻微波段緊密砍單！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Tight_SL]", is_stop_loss=True)
+            return
+
+        # 2. 利潤動態往上推進停利線 (Dynamic Trailing Stop Profit)
+        # 最高浮盈達 0.20% 以上啟動，保持 0.12% 緊密動態跟隨距離（利潤越高，停利線越往上升）
+        if highest_profit >= 0.0020:
+            current_trail_profit = highest_profit - 0.0012
+            prev_trail_profit = float(s.get("scalp_trail_profit_pct", 0.0) or 0.0)
+            if current_trail_profit > prev_trail_profit:
+                s["scalp_trail_profit_pct"] = current_trail_profit
+                logger.info(f"📈 [Scalp_Trail_Profit_Push] {sym} 最高浮盈升至 {highest_profit*100:.2f}%，動態停利線跟隨往上推至 +{current_trail_profit*100:.2f}%")
+
+        scalp_trail = float(s.get("scalp_trail_profit_pct", 0.0) or 0.0)
+        if scalp_trail > 0 and profit_pct <= scalp_trail:
+            logger.info(f"💰 [Scalp_Trail_Profit_Trigger] {sym} 浮盈 {profit_pct*100:.2f}% 觸及隨高點上推的動態停利線 (+{scalp_trail*100:.2f}%)，鎖定獲利出場！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_Trail_Profit]", is_stop_loss=False)
+            return
+
+        # 3. 高頻第一階段快扣停利 +0.30% (平倉 60%)
+        if profit_pct >= SCALP_TP1_PCT and not s.get("scalp_tp1_done", False):
+            qty_60 = abs(s["qty"]) * 0.60
+            logger.info(f"⚡ [Scalp_TP1_60Pct] {sym} 浮盈達 {profit_pct*100:.2f}% >= {SCALP_TP1_PCT*100:.2f}%，極速平倉 60% 部位 ({qty_60:.4f}) 落袋為安！")
+            s["scalp_tp1_done"] = True
+            await close_position(sym, cs, qty_60, p, avg, reason="[Scalp_TP1_60Pct]", is_stop_loss=False)
+            return
+
+        # 4. 高頻第二階段清倉 +0.50%
+        if profit_pct >= SCALP_TP2_PCT:
+            logger.info(f"🎯 [Scalp_TP2_Full] {sym} 浮盈達 {profit_pct*100:.2f}% >= {SCALP_TP2_PCT*100:.2f}%，高頻微波段清倉落袋！")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Scalp_TP2_Full]", is_stop_loss=False)
+            return
 
     # ── 第一階段：扣除費用與滑價後仍有實質利潤，才先平 50% ──
     if profit_pct >= PARTIAL_TP_MIN_GROSS_PCT and not s.get("partial_tp_done", False):

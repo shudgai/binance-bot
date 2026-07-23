@@ -5,7 +5,7 @@ from services.bot_manager_service import restart_bot, get_bot_status
 from services.update_paper_state import update_paper_state
 from services.system_log_service import add_system_log
 
-PAPER_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+from core.config import PAPER_STATE_FILE
 import sys
 # 測試環境隔離，避免單元測試污染實際紙交易數據
 if any("pytest" in x or "unittest" in x for x in sys.argv) or "pytest" in sys.modules or "unittest" in sys.modules:
@@ -60,22 +60,35 @@ def get_paper_position(symbol: str, quote_asset: str, base_asset: str, paper_key
     }
 
 def get_paper_trades(symbol: str, paper_key: str):
+    trades = []
+    state = {}
     if os.path.exists(PAPER_STATE_FILE):
         try:
             with open(PAPER_STATE_FILE, "r") as f:
                 state = json.load(f)
                 trades = state.get("trades", [])
-                if symbol == "ALL":
-                    result = list(reversed(trades))[:30]
-                    _enrich_trades_with_current_price(result, state)
-                    return result
-                symbol_trades = [t for t in trades if t.get("symbol") in (symbol, paper_key)]
-                result = list(reversed(symbol_trades))[:15]
-                _enrich_trades_with_current_price(result, state)
-                return result
         except:
-            return []
-    return []
+            trades = []
+
+    if not trades:
+        try:
+            from services.api import _get_real_trades
+            real_trades = _get_real_trades()
+            if symbol == "ALL":
+                return list(reversed(real_trades))[:30]
+            symbol_trades = [t for t in real_trades if t.get("symbol") in (symbol, paper_key)]
+            return list(reversed(symbol_trades))[:15]
+        except Exception:
+            pass
+
+    if symbol == "ALL":
+        result = list(reversed(trades))[:30]
+        _enrich_trades_with_current_price(result, state)
+        return result
+    symbol_trades = [t for t in trades if t.get("symbol") in (symbol, paper_key)]
+    result = list(reversed(symbol_trades))[:15]
+    _enrich_trades_with_current_price(result, state)
+    return result
 
 def _enrich_trades_with_current_price(trades, state):
     """為每筆交易補上 current_price (從即時報價)"""

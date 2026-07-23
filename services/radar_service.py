@@ -340,7 +340,8 @@ def trigger_manual_radar():
 
 def _get_recently_traded_symbols(hours=24):
     try:
-        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "paper_state.json")
+        from core.config import PAPER_STATE_FILE
+        state_path = PAPER_STATE_FILE
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:
@@ -368,7 +369,8 @@ def _get_open_position_symbols():
             print(f"⚠️ [讀取持倉] 失敗: {e}")
             return []
     try:
-        state_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "paper_state.json")
+        from core.config import PAPER_STATE_FILE
+        state_path = PAPER_STATE_FILE
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:

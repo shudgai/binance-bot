@@ -375,7 +375,8 @@ async def load_open_positions():
     if not PAPER_TRADING:
         return
     try:
-        state_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json")
+        from core.config import PAPER_STATE_FILE
+        state_path = PAPER_STATE_FILE
         with open(state_path, "r") as f:
             state = json.load(f)
 

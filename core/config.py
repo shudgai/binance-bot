@@ -4,16 +4,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
-PAPER_TRADING = not BINANCE_API_KEY or BINANCE_API_KEY == "your_api_key_here"
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "").strip()
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "").strip()
+
+def _is_placeholder_key(key):
+    if not key:
+        return True
+    k = str(key).lower()
+    return "your_" in k or "api_key" in k or "placeholder" in k or k == "your_api_key_here"
+
+PAPER_TRADING = _is_placeholder_key(BINANCE_API_KEY)
 
 # Demo Trading 帳戶實際餘額可能遠大於測試用的本金上限，倉位大小要用上限計算（僅在非紙上交易時生效）。
 # 設為 0 或留空則不再限制真實交易帳戶的資金上限。
 LIVE_CAPITAL_CAP = float(os.getenv("LIVE_CAPITAL_CAP", "150.0"))
 MAX_RISK_PER_TRADE_PCT = 0.025
 TIMEFRAME = '5m'
-TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
+PORT = os.getenv("PORT", "8005").strip()
+PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
+
+def get_data_file_path(filename: str) -> str:
+    base, ext = os.path.splitext(filename)
+    suffix = PORT_SUFFIX if PORT_SUFFIX else ""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", f"{base}{suffix}{ext}")
+
+TRADE_HISTORY_FILE = get_data_file_path("trade_history.json")
+PAPER_STATE_FILE = get_data_file_path("paper_state.json")
 MAX_GLOBAL_CONCURRENT_TRADES = 1
 DEFAULT_LEVERAGE = 5
 # DUAL_SHOT_MAX_SLOTS 以下維持當作「本金 <200 USDT」時的保守 fallback
@@ -190,7 +206,11 @@ BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 2    # 30 分鐘內觸發 2 次停損就封禁（原 3 次）
 SL_ATR_MULTIPLIER = 1.5
 TP_ATR_MULTIPLIER = 10.0
-HARD_STOP_LOSS_PCT = 0.035
+HARD_STOP_LOSS_PCT = float(os.getenv("HARD_STOP_LOSS_PCT", "0.035"))
+SCALP_MODE = os.getenv("SCALP_MODE", "false").lower() in ("true", "1", "yes")
+SCALP_TP1_PCT = float(os.getenv("SCALP_TP1_PCT", "0.003"))
+SCALP_TP2_PCT = float(os.getenv("SCALP_TP2_PCT", "0.005"))
+MIN_TREND_ADX = float(os.getenv("MIN_TREND_ADX", "18.0"))
 EXIT_RR_MULTIPLIER = 2.5
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.008

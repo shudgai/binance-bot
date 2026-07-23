@@ -40,8 +40,14 @@ use_testnet = os.getenv("USE_TESTNET", "True").lower() in ("true", "1", "yes")
 # Demo Trading 網域故障），整個 API process 會直接 crash-loop 起不來。這個 ping
 # 只是「啟動時的連線小提示」，不影響後續實際 API 呼叫，關掉它讓啟動不受外部
 # 短暫故障影響即可。
+def _is_placeholder_key(key):
+    if not key:
+        return True
+    k = str(key).lower()
+    return "your_" in k or "api_key" in k or "placeholder" in k or k == "your_api_key_here"
+
 client = None
-if api_key and api_key != "your_api_key_here":
+if api_key and not _is_placeholder_key(api_key):
     client = Client(api_key, api_secret, demo=use_testnet, ping=False)
 else:
     client = Client(demo=use_testnet, ping=False)

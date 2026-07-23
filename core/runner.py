@@ -1181,7 +1181,8 @@ async def sync_paper_state():
         if not PAPER_TRADING:
             continue
         try:
-            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), "r") as f:
+            from core.config import PAPER_STATE_FILE
+            with open(PAPER_STATE_FILE, "r") as f:
                 state = json.load(f)
             for sym in ctx.ALL_SYMBOLS:
                 pk = paper_key(sym)

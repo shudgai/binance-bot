@@ -45,7 +45,11 @@ DEFAULT_SYMBOLS = [
 
 def _strategy_label(balance=None):
     """Keep the status-page slot count aligned with the trading engine."""
+    from core.config import SCALP_MODE
     from core.balance import get_dynamic_max_slots
+
+    if SCALP_MODE:
+        return "Top 15 Radar / Scalp Micro-Trend (+0.3% TP / -1.5% SL)"
 
     slots = get_dynamic_max_slots(balance)
     if slots == 3:
@@ -310,7 +314,8 @@ def get_bot_status():
         try:
             total_realized = 0.0
             total_fees = 0.0
-            state_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+            from core.config import PAPER_STATE_FILE
+            state_path = PAPER_STATE_FILE
             if os.path.exists(state_path):
                 with open(state_path, "r") as f:
                     state = json.load(f)
@@ -546,7 +551,8 @@ def _start_multi_coin_bot(trade_amt: float):
 
 def _get_open_position_symbols():
     try:
-        state_path = os.path.join(os.path.dirname(__file__), "..", "data", "paper_state.json")
+        from core.config import PAPER_STATE_FILE
+        state_path = PAPER_STATE_FILE
         if not os.path.exists(state_path):
             return []
         with open(state_path, "r") as f:

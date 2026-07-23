@@ -22,7 +22,8 @@ from services.bot_manager_service import set_entry_diagnosis
 
 logger = logging.getLogger(__name__)
 
-_TRADE_HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trade_history.json")
+from core.config import TRADE_HISTORY_FILE
+_TRADE_HISTORY_PATH = TRADE_HISTORY_FILE
 _LOSS_HISTORY_CACHE_MTIME = None
 _LOSS_HISTORY_CACHE = {}
 COOLDOWN_REENTRY_TOTAL_CONFIRMATIONS = 3

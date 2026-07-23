@@ -77,7 +77,8 @@ def get_balance():
         base_bal = min(REAL_BALANCE, LIVE_CAPITAL_CAP) if LIVE_CAPITAL_CAP else REAL_BALANCE
         return base_bal + pnl
     try:
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), "r") as f:
+        from core.config import PAPER_STATE_FILE
+        with open(PAPER_STATE_FILE, "r") as f:
             state = json.load(f)
             return float(state.get("balance_usdt", 150.0))
     except:
@@ -116,7 +117,8 @@ def get_fee_overhead(leverage: float = 5.0) -> float:
 def get_total_wallet_balance():
     if PAPER_TRADING:
         try:
-            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_state.json"), 'r') as f:
+            from core.config import PAPER_STATE_FILE
+            with open(PAPER_STATE_FILE, 'r') as f:
                 st = json.load(f)
                 return float(st.get("balance_usdt", 150.0))
         except:
