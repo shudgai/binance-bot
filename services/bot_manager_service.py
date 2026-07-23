@@ -378,21 +378,17 @@ def get_bot_status():
     # 槽位數由本金級距動態決定，狀態頁不可再使用寫死的舊值。
     bot_status["strategy"] = _strategy_label(bot_status.get("balance_quote"))
 
-    # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步
+    # 每次都從 bot_symbols.json 讀取最新幣種清單，確保前端即時同步（100% 依英文首字母 A-Z 排序）
     try:
-        actual_symbols, _ = load_symbol_config()
-        # 強制將藍籌巨頭 (BTC, ETH, BNB) 擺放在 active_symbols 清單的最前面
-        ordered_symbols = []
-        for maj in ("BTCUSDT", "ETHUSDT", "BNBUSDT"):
-            if maj not in ordered_symbols:
-                ordered_symbols.append(maj)
-        for s in (actual_symbols or []):
-            if s not in ordered_symbols:
-                ordered_symbols.append(s)
-
+        symbols_data = load_symbol_config()
+        if isinstance(symbols_data, tuple):
+            symbols_data = symbols_data[0]
+        ordered_symbols = sorted(list(symbols_data or []))
         if ordered_symbols:
             bot_status["watch_symbols"] = ordered_symbols
             bot_status["active_symbols"] = ordered_symbols
+    except Exception:
+        pass
             _prune_entry_diagnoses(ordered_symbols)
         bot_status["disabled_symbols"] = load_disabled_symbols()
         config_path = get_data_file_path("bot_symbols.json")
