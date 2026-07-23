@@ -34,8 +34,9 @@ _web_log_throttle = {}
 ROUTINE_WAIT_LOG_INTERVAL_SEC = 60.0
 _restart_order_cache = {"checked_at": 0.0, "orders": None}
 RESTART_ORDER_CACHE_SEC = 5.0
-from core.config import get_data_file_path
-SYMBOL_CONFIG_PATH = get_data_file_path("bot_symbols.json")
+def _get_symbol_config_path():
+    return get_data_file_path("bot_symbols.json")
+
 BOT_STATE_PATH = get_data_file_path("bot_running_state.json")
 DEFAULT_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
@@ -187,7 +188,7 @@ def _prioritize_trade_pool(symbols, profiles):
 
 def load_symbol_config():
     try:
-        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(_get_symbol_config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             symbols = normalize_symbol_list(data.get("symbols", []))
@@ -205,7 +206,7 @@ def load_symbol_config():
 
 def load_symbol_profiles():
     try:
-        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(_get_symbol_config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             raw_profiles = data.get("profiles", {})
@@ -252,7 +253,7 @@ def _restore_truncated_radar_pool(symbols):
 
 def load_disabled_symbols():
     try:
-        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(_get_symbol_config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return [normalize_symbol(s) for s in data.get("disabled", [])]
@@ -270,7 +271,7 @@ def save_symbol_config(symbols):
         payload["profiles"] = profiles
     if disabled:
         payload["disabled"] = disabled
-    with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
+    with open(_get_symbol_config_path(), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     return normalized
 
@@ -278,7 +279,7 @@ def save_symbol_config(symbols):
 def toggle_coin_disabled(symbol: str) -> dict:
     sym = normalize_symbol(symbol)
     try:
-        with open(SYMBOL_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(_get_symbol_config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
         data = {}
@@ -292,7 +293,7 @@ def toggle_coin_disabled(symbol: str) -> dict:
         disabled.append(sym)
         is_disabled = True
     data["disabled"] = disabled
-    with open(SYMBOL_CONFIG_PATH, "w", encoding="utf-8") as f:
+    with open(_get_symbol_config_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
     bot_status["disabled_symbols"] = disabled
     action = "暫停" if is_disabled else "恢復"
