@@ -70,6 +70,13 @@ def get_paper_trades(symbol: str, paper_key: str):
         except:
             trades = []
 
+    if not trades and os.path.exists(TRADE_HISTORY_FILE):
+        try:
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                trades = json.load(f)
+        except Exception:
+            trades = []
+
     if symbol == "ALL":
         result = list(reversed(trades))[:30]
         _enrich_trades_with_current_price(result, state)
