@@ -628,8 +628,8 @@ def _entry_signal_chase_guard(side, signal_price, order_price, is_first_entry=Tr
         else (signal_price - order_price) / signal_price
     )
 
-    # 首次 MA 進場不因全域 relaxed 模式放寬：避免突破後才追在短線高/低點。
-    max_chase_pct = 0.0015
+    # 首次 MA 進場防追價：限制開倉價不得遠離訊號基準價（預設 0.15%，8007 可拉緊至 0.10%）
+    max_chase_pct = float(os.getenv("MAX_SIGNAL_CHASE_PCT", "0.0015"))
 
     if adverse_chase > max_chase_pct:
         return False, f"signal chase {adverse_chase*100:.3f}% > {max_chase_pct*100:.2f}%"

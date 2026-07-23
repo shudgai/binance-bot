@@ -265,16 +265,26 @@ class BinanceFuturesBot:
                     golden_cross = (prev_row['ema_fast'] <= prev_row['ema_slow']) and (last_row['ema_fast'] > last_row['ema_slow'])
                     death_cross = (prev_row['ema_fast'] >= prev_row['ema_slow']) and (last_row['ema_fast'] < last_row['ema_slow'])
 
+                    # D. 防追高/防價差背離 (限制實時價格離 EMA 快線不得超過 0.10%)
+                    ema_dev = abs(real_time_price - last_row['ema_fast']) / last_row['ema_fast']
+                    deviation_ok = (ema_dev <= 0.0010)
+
                     # 進場執行
                     if aligned_long and rvol_ok and adx_ok and golden_cross and last_row['rsi'] > RSI_BUY_THRESHOLD:
-                        logger.info("🟢 條件全達標：多時框對齊 + 量能OK + 金叉")
-                        amount = self.calculate_order_amount(SYMBOL, TRADE_AMOUNT_USDT, real_time_price)
-                        self.execute_trade(SYMBOL, 'long', amount, real_time_price, atr)
+                        if not deviation_ok:
+                            logger.info(f"⏳ 價格離 5m EMA 偏離過大 ({ema_dev*100:.2f}% > 0.10%)，暫停進場以防高點背離")
+                        else:
+                            logger.info("🟢 條件全達標：多時框對齊 + 量能OK + 金叉 + 價格貼近 EMA")
+                            amount = self.calculate_order_amount(SYMBOL, TRADE_AMOUNT_USDT, real_time_price)
+                            self.execute_trade(SYMBOL, 'long', amount, real_time_price, atr)
 
                     elif aligned_short and rvol_ok and adx_ok and death_cross and last_row['rsi'] < RSI_SELL_THRESHOLD:
-                        logger.info("🔴 條件全達標：多時框對齊 + 量能OK + 死叉")
-                        amount = self.calculate_order_amount(SYMBOL, TRADE_AMOUNT_USDT, real_time_price)
-                        self.execute_trade(SYMBOL, 'short', amount, real_time_price, atr)
+                        if not deviation_ok:
+                            logger.info(f"⏳ 價格離 5m EMA 偏離過大 ({ema_dev*100:.2f}% > 0.10%)，暫停進場以防低點背離")
+                        else:
+                            logger.info("🔴 條件全達標：多時框對齊 + 量能OK + 死叉 + 價格貼近 EMA")
+                            amount = self.calculate_order_amount(SYMBOL, TRADE_AMOUNT_USDT, real_time_price)
+                            self.execute_trade(SYMBOL, 'short', amount, real_time_price, atr)
 
                     elif not rvol_ok:
                         logger.warning(f"⚠️ 跳過：量能不足 (RVOL={last_row['rvol']:.2f})")
