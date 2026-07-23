@@ -1510,6 +1510,14 @@ createApp({
                 const res = await fetch(`${API_BASE}/trades/ALL`);
                 if (res.ok) {
                     const data = await res.json();
+                    const getTradeMs = (t) => {
+                        if (typeof t.time === 'number' && t.time > 0) return t.time;
+                        if (t.timestamp) {
+                            const parsed = Date.parse(t.timestamp.replace(' ', 'T'));
+                            if (!isNaN(parsed)) return parsed;
+                        }
+                        return 0;
+                    };
                     trades.value = data.sort((a, b) => {
                         // 1️⃣ 真實持倉（後端補入）排第一
                         const aPosFlag = a._is_open_position ? 2 : 0;
@@ -1519,8 +1527,8 @@ createApp({
                         const aOpen = !a.is_close ? 1 : 0;
                         const bOpen = !b.is_close ? 1 : 0;
                         if (aOpen !== bOpen) return bOpen - aOpen;
-                        // 3️⃣ 已平倉依時間降冪
-                        return b.time - a.time;
+                        // 3️⃣ 依時間降冪
+                        return getTradeMs(b) - getTradeMs(a);
                     });
                 }
             } catch(e) {}

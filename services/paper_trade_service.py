@@ -71,23 +71,43 @@ def get_paper_trades(symbol: str, paper_key: str):
             trades = []
 
     from core.config import TRADE_HISTORY_FILE
+    import datetime
     if os.path.exists(TRADE_HISTORY_FILE):
         try:
             with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
                 history_trades = json.load(f)
                 existing_times = {t.get("time") for t in trades if t.get("time")}
                 for ht in history_trades:
-                    if ht.get("time") not in existing_times:
-                        trades.append(ht)
+                    t_item = dict(ht)
+                    if "time" not in t_item and t_item.get("timestamp"):
+                        try:
+                            dt = datetime.datetime.strptime(t_item["timestamp"], "%Y-%m-%d %H:%M:%S")
+                            t_item["time"] = int(dt.timestamp() * 1000)
+                        except Exception:
+                            t_item["time"] = 0
+                    if t_item.get("time") not in existing_times:
+                        trades.append(t_item)
         except Exception:
             pass
 
+    # Ensure all trades have a numeric time field
+    for t in trades:
+        if "time" not in t or not t["time"]:
+            if t.get("timestamp"):
+                try:
+                    dt = datetime.datetime.strptime(t["timestamp"], "%Y-%m-%d %H:%M:%S")
+                    t["time"] = int(dt.timestamp() * 1000)
+                except Exception:
+                    t["time"] = 0
+            else:
+                t["time"] = 0
+
     if symbol == "ALL":
-        result = list(reversed(trades))[:50]
+        result = list(reversed(sorted(trades, key=lambda x: int(x.get("time", 0) or 0))))[:50]
         _enrich_trades_with_current_price(result, state)
         return result
     symbol_trades = [t for t in trades if t.get("symbol") in (symbol, paper_key)]
-    result = list(reversed(symbol_trades))[:30]
+    result = list(reversed(sorted(symbol_trades, key=lambda x: int(x.get("time", 0) or 0))))[:30]
     _enrich_trades_with_current_price(result, state)
     return result
 
