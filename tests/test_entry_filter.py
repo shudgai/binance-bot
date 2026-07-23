@@ -84,7 +84,7 @@ class EntryFilterTests(unittest.TestCase):
 
     def test_pullback_rejects_price_deep_below_ma99_buffer(self):
         sym = self._state("buy")
-        STATES[sym]["ma99"] = 103.0
+        STATES[sym]["ma99"] = 107.0
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA25_Pullback", strength=25.0))
 
     def test_adverse_ma25_slope_is_rejected(self):
@@ -149,7 +149,7 @@ class EntryFilterTests(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_insufficient_closed_volume_is_rejected(self):
-        sym = self._state("buy", volume=400.0)
+        sym = self._state("buy", volume=300.0)
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
 
     def test_bad_opposing_wick_is_rejected(self):
@@ -168,21 +168,27 @@ class EntryFilterTests(unittest.TestCase):
 
         # Body is 101.0 - 100.5 = 0.5.
         # Opposing (upper) wick is 102.1 - 101.0 = 1.1.
-        # Ratio = 1.1 / 0.5 = 2.2x. (Should pass for MA25_Pullback [<=2.5x] but fail for MA_Cross [<=1.8x])
+        # Ratio = 1.1 / 0.5 = 2.2x. (Should pass everywhere since it is <= 2.5x)
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.1, 100.2, 101.0, 1300.0]
+        self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA_Cross"))
+        self.assertTrue(is_entry_pin_safe(sym, "buy"))  # default to 2.5x
+        self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
+
+        # Ratio = 1.3 / 0.5 = 2.6x. (Should fail for MA_Cross [<=2.5x] and default [<=2.5x], but pass for MA25_Pullback [<=3.5x])
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.3, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA_Cross"))
-        self.assertFalse(is_entry_pin_safe(sym, "buy"))  # default to 1.8x
+        self.assertFalse(is_entry_pin_safe(sym, "buy"))
         self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
 
         # Body is 101.0 - 100.5 = 0.5.
-        # Opposing (upper) wick is 102.4 - 101.0 = 1.4.
-        # Ratio = 1.4 / 0.5 = 2.8x. Pullback仍拒絕，但 MA7_Simple 視為正常轉折震盪。
-        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.4, 100.2, 101.0, 1300.0]
+        # Opposing (upper) wick is 102.9 - 101.0 = 1.9.
+        # Ratio = 1.9 / 0.5 = 3.8x. Pullback仍拒絕(>3.5x)，但 MA7_Simple(<=4.5x) 視為正常轉折震盪。
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.9, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA25_Pullback"))
         self.assertTrue(is_entry_pin_safe(sym, "buy", route="MA7_Simple"))
 
-        # 3.6x 已是極端反向影線，MA7_Simple 仍必須拒絕。
-        STATES[sym]["ohlcv"][-2] = [1, 100.5, 102.8, 100.2, 101.0, 1300.0]
+        # 4.8x 已是極端反向影線，MA7_Simple 仍必須拒絕(>4.5x)。
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 103.4, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "buy", route="MA7_Simple"))
 
     def test_ma7_simple_short_uses_symmetric_relaxed_wick_limit(self):
@@ -190,7 +196,8 @@ class EntryFilterTests(unittest.TestCase):
         # body=0.5、下影線=1.4，2.8x 應放行；1.8 則為 3.6x，仍拒絕。
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 100.6, 98.6, 100.0, 1300.0]
         self.assertTrue(is_entry_pin_safe(sym, "sell", route="MA7_Simple"))
-        STATES[sym]["ohlcv"][-2] = [1, 100.5, 100.6, 98.2, 100.0, 1300.0]
+        # body=0.5、下影線=2.8，5.6x > 4.5x，拒絕。
+        STATES[sym]["ohlcv"][-2] = [1, 100.5, 100.6, 97.2, 100.0, 1300.0]
         self.assertFalse(is_entry_pin_safe(sym, "sell", route="MA7_Simple"))
 
     def test_final_filter_records_opposing_wick_reason(self):
@@ -198,7 +205,7 @@ class EntryFilterTests(unittest.TestCase):
         STATES[sym]["ohlcv"][-2] = [1, 100.5, 105.0, 100.2, 101.0, 1300.0]
         self.assertFalse(is_entry_allowed(sym, "buy", route="MA_Cross", strength=25.0))
         self.assertIn("反向影線", STATES[sym]["entry_block_reason"])
-        self.assertIn("8.00x > 1.8x", STATES[sym]["entry_block_reason"])
+        self.assertIn("8.00x > 2.5x", STATES[sym]["entry_block_reason"])
 
 
     def test_disabled_btc_macro_guard_allows_alt_to_follow_local_signal(self):

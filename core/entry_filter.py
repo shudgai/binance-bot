@@ -93,9 +93,9 @@ def is_ma_direction_aligned(state, side, route=None):
         return ma7 < prev_ma7 and closed_price <= (ma99 * 1.15) and adx_not_spiking
     if side == "buy":
         # MA25_Pullback / MA_Breakout：不強求完整牛市排列（MA25>MA99），
-        # 只要 MA7>MA25、斜率向上，且收盤與 MA25 均在 MA99 的 98% 緩衝帶以上即可。
+        # 只要 MA7>MA25、斜率向上，且收盤與 MA25 均在 MA99 的 95% 緩衝帶以上即可。
         # 這樣允許剛突破 MA99、MA25 還未完全站上的情況進場，同時仍擋住深度跌破 MA99 的假訊號。
-        ma99_buffer = ma99 * 0.98
+        ma99_buffer = ma99 * 0.95
         return (ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
                 and closed_price > ma99_buffer and ma25 > ma99_buffer)
     if side == "sell":
@@ -132,24 +132,24 @@ def is_entry_volume_confirmed(sym, side, route=None):
     from core.config import STRICT_ENTRY_SYMBOLS
     if sym not in STRICT_ENTRY_SYMBOLS:
         if route == "MA_Cross":
-            required = 0.25
-        elif route == "MA_Breakout":
-            required = 0.40
-        elif route in RANGE_ENTRY_ROUTES:
-            required = 0.30
-        else:
             required = 0.20
+        elif route == "MA_Breakout":
+            required = 0.30
+        elif route in RANGE_ENTRY_ROUTES:
+            required = 0.20
+        else:
+            required = 0.15
         return closed_volume >= vol_ma20 * required
     # 與 signal_engine.py 的路由門檻一致；送單前再以已收線量能複核，
     # 避免弱量轉折或突破只靠高基礎分數穿透最後一道品質檢查。
     if route == "MA_Cross":
-        required = 0.45   # 與 MA_Cross 最低有效已收線量一致
+        required = 0.35   # 與 MA_Cross 最低有效已收線量一致
     elif route == "MA_Breakout":
-        required = 1.04   # 非核心幣突破量需達 0.8x * 1.3
+        required = 0.80   # 非核心幣突破量需達 0.8x
     elif route in RANGE_ENTRY_ROUTES:
-        required = 0.30   # 大幅放寬區間模式門檻，允許量縮支撐開倉
+        required = 0.20   # 大幅放寬區間模式門檻，允許量縮支撐開倉
     else:
-        required = 0.80   # MA7_Simple / MA25_Pullback 不再用弱量豁免
+        required = 0.50   # MA7_Simple / MA25_Pullback 不再用弱量豁免
     return closed_volume >= vol_ma20 * required
 
 
@@ -167,10 +167,10 @@ def _opposing_wick_ratio(sym, side):
 def _entry_wick_multiplier(route):
     route_key = str(route or "").lower()
     if route_key == "ma7_simple":
-        return 3.5
+        return 4.5
     if route_key == "ma25_pullback":
-        return 2.5
-    return 1.8
+        return 3.5
+    return 2.5
 
 
 def is_valid_candle(sym, side, wick_multiplier=1.8):

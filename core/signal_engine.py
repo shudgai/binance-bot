@@ -169,15 +169,15 @@ def compute_signal_strength(sym, realtime_trigger=False):
         # 做空時 RSI < 52 表示已在下跌中途（超賣風險高），不跟進
         # 做多時 RSI > 65 表示已在上漲中途（超買風險高），不跟進
         # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
-        MA7_SIMPLE_SHORT_RSI_FLOOR = 25.0   # 下修做空最低 RSI 要求，但不低於 25 避免極度超賣追空
-        MA7_SIMPLE_LONG_RSI_CEIL   = 75.0   # 做多最高 RSI 要求
+        MA7_SIMPLE_SHORT_RSI_FLOOR = 20.0   # 重新放寬做空最低 RSI 要求，允許在極度跌勢中追空
+        MA7_SIMPLE_LONG_RSI_CEIL   = 80.0   # 做多最高 RSI 要求放寬至 80
 
         # 規則 2：15m RSI 多時間框架確認
         rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
-        MTF_RSI_SHORT_FLOOR = 40.0  # 15m RSI 防超賣地板
-        MTF_RSI_SHORT_CEIL  = 50.0  # 15m RSI 防逆勢天花板（大於 50 偏多不追空）
-        MTF_RSI_LONG_CEIL   = 70.0  # 15m RSI 防超買天花板
-        MTF_RSI_LONG_FLOOR  = 50.0  # 15m RSI 防逆勢地板（小於 50 偏空不追多）
+        MTF_RSI_SHORT_FLOOR = 35.0  # 15m RSI 防超賣地板放寬
+        MTF_RSI_SHORT_CEIL  = 55.0  # 15m RSI 防逆勢天花板放寬
+        MTF_RSI_LONG_CEIL   = 75.0  # 15m RSI 防超買天花板放寬
+        MTF_RSI_LONG_FLOOR  = 45.0  # 15m RSI 防逆勢地板放寬
 
         # 放寬 MA7_Simple 的專屬 RVOL 要求 (>= 0.3x)，並調整斜率只要由負轉正 (>0) 即認定觸發
         ma7_simple_volume_ok = volume_ratio >= 0.30

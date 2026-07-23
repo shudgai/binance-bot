@@ -511,7 +511,7 @@ class DynamicExitManager:
         self.is_long = is_long
 
         # 配置參數
-        self.profit_threshold = 0.30        # 至少覆蓋來回費用與一般市場雜訊後才啟動
+        self.profit_threshold = 0.15        # 只要利潤 > 0.15% 就啟動高位盤整防護
         self.stagnation_range = 0.0005       # 盤整區間 (0.05%)
         self.no_high_time_limit = 60         # 盤整判定時間 (60秒內沒創新高)
 
