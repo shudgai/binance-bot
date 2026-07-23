@@ -34,6 +34,8 @@ _web_log_throttle = {}
 ROUTINE_WAIT_LOG_INTERVAL_SEC = 60.0
 _restart_order_cache = {"checked_at": 0.0, "orders": None}
 RESTART_ORDER_CACHE_SEC = 5.0
+from core.config import get_data_file_path
+
 def _get_symbol_config_path():
     return get_data_file_path("bot_symbols.json")
 
