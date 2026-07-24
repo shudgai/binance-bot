@@ -2,8 +2,8 @@
 # start_8007.sh — Launch Port 8007 High-Frequency Scalping Bot + API Server
 BIN=/home/shudgai999/project/binance-bot/.venv/bin
 
-export ENTRY_STRICTNESS_MODE="strict"
-export MIN_TREND_ADX="20.0"
+export ENTRY_STRICTNESS_MODE="relaxed"
+export MIN_TREND_ADX="15.0"
 export MAX_SIGNAL_CHASE_PCT="0.0010"
 export SCALP_MODE="true"
 export SCALP_TP1_PCT="0.0025"
