@@ -342,10 +342,15 @@ def api_get_trades(symbol: str):
             # 儀表板只需本機已記錄的成交與目前持倉；不再為每個歷史幣種逐一呼叫
             # futures_account_trades，避免單次刷新累積數十個高權重請求。
             raw_trades = _get_real_trades()
-            from services.binance_service import _get_pnl_baseline_start_ms
-            baseline_ms = _get_pnl_baseline_start_ms()
-            if baseline_ms > 0:
-                raw_trades = [t for t in raw_trades if int(t.get("time", 0) or 0) >= baseline_ms]
+            try:
+                from services.binance_service import _get_pnl_baseline_start_ms
+                baseline_ms = _get_pnl_baseline_start_ms()
+                if baseline_ms > 0:
+                    filtered = [t for t in raw_trades if int(t.get("time", 0) or 0) >= baseline_ms]
+                    if filtered:
+                        raw_trades = filtered
+            except Exception:
+                pass
             trades = raw_trades[-100:]
             open_positions = get_all_positions()
             now_ms = int(time.time() * 1000)
