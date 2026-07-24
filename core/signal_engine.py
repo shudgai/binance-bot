@@ -14,8 +14,8 @@ CORE_LIQUID_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
 
 def _ma_base_volume_limit(sym, atr_pct):
     if atr_pct > 5.0:
-        return 1.0
-    return 0.70 if sym in CORE_LIQUID_SYMBOLS else 0.80
+        return 0.8
+    return 0.50 if sym in CORE_LIQUID_SYMBOLS else 0.55
 
 
 def compute_signal_strength(sym, realtime_trigger=False):

@@ -92,10 +92,10 @@ RANGE_ADX_THRESHOLD = 60.0          # ADX < 此值才視為區間行情（放寬
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
-RANGE_MIN_NET_PROFIT_PCT = 0.0003   # 一般幣種淨空間門檻（放寬至 0.03%）
+RANGE_MIN_NET_PROFIT_PCT = -0.0005  # 一般幣種淨空間門檻（放寬至 -0.05%）
 STRICT_ENTRY_SYMBOLS = frozenset({"ETHUSDT", "XRPUSDT"})
-STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.001  # ETH/XRP 窄區間防掃損門檻（放寬至 0.1%）
-RANGE_MIN_RR = 1.0                 # 區間單最低盈虧比要求（放寬至 1.0）
+STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.0005 # ETH/XRP 窄區間防掃損門檻（放寬至 0.05%）
+RANGE_MIN_RR = 0.7                 # 區間單最低盈虧比要求（放寬至 0.7）
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
 RANGE_MIN_SIGNAL_STRENGTH = 10.0    # 最低信號強度（放寬至 10.0）
 # ─────────────────────────────────────────────────────────────────────────────
