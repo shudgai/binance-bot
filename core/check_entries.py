@@ -1036,6 +1036,14 @@ async def check_entries():
             if price_diff_pct < 0.003 and side != last_entry_dir:
                 logger.info(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
                 continue
+            
+            # --- 停損同價位防重複進場 (Stop Loss Zone Lock) ---
+            last_exit = s.get("last_exit_reason", "")
+            is_last_stop_loss = any(tag in last_exit for tag in ("Stop", "Loss", "Trailing", "Momentum_Fade"))
+            if is_last_stop_loss and side == last_entry_dir:
+                if price_diff_pct < 0.005:
+                    logger.info(f"🛑 [Filter:StopLossZone] {sym} 欲 {side}，但上次停損出場，現價 {p:.4f} 距離上次停損進場價 {last_entry_price:.4f} 誤差小於 0.5% ({price_diff_pct*100:.2f}%)，拒絕重複被洗！")
+                    continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter)：只對 MA 路由做 ATR RR 計算 ---
         if not is_range_signal:
