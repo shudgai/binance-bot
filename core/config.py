@@ -88,16 +88,16 @@ DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，�
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
 RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
-RANGE_ADX_THRESHOLD = 60.0          # ADX < 此值才視為區間行情（放寬至 60.0）
+RANGE_ADX_THRESHOLD = 65.0          # ADX < 此值才視為區間行情（極度放寬至 65.0）
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
-RANGE_MIN_NET_PROFIT_PCT = -0.0005  # 一般幣種淨空間門檻（放寬至 -0.05%）
+RANGE_MIN_NET_PROFIT_PCT = -0.0020  # 一般幣種淨空間門檻（極度放寬至 -0.2%）
 STRICT_ENTRY_SYMBOLS = frozenset({"ETHUSDT", "XRPUSDT"})
-STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.0005 # ETH/XRP 窄區間防掃損門檻（放寬至 0.05%）
-RANGE_MIN_RR = 0.7                 # 區間單最低盈虧比要求（放寬至 0.7）
+STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.0002 # ETH/XRP 窄區間防掃損門檻（放寬至 0.02%）
+RANGE_MIN_RR = 0.4                 # 區間單最低盈虧比要求（極度放寬至 0.4）
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
-RANGE_MIN_SIGNAL_STRENGTH = 10.0    # 最低信號強度（放寬至 10.0）
+RANGE_MIN_SIGNAL_STRENGTH = 8.0     # 最低信號強度（極度放寬至 8.0）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -160,7 +160,7 @@ def get_symbol_leverage(sym):
     return DEFAULT_LEVERAGE
 
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 0.45  # 放寬量能門檻至 0.45x
+VOLUME_RATIO_THRESHOLD = 0.40  # 極度放寬量能門檻至 0.40x
 ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 19
 ATR_WARMUP_LIMIT = 1000
@@ -264,7 +264,7 @@ TREND_PERSISTENCE_WINDOW  = 300
 PRICE_MOVEMENT_THRESHOLD  = 0.0015
 
 # Entry & Radar Thresholds
-ENTRY_SURGE_THRESHOLD = float(os.getenv("ENTRY_SURGE_THRESHOLD", 0.5))  # 統一 0.50x（原 0.70x）
+ENTRY_SURGE_THRESHOLD = float(os.getenv("ENTRY_SURGE_THRESHOLD", 0.2))  # 統一 0.20x（原 0.70x）
 # MA7／MA25 交叉後至少要拉開 0.005%，避免均線仍黏合時把一次跳動誤認成方向成立。
 MA_CROSS_MIN_GAP_PCT = float(os.getenv("MA_CROSS_MIN_GAP_PCT", 0.00005))
 MIN_ATR_PCT_FOR_ENTRY = float(os.getenv("MIN_ATR_PCT_FOR_ENTRY", 0.3))   # 下修至 0.3%，放行 BTC/ETH/BNB 穩健藍籌資產
