@@ -797,13 +797,23 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
         # 現價、瞬間誤砍，實測驗證過 0.20% 有安全空間）。回吐容忍度不再是固定值，改
         # 回吐容忍度依 ATR 波動環境調整，避免依賴已移除的 MACD 交易規則。
         # Soft Trailing 啟動門檻拉高至 0.45%，給予利潤足夠的奔跑與震盪空間
-        if GENERIC_TRAILING_ARM_PCT <= _hp_soft:
+        # [2026-07-24 修正] Range 模式的峰值通常只有 0.25%~0.5%（區間本身空間有限），
+        # 沿用跟其他路線一樣的 0.45% 啟動門檻，等於峰值常常還沒到門檻就已經開始回落，
+        # 這段完全沒有保護（實測 UNI 峰值 0.37%、ZEC 峰值 0.29% 都低於 0.45%，完全沒
+        # 武裝任何移動停利，最後從峰值直接反轉成真虧損）。Range 路線改用跟
+        # check_exits() 一致的 0.25% 啟動門檻，回吐容忍度也同步收緊到 0.10%~0.20%
+        # （原 0.20%~0.40% 對只有 0.3% 左右峰值的區間單來說太寬，等於允許吐光大半）。
+        _range_arm_pct = RANGE_TRAILING_MIN_GROSS_PCT if is_range_route else GENERIC_TRAILING_ARM_PCT
+        if _range_arm_pct <= _hp_soft:
             # ── 動態緩衝區 (Dynamic ATR Buffer) ──
             # 根據當前幣種的 ATR% (ATR / 現價) 動態調整回撤緩衝比例。
             # 波動劇烈時自動放寬從 0.2% 至 0.4% (1.2 * ATR_PCT)，避免被「毛刺」洗出場；
             # 平緩市場維持 0.2% 緊密護航。
             _atr_pct = (atr_val / current_price) if current_price > 0 else 0.002
-            _soft_tolerance = max(0.0020, min(0.0040, _atr_pct * 1.2))
+            if is_range_route:
+                _soft_tolerance = max(0.0010, min(0.0020, _atr_pct * 0.8))
+            else:
+                _soft_tolerance = max(0.0020, min(0.0040, _atr_pct * 1.2))
                 
             # 保本低限：進場價 + 雙邊費用 + 0.05% 安全微利
             _soft_floor = avg_price * (1.0 + ROUND_TRIP_FEE_PCT + 0.0005)
@@ -864,6 +874,17 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
             s["trailing_stop_price"] = new_sl
             logger.info(f"🛡️ [Trailing_SL] {sym} 移動止損上移至 {new_sl:.4f} (獲利倍數: {profit_atr_multiple:.1f}x ATR)")
 
+        # Range 模式的結構停損 (range_sl_price) 進場後就固定在支撐帶外緣，不會隨
+        # 移動停利/保本鎖上移；check_exits() 卻優先檢查 range_sl_price 是否被觸及，
+        # 導致獲利鎖已經生效（trailing_stop_price 墊高到保本以上），價格一旦快速
+        # 反轉，卻先撞上還停在原地的、更寬的結構停損，實際成交在比鎖利點差很多的
+        # 價位（實測 ZEC/UNI 案例：峰值 0.29%/0.37%，最終卻是 -0.23%/-0.60%）。
+        # 這裡讓結構停損跟著移動停利一起收緊，兩者取較保護的一個。
+        if is_range_route:
+            _range_sl = float(s.get("range_sl_price", 0.0) or 0.0)
+            if _range_sl > 0 and s["trailing_stop_price"] > _range_sl:
+                s["range_sl_price"] = s["trailing_stop_price"]
+
     else:
         if current_price < s.get("trailing_lowest", float('inf')):
             s["trailing_lowest"] = current_price
@@ -875,12 +896,17 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
         if _linear_trail_candidate is not None:
             trail_sl = min(trail_sl, _linear_trail_candidate)
 
-        # 空單對稱版：Soft Trailing 啟動門檻拉高至 0.45%
-        if GENERIC_TRAILING_ARM_PCT <= _hp_soft:
+        # 空單對稱版：Soft Trailing 啟動門檻拉高至 0.45%；Range 模式峰值通常較小，
+        # 改用跟 check_exits() 一致的 0.25% 啟動門檻與更緊的回吐容忍度（理由同多單分支）。
+        _range_arm_pct = RANGE_TRAILING_MIN_GROSS_PCT if is_range_route else GENERIC_TRAILING_ARM_PCT
+        if _range_arm_pct <= _hp_soft:
             atr_history_v = s.get("atr_history", [])
             atr_24h_avg_v = float(np.mean(atr_history_v)) if len(atr_history_v) > 0 else 0.0
             is_low_vol_exit = atr_val <= atr_24h_avg_v if atr_24h_avg_v > 0 else False
-            _soft_tolerance = 0.0020 if is_low_vol_exit else 0.0012
+            if is_range_route:
+                _soft_tolerance = 0.0010 if is_low_vol_exit else 0.0006
+            else:
+                _soft_tolerance = 0.0020 if is_low_vol_exit else 0.0012
 
             # 保本高限：進場價 - 雙邊費用 - 0.05% 安全微利
             _soft_ceiling = avg_price * (1.0 - ROUND_TRIP_FEE_PCT - 0.0005)
@@ -936,6 +962,12 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
         if s["trailing_stop_price"] == 0.0 or new_sl < s["trailing_stop_price"]:
             s["trailing_stop_price"] = new_sl
             logger.info(f"🛡️ [Trailing_SL] {sym} 移動止損下移至 {new_sl:.4f} (獲利倍數: {profit_atr_multiple:.1f}x ATR)")
+
+        # Range 模式結構停損同步收緊（空單對稱版），理由同多單分支說明。
+        if is_range_route:
+            _range_sl = float(s.get("range_sl_price", 0.0) or 0.0)
+            if _range_sl > 0 and s["trailing_stop_price"] < _range_sl:
+                s["range_sl_price"] = s["trailing_stop_price"]
 
     return False, s["trailing_stop_price"]
 

@@ -29,10 +29,8 @@ PORT = _detect_port()
 PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
 
 def _detect_paper_trading():
-    port = _detect_port()
-    # Port 8005 為純紙上模擬交易 (Paper Trading)，Port 8007 為幣安測試網 (Binance Demo Trading)
-    if port == "8005":
-        return True
+    # 8005 也是接幣安 Testnet 的真實下單帳戶，不是純模擬；只有沒設定/放預留位置
+    # 字串的 key 才視為紙上模擬。不能用 port 號硬性判斷，8005/8007 都可能是真實 key。
     key = os.getenv("BINANCE_API_KEY", "").strip()
     return _is_placeholder_key(key)
 
@@ -88,7 +86,9 @@ DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，�
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
 RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
-RANGE_ADX_THRESHOLD = 35.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）
+RANGE_ADX_THRESHOLD = 45.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）；
+                                     # 適度放寬（原35.0），但不比照 8007 一度放到 65（那導致
+                                     # 假支撐/假突破機率大增，經比對已確認是問題根源之一）。
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
@@ -97,7 +97,7 @@ STRICT_ENTRY_SYMBOLS = frozenset({"ETHUSDT", "XRPUSDT"})
 STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.004  # ETH/XRP 保留窄區間防掃損修正
 RANGE_MIN_RR = 1.5                 # 區間單最終成交後至少維持 1.5:1 盈虧比
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
-RANGE_MIN_SIGNAL_STRENGTH = 18.0    # 模式 A：區間模式最低信號強度 18.0（高品質過濾）
+RANGE_MIN_SIGNAL_STRENGTH = 14.0    # 適度放寬（原18.0），保留基本品質過濾，不比照 8007 的 8.0
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -250,7 +250,7 @@ HARD_STOP_LOSS_PCT = float(os.getenv("HARD_STOP_LOSS_PCT", "0.035"))
 SCALP_MODE = os.getenv("SCALP_MODE", "false").lower() in ("true", "1", "yes")
 SCALP_TP1_PCT = float(os.getenv("SCALP_TP1_PCT", "0.005"))
 SCALP_TP2_PCT = float(os.getenv("SCALP_TP2_PCT", "0.010"))
-MIN_TREND_ADX = float(os.getenv("MIN_TREND_ADX", "18.0"))
+MIN_TREND_ADX = float(os.getenv("MIN_TREND_ADX", "15.0"))  # 適度放寬（原18.0），讓 MA 趨勢路線能提早跟上剛成形的趨勢
 EXIT_RR_MULTIPLIER = 2.5
 
 MIN_PROFIT_LOCK_THRESHOLD = 0.008

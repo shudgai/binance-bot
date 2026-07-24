@@ -368,7 +368,7 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_range_signal_rejects_high_adx_before_becoming_candidate(self):
         sym = self._setup_range_signal_state([20, 99.0, 99.4, 98.9, 99.2, 1000.0])
-        STATES[sym]["adx"] = 40.0
+        STATES[sym]["adx"] = 50.0  # 高於放寬後的 RANGE_ADX_THRESHOLD (45.0)
         with patch("core.signal_engine._find_horizontal_zones", return_value=(99.0, 103.0)):
             self.assertEqual(compute_range_signal(sym), (None, 0, None))
         self.assertIn("改由 MA", STATES[sym]["entry_block_reason"])
