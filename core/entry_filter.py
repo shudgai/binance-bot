@@ -90,26 +90,15 @@ def is_ma_direction_aligned(state, side, route=None):
         adx_not_spiking = (adx - prev_adx) <= 20.0
         atr = float(state.get("current_atr", 0.0) or 0.0)
         extension_limit = max(closed_price * 0.0035, atr * 1.5)
-        from core.config import PORT
         if side == "buy":
-            # 做多：MA7 向上，且價格高於 MA99 趨勢護城河（大方向做多）
-            if PORT == "8005":
-                candle_green = len(candles) >= 2 and float(candles[-2][4]) >= float(candles[-2][1])
-                return (ma7 > prev_ma7 and closed_price >= (ma99 * 0.985)
-                        and closed_price >= (ma25 * 0.998) and candle_green and adx_not_spiking)
-            return (ma7 > prev_ma7 and ma7 >= ma25 and ma25 >= prev_ma25
-                    and closed_price >= (ma99 * 0.985)
-                    and 0.0 <= closed_price - ma25 <= extension_limit
-                    and adx_not_spiking)
-        # 做空：MA7 向下，允許高達 MA99 +15% 的頂部空間（強勢趨勢後高位轉折做空）
-        if PORT == "8005":
-            candle_red = len(candles) >= 2 and float(candles[-2][4]) <= float(candles[-2][1])
-            return (ma7 < prev_ma7 and closed_price <= (ma99 * 1.15)
-                    and closed_price <= (ma25 * 1.002) and candle_red and adx_not_spiking)
-        return (ma7 < prev_ma7 and ma7 <= ma25 and ma25 <= prev_ma25
-                and closed_price <= (ma99 * 1.15)
-                and 0.0 <= ma25 - closed_price <= extension_limit
-                and adx_not_spiking)
+            # 做多：MA7 向上，且價格高於 MA99 趨勢護城河（大方向做多），前一根為陽線確認反彈
+            candle_green = len(candles) >= 2 and float(candles[-2][4]) >= float(candles[-2][1])
+            return (ma7 > prev_ma7 and closed_price >= (ma99 * 0.985)
+                    and closed_price >= (ma25 * 0.998) and candle_green and adx_not_spiking)
+        # 做空：MA7 向下，允許高達 MA99 +15% 的頂部空間，前一根為陰線確認反轉
+        candle_red = len(candles) >= 2 and float(candles[-2][4]) <= float(candles[-2][1])
+        return (ma7 < prev_ma7 and closed_price <= (ma99 * 1.15)
+                and closed_price <= (ma25 * 1.002) and candle_red and adx_not_spiking)
     if side == "buy":
         # MA25_Pullback / MA_Breakout：不強求完整牛市排列（MA25>MA99），
         # 只要 MA7>MA25、斜率向上，且收盤與 MA25 均在 MA99 的 95% 緩衝帶以上即可。
