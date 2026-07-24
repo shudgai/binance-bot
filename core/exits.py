@@ -1310,17 +1310,25 @@ async def check_exits(sym):
                 return
 
     # --- [新增] 動態退出管理器 (Dynamic Exit Manager) ---
-    if "dynamic_exit_manager" not in s:
-        s["dynamic_exit_manager"] = DynamicExitManager(avg, restored_peak_pct=s.get("highest_profit_pct", 0.0) * 100, is_long=is_long)
-    
-    manager = s["dynamic_exit_manager"]
-    # 啟用 DynamicExitManager，滿足使用者「入袋為安、盤整就在高點停利」的需求。
-    exit_signal = manager.update(p)
-    if exit_signal == "SELL":
-        cs = 'sell' if is_long else 'buy'
-        logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
-        await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
-        return
+    # [2026-07-24 修正] DynamicExitManager 跟下面的 Stagnation_Timeout 本質上是同一種
+    # 「太久沒進展就出場」邏輯，卻各自獨立在跑、門檻也不一致（這裡 180 秒沒創新高、
+    # Stagnation_Timeout 是幾十分鐘等級、依峰值分層給更多耐心）。兩個同時跑，哪個先
+    # 觸發就算哪個，DynamicExitManager 這條線比較敏感，常常在行情只是短暫小回檔、
+    # 其實還會繼續朝有利方向延伸時就搶先出場，錯過後面那一段——實測反映「明明價格
+    # 還在往有益方向跑，卻太快平倉」正是這個原因。只有 MA7_Simple 路線的
+    # Stagnation_Timeout 自己排除在外（見下方 `_ma7_turn_managed`），所以只留給
+    # MA7_Simple 用；其他路線一律交給 Stagnation_Timeout 那套更有耐心的分層邏輯。
+    if route == "ma7_simple":
+        if "dynamic_exit_manager" not in s:
+            s["dynamic_exit_manager"] = DynamicExitManager(avg, restored_peak_pct=s.get("highest_profit_pct", 0.0) * 100, is_long=is_long)
+
+        manager = s["dynamic_exit_manager"]
+        exit_signal = manager.update(p)
+        if exit_signal == "SELL":
+            cs = 'sell' if is_long else 'buy'
+            logger.info(f"🎯 [Dynamic_Exit_Trigger] {sym} 觸發動態退出機制 (耐心極限/盤整/回落)，執行平倉")
+            await close_position(sym, cs, abs(s["qty"]), p, avg, reason="[Dynamic_Exit_Manager]", is_stop_loss=False)
+            return
 
     # --- [新增] 極速止損 (Fast-Exit Guard / Instant Trap) ---
     # 檢查開倉後 60 秒內的「瞬間陷阱」

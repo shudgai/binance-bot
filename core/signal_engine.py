@@ -210,10 +210,19 @@ def compute_signal_strength(sym, realtime_trigger=False):
         ma7_simple_gap_ok = ma7_ma25_gap_pct >= 0.0008
         adx_trend_ok = adx >= 22.0
 
+        # MA25 逆勢豁免：MA25 尚未跟上剛啟動的趨勢時，只要量能真的夠大（>=1.0x 均量，
+        # 比一般路線的 0.25x/0.40x 高出許多），仍允許 MA7_Simple 進場，但視為逆勢單，
+        # 進場後 strength 評分會扣分（排序靠後、非首選訊號）。
+        MA7_SIMPLE_COUNTER_TREND_VOLUME = max(1.0, base_limit * 1.5)
+        counter_trend_volume_ok_long = volume_ratio >= MA7_SIMPLE_COUNTER_TREND_VOLUME
+        counter_trend_volume_ok_short = volume_ratio >= MA7_SIMPLE_COUNTER_TREND_VOLUME
+        ma25_long_gate_ok = ma25_not_against_long or counter_trend_volume_ok_long
+        ma25_short_gate_ok = ma25_not_against_short or counter_trend_volume_ok_short
+
         # MA7 谷底轉折向上：當 MA7 勾頭向上、RVOL >= 0.3x 即允許開倉做多
         if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
                 and ma7_simple_volume_ok and current_rsi < 82.0
-                and ma7 >= ma25 and ma25_not_against_long and ma25_long_extension_ok
+                and ma7 >= ma25 and ma25_long_gate_ok and ma25_long_extension_ok
                 and adx_not_spiking and adx_trend_ok and ma7_simple_gap_ok):
             # 規則 1：已超買則不追多
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
@@ -228,15 +237,18 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
             else:
                 side, route = "buy", "MA7_Simple"
-                reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "")
+                is_counter_trend = not ma25_not_against_long
+                reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "") + (" [MA25逆勢-高量確認]" if is_counter_trend else "")
                 s["ma_signal_candle_ts"] = signal_ts
                 logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] buy | {reason}")
                 volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
                 strength = 25.0 + volume_adjustment
+                if is_counter_trend:
+                    strength -= 5.0
                 return (side, strength, route)
         # MA7 頭部轉折向下：在 MA7 一向下勾且 RVOL >= 0.3x 時即刻開倉做空
         elif (turn_down and ma7_simple_volume_ok and current_rsi > 18.0
-                and ma7 <= ma25 and ma25_not_against_short and ma25_short_extension_ok
+                and ma7 <= ma25 and ma25_short_gate_ok and ma25_short_extension_ok
                 and adx_not_spiking and adx_trend_ok and ma7_simple_gap_ok):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
@@ -251,21 +263,26 @@ def compute_signal_strength(sym, realtime_trigger=False):
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
             else:
                 side, route = "sell", "MA7_Simple"
-                reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "")
+                is_counter_trend = not ma25_not_against_short
+                reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "") + (" [MA25逆勢-高量確認]" if is_counter_trend else "")
                 s["ma_signal_candle_ts"] = signal_ts
                 logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] sell | {reason}")
                 # 空單採對稱評分：弱量仍可觀察，但排序必須低於有量轉折。
                 volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
                 strength = 25.0 + volume_adjustment
+                if is_counter_trend:
+                    strength -= 5.0
                 return (side, strength, route)
 
-        if turn_up and not ma25_not_against_long:
-            reason = "MA7 雖向上勾，但 MA25 中期趨勢仍下彎，拒絕逆勢做多"
+        if turn_up and not ma25_not_against_long and not counter_trend_volume_ok_long:
+            reason = (f"MA7 雖向上勾，但 MA25 中期趨勢仍下彎且量能不足"
+                      f"（RVOL={volume_ratio:.2f}x < {MA7_SIMPLE_COUNTER_TREND_VOLUME:.2f}x），拒絕逆勢做多")
         elif turn_up and ma25_long_extension > ma25_extension_limit:
             reason = (f"MA7 向上勾但價格高於 MA25 {ma25_long_extension/ma25*100:.2f}% "
                       f"> 允許 {ma25_extension_limit/ma25*100:.2f}%，反彈末端不追多")
-        elif turn_down and not ma25_not_against_short:
-            reason = "MA7 雖向下勾，但 MA25 中期趨勢仍上揚，拒絕逆勢做空"
+        elif turn_down and not ma25_not_against_short and not counter_trend_volume_ok_short:
+            reason = (f"MA7 雖向下勾，但 MA25 中期趨勢仍上揚且量能不足"
+                      f"（RVOL={volume_ratio:.2f}x < {MA7_SIMPLE_COUNTER_TREND_VOLUME:.2f}x），拒絕逆勢做空")
         elif turn_down and ma25_short_extension > ma25_extension_limit:
             reason = (f"MA7 向下勾但價格低於 MA25 {ma25_short_extension/ma25*100:.2f}% "
                       f"> 允許 {ma25_extension_limit/ma25*100:.2f}%，下跌末端不追空")

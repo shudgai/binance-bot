@@ -147,7 +147,10 @@
       "Bash(.venv/bin/python3 -m pytest tests/test_entry_risk.py::EntryRiskTests::test_btc_range_short_stop_keeps_room_from_actual_entry tests/test_entry_risk.py::EntryRiskTests::test_ma_exchange_stop_is_symmetric_for_short tests/test_entry_risk.py::EntryRiskTests::test_ma_exchange_stop_promotes_confirmed_profit_floor tests/test_radar_symbol_selection.py::test_entry_slots_follow_capital_tiers -q)",
       "Bash(.venv/bin/python3 -m pytest tests/test_entry_risk.py::EntryRiskTests::test_ma_exchange_stop_is_symmetric_for_short tests/test_entry_risk.py::EntryRiskTests::test_ma_exchange_stop_promotes_confirmed_profit_floor -q)",
       "Bash(.venv/bin/python3 -m pytest tests/test_radar_symbol_selection.py::test_entry_slots_follow_capital_tiers -q)",
-      "Bash(.venv/bin/python3 -m pytest -q)"
+      "Bash(.venv/bin/python3 -m pytest -q)",
+      "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=1m&limit=15\")",
+      "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=5m&limit=6\")",
+      "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=5m&limit=20\")"
     ]
   }
 }

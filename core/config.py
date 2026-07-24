@@ -84,9 +84,12 @@ DUAL_SHOT_LEVERAGE = 5
 DUAL_SHOT_ORDER_TIMEOUT = 600
 DUAL_SHOT_MIN_PROFIT_ROOM = 0.012
 TRADE_POOL_SIZE = 15
-DISABLE_MA_BREAKOUT = True
+# [2026-07-24 修正] 強趨勢環境（ADX 常見 50~67）下拉回不易出現，MA25_Pullback
+# 一直卡住等不到訊號；MA_Breakout（帶量突破新高/新低）本身就是為這種強趨勢設計，
+# 不像 MA_Cross 有滯後性問題，重新開啟增加進場機會，不動任何停損/出場邏輯。
+DISABLE_MA_BREAKOUT = False
 DISABLE_MA25_PULLBACK = False
-DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，完全改用 MA25_Pullback
+DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，完全改用 MA25_Pullback/MA_Breakout
 
 # ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。

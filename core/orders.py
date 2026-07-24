@@ -233,23 +233,16 @@ def _ma_exchange_stop_target(state, avg, is_long, hard_stop, current_price=0.0):
     if check_take_profit(current_price, avg):
         return current_price
 
+    # [2026-07-24 修正] 這裡原本還有第三條候選線，呼叫 calculate_trailing_stop()
+    # 用寫死的 2% 距離算移動停損，但那個函式只處理多單（current_price > entry_price
+    # 才成立)，對空單永遠回傳 None，是不對稱的死碼；而且 2% 固定距離也跟 ma_profit_floor
+    # 的 ATR 動態距離、高點鎖利的分層保留比例不一致，容易在兩套邏輯之間產生落差。
+    # 移除後只保留設計更嚴謹、多空對稱的 ma_profit_floor / ma_peak_lock 兩條候選線。
     candidates = []
     if state.get("ma_profit_floor_armed", False):
         candidates.append(float(state.get("ma_profit_floor_price", 0.0) or 0.0))
     if state.get("ma_peak_lock_armed", False):
         candidates.append(float(state.get("ma_peak_lock_price", 0.0) or 0.0))
-    
-    # --- 整合移動止損 (Trailing Stop) ---
-    # 從 state 獲取最高價 (peak)
-    high_price = float(state.get("ma_peak_saved_pct", 0.0) * avg if state.get("ma_peak_saved_pct") else 0.0)
-    if high_price == 0:
-        # 如果 state 裡沒有直接存 peak 價格，則嘗試從 peak_store 或其他欄位獲取
-        pass
-
-    # 如果有可用的 peak，計算移動止損
-    ts_price = calculate_trailing_stop(current_price, avg, high_price, 0.0, trail_pct=0.02)
-    if ts_price and ts_price > 0:
-        candidates.append(ts_price)
 
     if not candidates:
         return float(hard_stop)
