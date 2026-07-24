@@ -86,11 +86,15 @@ async def update_trade_signal(sym, trade):
     if _ohlcv_close > 0 and _median5 > 0:
         _ohlcv_dev = abs(_median5 - _ohlcv_close) / _ohlcv_close
         if _ohlcv_dev > 0.005:  # 中位數仍偏離K線收盤 > 0.5% → 疑似連發插針
-            logger.info(
-                f"⚡ [SpikeFilter_L2] {sym} 成交中位數 {_median5:.6f} 偏離K線收盤 "
-                f"{_ohlcv_close:.6f} 達 {_ohlcv_dev*100:.2f}% > 0.5%，"
-                f"採用K線收盤作為確認價（疑似連發插針）"
-            )
+            _now = time.time()
+            _last_log_at = float(s.get("_last_spike_filter_log_at", 0.0) or 0.0)
+            if _now - _last_log_at >= 15.0:
+                logger.info(
+                    f"⚡ [SpikeFilter_L2] {sym} 成交中位數 {_median5:.6f} 偏離K線收盤 "
+                    f"{_ohlcv_close:.6f} 達 {_ohlcv_dev*100:.2f}% > 0.5%，"
+                    f"採用K線收盤作為確認價（疑似連發插針，已節流 15s）"
+                )
+                s["_last_spike_filter_log_at"] = _now
             s["close_price_spike_filtered"] = _ohlcv_close
         else:
             s["close_price_spike_filtered"] = _median5
