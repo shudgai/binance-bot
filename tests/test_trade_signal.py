@@ -54,7 +54,7 @@ class TradeSignalTests(unittest.TestCase):
         self.assertNotEqual(route, "MA_Cross")
 
     def test_live_surge_does_not_replace_missing_completed_volume(self):
-        sym = self._setup_ma_signal_state(signal_volume=300.0, vol_ma20=1000.0)
+        sym = self._setup_ma_signal_state(signal_volume=200.0, vol_ma20=1000.0)
         STATES[sym].update({"current_rsi": 55.0, "vol_surge": 2.0})
         self.assertEqual(compute_signal_strength(sym, realtime_trigger=True), (None, 0, None))
         self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
@@ -87,7 +87,7 @@ class TradeSignalTests(unittest.TestCase):
         self.assertNotEqual(route, "MA_Cross")
 
     def test_cross_without_volume_is_rejected(self):
-        sym = self._setup_ma_signal_state(signal_volume=300.0)
+        sym = self._setup_ma_signal_state(signal_volume=200.0)
         with patch("core.config.DISABLE_MA_CROSS", False):
             self.assertEqual(compute_signal_strength(sym), (None, 0, None))
             self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
