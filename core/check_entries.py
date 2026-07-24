@@ -744,9 +744,20 @@ async def check_entries():
             from core.idle_tracker import idle_tracker
             idle_tracker.mark_blocked(sym, "MA_Strategy", ma_block_reason)
 
-            # MA 訊號無效時，嘗試區間模式
-            from core.config import RANGE_MODE_ENABLED, RANGE_MIN_SIGNAL_STRENGTH
-            if RANGE_MODE_ENABLED:
+            # 方案 A + B 防禦過濾：
+            # 1. 方案 B: 指定高波動山寨幣 (INJ/SUI/AVAX/WLFI/TRUMP/ZEC) 永久停用區間單
+            # 2. 方案 A: 高波動市場環境 (vol_ratio > 1.3 / market_regime == High) 停用區間單
+            _range_disabled_coins = {"INJUSDT", "SUIUSDT", "AVAXUSDT", "WLFIUSDT", "TRUMPUSDT", "ZECUSDT"}
+            _current_regime = s.get("market_regime", "Normal")
+            _is_high_vol = (_current_regime == "High" or s.get("vol_ratio", 1.0) > 1.3)
+
+            _range_allowed = (
+                RANGE_MODE_ENABLED 
+                and sym not in _range_disabled_coins 
+                and not _is_high_vol
+            )
+
+            if _range_allowed:
                 side_strength = compute_range_signal(sym)
                 if side_strength is not None and side_strength[0] is not None:
                     is_range_signal = True
@@ -772,7 +783,13 @@ async def check_entries():
                     )
                     continue
             else:
-                block_reason = s.get("entry_block_reason") or "暫無有效訊號"
+                _disable_reason = (
+                    f"幣種 {sym} 停用區間模式" if sym in _range_disabled_coins
+                    else f"高波動環境 ({_current_regime}) 暫停區間模式" if _is_high_vol
+                    else "區間模式未啟用"
+                )
+                block_reason = s.get("entry_block_reason") or _disable_reason
+                s["entry_block_reason"] = block_reason
                 set_entry_diagnosis(f"{sym}: {radar_block_reason or block_reason}")
                 continue
         else:
