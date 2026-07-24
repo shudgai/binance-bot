@@ -1,0 +1,3 @@
+nohup: ignoring input
+✅ [SIGTERM_DIAG] SIGTERM 診斷處理器已安裝
+ℹ️ [防禦分流] 偵測到已有核心在盯盤 (PID=1878810)，本多餘執行緒自動退出。
