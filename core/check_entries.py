@@ -1040,12 +1040,14 @@ async def check_entries():
         # --- R:R 盈虧比過濾 (Risk:Reward Filter)：只對 MA 路由做 ATR RR 計算 ---
         if not is_range_signal:
             atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-            base_rr_thresh = s.get("min_rr", 1.2)
+            regime_min_rr = s.get("regime_min_rr", 0.5)
+            custom_rr = s.get("min_rr", 1.2)
+            base_rr_thresh = custom_rr if custom_rr >= 2.0 else regime_min_rr
             rr_thresh = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else base_rr_thresh)
-            if base_rr_thresh >= 2.0:
-                rr_thresh = base_rr_thresh
             if expected_rr < rr_thresh:
-                logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
+                regime_name = s.get("market_regime", "Normal")
+                vol_ratio = s.get("vol_ratio", 1.0)
+                logger.info(f"🛑 [Filter:RR_Low] {sym} [{regime_name} (VolRatio:{vol_ratio:.2f})] 預期盈虧比 {expected_rr:.2f} < {rr_thresh} (門檻={rr_thresh})，放棄暫存")
                 continue
             expected_profit_pct = (tp_dist / p if p > 0 else 0) - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
             if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:

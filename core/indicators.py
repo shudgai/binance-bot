@@ -125,8 +125,36 @@ def _get_atr(s, p):
     return atr if atr > 0 else (p * 0.01)
 
 
+def get_market_regime_config(current_atr: float, avg_atr: float) -> dict:
+    """
+    根據當前 ATR 與 24h 平均 ATR 的比率 (Volatility Ratio) 自動決定市場狀態與動態 RR 門檻。
+    """
+    vol_ratio = current_atr / avg_atr if avg_atr > 0 else 1.0
+    if vol_ratio < 0.7:
+        return {
+            "regime": "Ultra-Low",
+            "vol_ratio": vol_ratio,
+            "min_rr": 0.2,
+            "description": "捕捉微小波動 (Scalping)"
+        }
+    elif vol_ratio > 1.3:
+        return {
+            "regime": "High",
+            "vol_ratio": vol_ratio,
+            "min_rr": 0.8,
+            "description": "捕捉大波段獲利"
+        }
+    else:
+        return {
+            "regime": "Normal",
+            "vol_ratio": vol_ratio,
+            "min_rr": 0.5,
+            "description": "標準區間交易"
+        }
+
+
 def _calc_sl_tp(sym, side, s, p, route="a"):
-    """計算 ATR、SL 距離、TP 距離、預期盈虧比。"""
+    """計算 ATR、SL 距離、TP 距離、預期盈虧比與市場狀態。"""
     from core.symbol_profile import get_effective_exit_setting, get_dynamic_atr_multiplier
     from core.config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, HARD_STOP_LOSS_PCT, EXIT_RR_MULTIPLIER
     atr_val = _get_atr(s, p)
@@ -134,15 +162,19 @@ def _calc_sl_tp(sym, side, s, p, route="a"):
     tp_mult = get_effective_exit_setting(sym, "tp_atr_multiplier", s.get("tp_atr_multiplier", TP_ATR_MULTIPLIER), side == "buy")
     sl_mult = get_dynamic_atr_multiplier(sym, sl_raw)
 
-    # Layer-A: Low-Volatility Mode Switch
+    # Market Regime Detection
     _atr_hist_sl = s.get("atr_history", [])
-    _atr_24h_avg_sl = float(np.mean(_atr_hist_sl)) if len(_atr_hist_sl) > 0 else 0.0
-    _is_low_vol_mode = (_atr_24h_avg_sl > 0 and atr_val < _atr_24h_avg_sl * 0.8)
+    _atr_24h_avg_sl = float(np.mean(_atr_hist_sl)) if len(_atr_hist_sl) > 0 else atr_val
+    regime_cfg = get_market_regime_config(atr_val, _atr_24h_avg_sl)
+    s["market_regime"] = regime_cfg["regime"]
+    s["vol_ratio"] = regime_cfg["vol_ratio"]
+    s["regime_min_rr"] = regime_cfg["min_rr"]
 
-    if _is_low_vol_mode:
+    # Layer-A: Volatility-Based Mode Switch
+    if regime_cfg["regime"] == "Ultra-Low":
         sl_dist = p * 0.010
         tp_dist = p * 0.015
-        logger.info(f"[LowVol_Mode] {sym} ATR low({atr_val:.5f} < avg{_atr_24h_avg_sl:.5f}x0.8), using fixed% SL=1.0% TP=1.5%")
+        logger.info(f"[LowVol_Mode] {sym} ATR low({atr_val:.5f} < avg{_atr_24h_avg_sl:.5f}x0.7), regime Ultra-Low min_rr={regime_cfg['min_rr']}")
     else:
         sl_dist = max(atr_val * sl_mult, p * 0.004)
         sl_dist += p * 0.0005  # 0.05% 執行滑點緩衝
@@ -162,10 +194,11 @@ def _calc_sl_tp(sym, side, s, p, route="a"):
     )
     risk_dist = max(sl_dist, p * hard_sl_pct)
 
-    # Layer-C: Forced R:R Floor
-    min_tp_dist = risk_dist * EXIT_RR_MULTIPLIER
+    # Layer-C: Dynamic Regime R:R Floor
+    effective_min_rr = regime_cfg["min_rr"]
+    min_tp_dist = risk_dist * effective_min_rr
     if tp_dist < min_tp_dist:
-        logger.debug(f"⚠️ [R:R_Adjustment] {sym} 原本停利距離 {tp_dist:.4f} 太近 (< 風險×{EXIT_RR_MULTIPLIER})，已強制拉開至 {min_tp_dist:.4f} (保證 R:R >= {EXIT_RR_MULTIPLIER})")
+        logger.debug(f"⚠️ [R:R_Adjustment] {sym} [{regime_cfg['regime']}] 原本停利距離 {tp_dist:.4f} 太近 (< 風險×{effective_min_rr}), 已拉開至 {min_tp_dist:.4f} (保證 R:R >= {effective_min_rr})")
         tp_dist = min_tp_dist
 
     # Layer-D: Structure-Aware TP Convergence（使用者要求）
