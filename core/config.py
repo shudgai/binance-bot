@@ -29,10 +29,11 @@ PORT = _detect_port()
 PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
 
 def _detect_paper_trading():
-    port = _detect_port()
-    # Port 8005 為純紙上模擬交易 (Paper Trading)，Port 8007 為幣安測試網 (Binance Demo Trading)
-    if port == "8005":
+    force_paper = os.getenv("PAPER_TRADING", "").strip().lower()
+    if force_paper in ("true", "1", "yes"):
         return True
+    if force_paper in ("false", "0", "no"):
+        return False
     key = os.getenv("BINANCE_API_KEY", "").strip()
     return _is_placeholder_key(key)
 
