@@ -383,9 +383,9 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_core_liquid_symbols_use_slightly_lower_ma_volume_floor(self):
         from core.signal_engine import _ma_base_volume_limit
-        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 0.2), 0.40)
-        self.assertEqual(_ma_base_volume_limit("SOLUSDT", 0.2), 0.40)
-        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 6.0), 0.6)
+        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 0.2), 0.25)
+        self.assertEqual(_ma_base_volume_limit("SOLUSDT", 0.2), 0.25)
+        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 6.0), 0.40)
 
     def test_range_long_rejected_when_rsi_still_falling_fast(self):
         # 實測 ADAUSDT 案例：支撐反彈訊號觸發當下 RSI=50，但不到一分鐘內連續

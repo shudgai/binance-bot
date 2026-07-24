@@ -161,7 +161,7 @@ def get_symbol_leverage(sym):
     return DEFAULT_LEVERAGE
 
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 0.40  # 極度放寬量能門檻至 0.40x
+VOLUME_RATIO_THRESHOLD = 0.25  # 極度放寬量能門檻至 0.25x
 ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 19
 ATR_WARMUP_LIMIT = 1000
@@ -309,7 +309,7 @@ ENTRY_STRICTNESS_PROFILES = {
         "min_entry_strength": 3.0,
     },
     "balanced": {
-        "volume_ratio": 0.40,
+        "volume_ratio": 0.25,
         "pin_threshold": 2.0,
         "min_body_ratio": 0.25,
         "min_signal_strength": 8.0,

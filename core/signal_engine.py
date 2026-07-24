@@ -14,8 +14,8 @@ CORE_LIQUID_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
 
 def _ma_base_volume_limit(sym, atr_pct):
     if atr_pct > 5.0:
-        return 0.6
-    return 0.40 if sym in CORE_LIQUID_SYMBOLS else 0.40
+        return 0.40
+    return 0.25 if sym in CORE_LIQUID_SYMBOLS else 0.25
 
 
 def compute_signal_strength(sym, realtime_trigger=False):
@@ -93,10 +93,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     # 嚴格量能爆發與防假突破確認 (拒絕無量假突破/偽交叉)
     cross_long_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.45 and above_ma99 and atr_pct <= 5.0
+        volume_ratio >= 0.25 and above_ma99 and atr_pct <= 5.0
     )
     cross_short_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.45 and below_ma99 and atr_pct <= 5.0
+        volume_ratio >= 0.25 and below_ma99 and atr_pct <= 5.0
     )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
