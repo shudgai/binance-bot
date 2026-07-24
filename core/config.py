@@ -88,16 +88,16 @@ DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，�
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
 RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
-RANGE_ADX_THRESHOLD = 35.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）
+RANGE_ADX_THRESHOLD = 40.0          # ADX < 此值才視為區間行情（適度放寬，原為 35.0）
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
-RANGE_MIN_NET_PROFIT_PCT = 0.001    # 一般幣種沿用原本 0.1% 淨空間門檻
+RANGE_MIN_NET_PROFIT_PCT = 0.0005   # 一般幣種淨空間門檻（適度放寬，原為 0.001 即 0.1%）
 STRICT_ENTRY_SYMBOLS = frozenset({"ETHUSDT", "XRPUSDT"})
-STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.004  # ETH/XRP 保留窄區間防掃損修正
-RANGE_MIN_RR = 1.5                 # 區間單最終成交後至少維持 1.5:1 盈虧比
+STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.002  # ETH/XRP 窄區間防掃損門檻（適度放寬，原為 0.004即 0.4%）
+RANGE_MIN_RR = 1.2                 # 區間單最低盈虧比要求（適度放寬，原為 1.5）
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
-RANGE_MIN_SIGNAL_STRENGTH = 18.0    # 模式 A：區間模式最低信號強度 18.0（高品質過濾）
+RANGE_MIN_SIGNAL_STRENGTH = 15.0    # 最低信號強度（適度放寬，原為 18.0）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -160,7 +160,7 @@ def get_symbol_leverage(sym):
     return DEFAULT_LEVERAGE
 
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 0.7
+VOLUME_RATIO_THRESHOLD = 0.55  # 適度放寬量能門檻（原為 0.7）
 ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 19
 ATR_WARMUP_LIMIT = 1000
@@ -308,10 +308,10 @@ ENTRY_STRICTNESS_PROFILES = {
         "min_entry_strength": 5.0,
     },
     "balanced": {
-        "volume_ratio": 0.70,
+        "volume_ratio": 0.55,          # 適度放寬（原為 0.70）
         "pin_threshold": 2.0,
         "min_body_ratio": 0.35,
-        "min_signal_strength": 12.0,
+        "min_signal_strength": 10.0,   # 適度放寬（原為 12.0）
         "rsi_long_floor": 25.0,
         "rsi_short_floor": 25.0,
         "rsi_long_ceiling": 75.0,
@@ -319,15 +319,14 @@ ENTRY_STRICTNESS_PROFILES = {
         "min_entry_strength": 10.0,
     },
     "strict": {
-        "volume_ratio": 0.85,
+        "volume_ratio": 0.70,          # 適度放寬（原為 0.85）
         "pin_threshold": 1.5,
         "min_body_ratio": 0.45,
         # 實測近期 MA25_Pullback/MA7_Simple 進場的訊號強度普遍落在 23~30，舊值 15.0
         # 遠低於這個區間，等於形同虛設——不管盤面活不活躍，幾乎每次觸發的訊號都
         # 輕鬆超標，這個門檻從沒真正擋下過任何一筆（HYPEUSDT 23.89、NEARUSDT 25.00
-        # 都在盤整安靜期進場後小虧出場）。拉到 22.0，讓門檻真的能濾掉這個區間內
-        # 偏弱的訊號，只留下夠強的才准進場。
-        "min_signal_strength": 22.0,
+        # 都在盤整安靜期進場後小虧出場）。拉到 18.0（原為 22.0），讓門檻適度放寬。
+        "min_signal_strength": 18.0,
         "rsi_long_floor": 32.0,
         "rsi_short_floor": 30.0,
         "rsi_long_ceiling": 75.0,
