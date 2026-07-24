@@ -126,6 +126,7 @@ class ApiRateLimitTests(unittest.TestCase):
         with patch("services.api.is_paper_trading", return_value=False), \
              patch("services.api._get_real_trades", return_value=[local_trade]), \
              patch("services.api.get_all_positions", return_value={}), \
+             patch("services.binance_service._get_pnl_baseline_start_ms", return_value=0), \
              patch("services.api.get_trades") as remote_trades:
             result = api.api_get_trades("ALL")
 

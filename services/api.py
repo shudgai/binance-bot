@@ -346,9 +346,7 @@ def api_get_trades(symbol: str):
                 from services.binance_service import _get_pnl_baseline_start_ms
                 baseline_ms = _get_pnl_baseline_start_ms()
                 if baseline_ms > 0:
-                    filtered = [t for t in raw_trades if int(t.get("time", 0) or 0) >= baseline_ms]
-                    if filtered:
-                        raw_trades = filtered
+                    raw_trades = [t for t in raw_trades if int(t.get("time", 0) or 0) >= baseline_ms]
             except Exception:
                 pass
             trades = raw_trades[-100:]
