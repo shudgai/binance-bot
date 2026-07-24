@@ -187,6 +187,13 @@ def compute_signal_strength(sym, realtime_trigger=False):
         MA7_SIMPLE_SHORT_RSI_FLOOR = 20.0   # 重新放寬做空最低 RSI 要求，允許在極度跌勢中追空
         MA7_SIMPLE_LONG_RSI_CEIL   = 80.0   # 做多最高 RSI 要求放寬至 80
 
+        # [2026-07-24 修正] UNI/AVAX 兩筆實單顯示：RSI 卡在 45~55 中性區時，MA7 單根
+        # 勾頭多半只是雜訊、不是真轉折——兩筆進場後 max_profit_reached 都是 0%，價格
+        # 根本沒往訊號方向走過。做空需要 RSI 先來到中性偏高（真的有一段漲勢可以轉弱）
+        # 才有意義，做多對稱需要 RSI 先來到中性偏低，避免在方向未明時搶進。
+        MA7_SIMPLE_SHORT_RSI_CONFIRM = 55.0
+        MA7_SIMPLE_LONG_RSI_CONFIRM  = 45.0
+
         # 規則 2：15m RSI 多時間框架確認
         rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
         MTF_RSI_SHORT_FLOOR = 35.0  # 15m RSI 防超賣地板放寬
@@ -228,6 +235,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
             if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
                 reason = f"MA7 谷底轉折向上，但 5m RSI={current_rsi:.1f} > {MA7_SIMPLE_LONG_RSI_CEIL:.0f} 偏高，跳過"
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
+            # 規則 1b：RSI 仍在中性區，缺乏真正谷底確認
+            elif current_rsi > MA7_SIMPLE_LONG_RSI_CONFIRM:
+                reason = f"MA7 谷底轉折向上，但 RSI={current_rsi:.1f} 仍處中性（> {MA7_SIMPLE_LONG_RSI_CONFIRM:.0f}），缺乏真正轉強確認，跳過"
+                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
             # 規則 2：15m RSI 多時間框架確認（有資料才檢查）
             elif rsi_15m > 0 and rsi_15m > MTF_RSI_LONG_CEIL:
                 reason = f"MA7 谷底轉折，但 15m RSI={rsi_15m:.1f} > {MTF_RSI_LONG_CEIL:.0f} 大週期已超買，跳過"
@@ -253,6 +264,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
             # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
             if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
                 reason = f"MA7 頭部轉折向下，但 5m RSI={current_rsi:.1f} < {MA7_SIMPLE_SHORT_RSI_FLOOR:.0f} 已偏低，跳過避免超賣區做空"
+                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
+            # 規則 1b：RSI 仍在中性區，缺乏真正頭部確認
+            elif current_rsi < MA7_SIMPLE_SHORT_RSI_CONFIRM:
+                reason = f"MA7 頭部轉折向下，但 RSI={current_rsi:.1f} 仍處中性（< {MA7_SIMPLE_SHORT_RSI_CONFIRM:.0f}），缺乏真正轉弱確認，跳過"
                 logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
             # 規則 2：15m RSI 多時間框架確認（有資料才檢查）
             elif rsi_15m > 0 and rsi_15m < MTF_RSI_SHORT_FLOOR:

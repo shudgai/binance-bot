@@ -190,7 +190,7 @@ class TradeSignalTests(unittest.TestCase):
         STATES[sym].update({
             "prev_ma7_2": 101.2,  # prev_slope = 101.0 - 101.2 = -0.2 (<= 0)
                                   # curr_slope = 101.5 - 101.0 = +0.5 (> 0)
-            "current_rsi": 60.0   # < 75.0
+            "current_rsi": 40.0   # <= 45.0 (MA7_SIMPLE_LONG_RSI_CONFIRM) 且 >= 35 (rsi_bottom_ok)
         })
         side, strength, route = compute_signal_strength(sym)
         self.assertEqual((side, route), ("buy", "MA7_Simple"))
@@ -202,7 +202,7 @@ class TradeSignalTests(unittest.TestCase):
             signal_open=100.0, signal_close=101.5, signal_volume=800.0, vol_ma20=1000.0,
             ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
         )
-        STATES[sym].update({"prev_ma7_2": 101.2, "current_rsi": 60.0})
+        STATES[sym].update({"prev_ma7_2": 101.2, "current_rsi": 40.0})
         weak_side, weak_strength, weak_route = compute_signal_strength(sym)
 
         STATES[sym]["ohlcv"][-2][5] = 1000.0
@@ -285,7 +285,7 @@ class TradeSignalTests(unittest.TestCase):
             ma7=101.5, ma25=101.4, prev_ma7=101.0, prev_ma25=100.8,
         )
         STATES[sym].update({
-            "prev_ma7_2": 101.2, "current_rsi": 60.0,
+            "prev_ma7_2": 101.2, "current_rsi": 40.0,
             "adx": 30.4, "prev_adx": 27.3,
         })
         side, _, route = compute_signal_strength(sym)
@@ -305,7 +305,7 @@ class TradeSignalTests(unittest.TestCase):
         STATES[sym].update({
             "prev_ma7_2": 99.2,   # prev_slope = 99.5 - 99.2 = +0.3 (>= 0)
                                   # curr_slope = 99.0 - 99.5 = -0.5 (< 0)
-            "current_rsi": 40.0   # > 25.0
+            "current_rsi": 60.0   # >= 55.0 (MA7_SIMPLE_SHORT_RSI_CONFIRM)
         })
         side, strength, route = compute_signal_strength(sym)
         self.assertEqual((side, route), ("sell", "MA7_Simple"))
