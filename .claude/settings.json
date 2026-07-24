@@ -150,7 +150,9 @@
       "Bash(.venv/bin/python3 -m pytest -q)",
       "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=1m&limit=15\")",
       "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=5m&limit=6\")",
-      "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=5m&limit=20\")"
+      "Bash(curl -s \"http://localhost:8005/api/klines/BTCUSDT?interval=5m&limit=20\")",
+      "Bash(awk -F: '$1>=2 {print}')",
+      "Bash(awk -v d1=\"2026-07-24 22:51:00\" -v d2=\"2026-07-24 23:05:00\" '$0 >= d1 && $0 <= d2 && \\(/UNIUSDT/ || /CALIBRATION/ || /External_Close/ || /平倉/\\)' logs/bot.log)"
     ]
   }
 }

@@ -1383,6 +1383,32 @@ async def check_entries():
                 if abs(_s.get("qty", 0.0)) > 0.000001 and (_s["qty"] > 0) == (side == 'buy')
             )
             if _same_dir_count >= _MAX_SAME_DIRECTION:
+                # 相關性優先於強度/趨勢豁免：實測 AVAXUSDT/UNIUSDT（corr=0.82）案例
+                # ——兩者訊號強度都 >=20，各自都能繞過集中度上限，1 分鐘內疊加同方向
+                # 倉位，結果同一波 BTC 走勢把兩筆一起打進交易所端 1.5% 災難止損。高度
+                # 相關的加碼本質上不是分散風險，是把同一個賭注加倍下注，不該因為訊號夠
+                # 強或大盤趨勢確認就無條件放行。這裡在套用任何豁免之前，先檢查候選幣種
+                # 是否與「目前已持有的同方向倉位」高度相關 (corr > 0.8)，若是，直接視為
+                # 集中度已滿、不給任何豁免（下面的加碼相關性折扣只打七折，防不了整批
+                # 同時被停損，這裡要擋在源頭，不開才是真的分散）。
+                _highly_correlated_with_existing = False
+                _corr_block_sym = None
+                _klines_curr_cc = s.get("ohlcv", [])
+                if len(_klines_curr_cc) >= 6:
+                    for _other_sym_cc, _other_state_cc in ctx.STATES.items():
+                        if _other_sym_cc == sym:
+                            continue
+                        _other_qty_cc = float(_other_state_cc.get("qty", 0.0))
+                        if abs(_other_qty_cc) <= 0.000001 or (_other_qty_cc > 0) != (side == 'buy'):
+                            continue
+                        _klines_other_cc = _other_state_cc.get("ohlcv", [])
+                        if len(_klines_other_cc) >= 6 and _calculate_correlation(_klines_curr_cc, _klines_other_cc, limit=6) > 0.8:
+                            _highly_correlated_with_existing = True
+                            _corr_block_sym = _other_sym_cc
+                            break
+                if _highly_correlated_with_existing:
+                    logger.info(f"🧭 [方向集中度風控-相關性優先] {sym} 與現有同方向倉位 ({_corr_block_sym}) 高度相關 (corr>0.8)，視為疊加而非分散，不套用強度/趨勢豁免，放棄本次訊號")
+                    continue
                 _btc_4h = ctx.MARKET_WIND.get("btc_trend_4h")
                 _btc_1h = ctx.MARKET_WIND.get("btc_trend_1h")
                 _macro_confirms_direction = (
