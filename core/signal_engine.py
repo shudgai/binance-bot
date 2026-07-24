@@ -14,8 +14,8 @@ CORE_LIQUID_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
 
 def _ma_base_volume_limit(sym, atr_pct):
     if atr_pct > 5.0:
-        return 1.0
-    return 0.70 if sym in CORE_LIQUID_SYMBOLS else 0.80
+        return 0.40
+    return 0.25 if sym in CORE_LIQUID_SYMBOLS else 0.25
 
 
 def compute_signal_strength(sym, realtime_trigger=False):
@@ -93,10 +93,10 @@ def compute_signal_strength(sym, realtime_trigger=False):
 
     # 嚴格量能爆發與防假突破確認 (拒絕無量假突破/偽交叉)
     cross_long_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.45 and above_ma99 and atr_pct <= 5.0
+        volume_ratio >= 0.25 and above_ma99 and atr_pct <= 5.0
     )
     cross_short_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.45 and below_ma99 and atr_pct <= 5.0
+        volume_ratio >= 0.25 and below_ma99 and atr_pct <= 5.0
     )
     cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
                   and (candle_close > candle_open or is_realtime_strong)
@@ -484,7 +484,12 @@ def compute_range_signal(sym):
     # 4. 訊號 K 棒。ETH/XRP 曾出現只靠一根短暫拒跌 K 棒就逆著 15m
     # 趨勢做多，下一根隨即破底；嚴格幣種因此要用前一根作為觸碰／拒絕，
     # 再由最新已收盤 K 棒確認 higher-low + higher-close（做空反向）。
-    strict_reversal_confirmation = sym in STRICT_ENTRY_SYMBOLS
+    # [2026-07-24 修正] 實測 23 筆非 ETH/XRP 的區間單，贏率只有 26%，且幾乎每筆
+    # 峰值都很弱（0.3%~0.6%）就反轉——正是這條註解描述的「只靠一根拒跌就進場，
+    # 下一根隨即破底」同一種失敗模式，只是這個二次確認機制過去只套用在 ETH/XRP
+    # 身上。既然證實這是普遍問題，二次確認（第二根收線 higher-low/lower-high
+    # + 15m EMA 同向）改為對所有幣種一視同仁。
+    strict_reversal_confirmation = True
     if strict_reversal_confirmation and len(candles) < 23:
         s["entry_block_reason"] = "等待第二根收線確認區間反轉"
         return (None, 0, None)

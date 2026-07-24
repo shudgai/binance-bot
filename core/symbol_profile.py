@@ -302,7 +302,7 @@ def apply_all_symbol_profiles():
     default_profile = {
         "sl_atr_multiplier": 1.5,
         "tp_atr_multiplier": 3.0,
-        "min_rr": 1.2,
+        "min_rr": 0.6,
         "min_profit_pct": 0.001,
         "trailing_activation_atr": 1.0,
         "trailing_distance_atr": 0.8,

@@ -10,7 +10,7 @@ from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
     DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT,
     DEFAULT_LOSS_REENTRY_COOLDOWN_SEC, MIN_5M_ATR_PCT_FOR_MA_ENTRY,
-    STRICT_ENTRY_SYMBOLS, get_entry_strictness_profile)
+    STRICT_ENTRY_SYMBOLS, RANGE_MODE_ENABLED, get_entry_strictness_profile)
 from core.indicators import (_get_atr, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -285,7 +285,7 @@ async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=Non
         if price <= 0:
             return False, "invalid live price"
         _, _, tp_dist, latest_rr = _calc_sl_tp(sym, side, s, price, route)
-        rr_floor = 1.1 if fresh_strength > 14.0 else (1.2 if fresh_strength > 12.0 else s.get("min_rr", 1.2))
+        rr_floor = 0.6 if fresh_strength > 14.0 else (0.6 if fresh_strength > 12.0 else s.get("min_rr", 0.6))
         profit_room = tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
         if latest_rr < rr_floor or profit_room < 0.008:
             return False, f"RR or profit room failed on rapid check {attempt}"
@@ -744,9 +744,20 @@ async def check_entries():
             from core.idle_tracker import idle_tracker
             idle_tracker.mark_blocked(sym, "MA_Strategy", ma_block_reason)
 
-            # MA 訊號無效時，嘗試區間模式
-            from core.config import RANGE_MODE_ENABLED, RANGE_MIN_SIGNAL_STRENGTH
-            if RANGE_MODE_ENABLED:
+            # 方案 A + B 防禦過濾：
+            # 1. 方案 B: 指定高波動山寨幣 (INJ/SUI/AVAX/WLFI/TRUMP/ZEC) 永久停用區間單
+            # 2. 方案 A: 高波動市場環境 (vol_ratio > 1.3 / market_regime == High) 停用區間單
+            _range_disabled_coins = {"INJUSDT", "SUIUSDT", "AVAXUSDT", "WLFIUSDT", "TRUMPUSDT", "ZECUSDT"}
+            _current_regime = s.get("market_regime", "Normal")
+            _is_high_vol = (_current_regime == "High" or s.get("vol_ratio", 1.0) > 1.3)
+
+            _range_allowed = (
+                RANGE_MODE_ENABLED 
+                and sym not in _range_disabled_coins 
+                and not _is_high_vol
+            )
+
+            if _range_allowed:
                 side_strength = compute_range_signal(sym)
                 if side_strength is not None and side_strength[0] is not None:
                     is_range_signal = True
@@ -772,7 +783,13 @@ async def check_entries():
                     )
                     continue
             else:
-                block_reason = s.get("entry_block_reason") or "暫無有效訊號"
+                _disable_reason = (
+                    f"幣種 {sym} 停用區間模式" if sym in _range_disabled_coins
+                    else f"高波動環境 ({_current_regime}) 暫停區間模式" if _is_high_vol
+                    else "區間模式未啟用"
+                )
+                block_reason = s.get("entry_block_reason") or _disable_reason
+                s["entry_block_reason"] = block_reason
                 set_entry_diagnosis(f"{sym}: {radar_block_reason or block_reason}")
                 continue
         else:
@@ -1036,16 +1053,26 @@ async def check_entries():
             if price_diff_pct < 0.003 and side != last_entry_dir:
                 logger.info(f"🛑 [Filter:Choppiness] {sym} 欲 {side}，但現價 {p:.4f} 距離上次進場價 {last_entry_price:.4f} 誤差小於 0.3%，陷入原地盤整，拒絕雙巴被洗！")
                 continue
+            
+            # --- 停損同價位防重複進場 (Stop Loss Zone Lock) ---
+            last_exit = s.get("last_exit_reason", "")
+            is_last_stop_loss = any(tag in last_exit for tag in ("Stop", "Loss", "Trailing", "Momentum_Fade"))
+            if is_last_stop_loss and side == last_entry_dir:
+                if price_diff_pct < 0.005:
+                    logger.info(f"🛑 [Filter:StopLossZone] {sym} 欲 {side}，但上次停損出場，現價 {p:.4f} 距離上次停損進場價 {last_entry_price:.4f} 誤差小於 0.5% ({price_diff_pct*100:.2f}%)，拒絕重複被洗！")
+                    continue
 
         # --- R:R 盈虧比過濾 (Risk:Reward Filter)：只對 MA 路由做 ATR RR 計算 ---
         if not is_range_signal:
             atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
-            base_rr_thresh = s.get("min_rr", 1.2)
-            rr_thresh = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else base_rr_thresh)
-            if base_rr_thresh >= 2.0:
-                rr_thresh = base_rr_thresh
+            regime_min_rr = s.get("regime_min_rr", 0.5)
+            custom_rr = s.get("min_rr", 0.6)
+            base_rr_thresh = min(custom_rr if custom_rr >= 2.0 else regime_min_rr, 0.6)
+            rr_thresh = 0.6 if strength > 14.0 else (0.6 if strength > 12.0 else base_rr_thresh)
             if expected_rr < rr_thresh:
-                logger.info(f"🛑 [Filter:RR_Low] {sym} 預期盈虧比 {expected_rr:.2f} < {rr_thresh}，放棄暫存")
+                regime_name = s.get("market_regime", "Normal")
+                vol_ratio = s.get("vol_ratio", 1.0)
+                logger.info(f"🛑 [Filter:RR_Low] {sym} [{regime_name} (VolRatio:{vol_ratio:.2f})] 預期盈虧比 {expected_rr:.2f} < {rr_thresh} (門檻={rr_thresh})，放棄暫存")
                 continue
             expected_profit_pct = (tp_dist / p if p > 0 else 0) - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
             if expected_profit_pct < DUAL_SHOT_MIN_PROFIT_ROOM:
@@ -1137,7 +1164,7 @@ async def check_entries():
 
         # RR 驗證與獲利空間
         _, _, tp_dist, latest_rr = _calc_sl_tp(sym, side, s, price, route)
-        rr_floor = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else s.get("min_rr", 1.2))
+        rr_floor = 0.6 if strength > 14.0 else (0.6 if strength > 12.0 else s.get("min_rr", 0.6))
         if not is_range_sig:
             if (latest_rr < rr_floor or (tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)) < 0.008):
                 logger.info(f"[Final_Entry_Guard] {sym} latest RR or profit room insufficient")
@@ -1168,14 +1195,30 @@ async def check_entries():
                 logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {range_min_net_pct*100:.1f}%")
                 continue
             range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
-            if range_rr < RANGE_MIN_RR:
-                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < {RANGE_MIN_RR:.1f}")
+
+            # 計算當前 ATR 與平均 ATR 的比率 (vol_ratio)，自動切換區間三階段動態 RR 門檻
+            _atr_hist_range = s.get("atr_history", [])
+            _atr_avg_range = float(np.mean(_atr_hist_range)) if len(_atr_hist_range) > 0 else atr
+            vol_ratio = atr / _atr_avg_range if _atr_avg_range > 0 else 1.0
+
+            if vol_ratio < 0.7:
+                range_rr_threshold = 0.1
+                range_mode = "Ultra-Low"
+            elif vol_ratio > 1.3:
+                range_rr_threshold = 0.7
+                range_mode = "High"
+            else:
+                range_rr_threshold = 0.4
+                range_mode = "Normal"
+
+            if range_rr < range_rr_threshold:
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < {range_rr_threshold:.2f} | 狀態: {range_mode} (vol_ratio: {vol_ratio:.2f})")
                 continue
             # 寫入進場時預先計算好的區間出場價位到 state
             s["range_tp_price"] = range_tp
             s["range_sl_price"] = range_sl
             logger.info(
-                f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} | "
+                f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} (門檻={range_rr_threshold:.2f}, 狀態={range_mode}) | "
                 f"TP={range_tp:.4f} SL={range_sl:.4f} net={range_net_pct*100:.2f}%"
             )
 

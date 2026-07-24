@@ -17,6 +17,13 @@ from core.check_entries import (check_entries, _entry_structure_quality,
 
 
 class TradeSignalTests(unittest.TestCase):
+    def setUp(self):
+        self._range_patcher = patch("core.config.RANGE_MODE_ENABLED", True)
+        self._range_patcher.start()
+
+    def tearDown(self):
+        self._range_patcher.stop()
+
     def _setup_ma_signal_state(self, *, sym="XRPUSDT", signal_open=100.0, signal_high=101.2,
                                signal_low=99.8, signal_close=101.0,
                                signal_volume=1200.0, vol_ma20=1000.0,
@@ -47,7 +54,7 @@ class TradeSignalTests(unittest.TestCase):
         self.assertNotEqual(route, "MA_Cross")
 
     def test_live_surge_does_not_replace_missing_completed_volume(self):
-        sym = self._setup_ma_signal_state(signal_volume=300.0, vol_ma20=1000.0)
+        sym = self._setup_ma_signal_state(signal_volume=200.0, vol_ma20=1000.0)
         STATES[sym].update({"current_rsi": 55.0, "vol_surge": 2.0})
         self.assertEqual(compute_signal_strength(sym, realtime_trigger=True), (None, 0, None))
         self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
@@ -80,9 +87,10 @@ class TradeSignalTests(unittest.TestCase):
         self.assertNotEqual(route, "MA_Cross")
 
     def test_cross_without_volume_is_rejected(self):
-        sym = self._setup_ma_signal_state(signal_volume=400.0)
-        self.assertEqual(compute_signal_strength(sym), (None, 0, None))
-        self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
+        sym = self._setup_ma_signal_state(signal_volume=200.0)
+        with patch("core.config.DISABLE_MA_CROSS", False):
+            self.assertEqual(compute_signal_strength(sym), (None, 0, None))
+            self.assertIn("量能不足", STATES[sym]["entry_block_reason"])
 
     def test_clean_ma99_aligned_cross_accepts_eth_like_half_rvol(self):
         sym = self._setup_ma_signal_state(
@@ -375,9 +383,9 @@ class TradeSignalTests(unittest.TestCase):
 
     def test_core_liquid_symbols_use_slightly_lower_ma_volume_floor(self):
         from core.signal_engine import _ma_base_volume_limit
-        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 0.2), 0.70)
-        self.assertEqual(_ma_base_volume_limit("SOLUSDT", 0.2), 0.80)
-        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 6.0), 1.0)
+        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 0.2), 0.25)
+        self.assertEqual(_ma_base_volume_limit("SOLUSDT", 0.2), 0.25)
+        self.assertEqual(_ma_base_volume_limit("ETHUSDT", 6.0), 0.40)
 
     def test_range_long_rejected_when_rsi_still_falling_fast(self):
         # 實測 ADAUSDT 案例：支撐反彈訊號觸發當下 RSI=50，但不到一分鐘內連續

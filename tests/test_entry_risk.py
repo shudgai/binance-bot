@@ -27,6 +27,7 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
 
 class EntryRiskTests(unittest.TestCase):
     def test_range_entry_threshold_is_strict_only_for_eth_xrp(self):
+        # 曾被放寬到允許淨虧損開倉（-0.20%）；實測區間單贏率偏低後改回要求正淨獲利。
         self.assertEqual(RANGE_MIN_NET_PROFIT_PCT, 0.001)
         self.assertGreaterEqual(STRICT_RANGE_MIN_NET_PROFIT_PCT, 0.004)
 

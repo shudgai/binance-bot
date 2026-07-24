@@ -3,6 +3,7 @@ import time
 from core.config import (
     COIN_PROFILE_CONFIG, HARD_STOP_LOSS_PCT,
     MAX_STOPS_IN_WINDOW, BAN_WINDOW, BAN_DURATION,
+    COOLDOWN_SEC,
 )
 
 logger = logging.getLogger(__name__)
@@ -315,7 +316,7 @@ def mark_exit(sym, is_stop_loss=False, reason="", loss_pct=0.0):
         or ("buy" if float(s.get("qty", 0.0) or 0.0) > 0 else "sell")
     ).lower()
 
-    actual_cooldown = 1800 if is_stop_loss else 3600
+    actual_cooldown = 1800 if is_stop_loss else COOLDOWN_SEC
     if abs(loss_pct) >= 0.02:
         actual_cooldown += 3600
         logger.info(f"⚠️ [大虧延罰] {sym} 虧損 {loss_pct*100:.2f}% ≥ 2%，冷卻額外延長 60 分鐘")

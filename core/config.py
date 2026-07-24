@@ -31,6 +31,12 @@ PORT_SUFFIX = f"_{PORT}" if PORT and PORT != "8005" else ""
 def _detect_paper_trading():
     # 8005 也是接幣安 Testnet 的真實下單帳戶，不是純模擬；只有沒設定/放預留位置
     # 字串的 key 才視為紙上模擬。不能用 port 號硬性判斷，8005/8007 都可能是真實 key。
+    # 保留明確的 PAPER_TRADING 環境變數覆寫，方便需要時強制指定。
+    force_paper = os.getenv("PAPER_TRADING", "").strip().lower()
+    if force_paper in ("true", "1", "yes"):
+        return True
+    if force_paper in ("false", "0", "no"):
+        return False
     key = os.getenv("BINANCE_API_KEY", "").strip()
     return _is_placeholder_key(key)
 
@@ -87,17 +93,19 @@ DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，�
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
 RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
 RANGE_ADX_THRESHOLD = 45.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）；
-                                     # 適度放寬（原35.0），但不比照 8007 一度放到 65（那導致
-                                     # 假支撐/假突破機率大增，經比對已確認是問題根源之一）。
+                                     # 適度放寬（原35.0），但不比照另一個 session 一度放到 65
+                                     # （那導致假支撐/假突破機率大增，經比對已確認是問題根源之一）。
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
 RANGE_TOUCH_ATR_TOLERANCE = 0.3    # 觸碰誤差帶（ATR 倍數），允許小幅穿越
-RANGE_MIN_NET_PROFIT_PCT = 0.001    # 一般幣種沿用原本 0.1% 淨空間門檻
+# [2026-07-24] 曾被另一個 session 放寬到 -0.20%（允許淨虧損開倉）；實測 23 筆區間單
+# 贏率只有 26%，本來就該收緊品質而非放寬，改回正值，要求真正有淨獲利空間才開倉。
+RANGE_MIN_NET_PROFIT_PCT = 0.001    # 一般幣種淨空間門檻
 STRICT_ENTRY_SYMBOLS = frozenset({"ETHUSDT", "XRPUSDT"})
-STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.004  # ETH/XRP 保留窄區間防掃損修正
+STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.004  # ETH/XRP 窄區間防掃損門檻
 RANGE_MIN_RR = 1.5                 # 區間單最終成交後至少維持 1.5:1 盈虧比
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
-RANGE_MIN_SIGNAL_STRENGTH = 14.0    # 適度放寬（原18.0），保留基本品質過濾，不比照 8007 的 8.0
+RANGE_MIN_SIGNAL_STRENGTH = 14.0    # 適度放寬（原18.0），保留基本品質過濾，不比照另一個 session 的 8.0
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -160,7 +168,7 @@ def get_symbol_leverage(sym):
     return DEFAULT_LEVERAGE
 
 RSI_PERIOD = 9
-VOLUME_RATIO_THRESHOLD = 0.7
+VOLUME_RATIO_THRESHOLD = 0.25  # 極度放寬量能門檻至 0.25x
 ATR_WARMUP_BATCH_SIZE = 2
 ATR_WARMUP_SYMBOL_COUNT = 19
 ATR_WARMUP_LIMIT = 1000
@@ -244,7 +252,7 @@ PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 1800          # 縮短至 30 分鐘觀測窗口，更快偵測連續停損
 BAN_DURATION = 86400
 MAX_STOPS_IN_WINDOW = 2    # 30 分鐘內觸發 2 次停損就封禁（原 3 次）
-SL_ATR_MULTIPLIER = 1.5
+SL_ATR_MULTIPLIER = 2.0
 TP_ATR_MULTIPLIER = 10.0
 HARD_STOP_LOSS_PCT = float(os.getenv("HARD_STOP_LOSS_PCT", "0.035"))
 SCALP_MODE = os.getenv("SCALP_MODE", "false").lower() in ("true", "1", "yes")
@@ -264,7 +272,7 @@ TREND_PERSISTENCE_WINDOW  = 300
 PRICE_MOVEMENT_THRESHOLD  = 0.0015
 
 # Entry & Radar Thresholds
-ENTRY_SURGE_THRESHOLD = float(os.getenv("ENTRY_SURGE_THRESHOLD", 0.5))  # 統一 0.50x（原 0.70x）
+ENTRY_SURGE_THRESHOLD = float(os.getenv("ENTRY_SURGE_THRESHOLD", 0.2))  # 統一 0.20x（原 0.70x）
 # MA7／MA25 交叉後至少要拉開 0.005%，避免均線仍黏合時把一次跳動誤認成方向成立。
 MA_CROSS_MIN_GAP_PCT = float(os.getenv("MA_CROSS_MIN_GAP_PCT", 0.00005))
 MIN_ATR_PCT_FOR_ENTRY = float(os.getenv("MIN_ATR_PCT_FOR_ENTRY", 0.3))   # 下修至 0.3%，放行 BTC/ETH/BNB 穩健藍籌資產
@@ -281,7 +289,7 @@ TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_FEE_PCT = TAKER_FEE_RATE * 2
 MIN_5M_ATR_PCT_FOR_MA_ENTRY = float(os.getenv("MIN_5M_ATR_PCT_FOR_MA_ENTRY", 0.0005))
 # 虧損出場後避免同一幣種立刻沿用已失效的同方向訊號再次進場；個別幣種仍可覆蓋。
-DEFAULT_LOSS_REENTRY_COOLDOWN_SEC = int(os.getenv("DEFAULT_LOSS_REENTRY_COOLDOWN_SEC", 900))
+DEFAULT_LOSS_REENTRY_COOLDOWN_SEC = int(os.getenv("DEFAULT_LOSS_REENTRY_COOLDOWN_SEC", 1800))
 
 # 全域調整：進場方式改回 7dceb33 的 auto 模式，依訊號強度自動選 pullback/chase/market
 # （原本被改成強制全部用 pullback，不管訊號多強都要等拉回才進場，實測 AVAXUSDT
@@ -297,42 +305,37 @@ ENTRY_ORDER_MODE_AUTO_MARKET = float(os.getenv("ENTRY_ORDER_MODE_AUTO_MARKET", 2
 ENTRY_STRICTNESS_MODE = os.getenv("ENTRY_STRICTNESS_MODE", "relaxed").lower()
 ENTRY_STRICTNESS_PROFILES = {
     "relaxed": {
-        "volume_ratio": 0.35,
+        "volume_ratio": 0.25,
         "pin_threshold": 3.2,
-        "min_body_ratio": 0.10,
-        "min_signal_strength": 8.0,
-        "rsi_long_floor": 15.0,
-        "rsi_short_floor": 15.0,
-        "rsi_long_ceiling": 82.0,
-        "rsi_short_ceiling": 78.0,
-        "min_entry_strength": 5.0,
+        "min_body_ratio": 0.08,
+        "min_signal_strength": 5.0,
+        "rsi_long_floor": 10.0,
+        "rsi_short_floor": 10.0,
+        "rsi_long_ceiling": 95.0,
+        "rsi_short_ceiling": 90.0,
+        "min_entry_strength": 3.0,
     },
     "balanced": {
-        "volume_ratio": 0.70,
+        "volume_ratio": 0.25,
         "pin_threshold": 2.0,
-        "min_body_ratio": 0.35,
-        "min_signal_strength": 12.0,
-        "rsi_long_floor": 25.0,
-        "rsi_short_floor": 25.0,
-        "rsi_long_ceiling": 75.0,
-        "rsi_short_ceiling": 68.0,
-        "min_entry_strength": 10.0,
+        "min_body_ratio": 0.25,
+        "min_signal_strength": 8.0,
+        "rsi_long_floor": 20.0,
+        "rsi_short_floor": 20.0,
+        "rsi_long_ceiling": 88.0,
+        "rsi_short_ceiling": 82.0,
+        "min_entry_strength": 8.0,
     },
     "strict": {
-        "volume_ratio": 0.85,
+        "volume_ratio": 0.50,
         "pin_threshold": 1.5,
-        "min_body_ratio": 0.45,
-        # 實測近期 MA25_Pullback/MA7_Simple 進場的訊號強度普遍落在 23~30，舊值 15.0
-        # 遠低於這個區間，等於形同虛設——不管盤面活不活躍，幾乎每次觸發的訊號都
-        # 輕鬆超標，這個門檻從沒真正擋下過任何一筆（HYPEUSDT 23.89、NEARUSDT 25.00
-        # 都在盤整安靜期進場後小虧出場）。拉到 22.0，讓門檻真的能濾掉這個區間內
-        # 偏弱的訊號，只留下夠強的才准進場。
-        "min_signal_strength": 22.0,
-        "rsi_long_floor": 32.0,
-        "rsi_short_floor": 30.0,
-        "rsi_long_ceiling": 75.0,
-        "rsi_short_ceiling": 68.0,
-        "min_entry_strength": 12.0,
+        "min_body_ratio": 0.35,
+        "min_signal_strength": 12.0,
+        "rsi_long_floor": 28.0,
+        "rsi_short_floor": 25.0,
+        "rsi_long_ceiling": 80.0,
+        "rsi_short_ceiling": 75.0,
+        "min_entry_strength": 10.0,
     },
 }
 
