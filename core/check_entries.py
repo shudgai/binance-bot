@@ -1441,9 +1441,11 @@ async def check_entries():
                                                       entry_route=entry_route, signal_price=signal_anchor_price)
                     if order_data and order_data.get("avgPrice") and order_data.get("filledQty"):
                         from core.state_manager import update_state_with_fill
+                        from core.entry_reason_store import save_entry_reason
                         update_state_with_fill(sym, order_data)
-                        # Ensure last_entry metadata is updated with actual filled data
                         s = ctx.STATES[sym]
+                        s["entry_reason"] = entry_route
+                        save_entry_reason(sym, entry_route)
                         s["last_entry_price"] = float(order_data.get("avgPrice"))
                         s["last_entry_direction"] = side if side == "buy" else "sell"
                 except Exception as e:
