@@ -618,8 +618,10 @@ async def calibrate_with_exchange(exchange):
                         # 注意：只有在 current_qty == 0（代表從 0 變成有持倉的全新對帳接管）時，
                         # 才是真正「重啟接管的舊單」。若是機器人自己開倉後例行對帳，不可誤平！
                         _stored_reason = ctx.STATES[sym].get("entry_reason", "")
-                        if _stored_reason == "MA_Restored" and not _own_pending_fill and current_qty == 0:
-                            logger.info(f"🚨 [CALIBRATION] {sym} 屬無法追溯原因的舊殘留持倉 (MA_Restored)，當下立即發起市價清倉，杜絕殘留套牢！")
+                        _open_time = float(ctx.STATES[sym].get("open_time", 0.0) or 0.0)
+                        _time_elapsed = time.time() - _open_time
+                        if _stored_reason == "MA_Restored" and not _own_pending_fill and current_qty == 0 and _time_elapsed > 120.0:
+                            logger.info(f"🚨 [CALIBRATION] {sym} 屬無法追溯原因的舊殘留持倉 (MA_Restored) 且已持續超過 120 秒，當下立即發起市價清倉，杜絕殘留套牢！")
                             ctx.STATES[sym]["_auto_close_restored"] = True
 
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
