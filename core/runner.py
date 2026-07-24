@@ -617,12 +617,20 @@ async def calibrate_with_exchange(exchange):
                         # 當下立即市價平倉清空，不讓無開倉依據的殘留倉位留在市場中套牢。
                         # 注意：只有在 current_qty == 0（代表從 0 變成有持倉的全新對帳接管）時，
                         # 才是真正「重啟接管的舊單」。若是機器人自己開倉後例行對帳，不可誤平！
+                        # [2026-07-24 修正] 120 秒門檻太短：這個帳戶跟 8005 共用，任一邊重啟時
+                        # 常常剛好接住另一邊幾分鐘內才開的新倉，entry_reason 還沒同步過來就被這裡
+                        # 誤判成「舊殘留倉位」立即市價清倉（實測 ZEC 案例：正常新倉被誤殺，虧損
+                        # 純粹是重啟時機巧合，跟市場判斷無關）。拉長到 5 分鐘，給共用帳戶的另一邊
+                        # 更多時間把 entry_reason 落地，真正超過 5 分鐘還讀不到才視為真的舊殘留倉位。
                         _stored_reason = ctx.STATES[sym].get("entry_reason", "")
                         _open_time = float(ctx.STATES[sym].get("open_time", 0.0) or 0.0)
                         _time_elapsed = time.time() - _open_time
-                        if _stored_reason == "MA_Restored" and not _own_pending_fill and current_qty == 0 and _time_elapsed > 120.0:
-                            logger.info(f"🚨 [CALIBRATION] {sym} 屬無法追溯原因的舊殘留持倉 (MA_Restored) 且已持續超過 120 秒，當下立即發起市價清倉，杜絕殘留套牢！")
+                        _MIN_ORPHAN_AGE_FOR_AUTO_CLOSE_SEC = 300.0  # 5 分鐘
+                        if _stored_reason == "MA_Restored" and not _own_pending_fill and current_qty == 0 and _time_elapsed > _MIN_ORPHAN_AGE_FOR_AUTO_CLOSE_SEC:
+                            logger.info(f"🚨 [CALIBRATION] {sym} 屬無法追溯原因的舊殘留持倉 (MA_Restored) 且已持續超過 {_MIN_ORPHAN_AGE_FOR_AUTO_CLOSE_SEC/60:.0f} 分鐘，當下立即發起市價清倉，杜絕殘留套牢！")
                             ctx.STATES[sym]["_auto_close_restored"] = True
+                        elif _stored_reason == "MA_Restored" and not _own_pending_fill and current_qty == 0:
+                            logger.info(f"ℹ️ [CALIBRATION] {sym} entry_reason 遺失但持倉才 {_time_elapsed:.0f} 秒，判定是重啟時機巧合接住剛開的新倉，交給正常出場邏輯管理，不強制平倉")
 
                         logger.info(f"✅ [CALIBRATION] 已恢復 {sym} 的持倉數據。")
 

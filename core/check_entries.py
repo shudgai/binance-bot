@@ -1178,14 +1178,30 @@ async def check_entries():
                 logger.info(f"🛑 [Range_Final_Guard] {sym} 區間獲利空間 {range_net_pct*100:.2f}% < {range_min_net_pct*100:.1f}%")
                 continue
             range_rr = range_tp_dist / range_sl_dist if range_sl_dist > 0 else 0.0
-            if range_rr < RANGE_MIN_RR:
-                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < {RANGE_MIN_RR:.1f}")
+
+            # 計算當前 ATR 與平均 ATR 的比率 (vol_ratio)，自動切換區間三階段動態 RR 門檻
+            _atr_hist_range = s.get("atr_history", [])
+            _atr_avg_range = float(np.mean(_atr_hist_range)) if len(_atr_hist_range) > 0 else atr
+            vol_ratio = atr / _atr_avg_range if _atr_avg_range > 0 else 1.0
+
+            if vol_ratio < 0.7:
+                range_rr_threshold = 0.1
+                range_mode = "Ultra-Low"
+            elif vol_ratio > 1.3:
+                range_rr_threshold = 0.7
+                range_mode = "High"
+            else:
+                range_rr_threshold = 0.4
+                range_mode = "Normal"
+
+            if range_rr < range_rr_threshold:
+                logger.info(f"🛑 [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} < {range_rr_threshold:.2f} | 狀態: {range_mode} (vol_ratio: {vol_ratio:.2f})")
                 continue
             # 寫入進場時預先計算好的區間出場價位到 state
             s["range_tp_price"] = range_tp
             s["range_sl_price"] = range_sl
             logger.info(
-                f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} | "
+                f"✅ [Range_Final_Guard] {sym} 區間 RR={range_rr:.2f} (門檻={range_rr_threshold:.2f}, 狀態={range_mode}) | "
                 f"TP={range_tp:.4f} SL={range_sl:.4f} net={range_net_pct*100:.2f}%"
             )
 
