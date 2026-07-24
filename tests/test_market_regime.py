@@ -20,7 +20,7 @@ class TestMarketRegimeDetection(unittest.TestCase):
         # High: ratio > 1.3
         res_high = get_market_regime_config(current_atr=150.0, avg_atr=100.0)
         self.assertEqual(res_high["regime"], "High")
-        self.assertEqual(res_high["min_rr"], 0.8)
+        self.assertEqual(res_high["min_rr"], 0.6)
         self.assertAlmostEqual(res_high["vol_ratio"], 1.5)
 
     def test_calc_sl_tp_regime_integration(self):

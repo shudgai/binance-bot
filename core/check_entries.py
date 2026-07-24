@@ -10,7 +10,7 @@ from core import ctx
 from core.config import (COIN_PROFILE_CONFIG, DEFAULT_NEW_COIN_PROFILE,
     DUAL_SHOT_MIN_PROFIT_ROOM, RSI_PERIOD, DAILY_LOSS_LIMIT_PCT,
     DEFAULT_LOSS_REENTRY_COOLDOWN_SEC, MIN_5M_ATR_PCT_FOR_MA_ENTRY,
-    STRICT_ENTRY_SYMBOLS, get_entry_strictness_profile)
+    STRICT_ENTRY_SYMBOLS, RANGE_MODE_ENABLED, get_entry_strictness_profile)
 from core.indicators import (_get_atr, calculate_ema, calculate_macd,
     calculate_adx, calculate_bollinger_bands, _calc_sl_tp)
 from core.balance import is_daily_loss_halted
@@ -285,7 +285,7 @@ async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=Non
         if price <= 0:
             return False, "invalid live price"
         _, _, tp_dist, latest_rr = _calc_sl_tp(sym, side, s, price, route)
-        rr_floor = 1.1 if fresh_strength > 14.0 else (1.2 if fresh_strength > 12.0 else s.get("min_rr", 1.2))
+        rr_floor = 0.6 if fresh_strength > 14.0 else (0.6 if fresh_strength > 12.0 else s.get("min_rr", 0.6))
         profit_room = tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)
         if latest_rr < rr_floor or profit_room < 0.008:
             return False, f"RR or profit room failed on rapid check {attempt}"
@@ -1066,9 +1066,9 @@ async def check_entries():
         if not is_range_signal:
             atr_val, sl_dist, tp_dist, expected_rr = _calc_sl_tp(sym, side, s, p, route)
             regime_min_rr = s.get("regime_min_rr", 0.5)
-            custom_rr = s.get("min_rr", 1.2)
-            base_rr_thresh = custom_rr if custom_rr >= 2.0 else regime_min_rr
-            rr_thresh = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else base_rr_thresh)
+            custom_rr = s.get("min_rr", 0.6)
+            base_rr_thresh = min(custom_rr if custom_rr >= 2.0 else regime_min_rr, 0.6)
+            rr_thresh = 0.6 if strength > 14.0 else (0.6 if strength > 12.0 else base_rr_thresh)
             if expected_rr < rr_thresh:
                 regime_name = s.get("market_regime", "Normal")
                 vol_ratio = s.get("vol_ratio", 1.0)
@@ -1164,7 +1164,7 @@ async def check_entries():
 
         # RR 驗證與獲利空間
         _, _, tp_dist, latest_rr = _calc_sl_tp(sym, side, s, price, route)
-        rr_floor = 1.1 if strength > 14.0 else (1.2 if strength > 12.0 else s.get("min_rr", 1.2))
+        rr_floor = 0.6 if strength > 14.0 else (0.6 if strength > 12.0 else s.get("min_rr", 0.6))
         if not is_range_sig:
             if (latest_rr < rr_floor or (tp_dist / price - float(s.get("_expected_funding_cost_pct", 0.0) or 0.0)) < 0.008):
                 logger.info(f"[Final_Entry_Guard] {sym} latest RR or profit room insufficient")

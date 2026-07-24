@@ -108,6 +108,7 @@ class StopLossCooldownZoneTests(unittest.TestCase):
              patch("core.check_entries.compute_signal_strength", return_value=("buy", 15.0, "MA_Cross")), \
              patch("core.check_entries.is_entry_candidate_still_valid", return_value=(True, "")), \
              patch("core.check_entries._ma_candidate_quality", return_value=(True, "", 10.0)), \
+             patch("core.check_entries._radar_direction_block_reason", return_value=""), \
              patch("core.check_entries.is_entry_allowed", return_value=True), \
              patch("core.check_entries._calc_sl_tp", return_value=(1.0, 1.5, 3.0, 2.0)), \
              patch("core.orders.execute_order") as mock_execute:

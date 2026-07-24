@@ -141,7 +141,7 @@ def get_market_regime_config(current_atr: float, avg_atr: float) -> dict:
         return {
             "regime": "High",
             "vol_ratio": vol_ratio,
-            "min_rr": 0.8,
+            "min_rr": 0.6,
             "description": "捕捉大波段獲利"
         }
     else:

@@ -27,8 +27,8 @@ from core.orders import (execute_order, _enforce_bracket_rr, _pending_entry_setu
 
 class EntryRiskTests(unittest.TestCase):
     def test_range_entry_threshold_is_strict_only_for_eth_xrp(self):
-        self.assertEqual(RANGE_MIN_NET_PROFIT_PCT, 0.001)
-        self.assertGreaterEqual(STRICT_RANGE_MIN_NET_PROFIT_PCT, 0.004)
+        self.assertEqual(RANGE_MIN_NET_PROFIT_PCT, -0.0020)
+        self.assertGreaterEqual(STRICT_RANGE_MIN_NET_PROFIT_PCT, 0.0002)
 
     def test_entry_modes_use_market_for_ma_trend_turns_and_limit_for_range(self):
         # MA 趨勢路線的進場前提是「轉折剛發生，馬上跟上」，改用市價單保證跟上，

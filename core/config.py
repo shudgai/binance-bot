@@ -87,7 +87,7 @@ DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，�
 # ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
-RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
+RANGE_MODE_ENABLED = False          # 總開關；False 則完全禁用區間模式
 RANGE_ADX_THRESHOLD = 65.0          # ADX < 此值才視為區間行情（極度放寬至 65.0）
 RANGE_LOOKBACK = 40                 # 辨識支撐/壓力用的回顧已收盤 K 棒數
 RANGE_TOUCH_COUNT = 2               # 最少幾次觸碰才確認水平區（防止偽支撐）
