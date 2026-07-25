@@ -68,20 +68,29 @@ class ExitSystemTests(unittest.TestCase):
         self.assertAlmostEqual(s["sl_price"], 100.0 - EXIT_SL_ATR_MULTIPLIER * 1.0)
 
     def test_breakeven_triggers_at_threshold_long(self):
+        # [2026-07-25] 修正 XMRUSDT 實單案例：觸發保本的這個價位本身就是目前峰值，
+        # 同一次呼叫必須立刻用它計算 75% 鎖利，不能只鎖平的保本價（否則價格一觸發
+        # 保本就馬上回落，整段已經到手的漲幅完全沒鎖到，出場價幾乎等於保本/沒獲利）。
         sym = "EXITL3USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)  # init
-        update_trailing_stop(sym, 100.0 + EXIT_BREAKEVEN_ATR_MULTIPLIER * 1.001, True)
+        peak = 100.0 + EXIT_BREAKEVEN_ATR_MULTIPLIER * 1.001
+        update_trailing_stop(sym, peak, True)
         self.assertTrue(s["is_breakeven_moved"])
-        self.assertAlmostEqual(s["sl_price"], 100.0)
+        expected_sl = 100.0 + (peak - 100.0) * EXIT_TRAIL_LOCK_RATIO
+        self.assertAlmostEqual(s["sl_price"], expected_sl)
+        self.assertGreater(s["sl_price"], 100.0)  # 鎖到的一定比純保本多
 
     def test_breakeven_triggers_at_threshold_short(self):
         sym = "EXITS3USDT"
         s = self._setup(sym, "short", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, False)  # init
-        update_trailing_stop(sym, 100.0 - EXIT_BREAKEVEN_ATR_MULTIPLIER * 1.001, False)
+        trough = 100.0 - EXIT_BREAKEVEN_ATR_MULTIPLIER * 1.001
+        update_trailing_stop(sym, trough, False)
         self.assertTrue(s["is_breakeven_moved"])
-        self.assertAlmostEqual(s["sl_price"], 100.0)
+        expected_sl = 100.0 - (100.0 - trough) * EXIT_TRAIL_LOCK_RATIO
+        self.assertAlmostEqual(s["sl_price"], expected_sl)
+        self.assertLess(s["sl_price"], 100.0)
 
     # ── 峰值追蹤延展 ────────────────────────────────────────────────────────
     def test_trailing_locks_seventy_five_pct_and_extends_tp_long(self):
@@ -124,9 +133,15 @@ class ExitSystemTests(unittest.TestCase):
 
     # ── check_exits()：停利／停損／防插針／時間強制出場 ───────────────────────
     def test_take_profit_closes_position(self):
+        # check_exits() 用防插針確認價 (close_price_spike_filtered) 跑
+        # update_trailing_stop 峰值追蹤，但用即時 close_price 比對停利，兩者故意
+        # 分開：如果都用同一個價格，只要現價一到 tp_price，peak-tracking 會在
+        # 同一次呼叫先把 tp_price 往外延展，導致 tp_price 永遠追不上、TP 打不到。
+        # 這裡把確認價留在原地（不觸發保本/延展），只讓即時價格衝上原始 tp_price。
         sym = "EXITTP1USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)
+        s["close_price_spike_filtered"] = 100.5  # 遠低於保本門檻(100.8)，peak不延展
         s["close_price"] = s["tp_price"]
 
         async def run():
@@ -231,6 +246,42 @@ class ExitSystemTests(unittest.TestCase):
             with patch("core.orders.close_position", mock_close):
                 await check_exits(sym)
             mock_close.assert_not_called()
+
+        asyncio.run(run())
+
+    # ── 回歸測試：XMRUSDT 實單案例 ──────────────────────────────────────────
+    def test_breakeven_touch_then_immediate_reversal_still_locks_partial_profit(self):
+        """[2026-07-25] 實單案例：XMRUSDT 07:42 進場，08:28 觸發保本後 2 秒內
+        反轉，最終在接近保本處出場（獲利 -0.34%），完全沒鎖到已經走到的漲幅。
+        根因：保本觸發那一次呼叫直接 return，沒有用觸發當下的價格順便算 75%
+        鎖利，要等「下一筆更高的價格」才會補算——如果價格觸發保本後立刻回落，
+        永遠等不到那一筆。修正後：保本觸發跟 75% 鎖利在同一次呼叫內完成。"""
+        sym = "EXITREG1USDT"
+        s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
+        update_trailing_stop(sym, 100.0, True)  # init: sl=98.5, tp=103.0
+
+        # 價格觸及保本門檻 (0.8xATR = 100.8) 之上一點，然後立刻反轉回落。
+        touched_peak = 100.85
+        update_trailing_stop(sym, touched_peak, True)
+        self.assertTrue(s["is_breakeven_moved"])
+        locked_sl = s["sl_price"]
+        # 修正前：locked_sl 會剛好等於 100.0（純保本，沒鎖到任何漲幅）。
+        # 修正後：至少鎖住峰值的 75%。
+        self.assertGreater(locked_sl, 100.0, "應鎖住部分已到手的漲幅，不能只回到純保本")
+        self.assertAlmostEqual(locked_sl, 100.0 + (touched_peak - 100.0) * EXIT_TRAIL_LOCK_RATIO)
+
+        # 立刻反轉回落，觸及剛剛鎖定的止損價。
+        s["close_price"] = locked_sl
+        s["close_price_spike_filtered"] = locked_sl
+
+        async def run():
+            mock_close = AsyncMock(return_value=None)
+            with patch("core.orders.close_position", mock_close):
+                await check_exits(sym)
+            mock_close.assert_called_once()
+            # 出場價已經是「峰值的75%」而不是純保本，實際獲利應為正值。
+            exit_price = mock_close.call_args.args[3]
+            self.assertGreater(exit_price, 100.0)
 
         asyncio.run(run())
 

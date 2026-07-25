@@ -153,10 +153,15 @@ async def update_trade_signal(sym, trade):
     # 防插針保護），這裡只在每筆成交時即時更新 highest_price/lowest_price/sl_price/
     # tp_price，讓追蹤停損/延展停利的峰值不必等到下一輪主迴圈才反應；不在這裡直接
     # 平倉，避免跟 check_exits() 對同一倉位重複觸發平倉的競態。
+    # 用 close_price_spike_filtered（上面剛算好的防插針確認價）而非原始 price，
+    # 避免單筆插針瞬間偽造一個「新高」，把保本/追蹤停損永久鎖在雜訊價位上
+    # （實測 XMRUSDT 案例：單筆成交插到 +0.33%，保本剛觸發下一筆就打回真實價位，
+    # 平倉在接近保本的位置，明明沒有真的走到那個高點）。
     if (
         abs(s.get("qty", 0)) > 0.000001
         and s.get("avg_price", 0) > 0
     ):
         _is_long = s["qty"] > 0
+        _sf_price = float(s.get("close_price_spike_filtered", price) or price)
         from core.exits import update_trailing_stop
-        update_trailing_stop(sym, price, _is_long, update_peak=True)
+        update_trailing_stop(sym, _sf_price, _is_long, update_peak=True)

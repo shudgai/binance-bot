@@ -695,13 +695,17 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
             s["sl_price"] = avg_price
             s["is_breakeven_moved"] = True
             s["trailing_stop_price"] = s["sl_price"]
-            if is_long:
-                s["highest_price"] = max(float(s.get("highest_price", avg_price) or avg_price), current_price)
-            else:
-                s["lowest_price"] = min(float(s.get("lowest_price", avg_price) or avg_price), current_price)
             logger.info(f"🛡️ [保本觸發] {sym} 獲利達 {EXIT_BREAKEVEN_ATR_MULTIPLIER}xATR，止損鎖定保本價 {avg_price:.6f}")
             _schedule_ma_exchange_profit_stop(sym)
-        return True, s.get("sl_price", 0.0)
+            # 保本觸發跟峰值追蹤鎖定不能分兩次呼叫才生效：觸發保本的這個價位本身
+            # 就是目前的峰值，若在這裡直接 return，會讓 sl_price 卡在「剛好 0% 保本」，
+            # 要等「下一筆比這次還更高」的價格才會補算 75% 鎖利，萬一觸發保本後價格
+            # 立刻回落（沒有再創新高），這筆單就永遠只鎖在保本，白白吐掉已經到手的
+            # 那段獲利（實測 XMRUSDT 案例：觸發保本後 2 秒內反轉，最終在接近保本處
+            # 出場，等於完全沒鎖到那段已經走到的漲幅）。這裡讓同一次呼叫直接往下走，
+            # 用觸發保本當下的價格立即計算一次 75% 鎖利。
+        else:
+            return True, s.get("sl_price", 0.0)
 
     if is_long:
         if current_price > float(s.get("highest_price", avg_price) or avg_price):
@@ -758,6 +762,11 @@ async def check_exits(sym):
         return
 
     p = s["close_price"]
+    # 保本鎖定/峰值追蹤/停損比對都用防插針確認價，避免單筆插針瞬間偽造一個
+    # 「新高」把保本/移動停損永久鎖在雜訊價位（實測 XMRUSDT 案例：單筆插到
+    # +0.33% 觸發保本，下一筆就打回真實價位，結果在接近保本處平倉，但那個
+    # 高點從未真的走到過）；停利仍用即時 close_price，保持對真實獲利的敏感度。
+    p_sf = float(s.get("close_price_spike_filtered", p) or p)
     avg = s["avg_price"]
     is_long = s["qty"] > 0
 
@@ -768,7 +777,7 @@ async def check_exits(sym):
         save_peak(sym, s["highest_profit_pct"])
 
     # 維護 sl_price/tp_price（含開倉初始化、保本鎖定、峰值追蹤延展）
-    update_trailing_stop(sym, p, is_long)
+    update_trailing_stop(sym, p_sf, is_long)
 
     sl_price = float(s.get("sl_price", 0.0) or 0.0)
     tp_price = float(s.get("tp_price", 0.0) or 0.0)
@@ -788,12 +797,12 @@ async def check_exits(sym):
     if atr10 > 0 and is_candle_spike(s.get("ohlcv", []), atr10, EXIT_SPIKE_ATR_MULTIPLIER):
         logger.info(f"⚠️ [防插針保護] {sym} 單根K棒振幅 > {EXIT_SPIKE_ATR_MULTIPLIER}xATR，判定為異常插針，本輪暫停觸發止損")
     else:
-        sl_hit = (is_long and p <= sl_price) or (not is_long and p >= sl_price)
+        sl_hit = (is_long and p_sf <= sl_price) or (not is_long and p_sf >= sl_price)
         if sl_hit:
             cs = "sell" if is_long else "buy"
             reason_tag = "[Breakeven_Stop]" if s.get("is_breakeven_moved", False) else "[Stop_Loss]"
-            logger.info(f"🛑 {reason_tag} {sym} 現價 {p:.6f} 觸及止損價 {sl_price:.6f}，執行平倉")
-            await close_position(sym, cs, abs(s["qty"]), p, avg, reason=reason_tag, is_stop_loss=True)
+            logger.info(f"🛑 {reason_tag} {sym} 確認價 {p_sf:.6f} 觸及止損價 {sl_price:.6f}，執行平倉")
+            await close_position(sym, cs, abs(s["qty"]), p_sf, avg, reason=reason_tag, is_stop_loss=True)
             return
 
     # ── 24 小時強制出場（不論盈虧）──

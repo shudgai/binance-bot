@@ -1172,5 +1172,30 @@
         "exchange_close_id": "AAVEUSDT:344685251",
         "realized_pnl_usdt": -0.72,
         "net_realized_pnl_usdt": -0.829716
+    },
+    {
+        "timestamp": "2026-07-25 08:28:45",
+        "entry_timestamp_ms": 1784965335477,
+        "symbol": "XMRUSDT",
+        "entry_reason": "Keltner_SuperTrend",
+        "exit_reason": "[小虧] [Breakeven_Stop]",
+        "profit_pct": -0.0034,
+        "gross_profit_pct": -0.0032,
+        "max_profit_reached": 0.0029,
+        "atr_at_exit": 1.344286,
+        "market_mode": "High_Vol",
+        "expected_entry": 370.91,
+        "expected_exit": 369.711973,
+        "actual_entry": 370.91,
+        "actual_exit": 369.711973,
+        "fees": 0.027,
+        "qty": 0.365,
+        "slippage": 0.0,
+        "friction_rate": 0.02,
+        "side": "buy",
+        "theoretical_profit": -0.0032,
+        "ai_summary": "[小虧] XMRUSDT 透過 [小虧] [Breakeven_Stop] 出場。獲利 -0.34%，摩擦力 0.02%。",
+        "ai_anomaly_tags": [],
+        "ai_review_priority": 0
     }
 ]
