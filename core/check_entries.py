@@ -223,7 +223,8 @@ def log_decision_summary(
             reason = f"趨勢模式未進場 ({detail})；ADX={adx:.1f}，區間模式停用"
     else:
         # range_status == "未評估"（RANGE_MODE_ENABLED=False 且 MA 無訊號）
-        reason = f"趨勢模式無訊號 (ADX={adx:.1f})，區間模式未啟用"
+        detail = block_reason or "等待訊號"
+        reason = f"無訊號 (ADX={adx:.1f})：{detail}"
 
     logger.info(f"🔍 [Decision] {sym} | 決策路徑: {reason}")
 
