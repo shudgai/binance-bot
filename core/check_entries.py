@@ -113,7 +113,9 @@ def _radar_entry_block_reason(profile, route=None, observation_confirmed=False):
     """依實際訊號 route 重驗雷達分類；舊 profile 維持安全側相容。"""
     if not profile:
         return "尚無雷達交易資格"
-    if str(route or "").lower() == "ma7_simple":
+    # Keltner_SuperTrend 路線比照 MA7_Simple：使用者明確要求「5 秒內自動建倉」，
+    # 不能被雷達的「兩次確認+5分鐘觀察成熟期」拖慢，直接放行。
+    if str(route or "").lower() in ("ma7_simple", "keltner_supertrend"):
         return ""
 
     has_classified_data = (
@@ -151,10 +153,10 @@ def _radar_signal_block_message(sym, route, reason):
 
 
 def _radar_direction_block_reason(profile, side, route, sym=None):
-    """MA7_Simple 以即時轉折為準；其他路線保留高可信雷達方向保護。"""
+    """MA7_Simple/Keltner_SuperTrend 以即時轉折為準；其他路線保留高可信雷達方向保護。"""
     route_key = str(route or "").lower()
     is_range_route = route_key in ("range", "range_support_long", "range_resistance_short")
-    if route_key == "ma7_simple":
+    if route_key in ("ma7_simple", "keltner_supertrend"):
         return ""
     if is_range_route and str(sym or "").upper() not in STRICT_ENTRY_SYMBOLS:
         return ""
@@ -265,7 +267,7 @@ async def _rapid_reconfirm_cooldown_entry(sym, side, route, strength, checks=Non
 
         radar_profile = SYMBOL_PROFILES.get(sym, {})
         radar_block_reason = _radar_entry_block_reason(radar_profile, route)
-        if radar_block_reason and str(route or "").lower() != "ma7_simple":
+        if radar_block_reason and str(route or "").lower() not in ("ma7_simple", "keltner_supertrend"):
             return False, f"radar eligibility lost on rapid check {attempt}: {radar_block_reason}"
         macro_ok, macro_reason, _ = btc_macro_entry_guard(sym, side)
         if not macro_ok:
@@ -728,8 +730,16 @@ async def check_entries():
         # ── 出場管理由 runner.py check_exits 在主迴圈正常執行，無需在這裡額外呼叫。
         from core.idle_tracker import idle_tracker as _orphan_gate_tracker
         if sym in _orphan_gate_tracker.get_orphaned_positions():
-            logger.debug(f"⏭️ [孤兒倉位] {sym} 已列為孤兒，跳過新進場判斷，僅做出場管理")
-            continue
+            if abs(s.get("qty", 0.0)) > 0.000001:
+                logger.debug(f"⏭️ [孤兒倉位] {sym} 已列為孤兒，跳過新進場判斷，僅做出場管理")
+                continue
+            # 防呆：孤兒清單本來是給「還有實際持倉、正在等出場」的幣種用的，只有
+            # 偵測到真的平倉（confirm_position_closed）才會移除。如果本地已經沒有
+            # 倉位卻還留在清單裡，代表是過期的殘留紀錄（例如策略換代前留下、從此
+            # 沒再開過倉，永遠等不到平倉事件觸發移除）——直接清掉讓它恢復正常評估，
+            # 不讓陳舊狀態無限期卡住新訊號。
+            _orphan_gate_tracker.confirm_position_closed(sym)
+            logger.info(f"🔧 [孤兒清單修復] {sym} 孤兒紀錄無對應持倉，判定為過期殘留，已清除並恢復正常進場評估")
 
         current_candle_time = s["ohlcv"][-1][0] if s["ohlcv"] else 0
 
@@ -791,6 +801,13 @@ async def check_entries():
                 block_reason = s.get("entry_block_reason") or _disable_reason
                 s["entry_block_reason"] = block_reason
                 set_entry_diagnosis(f"{sym}: {radar_block_reason or block_reason}")
+                log_decision_summary(
+                    sym,
+                    ma_status=ma_status,
+                    range_status=range_status,
+                    adx=float(s.get("adx", 0.0) or 0.0),
+                    block_reason=block_reason,
+                )
                 continue
         else:
             from core.idle_tracker import idle_tracker
@@ -818,7 +835,7 @@ async def check_entries():
         # 雷達資料缺失也採安全側拒絕，不能因空 dict 繞過交易資格。
         # MA7_Simple 路線刻意設計為「MA7 一轉折就進場」，使用者明確要求不受
         # 雷達資格審核（普通訊號兩次確認＋5分鐘觀察）限制，直接放行。
-        if radar_block_reason and str(route or "").lower() != "ma7_simple":
+        if radar_block_reason and str(route or "").lower() not in ("ma7_simple", "keltner_supertrend"):
             diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
             s["entry_block_reason"] = radar_block_reason
             set_entry_diagnosis(diagnosis)
@@ -1124,7 +1141,7 @@ async def check_entries():
         radar_block_reason = _radar_entry_block_reason(
             radar_profile, route, observation_confirmed=fast_radar_approved,
         )
-        if radar_block_reason and str(route or "").lower() != "ma7_simple":
+        if radar_block_reason and str(route or "").lower() not in ("ma7_simple", "keltner_supertrend"):
             diagnosis = _radar_signal_block_message(sym, route, radar_block_reason)
             set_entry_diagnosis(diagnosis)
             logger.info(f"🛑 [Final_Entry_Guard] {diagnosis}")
@@ -1553,6 +1570,18 @@ def is_entry_candidate_still_valid(sym, side, route, strength, signal_price=0.0)
             f"price moved adverse {adverse_move/reference_price*100:.2f}% "
             f"(limit {adverse_limit/reference_price*100:.2f}%)"
         )
+
+    if route == "Keltner_SuperTrend":
+        # Keltner+SuperTrend 用自己的訊號重新驗證，不套用舊 MA7/MA25/MA99
+        # 結構檢查（is_ma_direction_aligned 是為四條已取代的 MA 路線設計的，
+        # 跟通道突破/SuperTrend 方向完全無關）。比照 Range 的作法：直接重跑
+        # compute_signal_strength() 確認突破條件此刻仍然成立。
+        from core.signal_engine import compute_signal_strength
+        fresh_side, _, fresh_route = compute_signal_strength(sym)
+        if fresh_side != side or fresh_route != route:
+            detail = str(s.get("entry_block_reason", "") or "Keltner/SuperTrend 訊號已不存在")
+            return False, f"fresh keltner/supertrend signal invalid: {detail}"
+        return True, "keltner/supertrend setup valid"
 
     if route in ("Range_Support_Long", "Range_Resistance_Short"):
         from core.config import RANGE_ADX_THRESHOLD

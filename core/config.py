@@ -80,7 +80,7 @@ DISABLE_MA_CROSS = True  # 禁用滯後性高的 MA_Cross 交叉開倉路線，�
 # ─── 區間模式參數 (Range Mode) ────────────────────────────────────────────────
 # 在 ADX 低、無明顯趨勢時，於確認支撐買多、確認壓力做空的獨立模式。
 # 與 MA 趨勢策略共用同一組槽位，不新增倉位數量。
-RANGE_MODE_ENABLED = True           # 總開關；False 則完全禁用區間模式
+RANGE_MODE_ENABLED = False          # [2026-07-25] 使用者指示：進場全面改用 Keltner+SuperTrend 突破，停用區間模式
 RANGE_ADX_THRESHOLD = 45.0          # ADX < 此值才視為區間行情（趨勢行情交給 MA 策略）；
                                      # 適度放寬（原35.0），但不比照另一個 session 一度放到 65
                                      # （那導致假支撐/假突破機率大增，經比對已確認是問題根源之一）。
@@ -95,6 +95,43 @@ STRICT_RANGE_MIN_NET_PROFIT_PCT = 0.004  # ETH/XRP 窄區間防掃損門檻
 RANGE_MIN_RR = 1.5                 # 區間單最終成交後至少維持 1.5:1 盈虧比
 RANGE_MAX_SLOTS = 3                 # 區間模式最多佔幾個槽位（與總槽位對齊）
 RANGE_MIN_SIGNAL_STRENGTH = 14.0    # 適度放寬（原18.0），保留基本品質過濾，不比照另一個 session 的 8.0
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── Keltner Channel + SuperTrend 突破進場 (2026-07-25) ───────────────────────
+# 使用者指示：完全取代 MA_Cross/MA_Breakout/MA25_Pullback/MA7_Simple/Range 五條
+# 舊路線，只保留現有出場與風控機制（硬停損、移動停利、停滯超時、相關性折扣、
+# 方向集中度等不變）。規則：價格突破 Keltner 通道上/下軌 + SuperTrend 同向轉多/
+# 轉空 ➔ 視為進場訊號，交由主迴圈在 MAIN_LOOP_INTERVAL_SEC 內送單。
+KELTNER_EMA_PERIOD = 20
+KELTNER_ATR_PERIOD = 10
+KELTNER_ATR_MULTIPLIER = 2.0
+SUPERTREND_ATR_PERIOD = 10
+SUPERTREND_MULTIPLIER = 3.0
+
+# 品質濾網（使用者要求全部加上）：都是在通道突破+SuperTrend之外的額外確認，
+# 不會恢復任何舊版 MA7/MA25/MA99 邏輯。
+KELTNER_BREAKOUT_MARGIN_PCT = 0.05   # 突破幅度緩衝：需超出通道寬度 5% 才算真突破，防止貼線即觸發
+KELTNER_MIN_VOLUME_RATIO = 0.5       # 量能確認：當前量需達 20 期均量 0.5x，防無量假突破
+SUPERTREND_MAX_FLIP_AGE_BARS = 5     # SuperTrend 新鮮度：方向須在最近 5 根已收盤K棒內剛轉向，防追老趨勢
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── 出場系統：固定 ATR 停損/停利 + 動態追蹤（方案三：趨勢獵人模式）(2026-07-25) ──
+# 使用者指示：完全取代舊版出場系統（硬停損、移動停利、停滯超時、MA_Peak_Lock、
+# TP1/TP2分批、DynamicExitManager、Range trailing 等全部停用）。規則：
+#   開倉：SL = entry ∓ EXIT_SL_ATR_MULTIPLIER x ATR(10)，TP = entry ± EXIT_TP_ATR_MULTIPLIER x ATR(10)
+#   獲利達 EXIT_BREAKEVEN_ATR_MULTIPLIER x ATR：SL 移到保本價（entry）
+#   保本後每創新高/新低：SL 追蹤到「峰值獲利的 EXIT_TRAIL_LOCK_RATIO」，
+#     TP 同步延展（新高/新低 ± EXIT_TP_EXTEND_ATR_MULTIPLIER x ATR），無上限
+#   防插針：單根已收盤K棒振幅 > EXIT_SPIKE_ATR_MULTIPLIER x ATR 時，暫停觸發SL（TP不受影響）
+#   持倉滿 EXIT_MAX_HOLD_SEC 強制平倉（不論盈虧）
+EXIT_ATR_PERIOD = 10
+EXIT_SL_ATR_MULTIPLIER = 1.5
+EXIT_TP_ATR_MULTIPLIER = 3.0
+EXIT_BREAKEVEN_ATR_MULTIPLIER = 0.8
+EXIT_TRAIL_LOCK_RATIO = 0.75
+EXIT_TP_EXTEND_ATR_MULTIPLIER = 1.5
+EXIT_SPIKE_ATR_MULTIPLIER = 5.0
+EXIT_MAX_HOLD_SEC = 86400
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -236,7 +273,7 @@ COOLDOWN_SEC = 300
 
 DAILY_LOSS_LIMIT_PCT = 0.10
 
-MAIN_LOOP_INTERVAL_SEC = 15
+MAIN_LOOP_INTERVAL_SEC = 5  # [2026-07-25] 使用者指示：Keltner+SuperTrend 突破需 5 秒內反應進場
 PENDING_CONFIRM_SEC = 2
 BAN_WINDOW = 1800          # 縮短至 30 分鐘觀測窗口，更快偵測連續停損
 BAN_DURATION = 86400

@@ -308,7 +308,7 @@ async def _record_external_position_close(exchange, sym, state):
 
     known_stop_prices = [
         float(state.get(key, 0.0) or 0.0)
-        for key in ("range_sl_price", "stop_loss", "trailing_stop_price")
+        for key in ("range_sl_price", "stop_loss", "trailing_stop_price", "sl_price")
     ]
     stop_price_tolerance = max(exit_price * 0.00015, 1e-12)
     matched_known_stop = bool(stored_stop_id) and any(
@@ -612,6 +612,13 @@ async def calibrate_with_exchange(exchange):
                         ctx.STATES[sym]["stop_loss"] = 0.0
                         ctx.STATES[sym]["is_breakeven_locked"] = False
                         ctx.STATES[sym].pop("dynamic_exit_manager", None)
+                        # 方案三欄位一併重置，讓 update_trailing_stop() 用目前還原的
+                        # avg_price 重新算一組固定 ATR 停損/停利，不沿用舊倉殘值。
+                        ctx.STATES[sym]["sl_price"] = 0.0
+                        ctx.STATES[sym]["tp_price"] = 0.0
+                        ctx.STATES[sym]["highest_price"] = 0.0
+                        ctx.STATES[sym]["lowest_price"] = 0.0
+                        ctx.STATES[sym]["is_breakeven_moved"] = False
 
                         # 如果是無法辨識歷史原因的盲目接管倉位 (MA_Restored)，且不屬於機器人自己掛單剛成交者，
                         # 當下立即市價平倉清空，不讓無開倉依據的殘留倉位留在市場中套牢。

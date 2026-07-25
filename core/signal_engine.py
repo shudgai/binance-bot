@@ -1,332 +1,132 @@
 import logging
 import json
 
+import numpy as np
+
 from core import ctx
 from core.config import CONFIG_FILE
+from core.indicators import calculate_keltner_channels, calculate_supertrend, bars_since_supertrend_flip
 
 logger = logging.getLogger(__name__)
 
 
-
-from core.config import ENTRY_SURGE_THRESHOLD, MA_CROSS_MIN_GAP_PCT, MIN_TREND_ADX
-
-CORE_LIQUID_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
-
-def _ma_base_volume_limit(sym, atr_pct):
-    if atr_pct > 5.0:
-        return 0.40
-    return 0.25 if sym in CORE_LIQUID_SYMBOLS else 0.25
-
-
 def compute_signal_strength(sym, realtime_trigger=False):
-    """Generate entries exclusively from completed-candle MA7/25/99 setups."""
+    """Keltner Channel 突破 + SuperTrend 轉向為進場依據，搭配動態波段過濾。
+
+    [2026-07-25] 使用者指示：完全取代 MA_Cross/MA_Breakout/MA25_Pullback/MA7_Simple
+    四條路線，目標高頻高勝率（一天 15~30 筆）：
+      1. 5 分鐘 K 線（TIMEFRAME 本來就是 5m，一天 288 根，開倉機會足夠）
+      2. 大趨勢過濾改用「動態波段」EMA20/EMA50（取代僵硬的 EMA200），
+         抓中短線趨勢，不會把短線高勝率波段突破濾掉
+      3. 動態 RSI 超買超賣防守，避免插針/低流動性雜訊誤觸發
+
+    多單：即時價格突破 Keltner 通道上軌 + SuperTrend 多頭 + EMA20>=EMA50 + RSI>=45
+    空單：即時價格跌破 Keltner 通道下軌 + SuperTrend 空頭 + EMA20<=EMA50 + RSI<=55
+    通道與 SuperTrend 用已收盤 K 棒計算（避免每個 tick 通道本身跟著即時價格抖動）；
+    突破判斷則對照最新一筆即時更新中的 close，讓訊號能在掃描週期內立即反應。
+
+    另外疊加 4 道品質濾網（使用者要求，皆與舊版 MA7/MA25/MA99 邏輯無關）：
+      1. 防插針：突破比對用 SpikeFilter_L2 修正後的成交中位數價，而非未濾波的即時
+         成交價，避免 Testnet 稀薄流動性造成的單根插針雜訊直接誤觸發
+      2. 突破幅度緩衝：價格需超出通道邊界一定比例（通道寬度 x margin），拒絕貼線
+         即回的邊緣訊號
+      3. 量能確認：當下量須達 20 期均量一定比例，拒絕無量假突破
+      4. SuperTrend 新鮮度：目前方向須在最近 N 根已收盤K棒內才剛轉向，避免追一個
+         已經走了很久、隨時可能回頭的老趨勢
+
+    既有出場與風控機制（硬停損、移動停利、停滯超時、相關性折扣、方向集中度等）
+    完全不受影響，這裡只取代「要不要開倉」的判斷本身。
+    """
+    from core.config import (
+        KELTNER_EMA_PERIOD, KELTNER_ATR_PERIOD, KELTNER_ATR_MULTIPLIER,
+        SUPERTREND_ATR_PERIOD, SUPERTREND_MULTIPLIER,
+        KELTNER_BREAKOUT_MARGIN_PCT, KELTNER_MIN_VOLUME_RATIO, SUPERTREND_MAX_FLIP_AGE_BARS,
+    )
     s = ctx.STATES[sym]
     s["entry_block_reason"] = ""
     candles = s.get("ohlcv", [])
-    ma7 = float(s.get("ma7", 0.0) or 0.0)
-    ma25 = float(s.get("ma25", 0.0) or 0.0)
-    ma99 = float(s.get("ma99", 0.0) or 0.0)
-    prev_ma7 = float(s.get("prev_ma7", 0.0) or 0.0)
-    prev_ma25 = float(s.get("prev_ma25", 0.0) or 0.0)
-    vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
-    adx = float(s.get("adx", 0.0) or 0.0)
-    prev_adx = float(s.get("prev_adx", 0.0) or 0.0)
-    if len(candles) < 22 or min(ma7, ma25, ma99, prev_ma7, prev_ma25, vol_ma20) <= 0:
-        s["entry_block_reason"] = "MA7／MA25／MA99 或成交量資料尚未完成"
+    min_len = max(KELTNER_EMA_PERIOD, SUPERTREND_ATR_PERIOD, 50) + 2
+    if len(candles) < min_len:
+        s["entry_block_reason"] = "K 線資料尚未足夠計算 Keltner/SuperTrend/EMA"
         return (None, 0, None)
 
-    # 實測 DOTUSDT（ADX=0.0）、BCHUSDT（ADX=1.4）、AVAXUSDT（ADX=2.7）三筆案例：
-    # MA_Cross／MA7_Simple 在幾乎沒有趨勢的盤整行情下一樣會觸發訊號（這幾條路線
-    # 原本完全沒有 ADX 下限），進場後幾十秒內就整段反轉回吐。四條 MA 趨勢路線
-    # 共用同一個最低 ADX 門檻，低於門檻直接不產生任何 MA 訊號——沒有趨勢的
-    # 環境，趨勢跟隨策略本來就不該進場，不分路線都一樣。
-    # 模式 A（高品質杜絕假突破）：趨勢強度 ADX 低於 18.0 直接過濾，拒絕死水盤整
-    if adx < MIN_TREND_ADX:
-        s["entry_block_reason"] = f"ADX={adx:.1f} < {MIN_TREND_ADX:.0f}，盤整無趨勢，暫停 MA 訊號"
+    ema20 = float(s.get("ema20", 0.0) or 0.0)
+    ema50 = float(s.get("ema50", 0.0) or 0.0)
+    current_rsi = float(s.get("current_rsi", 50.0) or 50.0)
+    if ema20 <= 0 or ema50 <= 0:
+        s["entry_block_reason"] = "EMA20/EMA50 尚未計算完成"
         return (None, 0, None)
 
-    signal_candle = candles[-2]
-    signal_ts = int(signal_candle[0])
-    candle_open, candle_high, candle_low, candle_close, candle_volume = map(float, signal_candle[1:6])
-    volume_ratio = candle_volume / vol_ma20
-    golden_cross = prev_ma7 <= prev_ma25 and ma7 > ma25
-    death_cross = prev_ma7 >= prev_ma25 and ma7 < ma25
-    gap, prev_gap = ma7 - ma25, prev_ma7 - prev_ma25
-    long_spreading = ma7 > ma25 and ma7 > prev_ma7 and gap > max(prev_gap, 0.0)
-    short_spreading = ma7 < ma25 and ma7 < prev_ma7 and gap < min(prev_gap, 0.0)
-    above_ma99, below_ma99 = candle_close > ma99, candle_close < ma99
-
-    current_rsi = float(s.get("current_rsi", 50.0))
-    vol_surge = float(s.get("vol_surge", 0.0))
-    personality = s.get("personality", "calm")
-    atr_pct = float(s.get("atr_pct", 0.0))
-
-    # 模式 A（高品質杜絕假突破）：量能必須達到 20 週期均量的 0.80x 以上，真金白銀掃盤才放行
-    base_limit = _ma_base_volume_limit(sym, atr_pct)
-    breakout_limit = base_limit * 1.3
-
-    long_stack = ma7 > ma25 and ma7 > prev_ma7 and ma25 >= prev_ma25
-    short_stack = ma7 < ma25 and ma7 < prev_ma7 and ma25 <= prev_ma25
-
-    # 即時量只用來確認當下價格方向；MA 策略的參與度門檻必須使用訊號 K 棒的已收線量。
-    # 否則新 K 棒剛開始時 vol_surge 接近 0 會誤擋有效訊號，也可能被未收線瞬時量誤放行。
-    is_realtime_strong = realtime_trigger and (vol_surge >= 1.5)
-
-    # 防假突破倒鉤 / 上下影線反轉過濾 (Fake Breakout Wick Guard)
-    c_range = max(candle_high - candle_low, 1e-8)
-    upper_wick_ratio = (candle_high - max(candle_close, candle_open)) / c_range
-    lower_wick_ratio = (min(candle_close, candle_open) - candle_low) / c_range
-    long_no_fake_breakout = upper_wick_ratio <= 0.45  # 上影線不可超過 45% (拒絕高位倒鉤/假突破吸頂)
-    short_no_fake_breakout = lower_wick_ratio <= 0.45  # 下影線不可超過 45% (拒絕低位反彈/假向下破位)
-
-    # 偏離度過大過濾 (過度延伸追高拒絕：超過 1.5% 遠離均線拒絕進場)
-    dev_from_ma25 = (candle_close - ma25) / ma25 if ma25 > 0 else 0.0
-    long_not_overextended = dev_from_ma25 <= 0.015  # 開多時離 MA25 不可拉開 > 1.5%
-    short_not_overextended = dev_from_ma25 >= -0.015  # 開空時離 MA25 不可跌開 > 1.5%
-
-    # MA7／MA25 必須在交叉後拉開最小距離；斜率與 GAP
-    ma_gap_pct = abs(gap) / candle_close if candle_close > 0 else 0.0
-    ma7_slope = abs(ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
-    ma25_slope = abs(ma25 - prev_ma25) / candle_close if candle_close > 0 else 0.0
-    is_flat_chop = ma_gap_pct < 0.001 and ma7_slope < 0.0005 and ma25_slope < 0.0005
-    cross_direction_confirmed = ma_gap_pct >= MA_CROSS_MIN_GAP_PCT
-
-    # 嚴格量能爆發與防假突破確認 (拒絕無量假突破/偽交叉)
-    cross_long_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.25 and above_ma99 and atr_pct <= 5.0
-    )
-    cross_short_volume_ok = volume_ratio >= base_limit or (
-        volume_ratio >= 0.25 and below_ma99 and atr_pct <= 5.0
-    )
-    cross_long = (golden_cross and ma7 > prev_ma7 and ma25 >= prev_ma25
-                  and (candle_close > candle_open or is_realtime_strong)
-                  and cross_long_volume_ok and current_rsi < 68
-                  and cross_direction_confirmed and not is_flat_chop
-                  and long_no_fake_breakout and long_not_overextended)
-    cross_short = (death_cross and ma7 < prev_ma7 and ma25 <= prev_ma25
-                   and (candle_close < candle_open or is_realtime_strong)
-                   and cross_short_volume_ok and current_rsi > 32
-                   and cross_direction_confirmed and not is_flat_chop
-                   and short_no_fake_breakout and short_not_overextended)
-
-    atr = float(s.get("current_atr", 0.0) or 0.0)
-    touch_tolerance = max(0.0015, min(0.008, (atr / candle_close) * 0.5 if candle_close > 0 else 0.002))
-    from core.config import STRICT_ENTRY_SYMBOLS
-    pullback_rebound_limit = max(candle_close * 0.0015, atr * 0.35)
-    pullback_long_rebound = candle_close - ma25
-    pullback_short_rebound = ma25 - candle_close
-
-    # 回調路線：量能 + K 棒方向確認 + 杜絕盤整黏合與上影線假突破
-    pullback_long = (long_spreading and long_stack and candle_low <= ma25 * (1 + touch_tolerance)
-                     and candle_close >= ma25 and (candle_close > candle_open or is_realtime_strong)
-                     and volume_ratio >= base_limit and current_rsi < 70 and not is_flat_chop
-                     and long_no_fake_breakout
-                     and (sym not in STRICT_ENTRY_SYMBOLS or pullback_long_rebound <= pullback_rebound_limit))
-    pullback_short = (short_spreading and short_stack and candle_high >= ma25 * (1 - touch_tolerance)
-                      and candle_close <= ma25 and (candle_close < candle_open or is_realtime_strong)
-                      and volume_ratio >= base_limit and current_rsi > 30 and not is_flat_chop
-                      and short_no_fake_breakout
-                      and (sym not in STRICT_ENTRY_SYMBOLS or pullback_short_rebound <= pullback_rebound_limit))
-
-    from core.config import DISABLE_MA_BREAKOUT, DISABLE_MA25_PULLBACK
     completed = candles[:-1]
-    breakout_long = breakout_short = False
-    if len(completed) >= 21 and not DISABLE_MA_BREAKOUT:
-        prior = completed[-21:-1]
-        prior_high = max(float(c[2]) for c in prior)
-        prior_low = min(float(c[3]) for c in prior)
-        # 突破路線：嚴格真量能 (RVOL >= 1.0) + 影線過濾 + 偏離過大過濾 (杜絕假突破追高)
-        breakout_long = (long_spreading and long_stack and candle_close > prior_high
-                         and (candle_close > candle_open or is_realtime_strong)
-                         and volume_ratio >= max(1.0, breakout_limit) and current_rsi < 68
-                         and long_no_fake_breakout and long_not_overextended)
-        breakout_short = (short_spreading and short_stack and candle_close < prior_low
-                           and (candle_close < candle_open or is_realtime_strong)
-                           and volume_ratio >= max(1.0, breakout_limit) and current_rsi > 32
-                           and short_no_fake_breakout and short_not_overextended)
+    closes = np.array([float(c[4]) for c in completed])
+    highs = np.array([float(c[2]) for c in completed])
+    lows = np.array([float(c[3]) for c in completed])
 
-    from core.config import DISABLE_MA_BREAKOUT, DISABLE_MA25_PULLBACK, DISABLE_MA_CROSS
-    if (cross_long or cross_short) and not DISABLE_MA_CROSS:
-        side, route = ("buy" if cross_long else "sell"), "MA_Cross"
-    elif (breakout_long or breakout_short) and not DISABLE_MA_BREAKOUT:
-        side, route = ("buy" if breakout_long else "sell"), "MA_Breakout"
-    elif (pullback_long or pullback_short) and not DISABLE_MA25_PULLBACK:
-        side, route = ("buy" if pullback_long else "sell"), "MA25_Pullback"
-    else:
-        # 既有三條路線都沒觸發時，才嘗試簡化路線 (MA7_Simple)
-        #
-        # 實測（peak_giveback_stats.py + trade_history.json）：MA7_Simple 40 筆只有
-        # 20% 勝率，是所有路線裡最差、單一路線就吃掉全部虧損過半。原因是它唯一
-        # 沒有要求 MA25 中期趨勢配合方向（其他三條路線都要求 long/short_spreading
-        # 或 long/short_stack），等於允許在 MA25 明顯走跌時，只因 MA7 這條最快的
-        # 均線單根蠟燭翻頭向上就做多——這種逆著中期趨勢的早期轉折，本質上更容易
-        # 只是雜訊，不是真反轉。這裡補上「MA25 不能是逆勢方向」的最低限度要求，
-        # 量能門檻也拉齊到跟其他路線一樣的 0.6x（原本 0.5x 比全部路線都寬鬆，
-        # 等於連平均以下的量都放行）。
-        prev_ma7_2 = float(s.get("prev_ma7_2", 0.0) or 0.0)
-        prev_slope = prev_ma7 - prev_ma7_2
-        curr_slope = ma7 - prev_ma7
-        turn_up = prev_slope <= 0 and curr_slope > 0
-        turn_down = prev_slope >= 0 and curr_slope < 0
-        bullish_candle = candle_close > candle_open
-        bearish_candle = candle_close < candle_open
-        volume_ok = volume_ratio >= base_limit
-        ma25_not_against_long = ma25 >= prev_ma25
-        ma25_not_against_short = ma25 <= prev_ma25
-        # 實測 LINKUSDT 案例：ADX 在短短 15 秒內從 7.7 暴衝到 35.4，同一輪掃描
-        # 就翻出 MA7_Simple 訊號，看起來像扎實趨勢，其實只是單根尖刺行情帶動，
-        # 進場後浮盈只到 +0.41% 就反轉停損。正常累積出來的趨勢，ADX 不會在
-        # 相鄰兩次掃描（約 10 秒）間跳這麼多，用這個過濾掉尖刺型態的假訊號。
-        ADX_SPIKE_GUARD_PCT = 20.0
-        adx_not_spiking = (adx - prev_adx) <= ADX_SPIKE_GUARD_PCT
-
-        # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
-        # 做空時 RSI < 52 表示已在下跌中途（超賣風險高），不跟進
-        # 做多時 RSI > 65 表示已在上漲中途（超買風險高），不跟進
-        # 規則 1：RSI 邊界保護 - MA7 轉折方向要與 RSI 動能空間一致
-        MA7_SIMPLE_SHORT_RSI_FLOOR = 20.0   # 重新放寬做空最低 RSI 要求，允許在極度跌勢中追空
-        MA7_SIMPLE_LONG_RSI_CEIL   = 80.0   # 做多最高 RSI 要求放寬至 80
-
-        # [2026-07-24 修正] UNI/AVAX 兩筆實單顯示：RSI 卡在 45~55 中性區時，MA7 單根
-        # 勾頭多半只是雜訊、不是真轉折——兩筆進場後 max_profit_reached 都是 0%，價格
-        # 根本沒往訊號方向走過。做空需要 RSI 先來到中性偏高（真的有一段漲勢可以轉弱）
-        # 才有意義，做多對稱需要 RSI 先來到中性偏低，避免在方向未明時搶進。
-        MA7_SIMPLE_SHORT_RSI_CONFIRM = 55.0
-        MA7_SIMPLE_LONG_RSI_CONFIRM  = 45.0
-
-        # 規則 2：15m RSI 多時間框架確認
-        rsi_15m = float(s.get("rsi_15m", 0.0) or 0.0)
-        MTF_RSI_SHORT_FLOOR = 35.0  # 15m RSI 防超賣地板放寬
-        MTF_RSI_SHORT_CEIL  = 50.0  # 15m RSI 防逆勢天花板放寬
-        MTF_RSI_LONG_CEIL   = 75.0  # 15m RSI 防超買天花板放寬
-        MTF_RSI_LONG_FLOOR  = 50.0  # 15m RSI 防逆勢地板放寬
-
-        # MA7_Simple 不再享有低量豁免；單根均線勾頭至少要有與其他 MA 路線相同的已收線量能。
-        ma7_simple_volume_ok = volume_ratio >= base_limit
-        curr_slope_pct = (ma7 - prev_ma7) / candle_close if candle_close > 0 else 0.0
-        slope_confirmed = curr_slope_pct > 0.0
-        price_above_ma7 = candle_close >= (ma7 * 0.9992)
-        rsi_bottom_ok = current_rsi >= 35.0
-        ma25_extension_limit = max(candle_close * 0.0035, atr * 1.5)
-        ma25_long_extension = candle_close - ma25
-        ma25_short_extension = ma25 - candle_close
-        ma25_long_extension_ok = 0.0 <= ma25_long_extension <= ma25_extension_limit
-        ma25_short_extension_ok = 0.0 <= ma25_short_extension <= ma25_extension_limit
-
-        ma7_ma25_gap_pct = abs(ma7 - ma25) / candle_close if candle_close > 0 else 0.0
-        ma7_simple_gap_ok = ma7_ma25_gap_pct >= 0.0008
-        adx_trend_ok = adx >= 22.0
-
-        # MA25 逆勢豁免：MA25 尚未跟上剛啟動的趨勢時，只要量能真的夠大（>=1.0x 均量，
-        # 比一般路線的 0.25x/0.40x 高出許多），仍允許 MA7_Simple 進場，但視為逆勢單，
-        # 進場後 strength 評分會扣分（排序靠後、非首選訊號）。
-        MA7_SIMPLE_COUNTER_TREND_VOLUME = max(1.0, base_limit * 1.5)
-        counter_trend_volume_ok_long = volume_ratio >= MA7_SIMPLE_COUNTER_TREND_VOLUME
-        counter_trend_volume_ok_short = volume_ratio >= MA7_SIMPLE_COUNTER_TREND_VOLUME
-        ma25_long_gate_ok = ma25_not_against_long or counter_trend_volume_ok_long
-        ma25_short_gate_ok = ma25_not_against_short or counter_trend_volume_ok_short
-
-        # MA7 谷底轉折向上：當 MA7 勾頭向上、RVOL >= 0.3x 即允許開倉做多
-        if (turn_up and slope_confirmed and price_above_ma7 and rsi_bottom_ok
-                and ma7_simple_volume_ok and current_rsi < 82.0
-                and ma7 >= ma25 and ma25_long_gate_ok and ma25_long_extension_ok
-                and adx_not_spiking and adx_trend_ok and ma7_simple_gap_ok):
-            # 規則 1：已超買則不追多
-            if current_rsi > MA7_SIMPLE_LONG_RSI_CEIL:
-                reason = f"MA7 谷底轉折向上，但 5m RSI={current_rsi:.1f} > {MA7_SIMPLE_LONG_RSI_CEIL:.0f} 偏高，跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            # 規則 1b：RSI 仍在中性區，缺乏真正谷底確認
-            elif current_rsi > MA7_SIMPLE_LONG_RSI_CONFIRM:
-                reason = f"MA7 谷底轉折向上，但 RSI={current_rsi:.1f} 仍處中性（> {MA7_SIMPLE_LONG_RSI_CONFIRM:.0f}），缺乏真正轉強確認，跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            # 規則 2：15m RSI 多時間框架確認（有資料才檢查）
-            elif rsi_15m > 0 and rsi_15m > MTF_RSI_LONG_CEIL:
-                reason = f"MA7 谷底轉折，但 15m RSI={rsi_15m:.1f} > {MTF_RSI_LONG_CEIL:.0f} 大週期已超買，跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            elif rsi_15m > 0 and rsi_15m < MTF_RSI_LONG_FLOOR:
-                reason = f"MA7 谷底轉折，但 15m RSI={rsi_15m:.1f} < {MTF_RSI_LONG_FLOOR:.0f} 大週期仍偏空，防逆勢跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            else:
-                side, route = "buy", "MA7_Simple"
-                is_counter_trend = not ma25_not_against_long
-                reason = f"MA7 谷底轉折向上 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "") + (" [MA25逆勢-高量確認]" if is_counter_trend else "")
-                s["ma_signal_candle_ts"] = signal_ts
-                logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] buy | {reason}")
-                volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
-                strength = 25.0 + volume_adjustment
-                if is_counter_trend:
-                    strength -= 5.0
-                return (side, strength, route)
-        # MA7 頭部轉折向下：在 MA7 一向下勾且 RVOL >= 0.3x 時即刻開倉做空
-        elif (turn_down and ma7_simple_volume_ok and current_rsi > 18.0
-                and ma7 <= ma25 and ma25_short_gate_ok and ma25_short_extension_ok
-                and adx_not_spiking and adx_trend_ok and ma7_simple_gap_ok):
-            # 規則 1：已在超賣區則不追空（ENAUSDT RSI=40 做空的問題案例）
-            if current_rsi < MA7_SIMPLE_SHORT_RSI_FLOOR:
-                reason = f"MA7 頭部轉折向下，但 5m RSI={current_rsi:.1f} < {MA7_SIMPLE_SHORT_RSI_FLOOR:.0f} 已偏低，跳過避免超賣區做空"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            # 規則 1b：RSI 仍在中性區，缺乏真正頭部確認
-            elif current_rsi < MA7_SIMPLE_SHORT_RSI_CONFIRM:
-                reason = f"MA7 頭部轉折向下，但 RSI={current_rsi:.1f} 仍處中性（< {MA7_SIMPLE_SHORT_RSI_CONFIRM:.0f}），缺乏真正轉弱確認，跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            # 規則 2：15m RSI 多時間框架確認（有資料才檢查）
-            elif rsi_15m > 0 and rsi_15m < MTF_RSI_SHORT_FLOOR:
-                reason = f"MA7 頭部轉折，但 15m RSI={rsi_15m:.1f} < {MTF_RSI_SHORT_FLOOR:.0f} 大週期已超賣，跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            elif rsi_15m > 0 and rsi_15m > MTF_RSI_SHORT_CEIL:
-                reason = f"MA7 頭部轉折，但 15m RSI={rsi_15m:.1f} > {MTF_RSI_SHORT_CEIL:.0f} 大週期仍偏多，防逆勢跳過"
-                logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA7_Simple] {reason}")
-            else:
-                side, route = "sell", "MA7_Simple"
-                is_counter_trend = not ma25_not_against_short
-                reason = f"MA7 頭部轉折向下 | MA7={ma7:.6f} RVOL={volume_ratio:.2f}x RSI={current_rsi:.1f}" + (f" 15mRSI={rsi_15m:.1f}" if rsi_15m > 0 else "") + (" [MA25逆勢-高量確認]" if is_counter_trend else "")
-                s["ma_signal_candle_ts"] = signal_ts
-                logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [MA7_Simple] sell | {reason}")
-                # 空單採對稱評分：弱量仍可觀察，但排序必須低於有量轉折。
-                volume_adjustment = max(-2.0, min((volume_ratio - 0.8) * 5.0, 5.0))
-                strength = 25.0 + volume_adjustment
-                if is_counter_trend:
-                    strength -= 5.0
-                return (side, strength, route)
-
-        if turn_up and not ma25_not_against_long and not counter_trend_volume_ok_long:
-            reason = (f"MA7 雖向上勾，但 MA25 中期趨勢仍下彎且量能不足"
-                      f"（RVOL={volume_ratio:.2f}x < {MA7_SIMPLE_COUNTER_TREND_VOLUME:.2f}x），拒絕逆勢做多")
-        elif turn_up and ma25_long_extension > ma25_extension_limit:
-            reason = (f"MA7 向上勾但價格高於 MA25 {ma25_long_extension/ma25*100:.2f}% "
-                      f"> 允許 {ma25_extension_limit/ma25*100:.2f}%，反彈末端不追多")
-        elif turn_down and not ma25_not_against_short and not counter_trend_volume_ok_short:
-            reason = (f"MA7 雖向下勾，但 MA25 中期趨勢仍上揚且量能不足"
-                      f"（RVOL={volume_ratio:.2f}x < {MA7_SIMPLE_COUNTER_TREND_VOLUME:.2f}x），拒絕逆勢做空")
-        elif turn_down and ma25_short_extension > ma25_extension_limit:
-            reason = (f"MA7 向下勾但價格低於 MA25 {ma25_short_extension/ma25*100:.2f}% "
-                      f"> 允許 {ma25_extension_limit/ma25*100:.2f}%，下跌末端不追空")
-        elif turn_up and rsi_15m > 0 and rsi_15m < MTF_RSI_LONG_FLOOR:
-            reason = f"MA7 向上勾但 15m RSI={rsi_15m:.1f} < 50，多週期仍偏空不做多"
-        elif turn_down and rsi_15m > MTF_RSI_SHORT_CEIL:
-            reason = f"MA7 向下勾但 15m RSI={rsi_15m:.1f} > 50，多週期仍偏多不做空"
-        elif volume_ratio < base_limit:
-            reason = f"量能不足（RVOL={volume_ratio:.2f}x < {base_limit:.2f}x），暫停交易"
-        elif (golden_cross or death_cross) and not cross_direction_confirmed:
-            reason = (f"MA7／MA25 交叉間距僅 {ma_gap_pct*100:.4f}% < "
-                      f"{MA_CROSS_MIN_GAP_PCT*100:.4f}%，方向確認不足")
-        elif is_flat_chop and (golden_cross or death_cross):
-            reason = "MA7／MA25 平走交織，屬盤整假訊號區"
-        elif current_rsi >= 70 and ma7 > ma25:
-            reason = f"RSI={current_rsi:.1f} 已達極端值，防超買反轉不追多"
-        elif current_rsi <= 30 and ma7 < ma25:
-            reason = f"RSI={current_rsi:.1f} 已達極端值，防超賣反轉不追空"
-        else:
-            reason = "等待 MA7／MA25 收線交叉、MA25 回調或帶量突破"
-        s["entry_block_reason"] = reason
-        logger.info(f"@@COIN_DEBUG@@ ⏳ {sym} [MA_Strategy] {reason}")
+    kc_upper, kc_mid, kc_lower = calculate_keltner_channels(
+        closes, highs, lows, KELTNER_EMA_PERIOD, KELTNER_ATR_PERIOD, KELTNER_ATR_MULTIPLIER
+    )
+    if kc_upper <= 0 or kc_lower <= 0:
+        s["entry_block_reason"] = "Keltner 通道尚未計算完成"
         return (None, 0, None)
 
-    strength = 25.0 + min(max(volume_ratio - 0.8, 0.0) * 5.0, 5.0)
-    if route == "MA_Breakout":
-        strength += 2.0
-    s["ma_signal_candle_ts"] = signal_ts
-    logger.info(f"@@COIN_DEBUG@@ ✅ {sym} [{route}] {side} | close={candle_close:.6f}, MA7={ma7:.6f}, MA25={ma25:.6f}, MA99={ma99:.6f}, volume={volume_ratio:.2f}x")
+    st_values, st_direction = calculate_supertrend(
+        highs, lows, closes, SUPERTREND_ATR_PERIOD, SUPERTREND_MULTIPLIER
+    )
+    if len(st_direction) == 0:
+        s["entry_block_reason"] = "SuperTrend 尚未計算完成"
+        return (None, 0, None)
+
+    current_dir = int(st_direction[-1])
+    flip_age = bars_since_supertrend_flip(st_direction)
+    # 防插針：優先採用 SpikeFilter_L2 已修正過的價格；沒有這個欄位（例如尚未跑過
+    # 即時 tick 處理）時退回原始 close，避免因缺欄位而整條路線失效。
+    live_price = float(s.get("close_price_spike_filtered", 0.0) or candles[-1][4])
+
+    s["keltner_upper"] = kc_upper
+    s["keltner_mid"] = kc_mid
+    s["keltner_lower"] = kc_lower
+    s["supertrend_direction"] = current_dir
+
+    kc_width = max(kc_upper - kc_lower, 1e-8)
+    margin = kc_width * KELTNER_BREAKOUT_MARGIN_PCT
+    current_vol = float(s.get("current_vol", 0.0) or 0.0)
+    vol_ma20 = float(s.get("vol_ma20", 0.0) or 0.0)
+    volume_ratio = (current_vol / vol_ma20) if vol_ma20 > 0 else 0.0
+    volume_ok = volume_ratio >= KELTNER_MIN_VOLUME_RATIO
+    flip_fresh = flip_age <= SUPERTREND_MAX_FLIP_AGE_BARS
+
+    trend_ok_long = ema20 >= ema50
+    trend_ok_short = ema20 <= ema50
+    rsi_ok_long = current_rsi >= 45.0
+    rsi_ok_short = current_rsi <= 55.0
+
+    long_breakout = (live_price > kc_upper + margin and current_dir == 1
+                      and trend_ok_long and rsi_ok_long and volume_ok and flip_fresh)
+    short_breakout = (live_price < kc_lower - margin and current_dir == -1
+                       and trend_ok_short and rsi_ok_short and volume_ok and flip_fresh)
+
+    if not long_breakout and not short_breakout:
+        s["entry_block_reason"] = (
+            f"等待 Keltner 突破(含緩衝) + SuperTrend 同向新鮮 + EMA20/50 波段同向 + "
+            f"RSI 動能 + 量能確認 "
+            f"(價={live_price:.6f}, KC上={kc_upper:.6f}, KC下={kc_lower:.6f}, "
+            f"ST方向={'多' if current_dir == 1 else '空'}(第{flip_age}根), "
+            f"EMA20={ema20:.6f}, EMA50={ema50:.6f}, RSI={current_rsi:.1f}, "
+            f"量能={volume_ratio:.2f}x)"
+        )
+        return (None, 0, None)
+
+    side = "buy" if long_breakout else "sell"
+    route = "Keltner_SuperTrend"
+    breakout_pct = ((live_price - kc_upper) / kc_width) if long_breakout else ((kc_lower - live_price) / kc_width)
+    strength = 25.0 + min(max(breakout_pct, 0.0) * 40.0, 10.0)
+
+    s["ma_signal_candle_ts"] = int(completed[-1][0]) if len(completed) else 0
+    logger.info(
+        f"@@COIN_DEBUG@@ ✅ {sym} [{route}] {side} | 價={live_price:.6f} "
+        f"KC上={kc_upper:.6f} KC中={kc_mid:.6f} KC下={kc_lower:.6f} ST方向={'多' if current_dir == 1 else '空'}(第{flip_age}根) "
+        f"EMA20={ema20:.6f} EMA50={ema50:.6f} RSI={current_rsi:.1f} 量能={volume_ratio:.2f}x"
+    )
     return (side, strength, route)
 
 

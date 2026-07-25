@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 from core.config import DISABLE_MA25_PULLBACK
 
-_ma_routes = ["MA_Cross", "MA_Breakout", "MA7_Simple"]
+_ma_routes = ["MA_Cross", "MA_Breakout", "MA7_Simple", "Keltner_SuperTrend"]
 if not DISABLE_MA25_PULLBACK:
     _ma_routes.insert(2, "MA25_Pullback")
 MA_ENTRY_ROUTES = tuple(_ma_routes)

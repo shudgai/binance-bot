@@ -87,6 +87,107 @@ def calculate_bollinger_bands(prices, period=20, std_dev=2.0):
     return sma + std_dev * std, sma, sma - std_dev * std
 
 
+def calculate_atr_series(highs, lows, closes, period=10):
+    """逐根 True Range 的滾動平均值陣列，長度與 closes 對齊。"""
+    n = len(closes)
+    if n == 0:
+        return np.zeros(0)
+    tr = np.zeros(n)
+    tr[0] = highs[0] - lows[0]
+    for i in range(1, n):
+        tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+    atr = np.zeros(n)
+    for i in range(n):
+        window = tr[max(0, i - period + 1):i + 1]
+        atr[i] = np.mean(window)
+    return atr
+
+
+def get_atr_from_ohlcv(ohlcv, period=10):
+    """從原始 ohlcv 陣列（[ts,o,h,l,c,v] 列表）算出最新一筆 ATR(period)。
+    只用「已收盤」K棒（排除最後一筆仍在即時更新的），避免每個 tick 抖動。"""
+    completed = ohlcv[:-1] if len(ohlcv) > 1 else ohlcv
+    if len(completed) < 2:
+        return 0.0
+    highs = np.array([float(c[2]) for c in completed])
+    lows = np.array([float(c[3]) for c in completed])
+    closes = np.array([float(c[4]) for c in completed])
+    atr_series = calculate_atr_series(highs, lows, closes, period)
+    return float(atr_series[-1]) if len(atr_series) > 0 else 0.0
+
+
+def is_candle_spike(ohlcv, atr_value, multiplier=5.0):
+    """判斷最近一根已收盤K棒的高低振幅是否異常（> multiplier x ATR），
+    用來偵測插針/爆倉針造成的單根K線失真。"""
+    completed = ohlcv[:-1] if len(ohlcv) > 1 else ohlcv
+    if not completed or atr_value <= 0:
+        return False
+    last = completed[-1]
+    candle_range = float(last[2]) - float(last[3])
+    return candle_range > multiplier * atr_value
+
+
+def calculate_keltner_channels(closes, highs, lows, ema_period=20, atr_period=10, multiplier=2.0):
+    """回傳最新一根的 (上軌, 中線, 下軌)。中線 = EMA(closes)，通道寬度 = ATR * multiplier。"""
+    if len(closes) < ema_period:
+        return 0.0, 0.0, 0.0
+    middle = calculate_ema(closes, ema_period)
+    atr_series = calculate_atr_series(highs, lows, closes, atr_period)
+    atr_val = float(atr_series[-1]) if len(atr_series) > 0 else 0.0
+    return middle + multiplier * atr_val, middle, middle - multiplier * atr_val
+
+
+def calculate_supertrend(highs, lows, closes, period=10, multiplier=3.0):
+    """標準 SuperTrend 演算法。回傳 (supertrend陣列, direction陣列)。
+    direction: 1 = 多頭(SuperTrend線在價格下方)，-1 = 空頭(SuperTrend線在價格上方)。
+    """
+    n = len(closes)
+    if n < 2:
+        return np.zeros(n), np.ones(n)
+    atr = calculate_atr_series(highs, lows, closes, period)
+    hl2 = (highs + lows) / 2.0
+    basic_upper = hl2 + multiplier * atr
+    basic_lower = hl2 - multiplier * atr
+
+    final_upper = np.zeros(n)
+    final_lower = np.zeros(n)
+    supertrend = np.zeros(n)
+    direction = np.ones(n)
+
+    final_upper[0] = basic_upper[0]
+    final_lower[0] = basic_lower[0]
+    direction[0] = 1 if closes[0] >= final_lower[0] else -1
+    supertrend[0] = final_lower[0] if direction[0] == 1 else final_upper[0]
+
+    for i in range(1, n):
+        final_upper[i] = basic_upper[i] if closes[i - 1] > final_upper[i - 1] else min(basic_upper[i], final_upper[i - 1])
+        final_lower[i] = basic_lower[i] if closes[i - 1] < final_lower[i - 1] else max(basic_lower[i], final_lower[i - 1])
+
+        if direction[i - 1] == 1:
+            direction[i] = -1 if closes[i] < final_lower[i] else 1
+        else:
+            direction[i] = 1 if closes[i] > final_upper[i] else -1
+
+        supertrend[i] = final_lower[i] if direction[i] == 1 else final_upper[i]
+
+    return supertrend, direction
+
+
+def bars_since_supertrend_flip(direction):
+    """回傳目前 SuperTrend 方向已經維持了幾根已收盤 K 棒（0 = 上一根才剛翻轉）。"""
+    n = len(direction)
+    if n < 2:
+        return 0
+    current = direction[-1]
+    bars = 0
+    for i in range(n - 2, -1, -1):
+        if direction[i] == current:
+            bars += 1
+        else:
+            break
+    return bars
+
+
 def calculate_adx(highs, lows, closes, period=14):
     if len(highs) < period + 1:
         return 0

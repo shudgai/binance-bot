@@ -7,3 +7,5 @@ export FOLLOW_SYMBOLS_FROM="$(pwd)/data/bot_symbols.json"
 
 echo "🌐 Starting Port 8005 Paper Trading API server..."
 $BIN/uvicorn services.api:app --host 0.0.0.0 --port 8005
+
+

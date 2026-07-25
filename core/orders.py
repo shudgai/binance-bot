@@ -262,6 +262,12 @@ def _ma_exchange_stop_target(state, avg, is_long, hard_stop, current_price=0.0):
 
 
 async def _replace_exchange_exit_orders(sym):
+    """[2026-07-25] 方案三：交易所端只掛固定/追蹤 SL（STOP_MARKET），作為軟體層
+    崩潰時的最後安全網；SL 價格直接讀 update_trailing_stop() 算好的 s['sl_price']
+    （已收盤前呼叫過，此時必為已初始化的固定 ATR 停損）。TP 是動態延展的（每創
+    新高就往外推），不掛真的交易所停利單（掛了也會被 5s 內的下一次追蹤更新蓋掉，
+    徒增掛單/撤單次數），完全交由軟體層 check_exits() 判斷觸價後主動平倉，跟舊版
+    「移動停損/獲利出場全由軟體層管理」的設計精神一致。"""
     if PAPER_TRADING:
         return
 
@@ -278,72 +284,11 @@ async def _replace_exchange_exit_orders(sym):
     close_side = "sell" if s["qty"] > 0 else "buy"
     is_long = s["qty"] > 0
 
-    hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
-    route = str(s.get("entry_reason", "a") or "a").lower()
-    is_ma_route = route in MA_ENTRY_ROUTES
-    if is_ma_route:
-        hard_sl_pct = MA_DISASTER_STOP_PCT
-    # Exchange-side disaster stop is anchored to market structure at entry.
-    # Breakouts use MA7; pullback/trend entries use the more stable MA25.
-    hard_stop = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
-    ma_anchor = float(s.get("ma7" if route in ("breakout", "ma_breakout", "ma_cross") else "ma25", 0.0) or 0.0)
-    atr = float(s.get("entry_atr", s.get("current_atr", 0.0)) or 0.0)
-    structure_buffer = max(atr * 0.30, avg * 0.002)
-    stop_price = hard_stop
-    if not is_ma_route and is_long and 0 < ma_anchor < avg:
-        stop_price = max(hard_stop, ma_anchor - structure_buffer)
-    elif not is_ma_route and not is_long and ma_anchor > avg:
-        stop_price = min(hard_stop, ma_anchor + structure_buffer)
+    stop_price = float(s.get("sl_price", 0.0) or 0.0)
+    if stop_price <= 0:
+        hard_sl_pct = s.get("hard_stop_loss_pct", HARD_STOP_LOSS_PCT)
+        stop_price = avg * (1 - hard_sl_pct) if is_long else avg * (1 + hard_sl_pct)
     stop_price = round_step(stop_price, prec["tick_size"])
-    stop_dist = (avg - stop_price) if is_long else (stop_price - avg)
-    _, _, tp_dist, _ = _calc_sl_tp(sym, "buy" if is_long else "sell", s, avg, route)
-    take_profit_price = avg + tp_dist if is_long else avg - tp_dist
-    take_profit_price = round_step(take_profit_price, prec["tick_size"])
-    _original_tp = take_profit_price
-
-    # 確保停損價格不會大於停利價格 (在 RR 比例強制執行前先做初步檢查)
-    # 如果 hard_sl_pct 導致的 stop_dist 大於 tp_dist，則強制縮減 stop_dist 或擴大 tp_dist
-    current_tp_dist = (take_profit_price - avg) if is_long else (avg - take_profit_price)
-    if not is_ma_route and stop_dist > current_tp_dist:
-        logger.info(f"⚠️ [SL_GT_TP_Guard] {sym} 偵測到停損距離 ({stop_dist:.4f}) 大於停利距離 ({current_tp_dist:.4f})。正在自動校正...")
-        # 優先縮減停損距離，確保其在合理的範圍內，同時保留 RR 比例檢查
-        # 這裡簡單處理：將 stop_dist 設為 tp_dist 的 0.8 倍，確保停損距離較小
-        new_stop_dist = current_tp_dist * 0.8
-        stop_price = avg - new_stop_dist if is_long else avg + new_stop_dist
-        stop_price = round_step(stop_price, prec["tick_size"])
-        stop_dist = new_stop_dist
-
-    bracket_min_rr = EXIT_RR_MULTIPLIER
-    stop_price, take_profit_price = _enforce_bracket_rr(
-        avg, stop_price, take_profit_price, is_long, prec["tick_size"], min_rr=bracket_min_rr
-    )
-    if not is_ma_route and take_profit_price != _original_tp:
-        logger.info(
-            f"⚠️ [Bracket_RR_Guard] {sym} 最終掛單盈虧比不足，"
-            f"停利由 {_original_tp} 校正為 {take_profit_price}（最低 R:R={bracket_min_rr}）"
-        )
-
-    is_range_route = route in RANGE_ENTRY_ROUTES
-    if is_range_route:
-        range_bracket = _range_exit_bracket(s, avg, is_long, prec["tick_size"])
-        if range_bracket is not None:
-            stop_price, take_profit_price = range_bracket
-            logger.info(
-                f"🎯 [Range_Exchange_Bracket] {sym} 使用區間結構保護單："
-                f"TP={take_profit_price} SL={stop_price}，不延伸到區間外"
-            )
-        else:
-            logger.info(f"⚠️ [Range_Exchange_Bracket] {sym} 區間 TP/SL 遺失或方向錯誤，使用通用保護單")
-
-    # MA 波段先保留 1.5% 災難止損；盈利底線形成後提升為交易所端鎖利。
-    if is_ma_route:
-        current_price = float(
-            s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0
-        )
-        stop_price = _ma_exchange_stop_target(
-            s, avg, is_long, hard_stop, current_price=current_price,
-        )
-        stop_price = round_step(stop_price, prec["tick_size"])
 
     # 防禦性保底：進場已經會把數量夾在 MARKET_LOT_SIZE 上限之內（見 execute_order），
     # 這裡理論上不該再超過，但攤平救援等會改變 qty 的路徑萬一漏夾，用同一個上限保底，
@@ -358,6 +303,7 @@ async def _replace_exchange_exit_orders(sym):
         params={"stopPrice": stop_price, "reduceOnly": True}
     )
     s["exchange_stop_order_id"] = stop_order["id"]
+    s["_exchange_stop_price_synced"] = stop_price
     logger.info(f"🛡️ [交易所挂單] {sym} 成功挂出 Stop Market 止損單 @ {stop_price} (數量: {qty})")
 
     # 使用者要求「利潤全部改移動停利，全部入袋、利潤往上移動停利也跟著往上」：
@@ -367,7 +313,8 @@ async def _replace_exchange_exit_orders(sym):
 
 
 async def _sync_ma_exchange_profit_stop(sym):
-    """先建立新單再撤舊單，將 MA 盈利底線同步成交易所端保護。"""
+    """[2026-07-25] 方案三：把軟體層追蹤到的最新 sl_price 同步成交易所端保護單
+    （先建新單再撤舊單，避免撤單後、建單前這段空窗完全沒有交易所端保護）。"""
     if PAPER_TRADING:
         return
     s = ctx.STATES.get(sym)
@@ -378,14 +325,9 @@ async def _sync_ma_exchange_profit_stop(sym):
     if qty <= 0.000001 or avg <= 0:
         return
     is_long = float(s.get("qty", 0.0)) > 0
-    hard_stop = avg * (1.0 - MA_DISASTER_STOP_PCT if is_long else 1.0 + MA_DISASTER_STOP_PCT)
-    current_price = float(
-        s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0
-    )
-    target = _ma_exchange_stop_target(
-        s, avg, is_long, hard_stop, current_price=current_price,
-    )
-    if abs(target - hard_stop) <= avg * 0.000001:
+    target = float(s.get("sl_price", 0.0) or 0.0)
+    current_stop = float(s.get("_exchange_stop_price_synced", 0.0) or 0.0)
+    if target <= 0 or abs(target - current_stop) <= avg * 0.000001:
         return
     prec = await get_contract_precision(sym)
     target = round_step(target, prec["tick_size"])
@@ -396,10 +338,11 @@ async def _sync_ma_exchange_profit_stop(sym):
         params={"stopPrice": target, "reduceOnly": True},
     )
     s["exchange_stop_order_id"] = new_order["id"]
+    s["_exchange_stop_price_synced"] = target
     if old_order_id and str(old_order_id) != str(new_order["id"]):
         await _cancel_exchange_exit_order_id(sym, old_order_id, "舊MA保護止損")
     logger.info(
-        f"🔒 [MA交易所鎖利] {sym} 已同步 STOP_MARKET @ {target}"
+        f"🔒 [交易所止損同步] {sym} 已同步 STOP_MARKET @ {target}"
     )
 
 
@@ -441,18 +384,8 @@ async def _ensure_exchange_exit_orders(sym):
         return
 
     close_side = "SELL" if s["qty"] > 0 else "BUY"
-    route = str(s.get("entry_reason", "") or "").lower()
-    is_ma_route = route in MA_ENTRY_ROUTES
     avg = float(s["avg_price"])
-    hard_ma_stop = avg * (
-        1.0 - MA_DISASTER_STOP_PCT if s["qty"] > 0 else 1.0 + MA_DISASTER_STOP_PCT
-    )
-    current_price = float(
-        s.get("last_trade_price", 0.0) or s.get("close_price", 0.0) or 0.0
-    )
-    expected_ma_stop = _ma_exchange_stop_target(
-        s, avg, s["qty"] > 0, hard_ma_stop, current_price=current_price,
-    )
+    expected_stop = float(s.get("sl_price", 0.0) or 0.0)
     candidates = {"stop": [], "take_profit": []}
     all_exit_orders = []
     for order in open_orders or []:
@@ -474,9 +407,9 @@ async def _ensure_exchange_exit_orders(sym):
             # 全倉統一改由移動停損管理獲利出場，交易所端不再保留固定停利單，
             # 任何殘留的舊版停利單一律視為多餘掛單，交給下方清除。
             continue
-        if is_ma_route and key == "stop":
+        if key == "stop" and expected_stop > 0:
             trigger_price = float(order.get("triggerPrice") or order.get("stopPrice") or 0.0)
-            if trigger_price <= 0 or abs(trigger_price - expected_ma_stop) / float(s["avg_price"]) > 0.001:
+            if trigger_price <= 0 or abs(trigger_price - expected_stop) / avg > 0.001:
                 continue
         candidates[key].append(order)
 

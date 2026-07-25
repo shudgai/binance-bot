@@ -50,6 +50,12 @@ def build_symbol_state(sym):
         "qty": 0.0,
         "avg_price": 0.0,
         "trailing_stop_price": 0.0,
+        # 方案三（動態追蹤止利）：固定 ATR 停損/停利 + 保本鎖定 + 峰值追蹤延展。
+        "sl_price": 0.0,
+        "tp_price": 0.0,
+        "highest_price": 0.0,
+        "lowest_price": 0.0,
+        "is_breakeven_moved": False,
         "open_time": 0.0,
         "current_atr": 0.0,
         "atr_history": [],
@@ -481,6 +487,12 @@ def reset_coin_state(sym):
     s["trailing_lowest"] = float('inf')
     s["highest_profit_pct"] = 0.0
     s["max_profit_reached"] = 0.0
+    s["sl_price"] = 0.0
+    s["tp_price"] = 0.0
+    s["highest_price"] = 0.0
+    s["lowest_price"] = 0.0
+    s["is_breakeven_moved"] = False
+    s["_exchange_stop_price_synced"] = 0.0
     s["realtime_peak_candidate_price"] = 0.0
     s["realtime_peak_candidate_profit"] = 0.0
     s["realtime_peak_candidate_time"] = 0.0
