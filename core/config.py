@@ -104,7 +104,9 @@ RANGE_MIN_SIGNAL_STRENGTH = 14.0    # 適度放寬（原18.0），保留基本�
 # 轉空 ➔ 視為進場訊號，交由主迴圈在 MAIN_LOOP_INTERVAL_SEC 內送單。
 KELTNER_EMA_PERIOD = 20
 KELTNER_ATR_PERIOD = 10
-KELTNER_ATR_MULTIPLIER = 2.0
+KELTNER_ATR_MULTIPLIER = 1.5  # [2026-07-25] 實測 15 檔幣種同一時間點價格全部卡在通道正中間、
+                               # 連邊緣都碰不到，2.0x 通道太寬導致真突破幾乎不會發生；收窄到 1.5x
+                               # 讓價格更容易碰到/穿越邊緣，提升開倉頻率。
 SUPERTREND_ATR_PERIOD = 10
 SUPERTREND_MULTIPLIER = 3.0
 
