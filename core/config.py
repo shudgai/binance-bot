@@ -120,20 +120,22 @@ SUPERTREND_MAX_FLIP_AGE_BARS = 15    # SuperTrend 新鮮度：方向須在最近
                                       # 放寬到 15 根（約 75 分鐘，5m K線）給真突破更多機會匹配到還算新的趨勢。
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ─── 出場系統：固定 ATR 停損/停利 + 動態追蹤（方案三：趨勢獵人模式）(2026-07-25) ──
+# ─── 出場系統：固定 ATR 停損/停利 + 動態追蹤 + 淨利保本線（方案三修訂版）(2026-07-25) ──
 # 使用者指示：完全取代舊版出場系統（硬停損、移動停利、停滯超時、MA_Peak_Lock、
 # TP1/TP2分批、DynamicExitManager、Range trailing 等全部停用）。規則：
 #   開倉：SL = entry ∓ EXIT_SL_ATR_MULTIPLIER x ATR(10)，TP = entry ± EXIT_TP_ATR_MULTIPLIER x ATR(10)
-#   獲利達 EXIT_BREAKEVEN_ATR_MULTIPLIER x ATR：SL 移到保本價（entry）
-#   保本後每創新高/新低：SL 追蹤到「峰值獲利的 EXIT_TRAIL_LOCK_RATIO」，
+#   獲利達 EXIT_TRAIL_ARM_ATR_MULTIPLIER x ATR：啟動峰值追蹤
+#     SL 追蹤到「峰值獲利的 EXIT_TRAIL_LOCK_RATIO」，但不得低於淨利保本線
+#     （entry ± EXIT_NET_PROFIT_FLOOR_PCT，扣手續費+滑點後仍保證淨正收益）
 #     TP 同步延展（新高/新低 ± EXIT_TP_EXTEND_ATR_MULTIPLIER x ATR），無上限
 #   防插針：單根已收盤K棒振幅 > EXIT_SPIKE_ATR_MULTIPLIER x ATR 時，暫停觸發SL（TP不受影響）
 #   持倉滿 EXIT_MAX_HOLD_SEC 強制平倉（不論盈虧）
 EXIT_ATR_PERIOD = 10
 EXIT_SL_ATR_MULTIPLIER = 1.5
 EXIT_TP_ATR_MULTIPLIER = 3.0
-EXIT_BREAKEVEN_ATR_MULTIPLIER = 0.8
+EXIT_TRAIL_ARM_ATR_MULTIPLIER = 1.2   # 獲利達此倍數 ATR 才啟動峰值追蹤
 EXIT_TRAIL_LOCK_RATIO = 0.75
+EXIT_NET_PROFIT_FLOOR_PCT = 0.0018    # 追蹤啟動後 SL 的保底：entry+0.18%（扣手續費0.1%+滑點0.06%後仍淨賺）
 EXIT_TP_EXTEND_ATR_MULTIPLIER = 1.5
 EXIT_SPIKE_ATR_MULTIPLIER = 5.0
 EXIT_MAX_HOLD_SEC = 86400

@@ -641,20 +641,23 @@ logger = logging.getLogger(__name__)
 
 def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     """
-    [2026-07-25] 使用者指示（方案三：動態追蹤止利／趨勢獵人模式）：完全取代舊版
-    移動停損/MA_Peak_Lock/Range trailing 邏輯。規則：
+    [2026-07-25] 方案三修訂版（使用者指示）：完全取代舊版移動停損/MA_Peak_Lock/
+    Range trailing 邏輯。規則：
       開倉：sl_price = entry ∓ EXIT_SL_ATR_MULTIPLIER x ATR(10)，
             tp_price = entry ± EXIT_TP_ATR_MULTIPLIER x ATR(10)
-      獲利達 EXIT_BREAKEVEN_ATR_MULTIPLIER x ATR：sl_price 移到保本價（entry）
-      保本後每創新高/新低：sl_price 追蹤到「峰值獲利的 EXIT_TRAIL_LOCK_RATIO」，
-        tp_price 同步延展（新高/新低 ± EXIT_TP_EXTEND_ATR_MULTIPLIER x ATR），無上限
+      獲利達 EXIT_TRAIL_ARM_ATR_MULTIPLIER x ATR：啟動峰值追蹤
+      啟動後每創新高/新低：sl_price 追蹤到「峰值獲利的 EXIT_TRAIL_LOCK_RATIO」，
+        但不得低於淨利保本線（entry ± EXIT_NET_PROFIT_FLOOR_PCT，扣手續費+滑點
+        後仍保證淨賺，取兩者較保護的一個），tp_price 同步延展（新高/新低 ±
+        EXIT_TP_EXTEND_ATR_MULTIPLIER x ATR），無上限
       sl_price 只會越收越緊、tp_price 只會越推越遠，兩者都不會往回鬆。
     真正的 SL/TP 觸發判斷與防插針保護在 check_exits() 執行；這裡只負責維護
     sl_price/tp_price/highest_price/lowest_price/is_breakeven_moved 這幾個欄位。
     """
     from core.config import (
         EXIT_ATR_PERIOD, EXIT_SL_ATR_MULTIPLIER, EXIT_TP_ATR_MULTIPLIER,
-        EXIT_BREAKEVEN_ATR_MULTIPLIER, EXIT_TRAIL_LOCK_RATIO, EXIT_TP_EXTEND_ATR_MULTIPLIER,
+        EXIT_TRAIL_ARM_ATR_MULTIPLIER, EXIT_TRAIL_LOCK_RATIO, EXIT_TP_EXTEND_ATR_MULTIPLIER,
+        EXIT_NET_PROFIT_FLOOR_PCT,
     )
     from core.indicators import get_atr_from_ohlcv
 
@@ -691,26 +694,23 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     profit_dist = (current_price - avg_price) if is_long else (avg_price - current_price)
 
     if not s.get("is_breakeven_moved", False):
-        if profit_dist >= EXIT_BREAKEVEN_ATR_MULTIPLIER * atr10:
-            s["sl_price"] = avg_price
+        if profit_dist >= EXIT_TRAIL_ARM_ATR_MULTIPLIER * atr10:
             s["is_breakeven_moved"] = True
-            s["trailing_stop_price"] = s["sl_price"]
-            logger.info(f"🛡️ [保本觸發] {sym} 獲利達 {EXIT_BREAKEVEN_ATR_MULTIPLIER}xATR，止損鎖定保本價 {avg_price:.6f}")
-            _schedule_ma_exchange_profit_stop(sym)
-            # 保本觸發跟峰值追蹤鎖定不能分兩次呼叫才生效：觸發保本的這個價位本身
-            # 就是目前的峰值，若在這裡直接 return，會讓 sl_price 卡在「剛好 0% 保本」，
-            # 要等「下一筆比這次還更高」的價格才會補算 75% 鎖利，萬一觸發保本後價格
-            # 立刻回落（沒有再創新高），這筆單就永遠只鎖在保本，白白吐掉已經到手的
-            # 那段獲利（實測 XMRUSDT 案例：觸發保本後 2 秒內反轉，最終在接近保本處
-            # 出場，等於完全沒鎖到那段已經走到的漲幅）。這裡讓同一次呼叫直接往下走，
-            # 用觸發保本當下的價格立即計算一次 75% 鎖利。
+            logger.info(f"🛡️ [追蹤止利啟動] {sym} 獲利達 {EXIT_TRAIL_ARM_ATR_MULTIPLIER}xATR，啟動峰值追蹤（保底淨利 {EXIT_NET_PROFIT_FLOOR_PCT*100:.2f}%）")
+            # 啟動追蹤跟峰值鎖定不能分兩次呼叫才生效：觸發啟動的這個價位本身就是
+            # 目前的峰值，若在這裡直接 return，要等「下一筆比這次還更高」的價格才會
+            # 補算鎖利，萬一啟動後價格立刻回落（沒有再創新高），這筆單就永遠鎖不到
+            # 任何獲利（實測 XMRUSDT 案例）。這裡讓同一次呼叫直接往下走，用啟動當下
+            # 的價格立即計算一次鎖利。
         else:
             return True, s.get("sl_price", 0.0)
 
     if is_long:
         if current_price > float(s.get("highest_price", avg_price) or avg_price):
             s["highest_price"] = current_price
-            new_sl = avg_price + (s["highest_price"] - avg_price) * EXIT_TRAIL_LOCK_RATIO
+            trail_sl = avg_price + (s["highest_price"] - avg_price) * EXIT_TRAIL_LOCK_RATIO
+            npg_floor = avg_price * (1.0 + EXIT_NET_PROFIT_FLOOR_PCT)
+            new_sl = max(trail_sl, npg_floor)
             if new_sl > float(s.get("sl_price", 0.0) or 0.0):
                 s["sl_price"] = new_sl
                 s["tp_price"] = s["highest_price"] + EXIT_TP_EXTEND_ATR_MULTIPLIER * atr10
@@ -720,7 +720,9 @@ def update_trailing_stop(sym, current_price, is_long, update_peak=True):
     else:
         if current_price < float(s.get("lowest_price", avg_price) or avg_price):
             s["lowest_price"] = current_price
-            new_sl = avg_price - (avg_price - s["lowest_price"]) * EXIT_TRAIL_LOCK_RATIO
+            trail_sl = avg_price - (avg_price - s["lowest_price"]) * EXIT_TRAIL_LOCK_RATIO
+            npg_floor = avg_price * (1.0 - EXIT_NET_PROFIT_FLOOR_PCT)
+            new_sl = min(trail_sl, npg_floor)
             if new_sl < float(s.get("sl_price", 0.0) or 0.0):
                 s["sl_price"] = new_sl
                 s["tp_price"] = s["lowest_price"] - EXIT_TP_EXTEND_ATR_MULTIPLIER * atr10
@@ -800,7 +802,7 @@ async def check_exits(sym):
         sl_hit = (is_long and p_sf <= sl_price) or (not is_long and p_sf >= sl_price)
         if sl_hit:
             cs = "sell" if is_long else "buy"
-            reason_tag = "[Breakeven_Stop]" if s.get("is_breakeven_moved", False) else "[Stop_Loss]"
+            reason_tag = "[Trailing_Stop]" if s.get("is_breakeven_moved", False) else "[Stop_Loss]"
             logger.info(f"🛑 {reason_tag} {sym} 確認價 {p_sf:.6f} 觸及止損價 {sl_price:.6f}，執行平倉")
             await close_position(sym, cs, abs(s["qty"]), p_sf, avg, reason=reason_tag, is_stop_loss=True)
             return

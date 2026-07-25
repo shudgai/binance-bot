@@ -8,8 +8,9 @@ from core.ctx import STATES, init_states
 from core.state_manager import reset_coin_state
 from core.exits import update_trailing_stop, check_exits
 from core.config import (
-    EXIT_SL_ATR_MULTIPLIER, EXIT_TP_ATR_MULTIPLIER, EXIT_BREAKEVEN_ATR_MULTIPLIER,
-    EXIT_TRAIL_LOCK_RATIO, EXIT_TP_EXTEND_ATR_MULTIPLIER, EXIT_MAX_HOLD_SEC,
+    EXIT_SL_ATR_MULTIPLIER, EXIT_TP_ATR_MULTIPLIER, EXIT_TRAIL_ARM_ATR_MULTIPLIER,
+    EXIT_TRAIL_LOCK_RATIO, EXIT_NET_PROFIT_FLOOR_PCT, EXIT_TP_EXTEND_ATR_MULTIPLIER,
+    EXIT_MAX_HOLD_SEC,
 )
 
 
@@ -24,9 +25,10 @@ def _flat_ohlcv(n, price=100.0, candle_range=1.0, start=0):
 
 
 class ExitSystemTests(unittest.TestCase):
-    """[2026-07-25] 方案三（動態追蹤止利／趨勢獵人模式）：固定 ATR 停損/停利 +
-    保本鎖定 + 峰值追蹤延展 + 防插針保護。取代整套舊版移動停損/MA_Peak_Lock/
-    Range trailing/DynamicExitManager/Stagnation_Timeout 測試。"""
+    """[2026-07-25] 方案三修訂版：固定 ATR 停損/停利 + 峰值追蹤（啟動門檻
+    1.2xATR）+ 淨利保本線（entry+0.18%，扣手續費+滑點後仍保證淨賺）+ 防插針
+    保護。取代整套舊版移動停損/MA_Peak_Lock/Range trailing/DynamicExitManager/
+    Stagnation_Timeout 測試。"""
 
     def _setup(self, sym, direction="long", avg=100.0, candle_range=1.0, n=15):
         init_states([sym])
@@ -58,46 +60,67 @@ class ExitSystemTests(unittest.TestCase):
         self.assertAlmostEqual(s["sl_price"], 100.0 + EXIT_SL_ATR_MULTIPLIER * 1.0)
         self.assertAlmostEqual(s["tp_price"], 100.0 - EXIT_TP_ATR_MULTIPLIER * 1.0)
 
-    # ── 保本鎖定 ────────────────────────────────────────────────────────────
-    def test_breakeven_not_triggered_before_threshold(self):
+    # ── 峰值追蹤啟動門檻 ────────────────────────────────────────────────────
+    def test_trailing_not_armed_before_threshold(self):
         sym = "EXITL2USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)  # init
-        update_trailing_stop(sym, 100.0 + EXIT_BREAKEVEN_ATR_MULTIPLIER * 0.5, True)
+        update_trailing_stop(sym, 100.0 + EXIT_TRAIL_ARM_ATR_MULTIPLIER * 0.5, True)
         self.assertFalse(s["is_breakeven_moved"])
         self.assertAlmostEqual(s["sl_price"], 100.0 - EXIT_SL_ATR_MULTIPLIER * 1.0)
 
-    def test_breakeven_triggers_at_threshold_long(self):
-        # [2026-07-25] 修正 XMRUSDT 實單案例：觸發保本的這個價位本身就是目前峰值，
-        # 同一次呼叫必須立刻用它計算 75% 鎖利，不能只鎖平的保本價（否則價格一觸發
-        # 保本就馬上回落，整段已經到手的漲幅完全沒鎖到，出場價幾乎等於保本/沒獲利）。
+    def test_trailing_arms_and_locks_seventy_five_pct_at_threshold_long(self):
+        # [2026-07-25] 修正 XMRUSDT 實單案例：觸發啟動的這個價位本身就是目前峰值，
+        # 同一次呼叫必須立刻用它計算鎖利，不能只回到保本（否則價格一觸發啟動就
+        # 馬上回落，整段已經到手的漲幅完全沒鎖到，出場價幾乎等於保本/沒獲利）。
         sym = "EXITL3USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)  # init
-        peak = 100.0 + EXIT_BREAKEVEN_ATR_MULTIPLIER * 1.001
+        peak = 100.0 + EXIT_TRAIL_ARM_ATR_MULTIPLIER * 1.001
         update_trailing_stop(sym, peak, True)
         self.assertTrue(s["is_breakeven_moved"])
         expected_sl = 100.0 + (peak - 100.0) * EXIT_TRAIL_LOCK_RATIO
         self.assertAlmostEqual(s["sl_price"], expected_sl)
-        self.assertGreater(s["sl_price"], 100.0)  # 鎖到的一定比純保本多
+        self.assertGreater(s["sl_price"], 100.0)
 
-    def test_breakeven_triggers_at_threshold_short(self):
+    def test_trailing_arms_and_locks_seventy_five_pct_at_threshold_short(self):
         sym = "EXITS3USDT"
         s = self._setup(sym, "short", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, False)  # init
-        trough = 100.0 - EXIT_BREAKEVEN_ATR_MULTIPLIER * 1.001
+        trough = 100.0 - EXIT_TRAIL_ARM_ATR_MULTIPLIER * 1.001
         update_trailing_stop(sym, trough, False)
         self.assertTrue(s["is_breakeven_moved"])
         expected_sl = 100.0 - (100.0 - trough) * EXIT_TRAIL_LOCK_RATIO
         self.assertAlmostEqual(s["sl_price"], expected_sl)
         self.assertLess(s["sl_price"], 100.0)
 
+    # ── 淨利保本線（低 ATR% 商品，75% 鎖利公式算出來的還不到保本線時墊高）───────
+    def test_net_profit_floor_overrides_thin_trail_lock_long(self):
+        sym = "EXITFLOOR1USDT"
+        s = self._setup(sym, "long", avg=100.0, candle_range=0.1)  # ATR10=0.1，波動很小
+        update_trailing_stop(sym, 100.0, True)  # init
+        peak = 100.0 + EXIT_TRAIL_ARM_ATR_MULTIPLIER * 0.1 * 1.001
+        trail_only = 100.0 + (peak - 100.0) * EXIT_TRAIL_LOCK_RATIO
+        npg_floor = 100.0 * (1.0 + EXIT_NET_PROFIT_FLOOR_PCT)
+        self.assertLess(trail_only, npg_floor, "測試前提：這個 ATR 下 75% 鎖利公式應該低於保本線")
+        update_trailing_stop(sym, peak, True)
+        self.assertAlmostEqual(s["sl_price"], npg_floor)
+
+    def test_net_profit_floor_overrides_thin_trail_lock_short(self):
+        sym = "EXITFLOOR2USDT"
+        s = self._setup(sym, "short", avg=100.0, candle_range=0.1)
+        update_trailing_stop(sym, 100.0, False)
+        trough = 100.0 - EXIT_TRAIL_ARM_ATR_MULTIPLIER * 0.1 * 1.001
+        npg_floor = 100.0 * (1.0 - EXIT_NET_PROFIT_FLOOR_PCT)
+        update_trailing_stop(sym, trough, False)
+        self.assertAlmostEqual(s["sl_price"], npg_floor)
+
     # ── 峰值追蹤延展 ────────────────────────────────────────────────────────
     def test_trailing_locks_seventy_five_pct_and_extends_tp_long(self):
         sym = "EXITL4USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)  # init
-        update_trailing_stop(sym, 101.0, True)  # breakeven armed (>= 0.8)
+        update_trailing_stop(sym, 101.3, True)  # arm (>= 1.2)
         update_trailing_stop(sym, 105.0, True)  # new high, 75% lock
         self.assertAlmostEqual(s["sl_price"], 100.0 + (105.0 - 100.0) * EXIT_TRAIL_LOCK_RATIO)
         self.assertAlmostEqual(s["tp_price"], 105.0 + EXIT_TP_EXTEND_ATR_MULTIPLIER * 1.0)
@@ -106,7 +129,7 @@ class ExitSystemTests(unittest.TestCase):
         sym = "EXITS4USDT"
         s = self._setup(sym, "short", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, False)  # init
-        update_trailing_stop(sym, 99.0, False)   # breakeven armed
+        update_trailing_stop(sym, 98.7, False)   # arm
         update_trailing_stop(sym, 95.0, False)   # new low, 75% lock
         self.assertAlmostEqual(s["sl_price"], 100.0 - (100.0 - 95.0) * EXIT_TRAIL_LOCK_RATIO)
         self.assertAlmostEqual(s["tp_price"], 95.0 - EXIT_TP_EXTEND_ATR_MULTIPLIER * 1.0)
@@ -115,7 +138,7 @@ class ExitSystemTests(unittest.TestCase):
         sym = "EXITL5USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)
-        update_trailing_stop(sym, 101.0, True)
+        update_trailing_stop(sym, 101.3, True)
         update_trailing_stop(sym, 105.0, True)
         locked_sl = s["sl_price"]
         update_trailing_stop(sym, 102.0, True)  # pulls back, still above sl
@@ -125,7 +148,7 @@ class ExitSystemTests(unittest.TestCase):
         sym = "EXITL6USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)
-        update_trailing_stop(sym, 101.0, True)
+        update_trailing_stop(sym, 101.3, True)
         update_trailing_stop(sym, 105.0, True)
         extended_tp = s["tp_price"]
         update_trailing_stop(sym, 102.0, True)
@@ -137,11 +160,11 @@ class ExitSystemTests(unittest.TestCase):
         # update_trailing_stop 峰值追蹤，但用即時 close_price 比對停利，兩者故意
         # 分開：如果都用同一個價格，只要現價一到 tp_price，peak-tracking 會在
         # 同一次呼叫先把 tp_price 往外延展，導致 tp_price 永遠追不上、TP 打不到。
-        # 這裡把確認價留在原地（不觸發保本/延展），只讓即時價格衝上原始 tp_price。
+        # 這裡把確認價留在原地（不觸發追蹤啟動/延展），只讓即時價格衝上原始 tp_price。
         sym = "EXITTP1USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)
-        s["close_price_spike_filtered"] = 100.5  # 遠低於保本門檻(100.8)，peak不延展
+        s["close_price_spike_filtered"] = 100.5  # 遠低於啟動門檻(101.2)，peak不延展
         s["close_price"] = s["tp_price"]
 
         async def run():
@@ -170,11 +193,11 @@ class ExitSystemTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_breakeven_stop_uses_breakeven_reason_tag(self):
+    def test_trailing_stop_uses_trailing_reason_tag(self):
         sym = "EXITBE1USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)
-        update_trailing_stop(sym, 101.0, True)  # breakeven armed, sl_price == avg
+        update_trailing_stop(sym, 101.3, True)  # arms trailing, sl_price locked above avg
         s["close_price"] = s["sl_price"]
 
         async def run():
@@ -182,7 +205,10 @@ class ExitSystemTests(unittest.TestCase):
             with patch("core.orders.close_position", mock_close):
                 await check_exits(sym)
             mock_close.assert_called_once()
-            self.assertEqual(mock_close.call_args.kwargs.get("reason"), "[Breakeven_Stop]")
+            self.assertEqual(mock_close.call_args.kwargs.get("reason"), "[Trailing_Stop]")
+            # 淨利保本線保證出場價高於進場價（扣費前）。
+            exit_price = mock_close.call_args.args[3]
+            self.assertGreater(exit_price, 100.0)
 
         asyncio.run(run())
 
@@ -250,25 +276,30 @@ class ExitSystemTests(unittest.TestCase):
         asyncio.run(run())
 
     # ── 回歸測試：XMRUSDT 實單案例 ──────────────────────────────────────────
-    def test_breakeven_touch_then_immediate_reversal_still_locks_partial_profit(self):
+    def test_trail_touch_then_immediate_reversal_still_locks_partial_profit(self):
         """[2026-07-25] 實單案例：XMRUSDT 07:42 進場，08:28 觸發保本後 2 秒內
         反轉，最終在接近保本處出場（獲利 -0.34%），完全沒鎖到已經走到的漲幅。
-        根因：保本觸發那一次呼叫直接 return，沒有用觸發當下的價格順便算 75%
-        鎖利，要等「下一筆更高的價格」才會補算——如果價格觸發保本後立刻回落，
-        永遠等不到那一筆。修正後：保本觸發跟 75% 鎖利在同一次呼叫內完成。"""
+        根因：啟動追蹤那一次呼叫直接 return，沒有用觸發當下的價格順便算鎖利，
+        要等「下一筆更高的價格」才會補算——如果價格觸發後立刻回落，永遠等不到
+        那一筆。修正後：啟動追蹤跟鎖利在同一次呼叫內完成，且保證不低於淨利
+        保本線。"""
         sym = "EXITREG1USDT"
         s = self._setup(sym, "long", avg=100.0, candle_range=1.0)
         update_trailing_stop(sym, 100.0, True)  # init: sl=98.5, tp=103.0
 
-        # 價格觸及保本門檻 (0.8xATR = 100.8) 之上一點，然後立刻反轉回落。
-        touched_peak = 100.85
+        # 價格觸及啟動門檻 (1.2xATR = 101.2) 之上一點，然後立刻反轉回落。
+        touched_peak = 101.25
         update_trailing_stop(sym, touched_peak, True)
         self.assertTrue(s["is_breakeven_moved"])
         locked_sl = s["sl_price"]
         # 修正前：locked_sl 會剛好等於 100.0（純保本，沒鎖到任何漲幅）。
-        # 修正後：至少鎖住峰值的 75%。
+        # 修正後：至少鎖住淨利保本線（entry+0.18%），實際上這裡遠超過。
         self.assertGreater(locked_sl, 100.0, "應鎖住部分已到手的漲幅，不能只回到純保本")
-        self.assertAlmostEqual(locked_sl, 100.0 + (touched_peak - 100.0) * EXIT_TRAIL_LOCK_RATIO)
+        expected_sl = max(
+            100.0 + (touched_peak - 100.0) * EXIT_TRAIL_LOCK_RATIO,
+            100.0 * (1.0 + EXIT_NET_PROFIT_FLOOR_PCT),
+        )
+        self.assertAlmostEqual(locked_sl, expected_sl)
 
         # 立刻反轉回落，觸及剛剛鎖定的止損價。
         s["close_price"] = locked_sl
@@ -279,7 +310,7 @@ class ExitSystemTests(unittest.TestCase):
             with patch("core.orders.close_position", mock_close):
                 await check_exits(sym)
             mock_close.assert_called_once()
-            # 出場價已經是「峰值的75%」而不是純保本，實際獲利應為正值。
+            # 出場價已經鎖了利，不是純保本，實際獲利應為正值。
             exit_price = mock_close.call_args.args[3]
             self.assertGreater(exit_price, 100.0)
 
