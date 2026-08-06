@@ -1419,16 +1419,29 @@ async def watch_kline_and_strategy():
                 )
 
                 def is_entry_allowed(side, is_counter_trend=False):
+                    # ================================================================
+                    # 【第三層：大盤趨勢過濾強化版】
+                    # ================================================================
                     if is_counter_trend:
-                        return True, "反轉搶短，無視趨勢濾網"
-                    if global_sma200_1h > 0:
-                        if side == 'buy' and close_price <= global_sma200_1h:
-                            return False, f"SMA200={global_sma200_1h:.4f} 之上才允許多，當前={close_price:.4f}"
-                        if side == 'sell' and close_price >= global_sma200_1h:
-                            return False, f"SMA200={global_sma200_1h:.4f} 之下才允許空，當前={close_price:.4f}"
-                    if adx_val < 15:  # 放寬至 15
-                        return False, f"ADX={adx_val:.1f} < 15，盤整不開倉"
-                    if current_vol < vol_ma20 * 0.7:  # 放寬至 70%
+                        # 反轉搶短仍需大盤方向允許（不再完全跳過濾網）
+                        if side == 'buy' and macro_regime == "BEAR":
+                            return False, f"大盤為熊市，反轉多單風險過高，拒絕"
+                        if side == 'sell' and macro_regime == "BULL":
+                            return False, f"大盤為牛市，反轉空單風險過高，拒絕"
+                    else:
+                        # RSI 過熱/過冷時暫停順勢追單，等回調/反彈再進場
+                        if macro_regime == "BULL" and side == 'buy' and current_rsi > 70:
+                            return False, f"牛市但 RSI={current_rsi:.1f} 過熱，等待回調再做多"
+                        if macro_regime == "BEAR" and side == 'sell' and current_rsi < 30:
+                            return False, f"熊市但 RSI={current_rsi:.1f} 過冷，等待反彈再做空"
+                        # SMA200 方向確認
+                        if global_sma200_1h > 0:
+                            if side == 'buy' and close_price <= global_sma200_1h:
+                                return False, f"SMA200={global_sma200_1h:.4f} 之上才允許多，當前={close_price:.4f}"
+                            if side == 'sell' and close_price >= global_sma200_1h:
+                                return False, f"SMA200={global_sma200_1h:.4f} 之下才允許空，當前={close_price:.4f}"
+                    # 量能基本門檻
+                    if current_vol < vol_ma20 * 0.7:
                         return False, f"量能不足 {current_vol:.0f} < {vol_ma20*0.7:.0f}(均量70%)"
                     return True, ""
 
@@ -1448,28 +1461,56 @@ async def watch_kline_and_strategy():
                 elif pending_signal_side is None:
                     pending_confirm_high = pending_confirm_low = 0
 
-# --- [加權計分制進場 + 反轉搶短] ---
-                is_counter_trend_long = current_rsi < 25
-                is_counter_trend_short = current_rsi > 75
+# --- [三層架構開倉策略：多因子計分 + 支撐/壓力確認 + 大盤趨勢過濾] ---
 
-                # 多單加權計分 (5 項指標各 1 分，满足 ≥3 分即可開倉)
+                # ================================================================
+                # 【第二層：支撐/壓力區位置判斷（進場點精準化）】
+                # 在關鍵位置開倉風報比最佳，門檻可相對放寬
+                # 不在關鍵位置則需更高確認數量才放行
+                # ================================================================
+                long_near_support     = (global_support > 0)     and (close_price <= global_support * 1.03)
+                short_near_resistance = (global_resistance > 0)  and (close_price >= global_resistance * 0.97)
+
+                # ================================================================
+                # 【第一層：多因子加權計分（7分制，原5分制擴充）】
+                # ================================================================
+                # 做多計分
                 score_long = 0
-                if macd_line > macd_signal:          score_long += 1
-                if close_price > global_sma200_1h:   score_long += 1
-                if current_rsi < 60:                 score_long += 1
-                if current_vol > vol_ma20 * 0.7:     score_long += 1
-                if macro_regime != "BEAR":            score_long += 1
+                if macd_line > macd_signal:          score_long += 1  # MACD 金叉
+                if close_price > global_sma200_1h:   score_long += 1  # 收盤在 SMA200 之上
+                if current_rsi < 60:                 score_long += 1  # RSI 未超買
+                if current_vol > vol_ma20 * 0.7:     score_long += 1  # 量能足夠
+                if macro_regime != "BEAR":            score_long += 1  # 非熊市
+                if long_near_support:                 score_long += 1  # ✅ [新增] 價格在支撐區附近
+                if adx_val > 20:                      score_long += 1  # ✅ [新增] ADX 趨勢強度確認
 
-                # 空單加權計分
+                # 做空計分
                 score_short = 0
-                if macd_line < macd_signal:          score_short += 1
-                if close_price < global_sma200_1h:   score_short += 1
-                if current_rsi > 40:                 score_short += 1
-                if current_vol > vol_ma20 * 0.7:     score_short += 1
-                if macro_regime != "BULL":            score_short += 1
+                if macd_line < macd_signal:          score_short += 1  # MACD 死叉
+                if close_price < global_sma200_1h:   score_short += 1  # 收盤在 SMA200 之下
+                if current_rsi > 40:                 score_short += 1  # RSI 未超賣
+                if current_vol > vol_ma20 * 0.7:     score_short += 1  # 量能足夠
+                if macro_regime != "BULL":            score_short += 1  # 非牛市
+                if short_near_resistance:             score_short += 1  # ✅ [新增] 價格在壓力區附近
+                if adx_val > 20:                      score_short += 1  # ✅ [新增] ADX 趨勢強度確認
 
-                long_cond  = (score_long  >= 3) or (current_rsi < 40 and close_price <= bb_low * 1.005) or is_counter_trend_long
-                short_cond = (score_short >= 3) or (current_rsi > 60 and close_price >= bb_up  * 0.995) or is_counter_trend_short
+                # 動態門檻：在好位置 ≥4分，不在位置需 ≥5分；MONKEY 盤整市再 +1
+                base_threshold = 4
+                if macro_regime == "MONKEY":
+                    base_threshold += 1  # 盤整市訊號雜，需更高確認才開倉
+
+                long_threshold  = base_threshold if long_near_support     else base_threshold + 1
+                short_threshold = base_threshold if short_near_resistance else base_threshold + 1
+
+                if score_long > 0 or score_short > 0:
+                    print(f"📊 [計分板] 多={score_long}/7(門檻{long_threshold}) 空={score_short}/7(門檻{short_threshold}) | 支撐區={long_near_support} 壓力區={short_near_resistance} | ADX={adx_val:.1f}")
+
+                # 反轉搶短：RSI 極端 + 布林通道確認（不再無條件觸發）
+                is_counter_trend_long  = (current_rsi < 25) and (close_price <= bb_low * 1.01)
+                is_counter_trend_short = (current_rsi > 75) and (close_price >= bb_up  * 0.99)
+
+                long_cond  = (score_long  >= long_threshold)  or is_counter_trend_long
+                short_cond = (score_short >= short_threshold) or is_counter_trend_short
                 # ----------------------------------------
 
                 if long_cond:
